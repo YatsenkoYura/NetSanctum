@@ -39,7 +39,7 @@ services:
       - "${HOST_PORT:-8000}:8000"
     volumes:
       - .:/app
-      - storage_data:/app/storage
+      - ./storage:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,7 +58,7 @@ services:
     env_file: .env
     volumes:
       - .:/app
-      - storage_data:/app/storage
+      - ./storage:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,4 +71,3 @@ services:
 
 volumes:
   pg_data:
-  storage_data:
