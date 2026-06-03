@@ -1,0 +1,7 @@
+# Video Archiver Module Requirements
+yt-dlp==2026.3.17 \
+    --hash=sha256:32992db94303a8a5d211a183f2174834fe7f8c29d83ed2e7a324eae97a8f26d8 \
+    --hash=sha256:ba7aa31d533f1ffccfe70e421596d7ca8ff0bf1398dc6bb658b7d9dec057d2c9
+openai==1.59.3 \
+    --hash=sha256:7f7fff9d8729968588edf1524e73266e8593bb6cab09298340efb755755bb66f \
+    --hash=sha256:b041887a0d8f3e70d1fc6ffbb2bf7661c3b9a2f3e806c04bf42f572b9ac7bc37

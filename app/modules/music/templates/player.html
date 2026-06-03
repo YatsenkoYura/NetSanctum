@@ -1,0 +1,234 @@
+<div class="pt-2">
+    <div class="flex items-center justify-between border-b border-zinc-800/60 pb-3 mb-6 gap-4 relative">
+        <div class="flex items-center gap-4 flex-1">
+            <button onclick="toggleDownloadDrawer()" class="text-emerald-400 hover:text-emerald-300 font-bold transition-colors border border-emerald-400/30 px-3 py-1 bg-emerald-950/20 hover:bg-emerald-900/40 uppercase text-[10px] whitespace-nowrap">
+                + Download
+            </button>
+            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider hidden sm:inline-block whitespace-nowrap">
+                {{ _('music', 'downloaded_songs') }}
+            </span>
+            <input type="text" name="search" value="{{ search }}"
+                   placeholder="Search songs, artists..." 
+                   hx-get="/music/ui/player" 
+                   hx-trigger="keyup changed delay:300ms, search" 
+                   hx-target="#content-songs"
+                   hx-push-url="false"
+                   class="flex-1 max-w-md bg-zinc-950 border border-zinc-800 rounded-none px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="flex border border-zinc-800/60 p-0.5 bg-zinc-950 font-mono text-[9px] uppercase">
+                <button onclick="setSongsViewMode('grid')" id="btn-songs-view-grid" class="px-2 py-0.5 text-teal-400 bg-teal-950/20 font-bold transition-all focus:outline-none">Grid</button>
+                <button onclick="setSongsViewMode('list')" id="btn-songs-view-list" class="px-2 py-0.5 text-zinc-500 hover:text-zinc-300 transition-all focus:outline-none">List</button>
+            </div>
+            <span class="text-xs font-mono text-teal-400 bg-teal-950/20 px-2 py-0.5 border border-teal-900/40 whitespace-nowrap">
+                {{ songs|length }}
+            </span>
+        </div>
+    </div>
+
+    <!-- Slide-out Download Drawer inside Songs Tab -->
+    <div id="songs-download-drawer" class="absolute top-0 right-0 w-80 bg-black border-l border-b border-zinc-800 transform translate-x-full hidden transition-transform duration-300 ease-in-out z-40 flex flex-col h-[80vh] shadow-2xl">
+        <div class="p-4 border-b border-zinc-900 flex justify-between items-center bg-zinc-950/50">
+            <h3 class="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">
+                {{ _('music', 'download_new') }}
+            </h3>
+            <button onclick="toggleDownloadDrawer()" class="text-zinc-500 hover:text-white font-mono text-lg leading-none">&times;</button>
+        </div>
+        <div class="p-4 overflow-y-auto flex-1 flex flex-col gap-4">
+            <form hx-post="/music/ui/download"
+                  hx-target="#download-feedback"
+                  hx-swap="innerHTML"
+                  class="flex flex-col gap-4">
+                
+                <div>
+                    <label class="block text-[10px] font-mono text-zinc-500 mb-1">YouTube URL</label>
+                    <input type="text" name="url" required
+                           placeholder="{{ _('music', 'url_placeholder') }}"
+                           class="w-full bg-zinc-950 border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+                </div>
+
+                <div class="flex items-center gap-2 mt-2">
+                    <input type="checkbox" name="use_ai" id="use_ai" value="true"
+                           class="w-3 h-3 appearance-none border border-zinc-700 bg-zinc-900 checked:bg-emerald-400 checked:border-emerald-400 rounded-none cursor-pointer">
+                    <label for="use_ai" class="text-[10px] font-mono text-zinc-400 cursor-pointer">
+                        Enable AI Metadata Analysis
+                    </label>
+                </div>
+
+                <div class="border-t border-zinc-900 pt-3 mt-1">
+                    <label class="block text-[10px] font-mono text-zinc-500 mb-1">OpenAI API Key (Optional)</label>
+                    <input type="password" name="openai_api_key"
+                           placeholder="Override DB key..."
+                           class="w-full bg-zinc-950 border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+                </div>
+
+                <div>
+                    <label class="block text-[10px] font-mono text-zinc-500 mb-1">OpenAI Base URL (Optional)</label>
+                    <input type="text" name="openai_base_url"
+                           placeholder="Override DB url..."
+                           class="w-full bg-zinc-950 border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+                </div>
+
+                <div class="border-t border-zinc-900 pt-3 mt-1">
+                    <label class="block text-[10px] font-mono text-zinc-500 mb-1">YouTube Cookies (Netscape format)</label>
+                    <textarea name="youtube_cookies" rows="3"
+                              placeholder="Paste cookies.txt to bypass bot blocks... (Saves globally)"
+                              class="w-full bg-zinc-950 border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-emerald-400 focus:outline-none transition-colors resize-none"></textarea>
+                </div>
+
+                <button type="submit"
+                        class="mt-4 bg-emerald-500/10 text-emerald-400 font-mono font-bold text-[11px] uppercase tracking-wider py-2.5 px-6 rounded-none border border-emerald-500/50 hover:bg-emerald-500 hover:text-black transition-all cursor-pointer">
+                    {{ _('music', 'btn_download') }}
+                </button>
+            </form>
+            
+            <div id="download-feedback" class="mt-4"></div>
+            
+            <div class="mt-6 border-t border-zinc-900 pt-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Active Downloads</h4>
+                    <button hx-delete="/music/ui/downloads/all" hx-target="#active-downloads-poller" class="text-[9px] text-red-500 hover:text-red-400 uppercase font-mono px-2 py-0.5 border border-red-500/30 bg-red-950/20">Cancel All</button>
+                </div>
+                <div id="active-downloads-poller" hx-get="/music/ui/downloads_active" hx-trigger="every 2s" hx-swap="innerHTML">
+                    <!-- Poller will inject HTML here -->
+                    <div class="text-xs font-mono text-zinc-600">Loading...</div>
+                </div>
+            </div>
+            
+            <p class="text-[10px] font-mono text-zinc-600 mt-6 leading-relaxed border-t border-zinc-900 pt-3">
+                {{ _('music', 'download_hint') }}
+            </p>
+        </div>
+    </div>
+
+    {% if songs and songs|length > 0 %}
+    <div id="songs-list-container" class="view-mode-grid">
+        {% for song in songs %}
+        <div onclick="window.musicPlayer.playSongElement(this)"
+             data-song-id="{{ song.id }}"
+             data-song-title="{{ song.title | escape }}"
+             data-song-artist="{{ song.author or 'Unknown' | escape }}"
+             data-song-original="{{ song.original_artist or '' | escape }}"
+             data-song-audio="{{ song.audio_url }}"
+             data-song-cover="{{ song.cover_url or '' }}"
+             class="song-card border border-zinc-800/80 bg-zinc-950/40 backdrop-blur-sm flex flex-col p-4 hover:border-teal-500/50 hover:bg-zinc-900/60 transition-all cursor-pointer group relative overflow-hidden rounded-xl">
+            
+            <!-- Play Overlay (Visible on Hover) -->
+            <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10 pointer-events-none">
+                <div class="w-12 h-12 rounded-full bg-teal-500/90 text-black flex items-center justify-center shadow-lg shadow-teal-500/20 transform translate-y-4 group-hover:translate-y-0 transition-transform">
+                    <svg class="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
+                </div>
+            </div>
+
+            <div class="flex gap-4 relative z-0 items-center">
+                <!-- Cover Image -->
+                <div class="song-cover w-16 h-16 rounded-md bg-zinc-900 border border-zinc-800 flex-shrink-0 flex items-center justify-center overflow-hidden shadow-md">
+                    {% if song.cover_url %}
+                        <img src="{{ song.cover_url }}" alt="Cover" class="w-full h-full object-cover">
+                    {% else %}
+                        <svg class="w-6 h-6 text-zinc-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+                    {% endif %}
+                </div>
+                
+                <!-- Info -->
+                <div class="flex-1 min-w-0 flex flex-col justify-center">
+                    <div class="flex justify-between items-start">
+                        <p class="text-xs font-semibold text-zinc-100 truncate group-hover:text-teal-400 transition-colors" title="{{ song.title }}">{{ song.title }}</p>
+                        <button hx-delete="/music/ui/songs/{{ song.id }}" 
+                                hx-target="closest .song-card" 
+                                hx-swap="outerHTML" 
+                                onclick="event.stopPropagation();" 
+                                class="text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2 focus:outline-none" 
+                                title="Delete Song">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-zinc-400 truncate mt-0.5">
+                        {{ song.author or 'Unknown' }}
+                    </p>
+                    {% if song.original_artist %}
+                    <p class="text-[9px] text-zinc-500 uppercase tracking-wider truncate mt-0.5">
+                        Orig: {{ song.original_artist }}
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="py-12 text-center text-zinc-600 font-mono text-xs">
+        {{ _('music', 'no_songs') }}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .view-mode-grid {
+        display: grid;
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+        gap: 1rem;
+    }
+    @media (min-width: 768px) {
+        .view-mode-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+    @media (min-width: 1024px) {
+        .view-mode-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+    }
+    
+    .view-mode-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .view-mode-list .song-card {
+        padding: 0.5rem 1rem !important;
+        border-radius: 0.5rem !important;
+    }
+    
+    .view-mode-list .song-cover {
+        width: 2.25rem !important;
+        height: 2.25rem !important;
+    }
+</style>
+
+<script>
+    (function() {
+        const mode = localStorage.getItem('music_view_mode') || 'grid';
+        setSongsViewMode(mode, false);
+    })();
+    
+    function setSongsViewMode(mode, save = true) {
+        const container = document.getElementById('songs-list-container');
+        if (!container) return;
+        
+        const btnGrid = document.getElementById('btn-songs-view-grid');
+        const btnList = document.getElementById('btn-songs-view-list');
+        
+        if (mode === 'list') {
+            container.className = 'view-mode-list';
+            if (btnList) {
+                btnList.className = 'px-2 py-0.5 text-teal-400 bg-teal-950/20 font-bold transition-all focus:outline-none';
+            }
+            if (btnGrid) {
+                btnGrid.className = 'px-2 py-0.5 text-zinc-500 hover:text-zinc-300 transition-all focus:outline-none';
+            }
+        } else {
+            container.className = 'view-mode-grid';
+            if (btnGrid) {
+                btnGrid.className = 'px-2 py-0.5 text-teal-400 bg-teal-950/20 font-bold transition-all focus:outline-none';
+            }
+            if (btnList) {
+                btnList.className = 'px-2 py-0.5 text-zinc-500 hover:text-zinc-300 transition-all focus:outline-none';
+            }
+        }
+        if (save) {
+            localStorage.setItem('music_view_mode', mode);
+        }
+    }
+</script>

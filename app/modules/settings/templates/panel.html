@@ -1,0 +1,108 @@
+<!-- Settings panel fragment — loaded via HTMX into the dashboard -->
+<div class="space-y-6">
+
+    <!-- Header info line -->
+    <div class="flex items-center justify-between border-b border-zinc-800/60 pb-3">
+        <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">
+            {{ _('settings', 'system_config') }}
+        </span>
+        <span class="text-xs font-mono text-teal-400 bg-teal-950/20 px-2 py-0.5 border border-teal-900/40">
+            {{ _('settings', 'entries', count=(settings|length if settings else 0)) }}
+        </span>
+    </div>
+
+    <!-- Minimal Add setting form -->
+    <form hx-post="/settings/ui/add"
+          hx-target="#settings-list"
+          hx-swap="innerHTML"
+          class="space-y-3 bg-zinc-950/20 p-4 border border-zinc-900">
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="space-y-1">
+                <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wide">Key</span>
+                <input type="text"
+                       name="key"
+                       required
+                       placeholder="{{ _('settings', 'key_placeholder') }}"
+                       class="w-full bg-black border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-800 focus:border-teal-400 focus:outline-none transition-colors">
+            </div>
+            <div class="space-y-1">
+                <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wide">Value</span>
+                <input type="text"
+                       name="value"
+                       required
+                       placeholder="{{ _('settings', 'value_placeholder') }}"
+                       class="w-full bg-black border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-800 focus:border-teal-400 focus:outline-none transition-colors">
+            </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3 pt-2">
+            <div class="flex-1 flex flex-col gap-1">
+                <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wide">Visibility Scope</span>
+                <select name="scope"
+                        class="bg-black border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-400 focus:border-teal-400 focus:outline-none transition-colors cursor-pointer">
+                    <option value="user">{{ _('settings', 'user_scope') }}</option>
+                    <option value="global">{{ _('settings', 'global_scope') }}</option>
+                    <option value="module">{{ _('settings', 'module_scope') }}</option>
+                </select>
+            </div>
+            <div class="flex items-end">
+                <button type="submit"
+                        class="w-full sm:w-auto bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider py-2.5 px-6 rounded-none border border-teal-400 hover:bg-black hover:text-teal-400 transition-all cursor-pointer">
+                    {{ _('settings', 'add_btn') }}
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <!-- Settings list -->
+    <div id="settings-list" class="border border-zinc-800 rounded-none divide-y divide-zinc-800/60 max-h-[300px] overflow-y-auto bg-black">
+        {% if settings and settings|length > 0 %}
+            {% for s in settings %}
+            <div class="flex items-center justify-between px-4 py-3 bg-black hover:bg-zinc-950 transition-colors group">
+                <div class="flex items-center gap-3 min-w-0">
+                    <span class="w-1.5 h-1.5 rounded-none inline-block flex-shrink-0
+                        {% if s.scope == 'global' %}bg-teal-400{% elif s.scope == 'module' %}bg-amber-400{% else %}bg-emerald-400{% endif %}">
+                    </span>
+                    <div class="min-w-0">
+                        <p class="text-xs font-mono font-bold text-zinc-200 truncate">{{ s.key }}</p>
+                        <p class="text-[11px] font-mono text-zinc-500 truncate mt-0.5">
+                            {% if s.is_secret %}••••••••{% else %}{{ s.value }}{% endif %}
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <span class="text-[10px] font-mono text-zinc-500 uppercase bg-zinc-900 border border-zinc-850 px-2 py-0.5">{{ s.scope }}</span>
+                    <button hx-delete="/settings/ui/{{ s.id }}"
+                            hx-target="#settings-list"
+                            hx-swap="innerHTML"
+                            hx-confirm="{{ _('settings', 'confirm_delete') }}"
+                            class="opacity-0 group-hover:opacity-100 text-[10px] font-mono text-zinc-500 border border-zinc-800 rounded-none px-1.5 py-0.5 hover:border-red-500 hover:text-red-400 transition-all cursor-pointer">
+                        ✕
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="px-4 py-8 text-center bg-zinc-950/20">
+                <p class="text-zinc-600 font-mono text-xs">{{ _('settings', 'no_settings') }}</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Scope legend -->
+    <div class="flex items-center gap-4 pt-1 border-t border-zinc-900">
+        <div class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 bg-teal-400 rounded-none inline-block"></span>
+            <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wide">{{ _('settings', 'global') }}</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 bg-amber-400 rounded-none inline-block"></span>
+            <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wide">{{ _('settings', 'module') }}</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 bg-emerald-400 rounded-none inline-block"></span>
+            <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wide">{{ _('settings', 'user') }}</span>
+        </div>
+    </div>
+</div>

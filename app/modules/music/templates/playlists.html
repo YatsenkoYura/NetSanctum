@@ -1,0 +1,50 @@
+<div class="space-y-8">
+    
+<div class="pt-2">
+    <!-- Playlists List -->
+    <div>
+        <div class="flex items-center justify-between border-b border-zinc-800/60 pb-3 mb-4">
+            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider">
+                {{ _('music', 'saved_playlists') }}
+            </span>
+            <div class="flex gap-4 items-center">
+                <form hx-post="/music/api/playlists" hx-swap="none" hx-on::after-request="if(event.detail.successful) this.reset()" class="flex gap-2">
+                    <input type="text" name="name" required placeholder="New playlist name..." class="bg-zinc-950 border border-zinc-800 px-2 py-1 text-[10px] font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none w-48">
+                    <button type="submit" class="bg-teal-950/20 text-teal-400 border border-teal-900/40 px-3 py-1 text-[10px] font-mono uppercase hover:bg-teal-900/40 transition-colors">+ Create</button>
+                </form>
+                <span class="text-xs font-mono text-teal-400 bg-teal-950/20 px-2 py-0.5 border border-teal-900/40">
+                    {{ playlists|length }}
+                </span>
+            </div>
+        </div>
+
+        {% if playlists and playlists|length > 0 %}
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {% for playlist in playlists %}
+            <div class="border border-zinc-800 bg-zinc-950/40 p-4 hover:border-teal-400/50 transition-colors cursor-pointer" 
+                 hx-get="/music/ui/playlists/{{ playlist.id }}" 
+                 hx-target="#content-playlist-detail" 
+                 onclick="switchTab('playlist-detail')">
+                <div class="flex justify-between items-start mb-3">
+                    <div class="w-10 h-10 border border-zinc-800 bg-black flex items-center justify-center text-teal-400">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M2 4a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H3a1 1 0 01-1-1V4zm0 6a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H3a1 1 0 01-1-1v-2zm1 5a1 1 0 00-1 1v2a1 1 0 001 1h14a1 1 0 001-1v-2a1 1 0 00-1-1H3z"></path></svg>
+                    </div>
+                    <button hx-delete="/music/ui/playlists/{{ playlist.id }}" hx-target="closest .border-zinc-800" hx-swap="outerHTML" onclick="event.stopPropagation();" class="text-zinc-600 hover:text-red-500 transition-colors" title="Delete Playlist">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+                <h4 class="text-sm font-mono font-bold text-zinc-200 truncate">{{ playlist.name }}</h4>
+                {% if playlist.description %}
+                    <p class="text-[10px] font-mono text-zinc-500 truncate mt-1">{{ playlist.description }}</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="py-8 text-center text-zinc-600 font-mono text-xs border border-dashed border-zinc-800">
+            {{ _('music', 'no_playlists') }}
+        </div>
+        {% endif %}
+    </div>
+
+</div>

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}NetSanctum — Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- ── Dashboard Clean Page Header ─────────────────── -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-4">
+        <div>
+            <h2 class="text-lg font-mono font-black text-white uppercase tracking-wider">
+                {{ _('settings', 'system_control_node') }}
+            </h2>
+            <p class="text-xs text-zinc-500 font-mono mt-0.5 uppercase tracking-wide">
+                {{ _('settings', 'dashboard_subtitle') }}
+            </p>
+        </div>
+    </div>
+
+    <!-- ── Configuration Manager Section ────────────────── -->
+    <div class="border border-zinc-800 rounded-none bg-zinc-950/40">
+        
+        <!-- Subtle minimalist header -->
+        <div class="border-b border-zinc-800 px-6 py-4 flex items-center justify-between bg-zinc-900/20">
+            <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 bg-teal-400 rounded-none inline-block"></span>
+                <span class="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
+                    {{ _('settings', 'manager_title') }}
+                </span>
+            </div>
+            
+            <button hx-get="/settings/ui/panel"
+                    hx-target="#settings-panel"
+                    hx-swap="innerHTML"
+                    class="text-[10px] font-mono text-zinc-400 border border-zinc-800 rounded-none px-2.5 py-1 hover:border-teal-400 hover:text-teal-400 transition-colors uppercase tracking-wider bg-black">
+                {{ _('settings', 'reload_btn') }}
+            </button>
+        </div>
+        
+        <!-- Settings Content Panel -->
+        <div id="settings-panel"
+             hx-get="/settings/ui/panel"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             class="p-6 min-h-[300px]">
+            <div class="htmx-indicator flex items-center gap-3 text-zinc-500 text-xs font-mono">
+                <span class="inline-block w-4 h-4 border-2 border-teal-400 border-t-transparent rounded-none animate-spin"></span>
+                {{ _('settings', 'initializing') }}
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

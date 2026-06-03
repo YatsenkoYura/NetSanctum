@@ -1,0 +1,18 @@
+<!-- Auth success fragment — returned by HTMX after successful login -->
+<div class="border border-emerald-500 bg-emerald-950/20 p-4 rounded-none">
+    <div class="flex items-center gap-3">
+        <span class="text-emerald-500 text-base">&#10004;</span>
+        <div>
+            <p class="text-xs font-mono font-bold text-emerald-400 uppercase">
+                {{ _('auth', 'access_granted') }}
+            </p>
+            <p class="text-[11px] font-mono text-zinc-400 mt-0.5">
+                {{ _('auth', 'redirecting') }}
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+    setTimeout(function() { window.location.href = '/dashboard'; }, 800);
+</script>

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}NetSanctum — {{ _('music', 'module_title') }}{% endblock %}
+
+{% block content %}
+<div class="flex flex-col space-y-4">
+
+    <!-- Top Bar -->
+    <div class="flex justify-start items-center font-mono text-[10px] uppercase tracking-wider mb-2">
+        <div class="flex gap-6">
+            <button onclick="switchTab('songs')" id="tab-songs" class="text-teal-400 font-bold transition-colors">
+                [Songs]
+            </button>
+            <button onclick="switchTab('playlists')" id="tab-playlists" class="text-zinc-600 hover:text-zinc-400 transition-colors">
+                Playlists
+            </button>
+        </div>
+    </div>
+
+
+
+    <!-- Dynamic Content Area (HTMX) -->
+    <div class="w-full">
+        <!-- Songs Tab Container -->
+        <div id="content-songs"
+             hx-get="/music/ui/player"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             class="block">
+             <div class="py-12 text-zinc-500 font-mono text-xs text-center">Loading songs...</div>
+        </div>
+
+        <!-- Playlists Tab Container -->
+        <div id="content-playlists"
+             hx-get="/music/ui/playlists"
+             hx-trigger="load, reloadPlaylists from:body"
+             hx-swap="innerHTML"
+             class="hidden">
+             <div class="py-12 text-zinc-500 font-mono text-xs text-center">Loading playlists...</div>
+        </div>
+        <!-- Playlist Detail Container -->
+        <div id="content-playlist-detail" class="hidden"></div>
+    </div>
+</div>
+
+{% endblock %}
