@@ -68,7 +68,9 @@ async def trigger_download(
         comments_replies=req.comments_replies,
         replies_limit=req.replies_limit,
         auto_update=req.auto_update,
-        cookies_text=req.cookies_text
+        cookies_text=req.cookies_text,
+        compress_video=req.compress_video,
+        download_subtitles=req.download_subtitles
     )
     
     # Store initial state in Redis
@@ -262,6 +264,27 @@ async def get_thumbnail(
     with storage.get_file_stream(video.thumbnail_path) as f:
         content = f.read()
     return Response(content=content, media_type=mt or "image/jpeg")
+
+@router.get("/api/video-archiver/videos/{video_id}/subtitles/{lang}", include_in_schema=False)
+async def get_subtitle(
+    video_id: str,
+    lang: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """Serve subtitle file from storage."""
+    video = await db.get(ArchivedVideo, video_id)
+    if not video or not video.subtitles or lang not in video.subtitles:
+        raise HTTPException(status_code=404, detail="Subtitle not found")
+
+    subtitle_path = video.subtitles[lang]
+    storage = get_storage()
+    if not storage.file_exists(subtitle_path):
+        raise HTTPException(status_code=404, detail="Subtitle file missing from storage")
+
+    with storage.get_file_stream(subtitle_path) as f:
+        content = f.read()
+    return Response(content=content, media_type="text/vtt")
 
 # ── Active Tasks API ─────────────────────────────────────
 

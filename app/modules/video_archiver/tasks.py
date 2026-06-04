@@ -40,7 +40,9 @@ def process_video_url_task(
     replies_limit: int = 5,
     auto_update: bool = False,
     cookies_text: str | None = None,
-    playlist_id: int | None = None
+    playlist_id: int | None = None,
+    compress_video: bool = False,
+    download_subtitles: bool = False
 ) -> str:
     """
     Entry point for archiving. Identifies if the URL is a playlist or single video.
@@ -121,7 +123,9 @@ def process_video_url_task(
                 replies_limit=replies_limit,
                 auto_update=auto_update,
                 cookies_text=cookies_text,
-                playlist_id=playlist_id
+                playlist_id=playlist_id,
+                compress_video=compress_video,
+                download_subtitles=download_subtitles
             )
             
             data = {
@@ -148,7 +152,9 @@ def process_video_url_task(
             replies_limit=replies_limit,
             auto_update=auto_update,
             cookies_text=cookies_text,
-            playlist_id=playlist_id
+            playlist_id=playlist_id,
+            compress_video=compress_video,
+            download_subtitles=download_subtitles
         )
         # Delete the resolver task tracker immediately since the child downloader task has registered its own tracker
         redis_client.delete(f"video_dl:{task_id}")
@@ -167,7 +173,9 @@ def download_video_task(
     replies_limit: int = 5,
     auto_update: bool = False,
     cookies_text: str | None = None,
-    playlist_id: int | None = None
+    playlist_id: int | None = None,
+    compress_video: bool = False,
+    download_subtitles: bool = False
 ) -> str:
     """Downloads a single video, caches metadata + comments, and saves to database."""
     task_id = self.request.id
@@ -213,15 +221,25 @@ def download_video_task(
             }
         },
         'js_runtimes': {'node': {}},
-        'remote_components': {'ejs:github': {}}
+        'remote_components': {'ejs:github': {}},
+        'ignoreerrors': True
     }
     
     if cookie_path:
         ydl_opts['cookiefile'] = cookie_path
 
+    if download_subtitles:
+        ydl_opts['writesubtitles'] = True
+        ydl_opts['writeautomaticsub'] = False  # Manual subtitles only (human-added, not auto-generated)
+        ydl_opts['subtitleslangs'] = ['all']
+        ydl_opts['subtitlesformat'] = 'vtt'
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
+            
+        if not info_dict:
+            raise Exception("Failed to download media: yt-dlp extraction returned no data.")
             
         video_id = info_dict.get('id')
         title = info_dict.get('title', 'Untitled Video')
@@ -243,6 +261,29 @@ def download_video_task(
 
         if not downloaded_file or not os.path.exists(downloaded_file):
             raise FileNotFoundError("Could not locate downloaded video file.")
+
+        # Compress video via FFmpeg if requested
+        if compress_video:
+            update_redis("Compressing video (FFmpeg)", "95%", title=title)
+            compressed_file = os.path.join(temp_dir, f"compressed_{video_id}.mp4")
+            try:
+                import subprocess
+                cmd = [
+                    "ffmpeg", "-y", "-i", downloaded_file,
+                    "-vcodec", "libx264", "-crf", "28", "-preset", "fast",
+                    "-acodec", "aac", "-b:a", "128k",
+                    compressed_file
+                ]
+                logger.info(f"Running compression command: {' '.join(cmd)}")
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+                if os.path.exists(compressed_file) and os.path.getsize(compressed_file) > 0:
+                    os.remove(downloaded_file)
+                    downloaded_file = compressed_file
+                    logger.info("FFmpeg compression completed successfully.")
+                else:
+                    logger.warning("FFmpeg compression output was missing or empty. Falling back to original file.")
+            except Exception as compress_err:
+                logger.error(f"FFmpeg compression failed, falling back to original video file: {compress_err}")
 
         # Save video to storage abstraction layer
         storage = get_storage()
@@ -267,6 +308,27 @@ def download_video_task(
                     storage.save_file(resp.content, thumbnail_storage_path)
             except Exception as thumbnail_err:
                 logger.warning(f"Failed to download thumbnail: {thumbnail_err}")
+
+        # Collect and save subtitles if downloaded
+        subtitles_map = {}
+        if download_subtitles:
+            update_redis("Extracting subtitles", "97%", title=title)
+            try:
+                for filename in os.listdir(temp_dir):
+                    if filename.startswith(video_id) and filename.endswith('.vtt'):
+                        parts = filename.split('.')
+                        if len(parts) >= 3:
+                            lang = parts[-2]
+                            subtitle_file = os.path.join(temp_dir, filename)
+                            with open(subtitle_file, "rb") as sub_f:
+                                subtitle_bytes = sub_f.read()
+                            
+                            sub_storage_path = f"video_archiver/subtitles/{video_id}.{lang}.vtt"
+                            storage.save_file(subtitle_bytes, sub_storage_path)
+                            subtitles_map[lang] = sub_storage_path
+                            logger.info(f"Saved subtitle for {lang} to {sub_storage_path}")
+            except Exception as sub_err:
+                logger.error(f"Failed to process subtitles: {sub_err}")
 
         # Extract comments
         comments = []
@@ -317,8 +379,12 @@ def download_video_task(
             video.thumbnail_path = thumbnail_storage_path
             video.status = "completed"
             video.comments = comments
+            video.subtitles = subtitles_map
             video.auto_update = auto_update
             video.is_deleted_on_youtube = False
+            video.like_count = info_dict.get('like_count')
+            video.view_count = info_dict.get('view_count')
+            video.tags = info_dict.get('tags')
             
             publish_date_str = info_dict.get('upload_date')
             if publish_date_str:
@@ -391,6 +457,9 @@ def sync_video_metadata_task(video_id: str) -> str:
                 video.title = info_dict.get('title', video.title)
                 video.description = info_dict.get('description', video.description)
                 video.is_deleted_on_youtube = False
+                video.like_count = info_dict.get('like_count', video.like_count)
+                video.view_count = info_dict.get('view_count', video.view_count)
+                video.tags = info_dict.get('tags', video.tags)
                 
                 # Update comments
                 comments = []

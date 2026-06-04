@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, async_engine, AsyncSessionLocal
@@ -139,10 +140,15 @@ async def lifespan(application: FastAPI):
             except Exception as e:
                 logger.debug(f"Bypassed model discovery for {module_name}: {e}")
                 
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.execute(text("ALTER TABLE archived_videos ADD COLUMN IF NOT EXISTS subtitles JSONB;"))
+            logger.info("Database auto-migration: verified subtitles column exists")
+        except Exception as e:
+            logger.debug(f"Subtitles column migration bypassed: {e}")
     logger.info("Database schemas verified")
 
     # Purge pending Celery tasks (generic cleanup)
@@ -257,6 +263,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Static Files ─────────────────────────────────────────
+app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 # ── Auto-mount module routers and register templates variables ────────────
 for module_router in _discover_modules_and_routers():

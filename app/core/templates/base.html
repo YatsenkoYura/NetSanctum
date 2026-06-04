@@ -6,8 +6,8 @@
     <title>{% block title %}NetSanctum{% endblock %}</title>
     <meta name="description" content="NetSanctum — Modular Monolith Control Panel">
 
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind CSS (Local for Offline/Self-Hosted usage) -->
+    <script src="/static/tailwind.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -21,13 +21,11 @@
         }
     </script>
 
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Google Fonts (Asynchronous fallback to prevent offline blocking) -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
 
-    <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <!-- HTMX (Local for Offline/Self-Hosted usage) -->
+    <script src="/static/htmx.min.js"></script>
 
     <style>
         * { font-family: 'Inter', system-ui, sans-serif; }
@@ -97,7 +95,7 @@
     </nav>
 
     <!-- ── Main Content Area ───────────────────────────── -->
-    <main id="main-content" class="max-w-7xl mx-auto px-6 py-8">
+    <main id="main-content" class="px-6 py-8 transition-all duration-500">
         {% block content %}{% endblock %}
     </main>
     
@@ -254,6 +252,7 @@
                 }
 
                 document.getElementById('global-player').classList.remove('translate-y-full', 'opacity-0');
+                document.getElementById('main-content').classList.add('pb-28');
                 document.getElementById('gp-title').innerText = song.title;
                 document.getElementById('gp-title').title = song.title;
                 document.getElementById('gp-artist').innerText = song.artist;

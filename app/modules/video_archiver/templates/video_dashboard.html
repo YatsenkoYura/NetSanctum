@@ -82,20 +82,15 @@
 
         <!-- Standarized Split/Stretchable Player Container -->
         <div id="library-player-view" class="hidden">
-            <div class="flex justify-between items-center bg-zinc-950 border-t-2 border-x-2 border-zinc-800 p-4">
+            <div class="flex justify-between items-center bg-zinc-950 border-t-2 border-x-2 border-zinc-800 p-3">
                 <button onclick="closeLibraryPlayer()" class="bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-white font-mono text-xs px-3 py-1.5 uppercase transition-colors">
                     &larr; {{ _('video_archiver', 'back_to_grid') }}
                 </button>
-                <div class="flex items-center gap-2">
-                    <button onclick="toggleTheaterMode()" id="btn-theater-mode" class="bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                        {{ _('video_archiver', 'theater_mode') }}
-                    </button>
-                </div>
             </div>
             
             <div id="player-grid-wrapper" class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950">
-                <!-- Left: Standardized Player & Details Column -->
-                <div id="player-main-col" class="lg:col-span-8 space-y-6">
+                <!-- Left: Video Player + Details (spans 8 cols) -->
+                <div id="player-main-col" class="lg:col-span-8 space-y-6" style="grid-row: 1;">
                     <!-- HTML5 Player & Delay Overlay -->
                     <div class="relative aspect-video bg-black border-2 border-zinc-800 overflow-hidden">
                         <!-- Custom Neo Loader -->
@@ -106,56 +101,161 @@
                             <span class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider">{{ _('video_archiver', 'preloading') }}</span>
                         </div>
                         
-                        <!-- Video Element -->
-                        <video id="shared-video-player" controls class="w-full h-full object-contain focus:outline-none">
-                            <source id="shared-video-source" src="" type="video/mp4">
-                        </video>
-                    </div>
-
-                    <!-- Video Details underneath player -->
-                    <div class="bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6">
-                        <div class="space-y-3">
-                            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-4">
-                                <h2 id="player-detail-title" class="text-lg font-bold text-white leading-tight">Video Title</h2>
-                                <span id="player-detail-resolution" class="bg-teal-400/10 text-teal-400 border border-teal-500/20 px-2 py-0.5 text-[9px] font-mono">{{ _('video_archiver', 'resolution') }}</span>
-                            </div>
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center gap-3">
-                                    <div id="player-detail-avatar" class="w-8 h-8 rounded-full bg-teal-400 text-black font-black font-mono text-xs flex items-center justify-center uppercase">
-                                        C
+                        <!-- Custom Video Player wrapper for shared-video-player -->
+                        <div id="shared-video-container" class="custom-video-player relative w-full h-full group bg-black overflow-hidden flex items-center justify-center">
+                            <video id="shared-video-player" class="w-full h-full object-contain focus:outline-none">
+                                <source id="shared-video-source" src="" type="video/mp4">
+                            </video>
+                            
+                            <!-- Big center play button -->
+                            <button onclick="toggleCustomPlay('shared-video-player')" class="center-play-btn absolute bg-black/60 hover:bg-black/80 text-teal-400 border border-zinc-800 hover:border-teal-400 p-4 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 focus:outline-none z-10">
+                                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5v13l11-6.5-11-6.5z"/></svg>
+                            </button>
+                            
+                            <!-- Custom Control Bar -->
+                            <div class="custom-controls absolute bottom-0 left-0 right-0 p-3 bg-zinc-950/95 border-t border-zinc-800 flex flex-col gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200 z-20">
+                                <!-- Progress Bar -->
+                                <div onclick="seekCustomPlayer(event, 'shared-video-player')" class="progress-container w-full h-1 bg-zinc-850 hover:h-2 transition-all cursor-pointer relative border border-zinc-800">
+                                    <div class="progress-bar h-full bg-teal-400 w-0"></div>
+                                </div>
+                                <!-- Controls Row -->
+                                <div class="flex justify-between items-center text-[10px] font-mono text-zinc-300">
+                                    <div class="flex items-center gap-4">
+                                        <!-- Play button -->
+                                        <button onclick="toggleCustomPlay('shared-video-player')" class="play-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                                        </button>
+                                        <!-- Time -->
+                                        <div class="time-display text-zinc-500">
+                                            <span class="curr-time">00:00</span> / <span class="dur-time">00:00</span>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <div id="player-detail-channel" class="text-xs font-bold text-white font-mono">Channel Name</div>
-                                        <div class="text-[9px] text-zinc-500 font-mono">YouTube Content Partner</div>
+                                    <div class="flex items-center gap-4">
+                                        <!-- Volume Controls -->
+                                        <div class="flex items-center gap-1.5">
+                                            <button onclick="toggleMuteCustom('shared-video-player')" class="mute-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>
+                                            </button>
+                                            <input type="range" oninput="changeVolumeCustom(event, 'shared-video-player')" class="vol-slider w-12 accent-teal-400 bg-zinc-800 h-1 appearance-none cursor-pointer" min="0" max="1" step="0.1" value="1">
+                                        </div>
+                                        <!-- Settings / Gear selector -->
+                                        <div class="relative settings-menu-container">
+                                            <button onclick="toggleSettingsMenu('shared-video-player')" class="settings-btn font-bold hover:text-teal-400 transition-colors p-1">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                            </button>
+                                            <!-- Settings Dropdown — wider panel -->
+                                            <div class="settings-dropdown absolute bottom-full right-0 mb-2 bg-zinc-950 border border-zinc-800 py-2 hidden flex-col w-52 text-[10px] shadow-2xl z-30 font-mono">
+                                                <!-- Speed Section -->
+                                                <div class="px-2 pb-1.5 border-b border-zinc-900 text-left">
+                                                    <span class="text-zinc-500 font-bold block uppercase tracking-wider text-[8px] mb-1">Speed</span>
+                                                    <select onchange="changeSpeedCustom(event, 'shared-video-player')" class="speed-select w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 text-[10px] focus:outline-none">
+                                                        <option value="0.25">0.25x</option>
+                                                        <option value="0.5">0.5x</option>
+                                                        <option value="1" selected>1.0x (Normal)</option>
+                                                        <option value="1.25">1.25x</option>
+                                                        <option value="1.5">1.5x</option>
+                                                        <option value="1.75">1.75x</option>
+                                                        <option value="2">2.0x</option>
+                                                    </select>
+                                                </div>
+                                                <!-- Subtitles Section -->
+                                                <div class="px-2 pt-1.5 border-b border-zinc-900 subtitle-section text-left">
+                                                    <span class="text-zinc-500 font-bold block uppercase tracking-wider text-[8px] mb-1">Subtitles</span>
+                                                    <div class="subtitles-list flex flex-col gap-1 max-h-24 overflow-y-auto">
+                                                        <!-- Populated dynamically -->
+                                                    </div>
+                                                </div>
+                                                <!-- Subtitle Style Section -->
+                                                <div class="px-2 pt-1.5 text-left space-y-1.5">
+                                                    <div class="flex items-center justify-between">
+                                                        <span class="text-zinc-500 font-bold uppercase tracking-wider text-[8px]">Стиль суб.</span>
+                                                        <input type="checkbox" id="subtitle_styling_toggle_player" checked
+                                                               onchange="applySubtitleStyle(this.checked)"
+                                                               class="w-3 h-3 accent-teal-400 cursor-pointer">
+                                                    </div>
+                                                    <div class="flex items-center gap-1.5">
+                                                        <button type="button" onclick="changeSubtitleFontSize(-2)" class="w-5 h-5 bg-zinc-800 hover:bg-teal-400 hover:text-black text-zinc-300 font-bold text-xs flex items-center justify-center transition-colors">−</button>
+                                                        <span class="flex-1 text-center text-teal-400 font-bold text-[10px]" id="sub-size-label-shared">13px</span>
+                                                        <button type="button" onclick="changeSubtitleFontSize(2)" class="w-5 h-5 bg-zinc-800 hover:bg-teal-400 hover:text-black text-zinc-300 font-bold text-xs flex items-center justify-center transition-colors">+</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- Theater mode inline in player bar -->
+                                        <button onclick="toggleTheaterMode()" id="btn-theater-mode"
+                                                class="theater-btn font-bold hover:text-teal-400 transition-colors p-1" title="{{ _('video_archiver', 'theater_mode') }}">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M4 16v4h4m8-12h4V4m-4 16h4v-4"/><rect x="3" y="7" width="18" height="10" rx="0" stroke-width="1.5"/></svg>
+                                        </button>
+                                        <!-- Fullscreen button -->
+                                        <button onclick="toggleFullscreenCustom('shared-video-container')" class="fullscreen-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M4 16v4h4m8-12h4V4m-4 16h4v-4"/></svg>
+                                        </button>
                                     </div>
                                 </div>
-                                <div class="text-right text-[10px] font-mono text-zinc-500 space-y-1">
-                                    <div>{{ _('video_archiver', 'duration_label') }}: <span id="player-detail-duration">0:00</span></div>
-                                    <div>{{ _('video_archiver', 'archived_label') }}: <span id="player-detail-archived">...</span></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Description (Collapsible/Scrollable) -->
-                        <div class="space-y-2 border-t border-zinc-800 pt-4">
-                            <h5 class="text-xs font-mono font-bold text-zinc-400 uppercase">{{ _('video_archiver', 'description_label') }}</h5>
-                            <p id="player-detail-desc" class="text-xs text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-[150px] overflow-y-auto bg-black border border-zinc-800 p-4">
-                                No description.
-                            </p>
-                        </div>
-
-                        <!-- Comments Section (Hierarchical nested comments) -->
-                        <div class="space-y-4 border-t border-zinc-800 pt-4">
-                            <h5 class="text-xs font-mono font-bold text-zinc-400 uppercase">{{ _('video_archiver', 'comments_discussions') }}</h5>
-                            <div id="player-detail-comments" class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-                                <!-- Dynamic comments list -->
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Right: Video Queue / Sidebar List Column -->
-                <div id="player-side-col" class="lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[600px]">
+                <!-- Video Details (col-span-8, below the player) -->
+                <div id="player-detail-col" class="lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6" style="grid-row: 2;">
+                    <div class="space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-4">
+                            <h2 id="player-detail-title" class="text-lg font-bold text-white leading-tight">Video Title</h2>
+                            <span id="player-detail-resolution" class="bg-teal-400/10 text-teal-400 border border-teal-500/20 px-2 py-0.5 text-[9px] font-mono">{{ _('video_archiver', 'resolution') }}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div id="player-detail-avatar" class="w-8 h-8 rounded-full bg-teal-400 text-black font-black font-mono text-xs flex items-center justify-center uppercase">
+                                    C
+                                </div>
+                                <div>
+                                    <div id="player-detail-channel" class="text-xs font-bold text-white font-mono">Channel Name</div>
+                                    <div class="text-[9px] text-zinc-500 font-mono">YouTube Content Partner</div>
+                                </div>
+                            </div>
+                            <div class="text-right text-[10px] font-mono text-zinc-500 space-y-1">
+                                <div>{{ _('video_archiver', 'duration_label') }}: <span id="player-detail-duration">0:00</span></div>
+                                <div>{{ _('video_archiver', 'archived_label') }}: <span id="player-detail-archived">...</span></div>
+                                <div class="flex items-center justify-end gap-2 text-[10px] text-zinc-400 mt-1">
+                                    <span class="flex items-center gap-1" title="Views">
+                                        <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                                        <span id="player-detail-views">-</span>
+                                    </span>
+                                    <span class="flex items-center gap-1" title="Likes">
+                                        <svg class="w-3 h-3 text-zinc-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
+                                        <span id="player-detail-likes">-</span>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tags -->
+                    <div id="player-detail-tags-container" class="space-y-1 border-t border-zinc-800 pt-4 hidden">
+                        <h5 class="text-[9px] font-mono font-bold text-zinc-500 uppercase">Tags</h5>
+                        <div id="player-detail-tags" class="flex flex-wrap gap-1"></div>
+                    </div>
+
+                    <!-- Description -->
+                    <div class="space-y-2 border-t border-zinc-800 pt-4">
+                        <h5 class="text-xs font-mono font-bold text-zinc-400 uppercase">{{ _('video_archiver', 'description_label') }}</h5>
+                        <p id="player-detail-desc" class="text-xs text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-[150px] overflow-y-auto bg-black border border-zinc-800 p-4">
+                            No description.
+                        </p>
+                    </div>
+
+                    <!-- Comments -->
+                    <div class="space-y-4 border-t border-zinc-800 pt-4">
+                        <h5 class="text-xs font-mono font-bold text-zinc-400 uppercase">{{ _('video_archiver', 'comments_discussions') }}</h5>
+                        <div id="player-detail-comments" class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                            <!-- Dynamic comments list -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Queue Sidebar — spans both the player and detail rows -->
+                <div id="player-side-col" class="lg:col-span-4 lg:row-span-2 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col" style="height: fit-content; position: sticky; top: 1rem; max-height: calc(100vh - 6rem); overflow: hidden;">
                     <div class="border-b border-zinc-800 pb-3 mb-4 space-y-2">
                         <h4 class="text-xs font-black text-white font-mono uppercase tracking-wider flex items-center">
                             <svg class="w-3.5 h-3.5 text-zinc-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -211,14 +311,30 @@
                         </select>
                     </div>
 
-                    <!-- Auto-update Checkbox -->
+                    <!-- Checkbox Settings -->
                     <div class="space-y-2 flex flex-col justify-end pb-3">
-                        <div class="flex items-center gap-3">
-                            <input type="checkbox" name="auto_update" id="auto_update_checkbox" 
-                                   class="w-4 h-4 accent-teal-400 cursor-pointer">
-                            <label for="auto_update_checkbox" class="text-xs font-mono text-zinc-400 cursor-pointer select-none">
-                                {{ _('video_archiver', 'auto_update_label') }}
-                            </label>
+                        <div class="space-y-2">
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox" name="auto_update" id="auto_update_checkbox" 
+                                       class="w-4 h-4 accent-teal-400 cursor-pointer">
+                                <label for="auto_update_checkbox" class="text-xs font-mono text-zinc-400 cursor-pointer select-none">
+                                    {{ _('video_archiver', 'auto_update_label') }}
+                                </label>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox" name="compress_video" id="compress_video_checkbox" 
+                                       class="w-4 h-4 accent-teal-400 cursor-pointer">
+                                <label for="compress_video_checkbox" class="text-xs font-mono text-zinc-400 cursor-pointer select-none">
+                                    {{ _('video_archiver', 'compress_video_label') }}
+                                </label>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox" name="download_subtitles" id="download_subtitles_checkbox" 
+                                       class="w-4 h-4 accent-teal-400 cursor-pointer">
+                                <label for="download_subtitles_checkbox" class="text-xs font-mono text-zinc-400 cursor-pointer select-none">
+                                    {{ _('video_archiver', 'download_subtitles_label') }}
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -351,9 +467,80 @@
                             <span class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider">{{ _('video_archiver', 'preloading') }}</span>
                         </div>
 
-                        <video id="playlist-video-player" controls class="w-full h-full object-contain focus:outline-none hidden">
-                            <source id="playlist-video-source" src="" type="video/mp4">
-                        </video>
+                        <!-- Custom Video Player wrapper for playlist-video-player -->
+                        <div id="playlist-video-container" class="custom-video-player relative w-full h-full group bg-black overflow-hidden flex items-center justify-center hidden">
+                            <video id="playlist-video-player" class="w-full h-full object-contain focus:outline-none">
+                                <source id="playlist-video-source" src="" type="video/mp4">
+                            </video>
+                            
+                            <!-- Big center play button -->
+                            <button onclick="toggleCustomPlay('playlist-video-player')" class="center-play-btn absolute bg-black/60 hover:bg-black/80 text-teal-400 border border-zinc-800 hover:border-teal-400 p-4 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 focus:outline-none z-10">
+                                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5v13l11-6.5-11-6.5z"/></svg>
+                            </button>
+                            
+                            <!-- Custom Control Bar -->
+                            <div class="custom-controls absolute bottom-0 left-0 right-0 p-3 bg-zinc-950/95 border-t border-zinc-800 flex flex-col gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200 z-20">
+                                <!-- Progress Bar -->
+                                <div onclick="seekCustomPlayer(event, 'playlist-video-player')" class="progress-container w-full h-1 bg-zinc-850 hover:h-2 transition-all cursor-pointer relative border border-zinc-800">
+                                    <div class="progress-bar h-full bg-teal-400 w-0"></div>
+                                </div>
+                                <!-- Controls Row -->
+                                <div class="flex justify-between items-center text-[10px] font-mono text-zinc-300">
+                                    <div class="flex items-center gap-4">
+                                        <!-- Play button -->
+                                        <button onclick="toggleCustomPlay('playlist-video-player')" class="play-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                                        </button>
+                                        <!-- Time -->
+                                        <div class="time-display text-zinc-500">
+                                            <span class="curr-time">00:00</span> / <span class="dur-time">00:00</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-4">
+                                        <!-- Volume Controls -->
+                                        <div class="flex items-center gap-1.5">
+                                            <button onclick="toggleMuteCustom('playlist-video-player')" class="mute-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>
+                                            </button>
+                                            <input type="range" oninput="changeVolumeCustom(event, 'playlist-video-player')" class="vol-slider w-12 accent-teal-400 bg-zinc-800 h-1 appearance-none cursor-pointer" min="0" max="1" step="0.1" value="1">
+                                        </div>
+                                        <!-- Settings / Gear selector -->
+                                        <div class="relative settings-menu-container">
+                                            <button onclick="toggleSettingsMenu('playlist-video-player')" class="settings-btn font-bold hover:text-teal-400 transition-colors p-1">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                            </button>
+                                            <!-- Settings Dropdown -->
+                                            <div class="settings-dropdown absolute bottom-full right-0 mb-2 bg-zinc-950 border border-zinc-800 py-2 hidden flex-col w-40 text-[10px] shadow-2xl z-30 font-mono">
+                                                <!-- Speed Section -->
+                                                <div class="px-2 pb-1.5 border-b border-zinc-900 text-left">
+                                                    <span class="text-zinc-500 font-bold block uppercase tracking-wider text-[8px] mb-1">Speed</span>
+                                                    <select onchange="changeSpeedCustom(event, 'playlist-video-player')" class="speed-select w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1 py-0.5 text-[10px] focus:outline-none">
+                                                        <option value="0.25">0.25x</option>
+                                                        <option value="0.5">0.5x</option>
+                                                        <option value="1" selected>1.0x (Normal)</option>
+                                                        <option value="1.25">1.25x</option>
+                                                        <option value="1.5">1.5x</option>
+                                                        <option value="1.75">1.75x</option>
+                                                        <option value="2">2.0x</option>
+                                                    </select>
+                                                </div>
+                                                <!-- Subtitles Section -->
+                                                <div class="px-2 pt-1.5 subtitle-section text-left">
+                                                    <span class="text-zinc-500 font-bold block uppercase tracking-wider text-[8px] mb-1">Subtitles</span>
+                                                    <div class="subtitles-list flex flex-col gap-1 max-h-24 overflow-y-auto">
+                                                        <!-- Populated dynamically -->
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- Fullscreen button -->
+                                        <button onclick="toggleFullscreenCustom('playlist-video-container')" class="fullscreen-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M4 16v4h4m8-12h4V4m-4 16h4v-4"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Video Information below player -->
@@ -517,6 +704,15 @@
         50% { left: 40%; width: 40%; }
         100% { left: 100%; width: 30%; }
     }
+    /* Subtitle style is applied dynamically via JS — see applySubtitleStyle() */
+</style>
+<style id="subtitle-style-tag">
+    video::cue {
+        background: rgba(9, 9, 11, 0.9);
+        color: #2dd4bf;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 13px;
+    }
 </style>
 <script>
     let activeTab = 'library';
@@ -529,6 +725,85 @@
     // Theater modes
     let isLibraryTheater = false;
     let isPlaylistTheater = false;
+
+    // ── Subtitle Appearance Settings ─────────────────────────────────
+    const SUBTITLE_FONT_SIZE_MIN = 9;
+    const SUBTITLE_FONT_SIZE_MAX = 29;
+    let subtitleFontSize = parseInt(localStorage.getItem('subtitle_font_size') || '13', 10);
+    let subtitleStylingEnabled = localStorage.getItem('subtitle_styling') !== 'false'; // default true
+
+    // Called by either the player checkbox or the download-tab checkbox
+    function applySubtitleStyle(checkedVal) {
+        if (checkedVal !== undefined) {
+            subtitleStylingEnabled = checkedVal;
+            localStorage.setItem('subtitle_styling', subtitleStylingEnabled ? 'true' : 'false');
+        }
+
+        // Sync all subtitle style checkboxes in the page
+        ['subtitle_styling_toggle', 'subtitle_styling_toggle_player'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.checked = subtitleStylingEnabled;
+        });
+
+        const styleTag = document.getElementById('subtitle-style-tag');
+        if (styleTag) {
+            if (!subtitleStylingEnabled) {
+                styleTag.textContent = `
+                    video::cue { 
+                        font-size: ${subtitleFontSize}px; 
+                        transition: transform 0.2s ease-in-out;
+                    }
+                    .custom-video-player:hover video::cue,
+                    .custom-video-player:focus-within video::cue {
+                        transform: translateY(-45px) !important;
+                    }
+                `;
+            } else {
+                styleTag.textContent = `
+                    video::cue {
+                        background: rgba(9, 9, 11, 0.9);
+                        color: #2dd4bf;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                        font-size: ${subtitleFontSize}px;
+                        transition: transform 0.2s ease-in-out;
+                    }
+                    .custom-video-player:hover video::cue,
+                    .custom-video-player:focus-within video::cue {
+                        transform: translateY(-45px) !important;
+                    }
+                `;
+            }
+        }
+
+        // Update all size labels
+        ['subtitle-font-size-label', 'sub-size-label-shared', 'sub-size-label-playlist'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = `${subtitleFontSize}px`;
+        });
+        const bar = document.getElementById('subtitle-font-size-bar');
+        if (bar) {
+            const pct = ((subtitleFontSize - SUBTITLE_FONT_SIZE_MIN) / (SUBTITLE_FONT_SIZE_MAX - SUBTITLE_FONT_SIZE_MIN)) * 100;
+            bar.style.width = `${pct}%`;
+        }
+    }
+
+    function changeSubtitleFontSize(delta) {
+        subtitleFontSize = Math.min(SUBTITLE_FONT_SIZE_MAX, Math.max(SUBTITLE_FONT_SIZE_MIN, subtitleFontSize + delta));
+        localStorage.setItem('subtitle_font_size', subtitleFontSize);
+        applySubtitleStyle();
+    }
+
+    // Restore volume from localStorage on page load
+    (function initPlayerVolume() {
+        const savedVol = parseFloat(localStorage.getItem('player_volume') ?? '1');
+        document.querySelectorAll('video').forEach(v => { v.volume = savedVol; });
+        document.querySelectorAll('.vol-slider').forEach(s => { s.value = savedVol; });
+    })();
+
+    // Init subtitle settings on page load
+    (function initSubtitleSettings() {
+        applySubtitleStyle();
+    })();
 
     // JavaScript client-side translations mapped from server Jinja
     const i18n = {
@@ -585,14 +860,15 @@
     // Helper: format duration (seconds -> MM:SS / HH:MM:SS)
     function formatDuration(seconds) {
         if (!seconds || isNaN(seconds)) return "00:00";
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = seconds % 60;
+        const totalSecs = Math.floor(seconds);
+        const h = Math.floor(totalSecs / 3600);
+        const m = Math.floor((totalSecs % 3600) / 60);
+        const s = totalSecs % 60;
         const pad = (num) => String(num).padStart(2, '0');
         if (h > 0) {
             return `${h}:${pad(m)}:${pad(s)}`;
         }
-        return `${m}:${pad(s)}`;
+        return `${pad(m)}:${pad(s)}`;
     }
 
     // Helper: format date
@@ -689,7 +965,7 @@
             }
 
             grid.innerHTML = videos.map(video => {
-                const thumbnailSrc = video.thumbnail_path ? `/api/video-archiver/videos/${video.id}/thumbnail` : 'https://placehold.co/600x400/18181b/a1a1aa?text=No+Thumbnail';
+                const thumbnailSrc = video.thumbnail_path ? `/api/video-archiver/videos/${video.id}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" fill="%2318181b"><rect width="16" height="9"/><path d="M6 3v3l4-2z" fill="%2327272a"/></svg>';
                 const resolutionBadge = video.resolution ? `<span class="absolute top-2 left-2 bg-black/80 px-2 py-0.5 text-[9px] font-mono text-teal-400 border border-zinc-800">${video.resolution}</span>` : '';
                 const deletedBadge = video.is_deleted_on_youtube ? `
                     <span class="absolute top-2 right-2 bg-red-950 px-2 py-0.5 text-[9px] font-mono text-red-400 border border-red-800 uppercase flex items-center gap-1">
@@ -705,6 +981,12 @@
                             ${resolutionBadge}
                             ${deletedBadge}
                             <span class="absolute bottom-2 right-2 bg-black/80 px-2 py-0.5 text-[9px] font-mono text-zinc-300 border border-zinc-800">${formatDuration(video.duration)}</span>
+                            <!-- Delete button — visible on hover -->
+                            <button onclick="event.stopPropagation(); deleteVideo('${video.id}')" 
+                                    class="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 bg-red-950/90 border border-red-800 hover:bg-red-900 text-red-400 p-1 transition-all"
+                                    title="${i18n.btn_delete}">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
                         </div>
                         
                         <!-- Metadata Area -->
@@ -747,7 +1029,7 @@
         const player = document.getElementById('shared-video-player');
         const loader = document.getElementById('player-loader');
         player.pause();
-        player.classList.add('hidden');
+        document.getElementById('shared-video-container').classList.add('hidden');
         loader.classList.remove('hidden');
 
         try {
@@ -767,13 +1049,38 @@
             document.getElementById('player-detail-archived').innerText = formatDate(video.archived_at);
             document.getElementById('player-detail-desc').innerText = video.description || '';
 
+            // Views & Likes
+            const viewsEl = document.getElementById('player-detail-views');
+            if (viewsEl) viewsEl.innerText = video.view_count !== null ? Number(video.view_count).toLocaleString() : '-';
+            const likesEl = document.getElementById('player-detail-likes');
+            if (likesEl) likesEl.innerText = video.like_count !== null ? Number(video.like_count).toLocaleString() : '-';
+
+            // Tags
+            const tagsContainer = document.getElementById('player-detail-tags-container');
+            const tagsList = document.getElementById('player-detail-tags');
+            if (tagsContainer && tagsList) {
+                if (video.tags && video.tags.length > 0) {
+                    tagsContainer.classList.remove('hidden');
+                    tagsList.innerHTML = video.tags.map(t => 
+                        `<span class="bg-zinc-900 border border-zinc-800 text-zinc-400 text-[9px] px-2 py-0.5 font-mono">#${t}</span>`
+                    ).join('');
+                } else {
+                    tagsContainer.classList.add('hidden');
+                    tagsList.innerHTML = '';
+                }
+            }
+
             // Render comments hierarchically
             renderComments(video.comments, 'player-detail-comments');
 
             // 2-second Preload Delay
             setTimeout(() => {
                 loader.classList.add('hidden');
-                player.classList.remove('hidden');
+                document.getElementById('shared-video-container').classList.remove('hidden');
+                
+                // Initialize custom subtitles menu
+                setupSubtitlesForCustomPlayer('shared-video-player', video.subtitles, video.id);
+
                 document.getElementById('shared-video-source').src = `/api/video-archiver/videos/${video.id}/stream`;
                 player.load();
                 player.play();
@@ -789,10 +1096,31 @@
     window.closeLibraryPlayer = function() {
         const player = document.getElementById('shared-video-player');
         player.pause();
+        document.getElementById('shared-video-container').classList.add('hidden');
         document.getElementById('library-player-view').classList.add('hidden');
         document.getElementById('videos-grid-container').classList.remove('hidden');
         document.getElementById('library-search-bar').classList.remove('hidden');
         currentVideo = null;
+    };
+
+    window.deleteVideo = async function(videoId) {
+        if (!confirm("Are you sure you want to delete this video? This will remove files and database record permanently.")) {
+            return;
+        }
+        try {
+            const resp = await fetch(`/api/video-archiver/videos/${videoId}`, {
+                method: 'DELETE'
+            });
+            if (resp.ok) {
+                showToast("Video deleted successfully.");
+                closeLibraryPlayer();
+                loadLibrary();
+            } else {
+                showToast("Failed to delete video.", "error");
+            }
+        } catch (err) {
+            showToast(`Error deleting video: ${err}`, 'error');
+        }
     };
 
     // Helper: render comments and nested replies
@@ -846,17 +1174,52 @@
     window.toggleTheaterMode = function() {
         isLibraryTheater = !isLibraryTheater;
         const mainCol = document.getElementById('player-main-col');
+        const detailCol = document.getElementById('player-detail-col');
         const sideCol = document.getElementById('player-side-col');
         const btn = document.getElementById('btn-theater-mode');
+        const wrapper = document.getElementById('player-grid-wrapper');
+
+        // Always keep 12 columns grid wrapper
+        wrapper.className = 'grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950';
 
         if (isLibraryTheater) {
-            mainCol.className = "lg:col-span-12 space-y-6";
-            sideCol.className = "hidden";
-            btn.innerHTML = `[${i18n.show_sidebar}]`;
+            // Theater mode: Video is 12 columns, details and queue below it side-by-side (8 and 4)
+            mainCol.className = 'lg:col-span-12 space-y-6';
+            mainCol.style.gridRow = '1';
+            
+            if (detailCol) {
+                detailCol.className = 'lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6';
+                detailCol.style.gridRow = '2';
+            }
+            
+            sideCol.className = 'lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col';
+            sideCol.style.gridRow = '2';
+            sideCol.style.height = '';
+            
+            const queueList = document.getElementById('player-queue-list');
+            if (queueList) {
+                queueList.className = 'flex-1 overflow-y-auto space-y-2 pr-1';
+            }
+            if (btn) btn.classList.add('text-teal-400');
         } else {
-            mainCol.className = "lg:col-span-8 space-y-6";
-            sideCol.className = "lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[600px]";
-            btn.innerHTML = `[${i18n.theater_mode}]`;
+            // Standard mode: Video 8 cols, Details 8 cols below it, Queue 4 cols spanning both rows on the right
+            mainCol.className = 'lg:col-span-8 space-y-6';
+            mainCol.style.gridRow = '1';
+            
+            if (detailCol) {
+                detailCol.className = 'lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6';
+                detailCol.style.gridRow = '2';
+            }
+            
+            sideCol.className = 'lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col';
+            sideCol.style.gridRow = '1 / span 2';
+            sideCol.style.height = '';
+            
+            const queueList = document.getElementById('player-queue-list');
+            if (queueList) {
+                queueList.className = 'flex-1 overflow-y-auto space-y-2 pr-1';
+            }
+            if (btn) btn.classList.remove('text-teal-400');
         }
     };
 
@@ -878,7 +1241,7 @@
             const activeBg = (currentVideo && currentVideo.id === v.id) ? 'border-teal-400 bg-zinc-900/55' : 'border-zinc-800 hover:border-zinc-700 bg-black';
             return `
                 <div onclick="playVideoInLibrary('${v.id}')" class="border-2 ${activeBg} p-2 font-mono cursor-pointer flex gap-3 items-center transition-colors">
-                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${v.id}/thumbnail` : 'https://placehold.co/120x90/18181b/a1a1aa?text=x'}" class="w-16 h-10 object-cover border border-zinc-800">
+                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${v.id}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-16 h-10 object-cover border border-zinc-800">
                     <div class="truncate min-w-0 flex-1">
                         <div class="text-[10px] font-bold text-white truncate leading-snug">${v.title}</div>
                         <div class="text-[9px] text-zinc-500 truncate mt-0.5">${v.channel_name} • ${formatDuration(v.duration)}</div>
@@ -903,7 +1266,9 @@
             comments_replies: document.getElementById('comments_replies').checked,
             replies_limit: parseInt(formData.get('replies_limit') || 5),
             auto_update: formData.get('auto_update') === 'on',
-            cookies_text: formData.get('cookies_text') || null
+            cookies_text: formData.get('cookies_text') || null,
+            compress_video: document.getElementById('compress_video_checkbox').checked,
+            download_subtitles: document.getElementById('download_subtitles_checkbox').checked
         };
 
         try {
@@ -1056,7 +1421,7 @@
 
             // Clear Player Area Placeholder
             document.getElementById('playlist-player-placeholder').classList.remove('hidden');
-            document.getElementById('playlist-video-player').classList.add('hidden');
+            document.getElementById('playlist-video-container').classList.add('hidden');
             document.getElementById('playlist-video-details-card').classList.add('hidden');
 
         } catch (err) {
@@ -1068,6 +1433,7 @@
     window.closePlaylistDetail = function() {
         const player = document.getElementById('playlist-video-player');
         if (player) player.pause();
+        document.getElementById('playlist-video-container').classList.add('hidden');
         document.getElementById('playlist-detail-view').classList.add('hidden');
         document.getElementById('playlists-grid-view').classList.remove('hidden');
         currentPlaylist = null;
@@ -1090,7 +1456,7 @@
         list.innerHTML = filtered.map(v => `
             <div class="border-2 border-zinc-800 bg-black p-2 font-mono flex justify-between items-center gap-2 group hover:border-zinc-700 transition-colors">
                 <div onclick="playVideoInPlaylist('${v.id}')" class="flex-1 flex gap-2 items-center cursor-pointer min-w-0">
-                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${v.id}/thumbnail` : 'https://placehold.co/120x90/18181b/a1a1aa?text=x'}" class="w-14 h-9 object-cover border border-zinc-800">
+                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${v.id}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-14 h-9 object-cover border border-zinc-800">
                     <div class="truncate min-w-0">
                         <div class="text-[9px] font-bold text-white truncate leading-snug group-hover:text-teal-400 transition-colors">${v.title}</div>
                         <div class="text-[8px] text-zinc-500 truncate">${v.channel_name} • ${formatDuration(v.duration)}</div>
@@ -1135,7 +1501,7 @@
 
         // Reset display state
         player.pause();
-        player.classList.add('hidden');
+        document.getElementById('playlist-video-container').classList.add('hidden');
         detailsCard.classList.add('hidden');
         placeholder.classList.add('hidden');
         loader.classList.remove('hidden');
@@ -1159,8 +1525,11 @@
             // 2-second Preload Delay
             setTimeout(() => {
                 loader.classList.add('hidden');
-                player.classList.remove('hidden');
+                document.getElementById('playlist-video-container').classList.remove('hidden');
                 detailsCard.classList.remove('hidden');
+
+                // Initialize custom subtitles menu
+                setupSubtitlesForCustomPlayer('playlist-video-player', video.subtitles, video.id);
 
                 document.getElementById('playlist-video-source').src = `/api/video-archiver/videos/${video.id}/stream`;
                 player.load();
@@ -1312,6 +1681,291 @@
         }
     }
 
+    // ── Custom Video Player Logic ────────────────────────────
+    const PLAY_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>`;
+    const PAUSE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg>`;
+    const VOL_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>`;
+    const MUTE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>`;
+
+    window.toggleCustomPlay = function(videoId) {
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const playBtn = container.querySelector('.play-btn');
+        const centerPlayBtn = container.querySelector('.center-play-btn');
+        
+        if (video.paused) {
+            stopAllPlayersExcept(videoId);
+            video.play();
+            if (playBtn) playBtn.innerHTML = PAUSE_ICON;
+            if (centerPlayBtn) centerPlayBtn.classList.add('hidden');
+        } else {
+            video.pause();
+            if (playBtn) playBtn.innerHTML = PLAY_ICON;
+            if (centerPlayBtn) centerPlayBtn.classList.remove('hidden');
+        }
+    };
+
+    function stopAllPlayersExcept(activeId) {
+        ['shared-video-player', 'playlist-video-player'].forEach(id => {
+            if (id !== activeId) {
+                const p = document.getElementById(id);
+                if (p && !p.paused) {
+                    p.pause();
+                    const container = p.closest('.custom-video-player') || p.parentElement;
+                    const playBtn = container.querySelector('.play-btn');
+                    if (playBtn) playBtn.innerHTML = PLAY_ICON;
+                    const centerPlayBtn = container.querySelector('.center-play-btn');
+                    if (centerPlayBtn) centerPlayBtn.classList.remove('hidden');
+                }
+            }
+        });
+        if (window.musicPlayer && typeof window.musicPlayer.pause === 'function') {
+            window.musicPlayer.pause();
+        }
+    }
+
+    window.seekCustomPlayer = function(event, videoId) {
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const progressContainer = container.querySelector('.progress-container');
+        const rect = progressContainer.getBoundingClientRect();
+        const clickX = event.clientX - rect.left;
+        const width = rect.width;
+        const percentage = Math.max(0, Math.min(1, clickX / width));
+        if (video.duration) {
+            video.currentTime = percentage * video.duration;
+        }
+    };
+
+    window.changeVolumeCustom = function(event, videoId) {
+        const vol = parseFloat(event.target.value);
+        // Sync volume across ALL video players and persist
+        document.querySelectorAll('video').forEach(v => {
+            v.volume = vol;
+            v.muted = (vol === 0);
+        });
+        document.querySelectorAll('.vol-slider').forEach(s => s.value = vol);
+        localStorage.setItem('player_volume', vol);
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const muteBtn = container.querySelector('.mute-btn');
+        if (muteBtn) {
+            muteBtn.innerHTML = (vol === 0) ? MUTE_ICON : VOL_ICON;
+        }
+    };
+
+    window.toggleMuteCustom = function(videoId) {
+        const video = document.getElementById(videoId);
+        video.muted = !video.muted;
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const muteBtn = container.querySelector('.mute-btn');
+        const volSlider = container.querySelector('.vol-slider');
+        if (muteBtn) {
+            muteBtn.innerHTML = video.muted ? MUTE_ICON : VOL_ICON;
+        }
+        if (volSlider) {
+            volSlider.value = video.muted ? 0 : video.volume;
+        }
+    };
+
+    window.toggleFullscreenCustom = function(containerId) {
+        const container = document.getElementById(containerId);
+        if (!document.fullscreenElement) {
+            container.requestFullscreen().catch(err => {
+                console.error(`Error enabling fullscreen: ${err.message}`);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    };
+
+    window.toggleSettingsMenu = function(videoId) {
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const dropdown = container.querySelector('.settings-dropdown');
+        if (dropdown) {
+            dropdown.classList.toggle('hidden');
+            dropdown.classList.toggle('flex');
+        }
+    };
+
+    window.changeSpeedCustom = function(event, videoId) {
+        const video = document.getElementById(videoId);
+        video.playbackRate = parseFloat(event.target.value);
+        showToast(`Speed: ${video.playbackRate}x`);
+    };
+
+    window.selectSubtitleLang = function(videoId, lang) {
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        
+        const dropdown = container.querySelector('.settings-dropdown');
+        if (dropdown) {
+            dropdown.classList.add('hidden');
+            dropdown.classList.remove('flex');
+        }
+
+        const tracks = video.querySelectorAll('track');
+        tracks.forEach(track => track.remove());
+
+        if (lang === 'off') {
+            showToast("Subtitles turned OFF");
+            return;
+        }
+
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = lang.toUpperCase();
+        track.srclang = lang;
+        track.src = `/api/video-archiver/videos/${currentVideo.id}/subtitles/${lang}`;
+        track.default = true;
+        
+        video.appendChild(track);
+        showToast(`Subtitles loaded: ${lang.toUpperCase()}`);
+
+        setTimeout(() => {
+            if (video.textTracks && video.textTracks.length > 0) {
+                for (let i = 0; i < video.textTracks.length; i++) {
+                    video.textTracks[i].mode = 'showing';
+                }
+            }
+        }, 100);
+    };
+
+    window.setupSubtitlesForCustomPlayer = function(videoId, subtitles, videoIdVal) {
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const dropdown = container.querySelector('.settings-dropdown');
+        const subtitleSection = container.querySelector('.subtitle-section');
+        const listContainer = container.querySelector('.subtitles-list');
+
+        const tracks = video.querySelectorAll('track');
+        tracks.forEach(track => track.remove());
+
+        // Reset speed select value to normal when loading a new video
+        const speedSelect = container.querySelector('.speed-select');
+        if (speedSelect) {
+            speedSelect.value = "1";
+            video.playbackRate = 1.0;
+        }
+
+        if (!subtitles || Object.keys(subtitles).length === 0) {
+            if (subtitleSection) subtitleSection.classList.add('hidden');
+            if (listContainer) listContainer.innerHTML = '';
+            return;
+        }
+
+        if (subtitleSection) subtitleSection.classList.remove('hidden');
+
+        if (listContainer) {
+            let html = `
+                <button onclick="selectSubtitleLang('${videoId}', 'off')" class="text-left px-2 py-1 hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors border-b border-zinc-900 uppercase font-bold text-[9px]">OFF</button>
+            `;
+            for (const lang in subtitles) {
+                const label = lang.toUpperCase() === 'RU' ? 'Русский' : (lang.toUpperCase() === 'EN' ? 'English' : lang.toUpperCase());
+                html += `
+                    <button onclick="selectSubtitleLang('${videoId}', '${lang}')" class="text-left px-2 py-1 hover:bg-zinc-900 text-zinc-300 hover:text-teal-400 transition-colors uppercase font-bold text-[9px]">${label}</button>
+                `;
+            }
+            listContainer.innerHTML = html;
+        }
+    };
+
+    // Global Keyboard Hotkeys
+    document.addEventListener('keydown', (e) => {
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable || activeEl.tagName === 'SELECT')) {
+            return;
+        }
+
+        let video = null;
+        if (!document.getElementById('library-player-view').classList.contains('hidden')) {
+            video = document.getElementById('shared-video-player');
+        } else if (!document.getElementById('playlist-detail-view').classList.contains('hidden') && !document.getElementById('playlist-video-container').classList.contains('hidden')) {
+            video = document.getElementById('playlist-video-player');
+        }
+
+        if (!video) return;
+
+        if (e.code === 'Space') {
+            e.preventDefault();
+            toggleCustomPlay(video.id);
+        }
+        if (e.code === 'ArrowLeft') {
+            e.preventDefault();
+            video.currentTime = Math.max(0, video.currentTime - 5);
+            showToast("Rewind -5s");
+        }
+        if (e.code === 'ArrowRight') {
+            e.preventDefault();
+            video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+            showToast("Forward +5s");
+        }
+        if (e.code === 'ArrowUp') {
+            e.preventDefault();
+            video.volume = Math.min(1, video.volume + 0.1);
+            video.muted = false;
+            syncVolumeUI(video);
+            showToast(`Volume: ${Math.round(video.volume * 100)}%`);
+        }
+        if (e.code === 'ArrowDown') {
+            e.preventDefault();
+            video.volume = Math.max(0, video.volume - 0.1);
+            video.muted = (video.volume === 0);
+            syncVolumeUI(video);
+            showToast(`Volume: ${Math.round(video.volume * 100)}%`);
+        }
+    });
+
+    function syncVolumeUI(video) {
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const muteBtn = container.querySelector('.mute-btn');
+        const volSlider = container.querySelector('.vol-slider');
+        if (muteBtn) {
+            muteBtn.innerHTML = video.muted ? MUTE_ICON : VOL_ICON;
+        }
+        if (volSlider) {
+            volSlider.value = video.muted ? 0 : video.volume;
+        }
+    }
+
+    function bindVideoEvents(videoId) {
+        const video = document.getElementById(videoId);
+        const container = video.closest('.custom-video-player') || video.parentElement;
+        const progressBar = container.querySelector('.progress-bar');
+        const currTimeSpan = container.querySelector('.curr-time');
+        const durTimeSpan = container.querySelector('.dur-time');
+        const centerPlayBtn = container.querySelector('.center-play-btn');
+
+        video.addEventListener('timeupdate', () => {
+            if (video.duration) {
+                const pct = (video.currentTime / video.duration) * 100;
+                if (progressBar) progressBar.style.width = `${pct}%`;
+                if (currTimeSpan) currTimeSpan.innerText = formatDuration(video.currentTime);
+            }
+        });
+
+        video.addEventListener('loadedmetadata', () => {
+            if (durTimeSpan) durTimeSpan.innerText = formatDuration(video.duration);
+        });
+
+        video.addEventListener('click', () => {
+            toggleCustomPlay(videoId);
+        });
+
+        video.addEventListener('play', () => {
+            if (centerPlayBtn) centerPlayBtn.classList.add('hidden');
+            const playBtn = container.querySelector('.play-btn');
+            if (playBtn) playBtn.innerHTML = PAUSE_ICON;
+        });
+
+        video.addEventListener('pause', () => {
+            if (centerPlayBtn) centerPlayBtn.classList.remove('hidden');
+            const playBtn = container.querySelector('.play-btn');
+            if (playBtn) playBtn.innerHTML = PLAY_ICON;
+        });
+    }
+
     // Polling Active Tasks (Every 3 seconds when download tab is open)
     setInterval(pollActiveTasks, 3000);
 
@@ -1320,6 +1974,8 @@
         loadLibrary();
         toggleCommentsInputs();
         toggleRepliesInput();
+        bindVideoEvents('shared-video-player');
+        bindVideoEvents('playlist-video-player');
         // Load playlists in background to populate variables
         fetch('/api/video-archiver/playlists')
             .then(r => r.json())

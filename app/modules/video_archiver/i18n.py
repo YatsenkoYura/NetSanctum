@@ -34,6 +34,9 @@ TRANSLATIONS = {
         "cookies_label": "YouTube Session Cookies (Optional - Netscape format)",
         "cookies_placeholder": "# Netscape HTTP Cookie File...",
         "auto_update_label": "Auto-sync metadata dynamically",
+        "compress_video_label": "Compress video via FFmpeg (H.264)",
+        "download_subtitles_label": "Download subtitles (ru/en if available)",
+        "delete_video_btn": "Delete Video",
         "btn_archive": "Archive Media",
         "active_downloads": "Active Archiving Tasks",
         "no_active_downloads": "No active archiving tasks.",
@@ -98,7 +101,10 @@ TRANSLATIONS = {
         "playlist_name_label": "Playlist Name",
         "playlist_desc_label": "Description (Optional)",
         "btn_delete": "Delete",
-        "back_to_playlists": "Back to Playlists"
+        "back_to_playlists": "Back to Playlists",
+        "subtitle_appearance": "Subtitle Appearance",
+        "subtitle_custom_style": "Custom styling (color, font, background)",
+        "subtitle_font_size": "Font Size"
     },
     "ru": {
         "module_title": "Видео Архив",
@@ -131,6 +137,9 @@ TRANSLATIONS = {
         "cookies_label": "Сессионные Cookies YouTube (Опционально - формат Netscape)",
         "cookies_placeholder": "# Netscape HTTP Cookie File...",
         "auto_update_label": "Автоматически обновлять метаданные",
+        "compress_video_label": "Сжимать ролики через FFmpeg (H.264)",
+        "download_subtitles_label": "Скачивать субтитры (ru/en если доступны)",
+        "delete_video_btn": "Удалить Видео",
         "btn_archive": "Начать Архивацию",
         "active_downloads": "Активные Загрузки",
         "no_active_downloads": "Нет активных задач архивации.",
@@ -195,6 +204,9 @@ TRANSLATIONS = {
         "playlist_name_label": "Название плейлиста",
         "playlist_desc_label": "Описание (Необязательно)",
         "btn_delete": "Удалить",
-        "back_to_playlists": "Назад к плейлистам"
+        "back_to_playlists": "Назад к плейлистам",
+        "subtitle_appearance": "Внешний вид субтитров",
+        "subtitle_custom_style": "Кастомный стиль (цвет, шрифт, фон)",
+        "subtitle_font_size": "Размер шрифта"
     }
 }

@@ -28,6 +28,11 @@ class ArchivedVideo(Base):
     
     status = Column(String, default="pending")          # pending, downloading, completed, failed
     comments = Column(JSON, nullable=True)              # JSON list of dicts: [{author, text, likes, time}]
+    subtitles = Column(JSON, nullable=True)             # JSON mapping of lang to file path: {"ru": "...", "en": "..."}
+    
+    like_count = Column(Integer, nullable=True)         # Total likes on YouTube
+    view_count = Column(Integer, nullable=True)         # Total views on YouTube
+    tags = Column(JSON, nullable=True)                  # List of tags (strings)
     
     archived_at = Column(DateTime, default=datetime.datetime.utcnow)
     original_publish_date = Column(DateTime, nullable=True)

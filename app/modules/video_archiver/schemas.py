@@ -12,6 +12,8 @@ class DownloadRequest(BaseModel):
     replies_limit: int = 5
     auto_update: bool = False
     cookies_text: Optional[str] = None
+    compress_video: bool = False
+    download_subtitles: bool = False
 
 class PlaylistCreate(BaseModel):
     name: str
@@ -37,6 +39,7 @@ class VideoResponse(BaseModel):
     thumbnail_path: Optional[str]
     status: str
     comments: Optional[List[CommentSchema]]
+    subtitles: Optional[dict] = None
     archived_at: datetime
     original_publish_date: Optional[datetime]
     auto_update: bool
