@@ -5,22 +5,22 @@ FastAPI router for RanobeLib downloader module.
 import json
 import mimetypes
 import urllib.parse
+
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.templates import templates
 from app.core.storage import get_storage
-from app.core.config import get_settings
-from app.modules.ranobelib.models import RanobeNovel, RanobeChapter
+from app.core.templates import templates
+from app.modules.ranobelib.i18n import TRANSLATIONS
+from app.modules.ranobelib.models import RanobeChapter, RanobeNovel
 from app.modules.ranobelib.schemas import DownloadRequest
 from app.modules.ranobelib.tasks import download_ranobe_task
-from app.modules.ranobelib.i18n import TRANSLATIONS
 
 router = APIRouter(prefix="/ranobelib", tags=["ranobelib"])
 settings = get_settings()
@@ -45,11 +45,7 @@ async def ranobe_dashboard(
     lang: str = Depends(_get_lang),
 ):
     """Render the primary RanobeLib dashboard."""
-    return templates.TemplateResponse(
-        request,
-        "ranobe_dashboard.html",
-        {"user": user, "lang": lang}
-    )
+    return templates.TemplateResponse(request, "ranobe_dashboard.html", {"user": user, "lang": lang})
 
 
 @router.get("/reader/{novel_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -85,7 +81,7 @@ async def ranobe_reader(
             "novel": novel,
             "chapters": chapters,
             "first_chapter_id": first_chapter_id,
-        }
+        },
     )
 
 
@@ -103,7 +99,7 @@ async def get_library_tab_ui(
     <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
             <input type="text" id="library-search" name="search" oninput="applyFilters()"
-                   placeholder="{_t("search_placeholder", lang)}" 
+                   placeholder="{_t("search_placeholder", lang)}"
                    class="flex-1 bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors">
         </div>
     </div>
@@ -128,7 +124,7 @@ async def get_novel_detail_ui(
     novel = await db.get(RanobeNovel, novel_id)
     if not novel:
         return HTMLResponse('<div class="text-red-500 font-mono text-xs p-4">Novel not found.</div>')
-    
+
     # Fetch chapter count
     ch_count_stmt = select(RanobeChapter).where(RanobeChapter.novel_id == novel_id)
     ch_count_res = await db.execute(ch_count_stmt)
@@ -142,14 +138,14 @@ async def get_novel_detail_ui(
             "ch_count": ch_count,
             "lang": lang,
             "_t": _t,
-        }
+        },
     )
 
 
 @router.get("/ui/library", response_class=HTMLResponse, include_in_schema=False)
 async def get_library_ui(
     request: Request,
-    search: Optional[str] = None,
+    search: str | None = None,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
     lang: str = Depends(_get_lang),
@@ -157,7 +153,9 @@ async def get_library_ui(
     """HTMX partial: render downloaded novels library grid."""
     stmt = select(RanobeNovel)
     if search:
-        stmt = stmt.where(RanobeNovel.title.ilike(f"%{search}%") | RanobeNovel.description.ilike(f"%{search}%"))
+        stmt = stmt.where(
+            RanobeNovel.title.ilike(f"%{search}%") | RanobeNovel.description.ilike(f"%{search}%")
+        )
 
     stmt = stmt.order_by(RanobeNovel.created_at.desc())
     res = await db.execute(stmt)
@@ -181,7 +179,7 @@ async def get_library_ui(
             <button hx-get="/ranobelib/ui/novel/{novel.id}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-full aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
                 <img src="{cover_url}" class="w-full h-full object-cover filter brightness-90 group-hover:brightness-100 group-hover:scale-105 transition-all duration-500" loading="lazy">
             </button>
-            
+
             <!-- Novel Metadata -->
             <div class="flex-1 flex flex-col justify-between min-w-0 mt-4">
                 <div class="space-y-1">
@@ -190,12 +188,12 @@ async def get_library_ui(
                     </button>
                     <p class="text-[9px] text-zinc-500 font-mono mt-0.5 truncate">{novel.eng_name or novel.rus_name or ""}</p>
                 </div>
-                
+
                 <div class="mt-4">
                     <div class="flex items-center justify-between border-t border-zinc-900/80 pt-2 mb-2">
                         <span class="text-[9px] font-mono text-zinc-500">{ch_count} {_t("chapters_count", lang)}</span>
                     </div>
-                    
+
                     <button hx-get="/ranobelib/ui/novel/{novel.id}" hx-target="#tab-content-library" hx-swap="innerHTML"
                        class="w-full text-center bg-teal-400 text-black border border-teal-400 font-mono font-bold text-[10px] uppercase py-2 transition-all block hover:bg-black hover:text-teal-400 cursor-pointer">
                         {_t("details", lang)}
@@ -204,7 +202,7 @@ async def get_library_ui(
             </div>
         </div>
         """
-    html += '</div>'
+    html += "</div>"
     return HTMLResponse(html)
 
 
@@ -254,7 +252,9 @@ async def get_active_downloads_ui(
             pass
 
     if not tasks:
-        return HTMLResponse(f'<div class="text-center py-8 font-mono text-xs text-zinc-600">No active downloads</div>')
+        return HTMLResponse(
+            '<div class="text-center py-8 font-mono text-xs text-zinc-600">No active downloads</div>'
+        )
 
     html = '<div class="space-y-3">'
     for t in tasks:
@@ -263,10 +263,10 @@ async def get_active_downloads_ui(
         <div class="border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-2">
             <div class="flex justify-between items-start">
                 <div class="min-w-0">
-                    <span class="text-[10px] font-mono text-teal-400 truncate block max-w-[400px]" title="{t.get('title')}">{t.get('title')}</span>
-                    <span class="text-[9px] font-mono text-zinc-600 block mt-0.5 truncate max-w-[400px]">{t.get('url')}</span>
+                    <span class="text-[10px] font-mono text-teal-400 truncate block max-w-[400px]" title="{t.get("title")}">{t.get("title")}</span>
+                    <span class="text-[9px] font-mono text-zinc-600 block mt-0.5 truncate max-w-[400px]">{t.get("url")}</span>
                 </div>
-                <button hx-delete="/ranobelib/api/tasks/{t.get('task_id')}"
+                <button hx-delete="/ranobelib/api/tasks/{t.get("task_id")}"
                         hx-swap="outerHTML"
                         class="text-[10px] text-red-500 font-mono hover:text-red-400 font-bold ml-4 cursor-pointer">
                     ❌
@@ -274,7 +274,7 @@ async def get_active_downloads_ui(
             </div>
             <div>
                 <div class="flex justify-between text-[9px] font-mono text-zinc-500 mb-1">
-                    <span>{t.get('status')}</span>
+                    <span>{t.get("status")}</span>
                     <span>{progress_val}</span>
                 </div>
                 <div class="w-full bg-zinc-900 h-1">
@@ -283,7 +283,7 @@ async def get_active_downloads_ui(
             </div>
         </div>
         """
-    html += '</div>'
+    html += "</div>"
     return HTMLResponse(html)
 
 
@@ -292,9 +292,7 @@ async def get_active_downloads_ui(
 
 @router.post("/api/download")
 async def trigger_download(
-    req: DownloadRequest,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user)
+    req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Trigger background download task for a novel."""
     task = download_ranobe_task.delay(url=req.url)
@@ -305,7 +303,7 @@ async def trigger_download(
         "url": req.url,
         "title": "Resolving URL...",
         "status": "Queued",
-        "progress": "0%"
+        "progress": "0%",
     }
     redis_client.setex(f"ranobe_dl:{task.id}", 86400, json.dumps(data))
 
@@ -318,7 +316,7 @@ async def delete_novel(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
-    lang: str = Depends(_get_lang)
+    lang: str = Depends(_get_lang),
 ):
     """Delete downloaded novel and all its chapters from storage & DB, returning the library tab."""
     novel = await db.get(RanobeNovel, novel_id)
@@ -334,43 +332,36 @@ async def delete_novel(
 
     await db.delete(novel)
     await db.commit()
-    
+
     # Return library tab HTML response to reset UI back to library view
     return await get_library_tab_ui(request, lang)
 
 
 @router.post("/api/novel/{novel_id}/sync")
-async def sync_novel(
-    novel_id: int,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user)
-):
+async def sync_novel(novel_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Trigger background download task to check for updates and download new chapters."""
     novel = await db.get(RanobeNovel, novel_id)
     if not novel or not novel.source_url:
         raise HTTPException(status_code=404, detail="Novel or source URL not found")
-        
+
     task = download_ranobe_task.delay(url=novel.source_url)
-    
+
     data = {
         "task_id": task.id,
         "url": novel.source_url,
         "title": f"Syncing: {novel.title}",
         "status": "Queued",
-        "progress": "0%"
+        "progress": "0%",
     }
     redis_client.setex(f"ranobe_dl:{task.id}", 86400, json.dumps(data))
     return {"task_id": task.id, "message": "Sync task scheduled successfully."}
 
 
 @router.get("/api/novel/{novel_id}/export")
-async def export_novel(
-    novel_id: int,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user)
-):
+async def export_novel(novel_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Export all chapters of a novel sequentially into a standard EPUB e-book."""
     from app.modules.ranobelib.epub_builder import EPUBBuilder
+
     novel = await db.get(RanobeNovel, novel_id)
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
@@ -390,25 +381,21 @@ async def export_novel(
     return Response(
         content=epub_bytes,
         media_type="application/epub+zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'
-        }
+        headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'},
     )
 
 
 @router.get("/api/novels")
 async def list_novels(
-    search: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user)
+    search: str | None = None, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """API: Lists all archived novels."""
     query = select(RanobeNovel)
     if search:
         query = query.where(
-            RanobeNovel.title.ilike(f"%{search}%") | 
-            RanobeNovel.rus_name.ilike(f"%{search}%") | 
-            RanobeNovel.eng_name.ilike(f"%{search}%")
+            RanobeNovel.title.ilike(f"%{search}%")
+            | RanobeNovel.rus_name.ilike(f"%{search}%")
+            | RanobeNovel.eng_name.ilike(f"%{search}%")
         )
     query = query.order_by(RanobeNovel.title.asc())
     res = await db.execute(query)
@@ -430,15 +417,13 @@ async def list_novels(
 
 @router.get("/api/novel/{novel_id}")
 async def get_novel_details(
-    novel_id: int,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user)
+    novel_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """API: Get details of a single novel, including chapters metadata."""
     novel = await db.get(RanobeNovel, novel_id)
     if not novel:
         raise HTTPException(status_code=404, detail="Novel not found")
-        
+
     stmt = (
         select(RanobeChapter)
         .where(RanobeChapter.novel_id == novel_id)
@@ -446,7 +431,7 @@ async def get_novel_details(
     )
     res = await db.execute(stmt)
     chapters = res.scalars().all()
-    
+
     return {
         "id": novel.id,
         "title": novel.title,
@@ -464,7 +449,7 @@ async def get_novel_details(
                 "name": ch.name,
             }
             for ch in chapters
-        ]
+        ],
     }
 
 
@@ -488,6 +473,7 @@ async def get_cover(novel_id: int, db: AsyncSession = Depends(get_db)):
 async def proxy_image(url: str, user=Depends(get_current_user)):
     """Proxy image requests with RanobeLib headers to bypass hotlinking and CORS blocks."""
     import requests
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://ranobelib.me/",
@@ -506,6 +492,7 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
 async def cancel_all_downloads(response: Response, user=Depends(get_current_user)):
     """Cancel all active novel downloads."""
     from app.core.scheduler import celery_app
+
     try:
         celery_app.control.purge()
     except Exception:
@@ -523,7 +510,7 @@ async def cancel_all_downloads(response: Response, user=Depends(get_current_user
             redis_client.delete(k)
         except Exception:
             pass
-            
+
     response.headers["HX-Trigger"] = "reloadActiveTasks"
     return {"message": "All downloads cancelled."}
 
@@ -532,6 +519,7 @@ async def cancel_all_downloads(response: Response, user=Depends(get_current_user
 async def cancel_single_download(task_id: str, response: Response, user=Depends(get_current_user)):
     """Cancel a single active novel download."""
     from app.core.scheduler import celery_app
+
     try:
         celery_app.control.revoke(task_id, terminate=True)
     except Exception:

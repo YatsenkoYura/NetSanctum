@@ -19,7 +19,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
-from app.core.database import Base, async_engine, AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, Base, async_engine
 from app.core.security import OwnerUser
 from app.core.templates import templates
 
@@ -29,10 +29,8 @@ logger = logging.getLogger(__name__)
 TOKEN_FILE = Path("/app/access_token.hash")
 
 
-import pkgutil
-import importlib
-
 ACTIVE_MODULES = []
+
 
 def _discover_modules_and_routers() -> list:
     """
@@ -43,34 +41,36 @@ def _discover_modules_and_routers() -> list:
     global ACTIVE_MODULES
     routers = []
     ACTIVE_MODULES = []
-    
+
     import app.modules as modules_pkg
 
-    for importer, module_name, is_pkg in pkgutil.iter_modules(
-        modules_pkg.__path__, prefix="app.modules."
-    ):
+    for _importer, module_name, is_pkg in pkgutil.iter_modules(modules_pkg.__path__, prefix="app.modules."):
         if not is_pkg:
             continue
-            
+
         # 1. Try to load the module package to inspect metadata
         try:
             pkg = importlib.import_module(module_name)
-            
+
             # Read metadata variables from __init__.py
             title_en = getattr(pkg, "TITLE_EN", None)
             title_ru = getattr(pkg, "TITLE_RU", None)
             dashboard_url = getattr(pkg, "DASHBOARD_URL", None)
-            
+
             if dashboard_url:
-                ACTIVE_MODULES.append({
-                    "name": module_name.split(".")[-1],
-                    "title_en": title_en or module_name.split(".")[-1].capitalize(),
-                    "title_ru": title_ru or module_name.split(".")[-1].capitalize(),
-                    "dashboard_url": dashboard_url,
-                    "order": getattr(pkg, "ORDER", 100),
-                })
+                ACTIVE_MODULES.append(
+                    {
+                        "name": module_name.split(".")[-1],
+                        "title_en": title_en or module_name.split(".")[-1].capitalize(),
+                        "title_ru": title_ru or module_name.split(".")[-1].capitalize(),
+                        "dashboard_url": dashboard_url,
+                        "order": getattr(pkg, "ORDER", 100),
+                    }
+                )
         except Exception as e:
-            logger.error("Failed to load module package %s (missing dependencies or syntax error): %s", module_name, e)
+            logger.error(
+                "Failed to load module package %s (missing dependencies or syntax error): %s", module_name, e
+            )
             continue
 
         # 2. Try to load the router for registered modules
@@ -91,23 +91,24 @@ def _discover_modules_and_routers() -> list:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup: ensure token exists, create tables. Shutdown: dispose engine."""
-    
+
     # 1. Physical Access Token Generation
     if not TOKEN_FILE.is_file():
         import hashlib
+
         # Generate dynamic secure key
         token = secrets.token_urlsafe(32)
         try:
             token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
             TOKEN_FILE.write_text(token_hash)
-            
+
             # Write plain text to a file so it's not lost in noisy docker logs
             plain_token_file = Path("/app/access_token.txt")
             plain_token_file.write_text(
                 f"YOUR MASTER TOKEN:\n\n{token}\n\n"
                 f"SAVE THIS AND DELETE THIS FILE (access_token.txt) IMMEDIATELY."
             )
-            
+
             # Print prominent Neo-brutalist alert to stdout for easy user discovery in logs
             print("\n" + "=" * 60)
             print("  [!] NETSANCTUM INITIALIZATION SUCCESSFUL")
@@ -126,20 +127,19 @@ async def lifespan(application: FastAPI):
 
     # 2. Schema creation
     # 2. Dynamic Schema Discovery & Creation
-    import pkgutil
     import importlib
+    import pkgutil
+
     import app.modules as modules_pkg
-    
-    for importer, module_name, is_pkg in pkgutil.iter_modules(
-        modules_pkg.__path__, prefix="app.modules."
-    ):
+
+    for _importer, module_name, is_pkg in pkgutil.iter_modules(modules_pkg.__path__, prefix="app.modules."):
         if is_pkg:
             try:
                 importlib.import_module(f"{module_name}.models")
                 logger.info(f"Loaded models for {module_name}")
             except Exception as e:
                 logger.debug(f"Bypassed model discovery for {module_name}: {e}")
-                
+
     from sqlalchemy import select, text
 
     async with async_engine.begin() as conn:
@@ -154,15 +154,18 @@ async def lifespan(application: FastAPI):
     # Purge pending Celery tasks (generic cleanup)
     try:
         from app.core.scheduler import celery_app
+
         purged = celery_app.control.purge()
         logger.info(f"Purged {purged} pending tasks from Celery.")
-        
+
         # Clear stale active download keys from Redis
         import redis
+
         from app.core.config import get_settings
+
         settings = get_settings()
         r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-        
+
         # Scan and delete active task trackers
         for key in r.scan_iter("video_dl:*"):
             r.delete(key)
@@ -175,6 +178,7 @@ async def lifespan(application: FastAPI):
     # 3. Seed default Settings if empty
     try:
         from app.modules.settings.models import Setting
+
         async with AsyncSessionLocal() as session:
             setting_check = await session.execute(select(Setting).limit(1))
             if not setting_check.scalar_one_or_none():
@@ -235,7 +239,7 @@ async def lifespan(application: FastAPI):
                         description="Symmetric replication key for remote vaults",
                         value_type="string",
                         is_secret=True,
-                    )
+                    ),
                 ]
                 session.add_all(default_settings)
                 await session.commit()
@@ -280,7 +284,8 @@ async def _get_user_from_cookie(request: Request):
     session_id = request.cookies.get("access_token")
     if not session_id:
         return None
-    from app.core.security import redis_client, OwnerUser
+    from app.core.security import redis_client
+
     if redis_client.get(f"session:{session_id}") == "1":
         return OwnerUser()
     return None
@@ -293,8 +298,10 @@ async def _get_lang(request: Request) -> str:
     if lang:
         return lang
     try:
-        from app.modules.settings.models import Setting
         from sqlalchemy import select
+
+        from app.modules.settings.models import Setting
+
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Setting).where(Setting.key == "system_language"))
             setting = result.scalar_one_or_none()
@@ -344,4 +351,3 @@ async def set_language(request: Request, lang: str = "en"):
 async def health():
     """System health check endpoint."""
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
-

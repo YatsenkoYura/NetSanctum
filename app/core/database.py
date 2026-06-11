@@ -48,6 +48,7 @@ SyncSessionLocal = sessionmaker(
 # ── Shared declarative base ─────────────────────────────
 class Base(DeclarativeBase):
     """All module models inherit from this base."""
+
     pass
 
 

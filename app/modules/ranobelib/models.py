@@ -2,8 +2,9 @@
 RanobeLib module database models.
 """
 
-from datetime import datetime, timezone
-from sqlalchemy import ForeignKey, Integer, String, DateTime, Text
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -24,7 +25,7 @@ class RanobeNovel(Base):
     source_url: Mapped[str | None] = mapped_column(String(510), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -48,11 +49,11 @@ class RanobeChapter(Base):
     novel_id: Mapped[int] = mapped_column(ForeignKey("ranobe_novels.id", ondelete="CASCADE"), nullable=False)
     volume: Mapped[str] = mapped_column(String(50), nullable=False)
     number: Mapped[str] = mapped_column(String(50), nullable=False)
-    
+
     # helper fields for correct ordering
     volume_int: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     number_float: Mapped[float] = mapped_column(nullable=False, default=0.0)
-    
+
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
 

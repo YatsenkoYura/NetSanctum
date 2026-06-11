@@ -6,20 +6,15 @@ Exposes two FastAPI dependencies:
 - `verify_api_key`    — validates an X-API-Key header for external integrations.
 """
 
-from datetime import datetime, timedelta, timezone
-
-
 import hashlib
 import hmac
+from datetime import UTC, datetime
+
 import redis
-import json
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, status
 from passlib.context import CryptContext
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.database import get_db
 
 settings = get_settings()
 
@@ -37,13 +32,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-
 from pathlib import Path
 
 TOKEN_FILE_PATH = Path("/app/access_token.hash")
 
 # Redis connection for sessions
-redis_client = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+
 
 def verify_access_token(token: str) -> bool:
     """Hash the input token and compare it with the stored hash using constant-time comparison."""
@@ -61,6 +56,7 @@ def verify_access_token(token: str) -> bool:
 
 class OwnerUser:
     """Statically defined Owner user representing the single occupant of this app."""
+
     id = 1
     username = "owner"
     email = "owner@netsanctum.local"
@@ -76,7 +72,7 @@ class OwnerUser:
             "email": "owner@netsanctum.local",
             "is_active": True,
             "is_superuser": True,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         }
 
 
@@ -87,14 +83,14 @@ async def get_current_user(request: Request):
     Returns OwnerUser() if valid, otherwise raises HTTPException.
     """
     token = None
-    
+
     # 1. Check Bearer token (API)
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
         if verify_access_token(token):
             return OwnerUser()
-            
+
     # 2. Check Session Cookie (UI)
     session_id = request.cookies.get("access_token")
     if session_id:
@@ -133,4 +129,3 @@ async def verify_api_key(
             detail="Invalid API key",
         )
     return x_api_key
-

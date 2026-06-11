@@ -2,9 +2,9 @@
 Music module database models.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import ForeignKey, Integer, String, DateTime
+from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -12,8 +12,9 @@ from app.core.database import Base
 
 class PlaylistSong(Base):
     """Association table for Many-to-Many relationship with ordering."""
+
     __tablename__ = "playlist_songs"
-    
+
     playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"), primary_key=True)
     song_id: Mapped[int] = mapped_column(ForeignKey("songs.id", ondelete="CASCADE"), primary_key=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -32,12 +33,15 @@ class Playlist(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
     playlist_songs: Mapped[list["PlaylistSong"]] = relationship(
-        "PlaylistSong", back_populates="playlist", cascade="all, delete-orphan", order_by="PlaylistSong.position"
+        "PlaylistSong",
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="PlaylistSong.position",
     )
 
     def __repr__(self) -> str:
@@ -58,7 +62,7 @@ class Song(Base):
     youtube_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     playlist_songs: Mapped[list["PlaylistSong"]] = relationship(

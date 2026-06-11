@@ -7,8 +7,8 @@ Provides the Jinja2 context translator helper.
 
 import importlib
 import logging
-import pkgutil
 from pathlib import Path
+
 from jinja2 import pass_context
 
 logger = logging.getLogger(__name__)
@@ -24,13 +24,13 @@ def discover_and_load_translations():
     Caches translations in-memory.
     """
     _TRANSLATIONS.clear()
-    
+
     app_dir = Path(__file__).resolve().parent.parent
     modules_dir = app_dir / "modules"
-    
+
     if not modules_dir.is_dir():
         return
-        
+
     for child in sorted(modules_dir.iterdir()):
         if child.is_dir():
             module_name = child.name
@@ -56,12 +56,12 @@ def translate(context, module: str, key: str, **kwargs) -> str:
     """
     Jinja2 translation helper function.
     Usage in templates: {{ _('auth', 'access_terminal') }}
-    
+
     Resolution order:
     1. Context variables: `context.get("lang")` (e.g. explicitly passed to template).
     2. Cookie check: `request.cookies.get("lang")`.
     3. Fallback default: "en".
-    
+
     Module translation lookup:
     1. If the module has translations for the target language, use it.
     2. If the module does not have that language, fall back to the first available language dictionary.
@@ -73,10 +73,10 @@ def translate(context, module: str, key: str, **kwargs) -> str:
         request = context.get("request")
         if request:
             lang = request.cookies.get("lang")
-    
+
     if not lang:
         lang = "en"
-        
+
     lang = lang.lower()
 
     # 2. Get module dictionary
@@ -107,5 +107,5 @@ def translate(context, module: str, key: str, **kwargs) -> str:
             return value.format(**kwargs)
         except Exception:
             pass
-            
+
     return value

@@ -4,18 +4,18 @@ Celery tasks for RanobeLib downloader module.
 
 import json
 import logging
-import urllib.parse
-from datetime import datetime, timezone
-from sqlalchemy import select
-import redis
 import re
+import urllib.parse
 
+import redis
+from sqlalchemy import select
+
+from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
-from app.core.config import get_settings
 from app.modules.ranobelib.api import RanobeLibAPI, RanobeLibParser
-from app.modules.ranobelib.models import RanobeNovel, RanobeChapter
+from app.modules.ranobelib.models import RanobeChapter, RanobeNovel
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -60,6 +60,7 @@ def proxy_html_images(html: str) -> str:
     if not html:
         return ""
     try:
+
         def replace_src(match):
             prefix = match.group(1)
             url = match.group(2)
@@ -169,10 +170,9 @@ def download_ranobe_task(self, url: str) -> str:
                     filtered_chapters.append((ch, branch_id_str))
                     break
 
-        filtered_chapters.sort(key=lambda x: (
-            parse_int(x[0].get("volume", "0")),
-            parse_float(x[0].get("number", "0"))
-        ))
+        filtered_chapters.sort(
+            key=lambda x: (parse_int(x[0].get("volume", "0")), parse_float(x[0].get("number", "0")))
+        )
 
         total_chapters = len(filtered_chapters)
         if total_chapters == 0:
@@ -206,9 +206,7 @@ def download_ranobe_task(self, url: str) -> str:
                     db_novel.cover_path = cover_storage_path
 
             # Map existing chapters to skip
-            existing_chapters = {
-                (ch.volume, ch.number): ch for ch in db_novel.chapters
-            }
+            existing_chapters = {(ch.volume, ch.number): ch for ch in db_novel.chapters}
 
             novel_db_id = db_novel.id
 
@@ -234,8 +232,14 @@ def download_ranobe_task(self, url: str) -> str:
                     content = chapter_data.get("content")
                     html = ""
                     if content:
-                        if isinstance(content, dict) and content.get("type") == "doc" and content.get("content"):
-                            html = parser.json_to_html(content["content"], chapter_data.get("attachments", []))
+                        if (
+                            isinstance(content, dict)
+                            and content.get("type") == "doc"
+                            and content.get("content")
+                        ):
+                            html = parser.json_to_html(
+                                content["content"], chapter_data.get("attachments", [])
+                            )
                         else:
                             html = str(content)
 

@@ -7,7 +7,8 @@ import json
 import re
 import time
 from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -37,14 +38,14 @@ class RanobeLibAPI:
                 "Site-Id": "3",
             }
         )
-        self.request_timestamps: Deque[float] = deque()
+        self.request_timestamps: deque[float] = deque()
 
     def make_request(
         self,
         url: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         retry: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Perform request to API with rate-limiting controls and error retries."""
         self.wait_for_rate_limit()
 
@@ -75,7 +76,7 @@ class RanobeLibAPI:
 
         return {}
 
-    def extract_slug_from_url(self, url: str) -> Optional[str]:
+    def extract_slug_from_url(self, url: str) -> str | None:
         """Extract slug from RanobeLib URL."""
         parsed_url = urlparse(url)
         path_parts = parsed_url.path.strip("/").split("/")
@@ -94,7 +95,7 @@ class RanobeLibAPI:
             return last
         return None
 
-    def get_novel_info(self, slug: str) -> Dict[str, Any]:
+    def get_novel_info(self, slug: str) -> dict[str, Any]:
         """Get light novel metadata."""
         fields = [
             "summary",
@@ -114,19 +115,18 @@ class RanobeLibAPI:
         data = self.make_request(url)
         return data.get("data", {})
 
-    def get_novel_chapters(self, slug: str) -> List[Dict[str, Any]]:
+    def get_novel_chapters(self, slug: str) -> list[dict[str, Any]]:
         """Get list of chapters for a light novel."""
         url = f"{self.api_url}{slug}/chapters"
         data = self.make_request(url)
-        chapters: List[Dict[str, Any]] = data.get("data", [])
+        chapters: list[dict[str, Any]] = data.get("data", [])
 
         # Filter out chapters on moderation
-        filtered_chapters: List[Dict[str, Any]] = []
+        filtered_chapters: list[dict[str, Any]] = []
         for chapter in chapters:
             branches = chapter.get("branches", [])
             is_on_moderation = any(
-                isinstance(branch, dict)
-                and branch.get("moderation", {}).get("id") == 0
+                isinstance(branch, dict) and branch.get("moderation", {}).get("id") == 0
                 for branch in branches
             )
             if not is_on_moderation:
@@ -139,8 +139,8 @@ class RanobeLibAPI:
         slug: str,
         volume: str,
         number: str,
-        branch_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        branch_id: str | None = None,
+    ) -> dict[str, Any]:
         """Get chapter content."""
         url = f"{self.api_url}{slug}/chapter"
         params = {"volume": volume, "number": number}
@@ -187,36 +187,24 @@ class RanobeLibParser:
     """Parses RanobeLib Prosemirror JSON nodes into HTML."""
 
     def __init__(self):
-        self._element_handlers: Dict[str, Callable[[Dict[str, Any], List[Dict[str, Any]]], str]] = {
+        self._element_handlers: dict[str, Callable[[dict[str, Any], list[dict[str, Any]]], str]] = {
             "hardBreak": self._handle_hard_break,
             "horizontalRule": self._handle_horizontal_rule,
             "image": self._handle_image,
-            "paragraph": lambda element, attachments: self._handle_simple_tag(
-                element, attachments, "p"
-            ),
-            "orderedList": lambda element, attachments: self._handle_simple_tag(
-                element, attachments, "ol"
-            ),
-            "listItem": lambda element, attachments: self._handle_simple_tag(
-                element, attachments, "li"
-            ),
+            "paragraph": lambda element, attachments: self._handle_simple_tag(element, attachments, "p"),
+            "orderedList": lambda element, attachments: self._handle_simple_tag(element, attachments, "ol"),
+            "listItem": lambda element, attachments: self._handle_simple_tag(element, attachments, "li"),
             "blockquote": lambda element, attachments: self._handle_simple_tag(
                 element, attachments, "blockquote"
             ),
             "italic": lambda element, attachments: self._handle_simple_tag(element, attachments, "i"),
             "bold": lambda element, attachments: self._handle_simple_tag(element, attachments, "b"),
-            "underline": lambda element, attachments: self._handle_simple_tag(
-                element, attachments, "u"
-            ),
-            "heading": lambda element, attachments: self._handle_simple_tag(
-                element, attachments, "h2"
-            ),
+            "underline": lambda element, attachments: self._handle_simple_tag(element, attachments, "u"),
+            "heading": lambda element, attachments: self._handle_simple_tag(element, attachments, "h2"),
             "text": self._handle_text,
         }
 
-    def json_to_html(
-        self, json_content: List[Dict[str, Any]], attachments: List[Dict[str, Any]]
-    ) -> str:
+    def json_to_html(self, json_content: list[dict[str, Any]], attachments: list[dict[str, Any]]) -> str:
         """Convert JSON Prosemirror nodes to HTML string."""
         if not json_content:
             return ""
@@ -244,38 +232,29 @@ class RanobeLibParser:
             previous = decoded
         return previous
 
-    def _handle_simple_tag(
-        self, element: Dict[str, Any], attachments: List[Dict[str, Any]], tag: str
-    ) -> str:
+    def _handle_simple_tag(self, element: dict[str, Any], attachments: list[dict[str, Any]], tag: str) -> str:
         """Handle simple elements containing child content."""
         content = (
-            self.json_to_html(element.get("content", []), attachments)
-            if element.get("content")
-            else "<br>"
+            self.json_to_html(element.get("content", []), attachments) if element.get("content") else "<br>"
         )
         return f"<{tag}>{content}</{tag}>"
 
-    def _handle_hard_break(self, element: Dict[str, Any], attachments: List[Dict[str, Any]]) -> str:
+    def _handle_hard_break(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
         return "<br>"
 
-    def _handle_horizontal_rule(
-        self, element: Dict[str, Any], attachments: List[Dict[str, Any]]
-    ) -> str:
+    def _handle_horizontal_rule(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
         return "<hr>"
 
-    def _handle_image(self, element: Dict[str, Any], attachments: List[Dict[str, Any]]) -> str:
+    def _handle_image(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
         import urllib.parse
+
         html = ""
         attrs = element.get("attrs", {})
         if attrs.get("images"):
             for img in attrs["images"]:
                 image_id = img.get("image")
                 file = next(
-                    (
-                        f
-                        for f in attachments
-                        if f.get("name") == image_id or f.get("id") == image_id
-                    ),
+                    (f for f in attachments if f.get("name") == image_id or f.get("id") == image_id),
                     None,
                 )
                 if file and file.get("url"):
@@ -290,10 +269,10 @@ class RanobeLibParser:
             html += f"<img {attr_str}>"
         return html
 
-    def _handle_text(self, element: Dict[str, Any], attachments: List[Dict[str, Any]]) -> str:
+    def _handle_text(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
         text_val = element.get("text", "")
         processed_text = re.sub(" +", " ", text_val.replace("\n", " "))
         return self.decode_html_entities(processed_text)
 
-    def _handle_default(self, element: Dict[str, Any], attachments: List[Dict[str, Any]]) -> str:
+    def _handle_default(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
         return f"<pre>{json.dumps(element, indent=2)}</pre>"

@@ -20,7 +20,6 @@ TRANSLATIONS = {
         "no_playlists": "No playlists detected.",
         "now_playing": "Now Playing",
         "album": "Album",
-        
         # Playlist editor UI
         "edit": "Edit",
         "play_all": "Play All",
@@ -54,7 +53,6 @@ TRANSLATIONS = {
         "no_playlists": "Плейлисты не обнаружены.",
         "now_playing": "Сейчас играет",
         "album": "Альбом",
-        
         # Playlist editor UI
         "edit": "Редактировать",
         "play_all": "Воспроизвести все",
@@ -70,5 +68,5 @@ TRANSLATIONS = {
         "in_list": "В списке",
         "add": "+ Добавить",
         "added": "Добавлено",
-    }
+    },
 }

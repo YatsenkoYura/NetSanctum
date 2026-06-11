@@ -57,7 +57,6 @@ TRANSLATIONS = {
         "playlist_name": "Playlist Name",
         "playlist_desc": "Description (Optional)",
         "no_playlists": "No custom playlists created yet.",
-        
         # New Translations
         "back_to_grid": "Back to Grid",
         "theater_mode": "Theater Mode",
@@ -104,7 +103,7 @@ TRANSLATIONS = {
         "back_to_playlists": "Back to Playlists",
         "subtitle_appearance": "Subtitle Appearance",
         "subtitle_custom_style": "Custom styling (color, font, background)",
-        "subtitle_font_size": "Font Size"
+        "subtitle_font_size": "Font Size",
     },
     "ru": {
         "module_title": "Видео Архив",
@@ -160,7 +159,6 @@ TRANSLATIONS = {
         "playlist_name": "Название плейлиста",
         "playlist_desc": "Описание (Необязательно)",
         "no_playlists": "Плейлисты еще не созданы.",
-        
         # New Translations
         "back_to_grid": "Назад к сетке",
         "theater_mode": "Театральный режим",
@@ -207,6 +205,6 @@ TRANSLATIONS = {
         "back_to_playlists": "Назад к плейлистам",
         "subtitle_appearance": "Внешний вид субтитров",
         "subtitle_custom_style": "Кастомный стиль (цвет, шрифт, фон)",
-        "subtitle_font_size": "Размер шрифта"
-    }
+        "subtitle_font_size": "Размер шрифта",
+    },
 }

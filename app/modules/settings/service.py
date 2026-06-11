@@ -12,7 +12,6 @@ from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.settings.models import Setting
-from app.modules.settings.schemas import SettingScope, ValueType
 
 
 # ── Type casting helper ──────────────────────────────────
@@ -163,15 +162,11 @@ async def list_settings(
 
 async def delete_setting(db: AsyncSession, setting_id: int) -> bool:
     """Delete a setting by ID. Returns True if deleted."""
-    result = await db.execute(
-        delete(Setting).where(Setting.id == setting_id)
-    )
+    result = await db.execute(delete(Setting).where(Setting.id == setting_id))
     return result.rowcount > 0
 
 
-async def delete_module_settings(
-    db: AsyncSession, module_name: str
-) -> int:
+async def delete_module_settings(db: AsyncSession, module_name: str) -> int:
     """Delete ALL settings for a given module. Returns count deleted."""
     result = await db.execute(
         delete(Setting).where(
@@ -259,7 +254,10 @@ async def resolve_many(
     resolved: dict[str, Setting] = {}
     for key in keys:
         setting = await resolve_setting(
-            db, key=key, module_name=module_name, user_id=user_id,
+            db,
+            key=key,
+            module_name=module_name,
+            user_id=user_id,
         )
         if setting:
             resolved[key] = setting

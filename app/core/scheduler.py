@@ -21,7 +21,7 @@ def _discover_task_modules() -> list[str]:
     try:
         import app.modules as modules_pkg
 
-        for importer, module_name, is_pkg in pkgutil.iter_modules(
+        for _importer, module_name, is_pkg in pkgutil.iter_modules(
             modules_pkg.__path__, prefix="app.modules."
         ):
             if is_pkg:
@@ -29,7 +29,7 @@ def _discover_task_modules() -> list[str]:
                 try:
                     importlib.import_module(tasks_path)
                     task_modules.append(tasks_path)
-                except Exception as e:
+                except Exception:
                     # Module doesn't have tasks.py or dependencies are missing — that's fine
                     pass
     except ImportError:

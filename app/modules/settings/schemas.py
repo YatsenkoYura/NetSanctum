@@ -3,21 +3,22 @@ Settings module — Pydantic request/response schemas.
 """
 
 from datetime import datetime
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class SettingScope(str, Enum):
+class SettingScope(StrEnum):
     """Allowed scopes for a setting."""
+
     GLOBAL = "global"
     MODULE = "module"
     USER = "user"
 
 
-class ValueType(str, Enum):
+class ValueType(StrEnum):
     """Supported value types for settings."""
+
     STRING = "string"
     INTEGER = "integer"
     FLOAT = "float"
@@ -28,6 +29,7 @@ class ValueType(str, Enum):
 # ── Requests ─────────────────────────────────────────────
 class SettingCreate(BaseModel):
     """Create or upsert a setting."""
+
     key: str = Field(..., min_length=1, max_length=255)
     value: str
     scope: SettingScope = SettingScope.GLOBAL
@@ -39,6 +41,7 @@ class SettingCreate(BaseModel):
 
 class SettingUpdate(BaseModel):
     """Partial update for an existing setting."""
+
     value: str | None = None
     description: str | None = None
     value_type: ValueType | None = None
@@ -47,12 +50,14 @@ class SettingUpdate(BaseModel):
 
 class SettingBulkCreate(BaseModel):
     """Bulk upsert multiple settings at once."""
+
     settings: list[SettingCreate]
 
 
 # ── Responses ────────────────────────────────────────────
 class SettingResponse(BaseModel):
     """Single setting response (secret values are masked)."""
+
     id: int
     scope: str
     module_name: str | None
@@ -70,6 +75,7 @@ class SettingResponse(BaseModel):
 
 class SettingListResponse(BaseModel):
     """Paginated list of settings."""
+
     items: list[SettingResponse]
     total: int
     page: int
@@ -81,6 +87,7 @@ class SettingResolvedResponse(BaseModel):
     A resolved setting value — after applying the scope hierarchy
     (user → module → global fallback).
     """
+
     key: str
     value: str
     value_type: str

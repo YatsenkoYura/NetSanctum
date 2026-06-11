@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import List, Optional
 from datetime import datetime
+
+from pydantic import BaseModel
+
 
 class DownloadRequest(BaseModel):
     url: str
@@ -11,49 +12,53 @@ class DownloadRequest(BaseModel):
     comments_replies: bool = True
     replies_limit: int = 5
     auto_update: bool = False
-    cookies_text: Optional[str] = None
+    cookies_text: str | None = None
     compress_video: bool = False
     download_subtitles: bool = False
 
+
 class PlaylistCreate(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
+
 
 class CommentSchema(BaseModel):
     author: str
     text: str
     likes: int
     time: str
-    replies: Optional[List["CommentSchema"]] = None
+    replies: list["CommentSchema"] | None = None
+
 
 class VideoResponse(BaseModel):
     id: str
     title: str
-    description: Optional[str]
+    description: str | None
     channel_name: str
     channel_id: str
-    channel_avatar_url: Optional[str]
+    channel_avatar_url: str | None
     duration: int
     resolution: str
-    file_path: Optional[str]
-    thumbnail_path: Optional[str]
+    file_path: str | None
+    thumbnail_path: str | None
     status: str
-    comments: Optional[List[CommentSchema]]
-    subtitles: Optional[dict] = None
+    comments: list[CommentSchema] | None
+    subtitles: dict | None = None
     archived_at: datetime
-    original_publish_date: Optional[datetime]
+    original_publish_date: datetime | None
     auto_update: bool
     is_deleted_on_youtube: bool
 
     class Config:
         from_attributes = True
 
+
 class PlaylistResponse(BaseModel):
     id: int
     name: str
-    description: Optional[str]
+    description: str | None
     created_at: datetime
-    videos: List[VideoResponse]
+    videos: list[VideoResponse]
 
     class Config:
         from_attributes = True

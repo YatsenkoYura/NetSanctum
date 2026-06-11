@@ -6,13 +6,12 @@ the core templates directory so that each module's HTML fragments are
 discoverable by the unified Jinja2Templates instance.
 """
 
-import pkgutil
 from pathlib import Path
 
 from starlette.templating import Jinja2Templates
 
 # ── Base paths ───────────────────────────────────────────
-_APP_DIR = Path(__file__).resolve().parent.parent          # app/
+_APP_DIR = Path(__file__).resolve().parent.parent  # app/
 _CORE_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"  # app/core/templates/
 _MODULES_DIR = _APP_DIR / "modules"
 
@@ -53,6 +52,7 @@ def create_templates() -> Jinja2Templates:
 
     # Register modular localization context helper
     from app.core.i18n import translate
+
     templates.env.globals["_"] = translate
 
     return templates
@@ -60,4 +60,3 @@ def create_templates() -> Jinja2Templates:
 
 # Singleton instance — import this from routers
 templates = create_templates()
-

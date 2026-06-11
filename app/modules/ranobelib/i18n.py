@@ -48,5 +48,5 @@ TRANSLATIONS = {
         "sync_now": "Обновить главы",
         "chapters_downloaded": "Скачано глав",
         "source_url": "Ссылка на источник",
-    }
+    },
 }

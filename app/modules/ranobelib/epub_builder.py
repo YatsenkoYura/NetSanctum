@@ -1,32 +1,34 @@
-import io
-import uuid
-import zipfile
 import html
+import io
+import logging
 import re
 import urllib.parse
-import logging
+import uuid
+import zipfile
+
 import requests
-from typing import List
+
 from app.core.storage import get_storage
-from app.modules.ranobelib.models import RanobeNovel, RanobeChapter
+from app.modules.ranobelib.models import RanobeChapter, RanobeNovel
 
 logger = logging.getLogger(__name__)
 
+
 class EPUBBuilder:
     @staticmethod
-    def build_epub(novel: RanobeNovel, chapters: List[RanobeChapter]) -> bytes:
+    def build_epub(novel: RanobeNovel, chapters: list[RanobeChapter]) -> bytes:
         """
         Builds a valid EPUB 2.0 e-book archive in memory and returns the raw bytes.
         Downloads all external/proxied images and bundles them within the EPUB.
         """
         epub_io = io.BytesIO()
         book_uuid = str(uuid.uuid4())
-        
+
         # We use ZIP_DEFLATED for everything except mimetype, which must be uncompressed (ZIP_STORED)
         with zipfile.ZipFile(epub_io, "w", zipfile.ZIP_DEFLATED) as epub:
             # 1. mimetype (MUST be first file, uncompressed)
             epub.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-            
+
             # 2. META-INF/container.xml
             container_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -35,7 +37,7 @@ class EPUBBuilder:
     </rootfiles>
 </container>"""
             epub.writestr("META-INF/container.xml", container_xml)
-            
+
             # 3. Read cover if exists
             has_cover = False
             cover_bytes = None
@@ -62,7 +64,7 @@ class EPUBBuilder:
             escaped_eng = html.escape(novel.eng_name or "")
             escaped_rus = html.escape(novel.rus_name or "")
             escaped_desc = novel.description or ""  # Keep HTML safe or cleaned
-            
+
             title_xhtml = f"""<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -80,7 +82,7 @@ class EPUBBuilder:
 <body>
   <h1>{escaped_title}</h1>
   {f"<h2>{escaped_eng} / {escaped_rus}</h2>" if escaped_eng or escaped_rus else ""}
-  {f'<img class="cover-img" src="cover.jpg" alt="Cover"/>' if has_cover else ""}
+  {'<img class="cover-img" src="cover.jpg" alt="Cover"/>' if has_cover else ""}
   <div class="description">
     <h3>Description / Описание:</h3>
     {escaped_desc}
@@ -93,58 +95,60 @@ class EPUBBuilder:
             manifest_items = []
             spine_items = []
             nav_points = []
-            
+
             # Add title to manifest/spine
             manifest_items.append('<item id="title" href="title.xhtml" media-type="application/xhtml+xml"/>')
             spine_items.append('<itemref idref="title"/>')
-            
+
             if has_cover:
-                manifest_items.append(f'<item id="cover-image" href="cover.jpg" media-type="{cover_media_type}"/>')
+                manifest_items.append(
+                    f'<item id="cover-image" href="cover.jpg" media-type="{cover_media_type}"/>'
+                )
 
             # We pre-compile regex to extract img tags and their src attributes
             img_tag_pattern = re.compile(r'<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
-            
+
             image_counter = 0
             url_to_epub_path = {}  # mapping: original_img_url -> (epub_href, media_type)
 
             for idx, ch in enumerate(chapters, start=1):
                 ch_id = f"chapter_{idx}"
                 ch_href = f"chapter_{idx}.xhtml"
-                
+
                 ch_title = f"Volume {ch.volume} Chapter {ch.number}"
                 if ch.name:
                     ch_title += f" - {ch.name}"
                 escaped_ch_title = html.escape(ch_title)
-                
+
                 ch_body = ch.content_html or ""
-                
+
                 # Internal substitution helper to download and map images
                 def replace_img_tags(match):
                     nonlocal image_counter
                     original_tag = match.group(0)
                     src = match.group(1)
-                    
+
                     img_url = src
                     # Resolve original URL if it was rewritten to flow through local image proxy
                     if "/ranobelib/api/proxy-image?url=" in src:
                         try:
                             parsed = urllib.parse.urlparse(src)
                             query = urllib.parse.parse_qs(parsed.query)
-                            if 'url' in query and query['url']:
-                                img_url = query['url'][0]
+                            if query.get("url"):
+                                img_url = query["url"][0]
                         except Exception as parse_err:
                             logger.warning(f"Failed to parse proxied image url: {src}, error: {parse_err}")
-                    
+
                     # Check if it's a valid remote URL
                     if not (img_url.startswith("http://") or img_url.startswith("https://")):
                         return original_tag
-                    
+
                     if img_url in url_to_epub_path:
                         epub_href, media_type = url_to_epub_path[img_url]
                     else:
                         headers = {
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Referer": "https://ranobelib.me/"
+                            "Referer": "https://ranobelib.me/",
                         }
                         try:
                             res = requests.get(img_url, headers=headers, timeout=15)
@@ -160,28 +164,32 @@ class EPUBBuilder:
                                 else:
                                     ext = "jpg"
                                     media_type = "image/jpeg"
-                                
+
                                 epub_href = f"images/img_{image_counter}.{ext}"
                                 # Save image binary to EPUB zip
                                 epub.writestr(f"OEBPS/{epub_href}", res.content)
                                 # Cache
                                 url_to_epub_path[img_url] = (epub_href, media_type)
                                 # Add to manifest_items
-                                manifest_items.append(f'<item id="img_{image_counter}" href="{epub_href}" media-type="{media_type}"/>')
+                                manifest_items.append(
+                                    f'<item id="img_{image_counter}" href="{epub_href}" media-type="{media_type}"/>'
+                                )
                                 logger.info(f"Successfully embedded image {img_url} to OEBPS/{epub_href}")
                             else:
-                                logger.warning(f"Failed to download image {img_url}: status {res.status_code}")
+                                logger.warning(
+                                    f"Failed to download image {img_url}: status {res.status_code}"
+                                )
                                 return original_tag
                         except Exception as img_err:
                             logger.warning(f"Error downloading image {img_url}: {img_err}")
                             return original_tag
-                    
+
                     # Return compliant self-closing xhtml img tag referencing local EPUB path
                     return f'<img src="{epub_href}" alt="Image" />'
 
                 # Process all image tags in chapter body
                 ch_body_processed = img_tag_pattern.sub(replace_img_tags, ch_body)
-                
+
                 ch_xhtml = f"""<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -203,14 +211,16 @@ class EPUBBuilder:
   </div>
 </body>
 </html>"""
-                
+
                 # Write to zip
                 epub.writestr(f"OEBPS/{ch_href}", ch_xhtml)
-                
+
                 # Append to metadata collections
-                manifest_items.append(f'<item id="{ch_id}" href="{ch_href}" media-type="application/xhtml+xml"/>')
+                manifest_items.append(
+                    f'<item id="{ch_id}" href="{ch_href}" media-type="application/xhtml+xml"/>'
+                )
                 spine_items.append(f'<itemref idref="{ch_id}"/>')
-                
+
                 # playOrder starts at 2 (since title page is 1)
                 nav_points.append(f"""    <navPoint id="navPoint-{idx}" playOrder="{idx + 1}">
       <navLabel>
@@ -245,7 +255,7 @@ class EPUBBuilder:
             epub.writestr("OEBPS/toc.ncx", toc_ncx)
 
             # 7. Generate content.opf
-            cover_meta = '<meta name="cover" content="cover-image"/>' if has_cover else ''
+            cover_meta = '<meta name="cover" content="cover-image"/>' if has_cover else ""
             content_opf = f"""<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">

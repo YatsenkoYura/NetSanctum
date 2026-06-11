@@ -9,14 +9,13 @@ Endpoints:
     GET  /auth/logout-page    — clear session and redirect to login page
 """
 
+import uuid
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app.core.security import (
-    get_current_user, verify_access_token, OwnerUser, redis_client
-)
-import uuid
+from app.core.security import OwnerUser, get_current_user, redis_client, verify_access_token
 from app.core.templates import templates
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -90,6 +89,7 @@ async def ui_login(
     if not verify_access_token(token.strip()):
         # Resolve dynamic translation for failure banner
         from app.core.i18n import translate
+
         err_msg = translate(request.scope, "auth", "invalid_token")
         return templates.TemplateResponse(
             request,
@@ -117,7 +117,7 @@ async def logout_page(request: Request):
     session_id = request.cookies.get("access_token")
     if session_id:
         redis_client.delete(f"session:{session_id}")
-    
+
     response = RedirectResponse(url="/auth/login-page", status_code=302)
     response.delete_cookie("access_token")
     return response
