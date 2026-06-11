@@ -499,6 +499,56 @@ async def cancel_download_ui(task_id: str, request: Request, user=Depends(get_cu
     return HTMLResponse("")
 
 
+@router.get("/api/songs/{song_id}/sync-manifest")
+async def get_song_sync_manifest(
+    song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """API: Generates a NetOutpost sync manifest for a specific song."""
+    song = await db.get(Song, song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    resources = [
+        {"url": "/music/api/songs", "type": "json"},
+        {"url": f"/music/audio/{song_id}", "type": "binary"},
+    ]
+    if song.cover_file_id:
+        resources.append({"url": f"/music/cover/{song_id}", "type": "image"})
+
+    return {"package_id": f"song_{song_id}", "root_url": "/music/dashboard", "resources": resources}
+
+
+@router.get("/api/playlists/{playlist_id}/sync-manifest")
+async def get_playlist_sync_manifest(
+    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """API: Generates a NetOutpost sync manifest for an entire playlist."""
+    playlist = await db.get(Playlist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    from app.modules.music.models import PlaylistSong
+
+    result = await db.execute(
+        select(Song)
+        .join(PlaylistSong)
+        .where(PlaylistSong.playlist_id == playlist_id)
+        .order_by(PlaylistSong.position.asc())
+    )
+    songs = result.scalars().all()
+
+    resources = [
+        {"url": "/music/api/playlists", "type": "json"},
+        {"url": f"/music/api/playlists/{playlist_id}/songs", "type": "json"},
+    ]
+    for song in songs:
+        resources.append({"url": f"/music/audio/{song.id}", "type": "binary"})
+        if song.cover_file_id:
+            resources.append({"url": f"/music/cover/{song.id}", "type": "image"})
+
+    return {"package_id": f"playlist_{playlist_id}", "root_url": "/music/dashboard", "resources": resources}
+
+
 # ── Shared Media Endpoints ───────────────────────────────
 
 
