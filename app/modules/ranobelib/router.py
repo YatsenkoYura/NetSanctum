@@ -396,6 +396,78 @@ async def export_novel(
     )
 
 
+@router.get("/api/novels")
+async def list_novels(
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """API: Lists all archived novels."""
+    query = select(RanobeNovel)
+    if search:
+        query = query.where(
+            RanobeNovel.title.ilike(f"%{search}%") | 
+            RanobeNovel.rus_name.ilike(f"%{search}%") | 
+            RanobeNovel.eng_name.ilike(f"%{search}%")
+        )
+    query = query.order_by(RanobeNovel.title.asc())
+    res = await db.execute(query)
+    novels = res.scalars().all()
+    return [
+        {
+            "id": novel.id,
+            "title": novel.title,
+            "eng_name": novel.eng_name,
+            "rus_name": novel.rus_name,
+            "slug": novel.slug,
+            "source_url": novel.source_url,
+            "cover_path": novel.cover_path,
+            "description": novel.description,
+        }
+        for novel in novels
+    ]
+
+
+@router.get("/api/novel/{novel_id}")
+async def get_novel_details(
+    novel_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """API: Get details of a single novel, including chapters metadata."""
+    novel = await db.get(RanobeNovel, novel_id)
+    if not novel:
+        raise HTTPException(status_code=404, detail="Novel not found")
+        
+    stmt = (
+        select(RanobeChapter)
+        .where(RanobeChapter.novel_id == novel_id)
+        .order_by(RanobeChapter.volume_int.asc(), RanobeChapter.number_float.asc())
+    )
+    res = await db.execute(stmt)
+    chapters = res.scalars().all()
+    
+    return {
+        "id": novel.id,
+        "title": novel.title,
+        "eng_name": novel.eng_name,
+        "rus_name": novel.rus_name,
+        "slug": novel.slug,
+        "source_url": novel.source_url,
+        "cover_path": novel.cover_path,
+        "description": novel.description,
+        "chapters": [
+            {
+                "id": ch.id,
+                "volume": ch.volume,
+                "number": ch.number,
+                "name": ch.name,
+            }
+            for ch in chapters
+        ]
+    }
+
+
 @router.get("/api/cover/{novel_id}", include_in_schema=False)
 async def get_cover(novel_id: int, db: AsyncSession = Depends(get_db)):
     """Serve cover image from storage backend."""
