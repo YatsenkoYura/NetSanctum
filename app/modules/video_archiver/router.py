@@ -148,6 +148,37 @@ async def sync_all(user=Depends(get_current_user)):
     return {"task_id": task.id, "message": "Global sync dispatched."}
 
 
+@router.get("/api/video-archiver/videos/{video_id}/sync-manifest")
+async def get_video_sync_manifest(
+    video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """API: Generates a NetOutpost sync manifest for a specific video."""
+    video = await db.get(ArchivedVideo, video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    resources = [
+        {"url": "/api/video-archiver/videos", "type": "json"},
+        {"url": f"/api/video-archiver/videos/{video_id}", "type": "json"},
+    ]
+    if video.file_path:
+        resources.append({"url": f"/api/video-archiver/videos/{video_id}/stream", "type": "binary"})
+    if video.thumbnail_path:
+        resources.append({"url": f"/api/video-archiver/videos/{video_id}/thumbnail", "type": "image"})
+
+    if video.subtitles:
+        for lang in video.subtitles.keys():
+            resources.append(
+                {"url": f"/api/video-archiver/videos/{video_id}/subtitles/{lang}", "type": "text"}
+            )
+
+    return {
+        "package_id": f"video_{video_id}",
+        "root_url": "/video-archiver/dashboard",
+        "resources": resources,
+    }
+
+
 # ── Streaming ────────────────────────────────────────────
 
 

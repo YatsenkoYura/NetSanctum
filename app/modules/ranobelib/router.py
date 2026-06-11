@@ -453,6 +453,30 @@ async def get_novel_details(
     }
 
 
+@router.get("/api/novel/{novel_id}/sync-manifest")
+async def get_novel_sync_manifest(
+    novel_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """API: Generates a NetOutpost sync manifest for a specific novel."""
+    novel = await db.get(RanobeNovel, novel_id)
+    if not novel:
+        raise HTTPException(status_code=404, detail="Novel not found")
+
+    resources = [
+        {"url": "/api/novels", "type": "json"},
+        {"url": f"/api/novel/{novel_id}", "type": "json"},
+        {"url": f"/api/novel/{novel_id}/export", "type": "binary"},
+    ]
+    if novel.cover_path:
+        resources.append({"url": f"/api/cover/{novel_id}", "type": "image"})
+
+    return {
+        "package_id": f"novel_{novel_id}",
+        "root_url": f"/ranobelib/reader/{novel_id}",
+        "resources": resources,
+    }
+
+
 @router.get("/api/cover/{novel_id}", include_in_schema=False)
 async def get_cover(novel_id: int, db: AsyncSession = Depends(get_db)):
     """Serve cover image from storage backend."""
