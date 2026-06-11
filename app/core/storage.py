@@ -5,17 +5,26 @@ Modules MUST NOT write to disk or S3 directly.
 They use the `get_storage()` singleton which returns the active backend.
 """
 
+import hashlib
 import io
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import BinaryIO
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from app.core.config import get_settings
 
 
 class StorageInterface(ABC):
     """Abstract contract for all storage backends."""
+
+    def _get_encryption_key(self) -> bytes:
+        """Derive a 32-byte key from the configured file encryption key or master key."""
+        settings = get_settings()
+        raw_key = getattr(settings, "FILE_ENCRYPTION_KEY", None) or settings.MASTER_API_KEY
+        return hashlib.sha256(raw_key.encode("utf-8")).digest()
 
     @abstractmethod
     def save_file(self, data: bytes, path: str) -> str:
@@ -25,6 +34,19 @@ class StorageInterface(ABC):
         """
         ...
 
+    def save_file_encrypted(self, data: bytes, path: str) -> str:
+        """
+        Encrypt binary data using AES-256-GCM and persist it at the given logical path.
+        Returns the canonical path/key where the file was stored.
+        """
+        key = self._get_encryption_key()
+        aesgcm = AESGCM(key)
+        nonce = os.urandom(12)
+        encrypted_data = aesgcm.encrypt(nonce, data, None)
+        # Prepend the 12-byte nonce to the ciphertext
+        payload = nonce + encrypted_data
+        return self.save_file(payload, path)
+
     @abstractmethod
     def get_file_stream(self, path: str) -> BinaryIO:
         """
@@ -32,6 +54,37 @@ class StorageInterface(ABC):
         Raises FileNotFoundError if the file does not exist.
         """
         ...
+
+    def get_file_stream_decrypted(self, path: str) -> BinaryIO:
+        """
+        Retrieve the encrypted file, decrypt it using AES-256-GCM, and return a readable stream.
+        """
+        key = self._get_encryption_key()
+        stream = self.get_file_stream(path)
+        try:
+            payload = stream.read()
+        finally:
+            stream.close()
+
+        if len(payload) < 12:
+            raise ValueError(f"Invalid encrypted file '{path}': payload is too short.")
+
+        nonce = payload[:12]
+        ciphertext = payload[12:]
+        aesgcm = AESGCM(key)
+        try:
+            decrypted_data = aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception as e:
+            raise ValueError(f"Failed to decrypt file '{path}': {e}")
+
+        return io.BytesIO(decrypted_data)
+
+    def get_file_decrypted(self, path: str) -> bytes:
+        """
+        Retrieve the encrypted file, decrypt it, and return its raw bytes.
+        """
+        with self.get_file_stream_decrypted(path) as f:
+            return f.read()
 
     @abstractmethod
     def delete_file(self, path: str) -> bool:

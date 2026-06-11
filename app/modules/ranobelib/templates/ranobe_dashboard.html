@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('ranobelib', 'module_title') }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header / Branding -->
+    <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-teal-950/20 border border-teal-900/40 text-teal-400">
+                <!-- Book/Read icon -->
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="text-2xl font-black text-white tracking-tight uppercase font-mono">
+                    {{ _('ranobelib', 'module_title') }}
+                </h1>
+                <p class="text-xs text-zinc-500 font-mono mt-1">
+                    {{ _('ranobelib', 'module_subtitle') }}
+                </p>
+            </div>
+        </div>
+        
+        <!-- Tab Buttons -->
+        <div class="flex flex-wrap gap-1 bg-black p-1 border border-zinc-800">
+            <button onclick="ranobeSwitchTab('library')" id="btn-tab-library" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z" />
+                </svg>
+                <span>[{{ _('ranobelib', 'tab_library') }}]</span>
+            </button>
+            <button onclick="ranobeSwitchTab('download')" id="btn-tab-download" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>{{ _('ranobelib', 'tab_download') }}</span>
+            </button>
+            <button onclick="ranobeSwitchTab('active_downloads')" id="btn-tab-active_downloads" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>{{ _('ranobelib', 'tab_active_downloads') }}</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Tab: Library ── -->
+    <div id="tab-content-library" class="space-y-6">
+        <!-- Search -->
+        <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
+                <input type="text" id="library-search" name="search" oninput="ranobeApplyFilters()"
+                       placeholder="{{ _('ranobelib', 'search_placeholder') }}" 
+                       class="flex-1 bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors">
+            </div>
+        </div>
+
+        <!-- Grid Container -->
+        <div id="library-items" hx-get="/ranobelib/ui/library" hx-trigger="load" hx-swap="innerHTML">
+            <div class="text-center py-12 font-mono text-xs text-zinc-600">Loading library...</div>
+        </div>
+    </div>
+
+    <!-- ── Tab: Download ── -->
+    <div id="tab-content-download" class="hidden space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto space-y-5">
+            <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider border-b-2 border-zinc-800 pb-3 flex items-center">
+                <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>{{ _('ranobelib', 'tab_download') }}</span>
+            </h3>
+
+            <form onsubmit="ranobeSubmitDownloadTask(event)" class="space-y-4">
+                <div class="space-y-1.5">
+                    <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">RanobeLib URL</label>
+                    <input type="url" required id="dl-url" 
+                           placeholder="{{ _('ranobelib', 'url_placeholder') }}"
+                           class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                </div>
+
+                <button type="submit" 
+                        class="w-full bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider py-3 px-4 rounded-none border border-teal-400 hover:bg-black hover:text-teal-400 transition-all cursor-pointer">
+                    {{ _('ranobelib', 'btn_download') }}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ── Tab: Active Downloads ── -->
+    <div id="tab-content-active_downloads" class="hidden space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto space-y-4">
+            <div class="flex justify-between items-center border-b-2 border-zinc-800 pb-3">
+                <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider flex items-center">
+                    <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>{{ _('ranobelib', 'active_tasks') }}</span>
+                </h3>
+                <button hx-delete="/ranobelib/api/tasks/all" hx-swap="none"
+                        class="bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold font-mono px-2 py-1 uppercase hover:bg-red-900 transition-colors">
+                    {{ _('ranobelib', 'cancel_all') }}
+                </button>
+            </div>
+            
+            <!-- Auto-polling active downloads list -->
+            <div id="active-tasks-list" hx-get="/ranobelib/ui/active_downloads" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
+                <div class="text-center py-6 text-zinc-600 font-mono text-xs">No active downloads</div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    var ranobeActiveTab = 'library';
+
+    window.ranobeSwitchTab = function(tab) {
+        // Hide active
+        document.getElementById(`tab-content-${ranobeActiveTab}`).classList.add('hidden');
+        
+        // Remove active class and brackets from old tab
+        const oldBtn = document.getElementById(`btn-tab-${ranobeActiveTab}`);
+        oldBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center";
+        const oldSpan = oldBtn.querySelector('span');
+        if (oldSpan) {
+            oldSpan.innerText = oldSpan.innerText.replace(/^\[|\]$/g, '');
+        }
+
+        // Show new active and add brackets
+        document.getElementById(`tab-content-${tab}`).classList.remove('hidden');
+        const newBtn = document.getElementById(`btn-tab-${tab}`);
+        newBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center";
+        const newSpan = newBtn.querySelector('span');
+        if (newSpan && !newSpan.innerText.startsWith('[')) {
+            newSpan.innerText = `[${newSpan.innerText}]`;
+        }
+        
+        ranobeActiveTab = tab;
+
+        if (tab === 'library') {
+            ranobeReloadLibraryTab();
+        } else if (tab === 'active_downloads') {
+            const activeList = document.getElementById('active-tasks-list');
+            if (activeList) {
+                htmx.trigger(activeList, 'load');
+            }
+        }
+    };
+
+    window.ranobeReloadLibraryTab = function() {
+        if (!document.getElementById('library-search')) {
+            htmx.ajax('GET', '/ranobelib/ui/library_tab', {target: '#tab-content-library', swap: 'innerHTML'});
+        } else {
+            ranobeRefreshLibrary();
+        }
+    };
+
+    window.ranobeRefreshLibrary = function() {
+        const library = document.getElementById('library-items');
+        if (library) {
+            htmx.trigger(library, 'load');
+        }
+    };
+
+    window.ranobeApplyFilters = function() {
+        const search = document.getElementById('library-search').value;
+        const library = document.getElementById('library-items');
+        
+        let url = `/ranobelib/ui/library?search=${encodeURIComponent(search)}`;
+        
+        library.setAttribute('hx-get', url);
+        htmx.process(library);
+        htmx.trigger(library, 'load');
+    };
+
+    window.ranobeSubmitDownloadTask = async function(e) {
+        e.preventDefault();
+        const url = document.getElementById('dl-url').value;
+
+        const resp = await fetch('/ranobelib/api/download', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ url })
+        });
+        
+        if (resp.ok) {
+            e.target.reset();
+            // Switch to active downloads tab
+            ranobeSwitchTab('active_downloads');
+            htmx.trigger(document.getElementById('active-tasks-list'), 'load');
+        } else {
+            alert('Failed to dispatch download task');
+        }
+    };
+</script>
+{% endblock %}
+
+{% block scripts_extra %}{% endblock %}

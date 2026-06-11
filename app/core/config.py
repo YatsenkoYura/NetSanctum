@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # ── API Key ──────────────────────────────────────────
     MASTER_API_KEY: str = "dev-api-key-change-me"
 
+    # ── Encryption ───────────────────────────────────────
+    FILE_ENCRYPTION_KEY: str = "dev-file-encryption-key-change-me"
+
     # ── Storage ──────────────────────────────────────────
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
     LOCAL_STORAGE_ROOT: str = "./storage"

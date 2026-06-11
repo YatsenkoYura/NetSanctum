@@ -12,6 +12,7 @@ alembic==1.15.2
 # Auth & Security
 passlib[bcrypt]==1.7.4
 bcrypt==4.3.0
+cryptography
 
 # Settings & Configuration
 pydantic==2.11.3

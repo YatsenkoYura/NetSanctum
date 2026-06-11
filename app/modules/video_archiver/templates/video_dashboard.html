@@ -695,9 +695,6 @@
         </div>
     </form>
 </div>
-{% endblock %}
-
-{% block scripts_extra %}
 <style>
     @keyframes loading {
         0% { left: -30%; width: 30%; }
@@ -715,22 +712,22 @@
     }
 </style>
 <script>
-    let activeTab = 'library';
-    let currentVideo = null;
-    let allLibraryVideos = [];
-    let currentPlaylist = null;
-    let playlistVideos = [];
-    let playlists = [];
+    var activeTab = 'library';
+    var currentVideo = null;
+    var allLibraryVideos = [];
+    var currentPlaylist = null;
+    var playlistVideos = [];
+    var playlists = [];
     
     // Theater modes
-    let isLibraryTheater = false;
-    let isPlaylistTheater = false;
+    var isLibraryTheater = false;
+    var isPlaylistTheater = false;
 
     // ── Subtitle Appearance Settings ─────────────────────────────────
-    const SUBTITLE_FONT_SIZE_MIN = 9;
-    const SUBTITLE_FONT_SIZE_MAX = 29;
-    let subtitleFontSize = parseInt(localStorage.getItem('subtitle_font_size') || '13', 10);
-    let subtitleStylingEnabled = localStorage.getItem('subtitle_styling') !== 'false'; // default true
+    var SUBTITLE_FONT_SIZE_MIN = 9;
+    var SUBTITLE_FONT_SIZE_MAX = 29;
+    var subtitleFontSize = parseInt(localStorage.getItem('subtitle_font_size') || '13', 10);
+    var subtitleStylingEnabled = localStorage.getItem('subtitle_styling') !== 'false'; // default true
 
     // Called by either the player checkbox or the download-tab checkbox
     function applySubtitleStyle(checkedVal) {
@@ -806,7 +803,7 @@
     })();
 
     // JavaScript client-side translations mapped from server Jinja
-    const i18n = {
+    var i18n = {
         now_playing: "{{ _('video_archiver', 'now_playing') }}",
         no_comments: "{{ _('video_archiver', 'no_comments') }}",
         delete_playlist_confirm: "{{ _('video_archiver', 'delete_playlist_confirm') }}",
@@ -914,8 +911,18 @@
         // Pause playing videos on tab switch
         stopAllVideos();
 
-        if (tabName === 'library') loadLibrary();
-        if (tabName === 'playlists') loadPlaylists();
+        if (tabName === 'library') {
+            if (typeof window.closeLibraryPlayer === 'function') {
+                window.closeLibraryPlayer();
+            }
+            loadLibrary();
+        }
+        if (tabName === 'playlists') {
+            if (typeof window.closePlaylistDetail === 'function') {
+                window.closePlaylistDetail();
+            }
+            loadPlaylists();
+        }
         if (tabName === 'management') loadManagement();
     };
 
@@ -1682,10 +1689,10 @@
     }
 
     // ── Custom Video Player Logic ────────────────────────────
-    const PLAY_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>`;
-    const PAUSE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg>`;
-    const VOL_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>`;
-    const MUTE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>`;
+    var PLAY_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>`;
+    var PAUSE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg>`;
+    var VOL_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>`;
+    var MUTE_ICON = `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/></svg>`;
 
     window.toggleCustomPlay = function(videoId) {
         const video = document.getElementById(videoId);
@@ -1970,7 +1977,7 @@
     setInterval(pollActiveTasks, 3000);
 
     // Initial Load
-    document.addEventListener('DOMContentLoaded', () => {
+    function initVideoDashboard() {
         loadLibrary();
         toggleCommentsInputs();
         toggleRepliesInput();
@@ -1980,6 +1987,14 @@
         fetch('/api/video-archiver/playlists')
             .then(r => r.json())
             .then(data => { playlists = data; });
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initVideoDashboard);
+    } else {
+        initVideoDashboard();
+    }
 </script>
 {% endblock %}
+
+{% block scripts_extra %}{% endblock %}
