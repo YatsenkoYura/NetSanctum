@@ -621,6 +621,37 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
         raise HTTPException(status_code=404, detail="File missing from storage")
 
     mt, _ = mimetypes.guess_type(song.cover_file_id)
+    import anyio
+
     with storage.get_file_stream(song.cover_file_id) as f:
-        content = f.read()
+        content = await anyio.to_thread.run_sync(f.read)
     return Response(content=content, media_type=mt or "image/jpeg")
+
+
+# ── Storage Cleanup Hooks Registration ───────────────────
+try:
+    from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
+    from sqlalchemy import update, delete
+
+    async def music_file_deletion_hook(db: AsyncSession, path: str):
+        if path.startswith("music/audio/"):
+            from app.modules.music.models import Song
+
+            stmt = delete(Song).where(Song.audio_file_id == path)
+            await db.execute(stmt)
+        elif path.startswith("music/covers/"):
+            from app.modules.music.models import Song
+
+            stmt = update(Song).where(Song.cover_file_id == path).values(cover_file_id=None)
+            await db.execute(stmt)
+
+    async def music_module_cleanup_hook(db: AsyncSession):
+        from app.modules.music.models import Song
+
+        stmt = delete(Song)
+        await db.execute(stmt)
+
+    register_file_deletion_hook(music_file_deletion_hook)
+    register_module_cleanup_hook("music", music_module_cleanup_hook)
+except ImportError:
+    pass

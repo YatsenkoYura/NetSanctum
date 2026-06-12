@@ -327,8 +327,10 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=
         raise HTTPException(status_code=404, detail="Thumbnail missing from storage")
 
     mt, _ = mimetypes.guess_type(video.thumbnail_path)
+    import anyio
+
     with storage.get_file_stream(video.thumbnail_path) as f:
-        content = f.read()
+        content = await anyio.to_thread.run_sync(f.read)
     return Response(content=content, media_type=mt or "image/jpeg")
 
 
@@ -347,7 +349,7 @@ async def get_subtitle(
         raise HTTPException(status_code=404, detail="Subtitle file missing from storage")
 
     with storage.get_file_stream(subtitle_path) as f:
-        content = f.read()
+        content = await anyio.to_thread.run_sync(f.read)
     return Response(content=content, media_type="text/vtt")
 
 
@@ -518,3 +520,44 @@ async def remove_video_from_playlist(
     await db.execute(stmt)
     await db.commit()
     return {"message": "Video unlinked from playlist."}
+
+
+# ── Storage Cleanup Hooks Registration ───────────────────
+try:
+    from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
+    from sqlalchemy import update, delete, select
+
+    async def video_file_deletion_hook(db: AsyncSession, path: str):
+        if path.startswith("video_archiver/videos/"):
+            from app.modules.video_archiver.models import ArchivedVideo
+
+            stmt = delete(ArchivedVideo).where(ArchivedVideo.file_path == path)
+            await db.execute(stmt)
+        elif path.startswith("video_archiver/thumbnails/"):
+            from app.modules.video_archiver.models import ArchivedVideo
+
+            stmt = (
+                update(ArchivedVideo).where(ArchivedVideo.thumbnail_path == path).values(thumbnail_path=None)
+            )
+            await db.execute(stmt)
+        elif path.startswith("video_archiver/subtitles/"):
+            from app.modules.video_archiver.models import ArchivedVideo
+
+            result = await db.execute(select(ArchivedVideo))
+            videos = result.scalars().all()
+            for v in videos:
+                if v.subtitles:
+                    updated_subtitles = {k: val for k, val in v.subtitles.items() if val != path}
+                    v.subtitles = updated_subtitles
+                    db.add(v)
+
+    async def video_module_cleanup_hook(db: AsyncSession):
+        from app.modules.video_archiver.models import ArchivedVideo
+
+        stmt = delete(ArchivedVideo)
+        await db.execute(stmt)
+
+    register_file_deletion_hook(video_file_deletion_hook)
+    register_module_cleanup_hook("video_archiver", video_module_cleanup_hook)
+except ImportError:
+    pass

@@ -1,0 +1,215 @@
+<!-- Storage Content Panel -->
+<div class="space-y-6">
+
+    <!-- ── Header & Reload controls ─────────────────── -->
+    <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-teal-950/20 border border-teal-900/40 text-teal-400">
+                <!-- Server / Storage Hard drive icon -->
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0v3.75m-16.5-3.75v3.75" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="text-2xl font-black text-white tracking-tight uppercase font-mono">
+                    {{ _('storage', 'module_title') }}
+                </h1>
+                <p class="text-xs text-zinc-500 font-mono mt-1">
+                    {% if stats.is_s3 %}
+                        {{ _('storage', 's3_active') }} ({{ _('storage', 'bucket') }}: {{ stats.bucket_name }})
+                    {% else %}
+                        {{ _('storage', 'local_active') }}
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        <button hx-post="/storage/api/recalculate"
+                hx-target="#storage-container"
+                hx-swap="outerHTML"
+                class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-zinc-800 bg-zinc-900 text-teal-400 hover:border-teal-400 hover:bg-black rounded-none">
+            {{ _('storage', 'recalculate') }} ↻
+        </button>
+    </div>
+
+    <!-- ── Capacity Statistics Grid ────────────────── -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <!-- Used space (with bar) -->
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col justify-between min-h-[140px]">
+            <div>
+                <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
+                    {{ _('storage', 'used_space') }}
+                </span>
+                <span class="text-3xl font-black text-white font-mono leading-none">
+                    {{ stats.used_human }}
+                </span>
+            </div>
+            
+            {% if not stats.is_s3 %}
+            <div class="mt-4 space-y-2">
+                <div class="w-full bg-zinc-900 h-3 border border-zinc-800 relative overflow-hidden">
+                    <div class="h-full {% if stats.used_percent < 50 %}bg-teal-400{% elif stats.used_percent < 80 %}bg-amber-400{% else %}bg-rose-500{% endif %}"
+                         style="width: {{ stats.used_percent }}%"></div>
+                </div>
+                <div class="flex justify-between text-[9px] font-mono text-zinc-500">
+                    <span>{{ stats.used_percent }}% USED</span>
+                    <span>{{ stats.total_human }} TOTAL</span>
+                </div>
+            </div>
+            {% else %}
+            <div class="mt-4 text-[9px] font-mono text-zinc-500">
+                S3 CLOUD CAPACITIES ARE UNLIMITED
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Free space -->
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col justify-between min-h-[140px]">
+            <div>
+                <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
+                    {{ _('storage', 'free_space') }}
+                </span>
+                <span class="text-3xl font-black text-white font-mono leading-none">
+                    {{ stats.free_human }}
+                </span>
+            </div>
+            <div class="mt-4 text-[9px] font-mono text-zinc-500 uppercase">
+                {% if stats.is_s3 %}
+                    AVAILABLE IMMEDIATELY
+                {% else %}
+                    REMAINING ON LOCAL DISK
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Total Storage capacity -->
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col justify-between min-h-[140px]">
+            <div>
+                <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider block mb-1">
+                    {{ _('storage', 'total_space') }}
+                </span>
+                <span class="text-3xl font-black text-white font-mono leading-none">
+                    {{ stats.total_human }}
+                </span>
+            </div>
+            <div class="mt-4 text-[9px] font-mono text-zinc-500 uppercase">
+                HARD DRIVE PARTITION SIZE
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ── Module Breakdown Section ────────────────── -->
+    <div class="bg-zinc-950 border-2 border-zinc-800 rounded-none">
+        <div class="border-b border-zinc-800 px-6 py-4 bg-zinc-900/20">
+            <span class="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
+                {{ _('storage', 'module_caches') }}
+            </span>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-zinc-800">
+            {% for mod in stats.modules %}
+            <div class="p-6 flex flex-col justify-between min-h-[180px] hover:bg-zinc-900/10 transition-colors">
+                <div>
+                    <span class="text-xs font-mono font-black uppercase tracking-wider text-teal-400 block mb-2">
+                        [{{ mod.name }}]
+                    </span>
+                    <div class="text-2xl font-black text-white font-mono mt-1">
+                        {{ mod.size_human }}
+                    </div>
+                    <div class="text-[10px] font-mono text-zinc-500 mt-1">
+                        {{ _('storage', 'file_count', count=mod.file_count) }}
+                    </div>
+                </div>
+                
+                <div class="mt-6">
+                    {% if mod.file_count > 0 %}
+                    <button hx-post="/storage/api/clean-module?module={{ mod.name }}"
+                            hx-confirm="{{ _('storage', 'clear_module_confirm', name=mod.name) }}"
+                            hx-target="#storage-container"
+                            hx-swap="outerHTML"
+                            class="w-full text-center py-1.5 text-[10px] font-mono uppercase tracking-wider font-bold border border-rose-900 bg-rose-950/20 text-rose-400 hover:bg-rose-950/60 hover:border-rose-600 transition-colors rounded-none">
+                        {{ _('storage', 'clean_module_btn') }}
+                    </button>
+                    {% else %}
+                    <button disabled
+                            class="w-full text-center py-1.5 text-[10px] font-mono uppercase tracking-wider font-bold border border-zinc-800 bg-zinc-900/40 text-zinc-600 cursor-not-allowed rounded-none">
+                        EMPTY
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- ── Big Files Listing ───────────────────────── -->
+    <div class="bg-zinc-950 border-2 border-zinc-800 rounded-none">
+        <div class="border-b border-zinc-800 px-6 py-4 bg-zinc-900/20 flex items-center justify-between">
+            <span class="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
+                {{ _('storage', 'large_files') }}
+            </span>
+            <span class="text-[10px] font-mono text-zinc-500">
+                TOP 50 LARGEST ITEMS
+            </span>
+        </div>
+        
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-left text-xs font-mono">
+                <thead>
+                    <tr class="border-b border-zinc-800 bg-zinc-900/40 text-zinc-400 uppercase text-[10px]">
+                        <th class="px-6 py-3 font-bold">Module</th>
+                        <th class="px-6 py-3 font-bold">File Name / Path</th>
+                        <th class="px-6 py-3 font-bold text-right">Size</th>
+                        <th class="px-6 py-3 font-bold text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-900">
+                    {% if stats.large_files %}
+                        {% for file in stats.large_files %}
+                        <tr class="hover:bg-zinc-900/20 transition-colors text-zinc-300">
+                            <!-- Module Badge -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 py-0.5 border text-[9px] uppercase font-bold rounded-none
+                                    {% if file.module == 'ranobelib' %}border-teal-900 text-teal-400 bg-teal-950/20
+                                    {% elif file.module == 'music' %}border-purple-900 text-purple-400 bg-purple-950/20
+                                    {% elif file.module == 'video_archiver' %}border-amber-900 text-amber-400 bg-amber-950/20
+                                    {% else %}border-zinc-800 text-zinc-400 bg-zinc-900/20{% endif %}">
+                                    {{ file.module }}
+                                </span>
+                            </td>
+                            <!-- File path info -->
+                            <td class="px-6 py-4 max-w-lg truncate">
+                                <div class="font-bold text-zinc-100 truncate" title="{{ file.name }}">{{ file.name }}</div>
+                                <div class="text-[10px] text-zinc-500 truncate mt-0.5" title="{{ file.path }}">{{ file.path }}</div>
+                            </td>
+                            <!-- Human readable Size -->
+                            <td class="px-6 py-4 text-right whitespace-nowrap font-bold text-zinc-100">
+                                {{ file.size_human }}
+                            </td>
+                            <!-- Delete specific file -->
+                            <td class="px-6 py-4 text-center whitespace-nowrap">
+                                <button hx-delete="/storage/api/file?path={{ file.path }}"
+                                        hx-confirm="{{ _('storage', 'delete_file_confirm') }}"
+                                        hx-target="#storage-container"
+                                        hx-swap="outerHTML"
+                                        class="px-2.5 py-1 text-[10px] font-bold text-rose-500 border border-transparent hover:border-rose-900 hover:bg-rose-950/20 transition-all rounded-none uppercase">
+                                    [Delete]
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4" class="px-6 py-8 text-center text-zinc-500 font-mono italic">
+                                No files found in storage.
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>

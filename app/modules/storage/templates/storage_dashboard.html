@@ -1,0 +1,15 @@
+{% if only_stats %}
+    <!-- Inner HTMX block swap -->
+    <div id="storage-container" class="space-y-6 animate-fade-in">
+        {% include "storage_content.html" %}
+    </div>
+{% else %}
+    {% extends "base.html" %}
+    {% block title %}{{ _('storage', 'module_title') }}{% endblock %}
+
+    {% block content %}
+    <div id="storage-container" class="space-y-6">
+        {% include "storage_content.html" %}
+    </div>
+    {% endblock %}
+{% endif %}

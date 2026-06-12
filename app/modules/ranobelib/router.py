@@ -374,8 +374,10 @@ async def export_novel(novel_id: int, db: AsyncSession = Depends(get_db), user=D
     result = await db.execute(stmt)
     chapters = result.scalars().all()
 
-    # Build EPUB bytes
-    epub_bytes = EPUBBuilder.build_epub(novel, chapters)
+    # Build EPUB bytes using threadpool to prevent blocking the event loop
+    import anyio
+
+    epub_bytes = await anyio.to_thread.run_sync(EPUBBuilder.build_epub, novel, chapters)
     filename = f"{novel.slug}.epub"
 
     return Response(
@@ -465,26 +467,34 @@ async def get_novel_sync_manifest(
     resources = [
         {"url": "/static/tailwind.min.js", "type": "js"},
         {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/static/placeholder.jpg", "type": "image"},
         {"url": "/ranobelib/dashboard", "type": "html"},
         {"url": "/ranobelib/ui/library", "type": "html"},
         {"url": "/ranobelib/ui/library_tab", "type": "html"},
         {"url": "/ranobelib/ui/active_downloads", "type": "html"},
         {"url": f"/ranobelib/reader/{novel_id}", "type": "html"},
         {"url": f"/ranobelib/ui/novel/{novel_id}", "type": "html"},
-        {"url": "/api/novels", "type": "json"},
-        {"url": f"/api/novel/{novel_id}", "type": "json"},
-        {"url": f"/api/novel/{novel_id}/export", "type": "binary"},
+        {"url": "/ranobelib/api/novels", "type": "json"},
+        {"url": f"/ranobelib/api/novel/{novel_id}", "type": "json"},
+        {"url": f"/ranobelib/api/novel/{novel_id}/export", "type": "binary"},
     ]
     if novel.cover_path:
-        resources.append({"url": f"/api/cover/{novel_id}", "type": "image"})
+        resources.append({"url": f"/ranobelib/api/cover/{novel_id}", "type": "image"})
 
-    # Fetch all chapters to cache their reading views
+    # Fetch all chapters to cache their reading views and extract illustrations
     chapters_stmt = select(RanobeChapter).where(RanobeChapter.novel_id == novel_id)
     chapters_res = await db.execute(chapters_stmt)
     chapters = chapters_res.scalars().all()
+    import re
+
     for ch in chapters:
         resources.append({"url": f"/ranobelib/ui/chapter/{ch.id}", "type": "html"})
+        if ch.content_html:
+            # Find all image proxy URLs inside the chapter HTML
+            found_urls = re.findall(r'["\'](/ranobelib/api/proxy-image\?url=[^"\']+)["\']', ch.content_html)
+            for img_url in found_urls:
+                # Avoid duplicates
+                if not any(r["url"] == img_url for r in resources):
+                    resources.append({"url": img_url, "type": "image"})
 
     return {
         "package_id": f"novel_{novel_id}",
@@ -514,7 +524,7 @@ async def get_cover(novel_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/api/proxy-image", include_in_schema=False)
-async def proxy_image(url: str, user=Depends(get_current_user)):
+def proxy_image(url: str, user=Depends(get_current_user)):
     """Proxy image requests with RanobeLib headers to bypass hotlinking and CORS blocks."""
     import requests
 
@@ -581,3 +591,27 @@ async def cancel_single_download(task_id: str, response: Response, user=Depends(
     redis_client.delete(f"ranobe_dl:{task_id}")
     response.headers["HX-Trigger"] = "reloadActiveTasks"
     return {"message": f"Task {task_id} cancelled."}
+
+
+# ── Storage Cleanup Hooks Registration ───────────────────
+try:
+    from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
+    from sqlalchemy import update
+
+    async def ranobe_file_deletion_hook(db: AsyncSession, path: str):
+        if path.startswith("ranobelib/") or "cover" in path:
+            from app.modules.ranobelib.models import RanobeNovel
+
+            stmt = update(RanobeNovel).where(RanobeNovel.cover_path == path).values(cover_path=None)
+            await db.execute(stmt)
+
+    async def ranobe_module_cleanup_hook(db: AsyncSession):
+        from app.modules.ranobelib.models import RanobeNovel
+
+        stmt = update(RanobeNovel).values(cover_path=None)
+        await db.execute(stmt)
+
+    register_file_deletion_hook(ranobe_file_deletion_hook)
+    register_module_cleanup_hook("ranobelib", ranobe_module_cleanup_hook)
+except ImportError:
+    pass
