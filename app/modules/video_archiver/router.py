@@ -158,6 +158,9 @@ async def get_video_sync_manifest(
         raise HTTPException(status_code=404, detail="Video not found")
 
     resources = [
+        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/video-archiver/dashboard", "type": "html"},
         {"url": "/api/video-archiver/videos", "type": "json"},
         {"url": f"/api/video-archiver/videos/{video_id}", "type": "json"},
     ]
@@ -174,6 +177,56 @@ async def get_video_sync_manifest(
 
     return {
         "package_id": f"video_{video_id}",
+        "package_title": f"Video: {video.title}",
+        "package_name": f"Video: {video.title}",
+        "title": f"Video: {video.title}",
+        "name": f"Video: {video.title}",
+        "root_url": "/video-archiver/dashboard",
+        "resources": resources,
+    }
+
+
+@router.get("/api/video-archiver/playlists/{playlist_id}/sync-manifest")
+async def get_playlist_sync_manifest(
+    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """API: Generates a NetOutpost sync manifest for an entire video playlist."""
+    playlist = await db.get(VideoPlaylist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    res = await db.execute(
+        select(ArchivedVideo)
+        .join(video_playlist_association)
+        .where(video_playlist_association.c.playlist_id == playlist_id)
+    )
+    videos = res.scalars().all()
+
+    resources = [
+        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/video-archiver/dashboard", "type": "html"},
+        {"url": "/api/video-archiver/playlists", "type": "json"},
+        {"url": f"/api/video-archiver/playlists/{playlist_id}", "type": "json"},
+    ]
+    for video in videos:
+        resources.append({"url": f"/api/video-archiver/videos/{video.id}", "type": "json"})
+        if video.file_path:
+            resources.append({"url": f"/api/video-archiver/videos/{video.id}/stream", "type": "binary"})
+        if video.thumbnail_path:
+            resources.append({"url": f"/api/video-archiver/videos/{video.id}/thumbnail", "type": "image"})
+        if video.subtitles:
+            for lang in video.subtitles.keys():
+                resources.append(
+                    {"url": f"/api/video-archiver/videos/{video.id}/subtitles/{lang}", "type": "text"}
+                )
+
+    return {
+        "package_id": f"video_playlist_{playlist_id}",
+        "package_title": f"Playlist: {playlist.name}",
+        "package_name": f"Playlist: {playlist.name}",
+        "title": f"Playlist: {playlist.name}",
+        "name": f"Playlist: {playlist.name}",
         "root_url": "/video-archiver/dashboard",
         "resources": resources,
     }

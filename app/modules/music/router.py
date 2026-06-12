@@ -509,13 +509,26 @@ async def get_song_sync_manifest(
         raise HTTPException(status_code=404, detail="Song not found")
 
     resources = [
+        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/music/dashboard", "type": "html"},
+        {"url": "/music/ui/player", "type": "html"},
         {"url": "/music/api/songs", "type": "json"},
         {"url": f"/music/audio/{song_id}", "type": "binary"},
     ]
     if song.cover_file_id:
         resources.append({"url": f"/music/cover/{song_id}", "type": "image"})
 
-    return {"package_id": f"song_{song_id}", "root_url": "/music/dashboard", "resources": resources}
+    title_str = f"Song: {song.title}" + (f" - {song.author}" if song.author else "")
+    return {
+        "package_id": f"song_{song_id}",
+        "package_title": title_str,
+        "package_name": title_str,
+        "title": title_str,
+        "name": title_str,
+        "root_url": "/music/dashboard",
+        "resources": resources,
+    }
 
 
 @router.get("/api/playlists/{playlist_id}/sync-manifest")
@@ -538,6 +551,12 @@ async def get_playlist_sync_manifest(
     songs = result.scalars().all()
 
     resources = [
+        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/music/dashboard", "type": "html"},
+        {"url": "/music/ui/player", "type": "html"},
+        {"url": f"/music/ui/playlists/{playlist_id}", "type": "html"},
+        {"url": "/music/ui/playlists", "type": "html"},
         {"url": "/music/api/playlists", "type": "json"},
         {"url": f"/music/api/playlists/{playlist_id}/songs", "type": "json"},
     ]
@@ -546,7 +565,16 @@ async def get_playlist_sync_manifest(
         if song.cover_file_id:
             resources.append({"url": f"/music/cover/{song.id}", "type": "image"})
 
-    return {"package_id": f"playlist_{playlist_id}", "root_url": "/music/dashboard", "resources": resources}
+    playlist_title = f"Music Playlist: {playlist.name}"
+    return {
+        "package_id": f"playlist_{playlist_id}",
+        "package_title": playlist_title,
+        "package_name": playlist_title,
+        "title": playlist_title,
+        "name": playlist_title,
+        "root_url": "/music/dashboard",
+        "resources": resources,
+    }
 
 
 # ── Shared Media Endpoints ───────────────────────────────

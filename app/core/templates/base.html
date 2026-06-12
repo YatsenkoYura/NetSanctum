@@ -2,7 +2,7 @@
 <html lang="{% if lang %}{{ lang }}{% else %}en{% endif %}" class="antialiased">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=1280">
     <title>{% block title %}NetSanctum{% endblock %}</title>
     <meta name="description" content="NetSanctum — Modular Monolith Control Panel">
 
@@ -41,6 +41,23 @@
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
         .htmx-request.htmx-indicator { display: inline-block; }
+
+        /* NetOutpost Bridge Styles */
+        .outpost-only {
+            display: none !important;
+        }
+        .has-outpost-bridge .outpost-only {
+            display: inline-flex !important;
+        }
+        .has-outpost-bridge button.outpost-only {
+            display: inline-flex !important;
+        }
+        .has-outpost-bridge a.outpost-only {
+            display: inline-flex !important;
+        }
+        .has-outpost-bridge div.outpost-only {
+            display: block !important;
+        }
     </style>
 
     {% block head_extra %}{% endblock %}
@@ -455,6 +472,53 @@
                 }
             }
         };
+
+        // NetOutpost Bridge helper & detection
+        window.sendToOutpost = async function(manifestUrl) {
+            try {
+                const response = await fetch(manifestUrl);
+                if (!response.ok) throw new Error("Failed to fetch sync manifest");
+                const manifest = await response.json();
+                
+                const payload = JSON.stringify({
+                    action: "DOWNLOAD_PACKAGE",
+                    manifest: manifest
+                });
+                
+                if (window.NetOutpostBridge && window.NetOutpostBridge.postMessage) {
+                    window.NetOutpostBridge.postMessage(payload);
+                    alert("Package sync requested.");
+                } else if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+                    window.flutter_inappwebview.callHandler('NetOutpostBridge', {
+                        action: "DOWNLOAD_PACKAGE",
+                        manifest: manifest
+                    });
+                    alert("Package sync requested.");
+                } else {
+                    console.log("No native bridge detected. Manifest:", manifest);
+                    alert("Sync not supported on this platform.");
+                }
+            } catch (e) {
+                console.error("Outpost sync error:", e);
+                alert("Sync failed: " + e.message);
+            }
+        };
+
+        (function() {
+            function detectBridge() {
+                if (window.NetOutpostBridge || window.flutter_inappwebview || navigator.userAgent.includes("NetOutpost")) {
+                    document.documentElement.classList.add("has-outpost-bridge");
+                    return true;
+                }
+                return false;
+            }
+            if (!detectBridge()) {
+                window.addEventListener("flutterInAppWebViewPlatformReady", detectBridge);
+                setTimeout(detectBridge, 500);
+                setTimeout(detectBridge, 1000);
+                setTimeout(detectBridge, 2000);
+            }
+        })();
     </script>
 
 

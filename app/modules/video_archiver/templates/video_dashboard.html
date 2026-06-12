@@ -73,7 +73,7 @@
 
         <!-- Default Grid View -->
         <div id="videos-grid-container" class="block">
-            <div id="videos-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div id="videos-grid" class="grid grid-cols-3 gap-6">
                 <div class="col-span-full py-12 text-center text-zinc-500 font-mono text-sm">
                     {{ _('video_archiver', 'no_videos') }}
                 </div>
@@ -86,11 +86,15 @@
                 <button onclick="closeLibraryPlayer()" class="bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-white font-mono text-xs px-3 py-1.5 uppercase transition-colors">
                     &larr; {{ _('video_archiver', 'back_to_grid') }}
                 </button>
+                <button onclick="sendToOutpost('/api/video-archiver/videos/' + currentVideo.id + '/sync-manifest')"
+                        class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
+                    Save to Device
+                </button>
             </div>
             
-            <div id="player-grid-wrapper" class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950">
+            <div id="player-grid-wrapper" class="grid grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950">
                 <!-- Left: Video Player + Details (spans 8 cols) -->
-                <div id="player-main-col" class="lg:col-span-8 space-y-6" style="grid-row: 1;">
+                <div id="player-main-col" class="col-span-8 space-y-6" style="grid-row: 1;">
                     <!-- HTML5 Player & Delay Overlay -->
                     <div class="relative aspect-video bg-black border-2 border-zinc-800 overflow-hidden">
                         <!-- Custom Neo Loader -->
@@ -198,7 +202,7 @@
                 </div>
 
                 <!-- Video Details (col-span-8, below the player) -->
-                <div id="player-detail-col" class="lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6" style="grid-row: 2;">
+                <div id="player-detail-col" class="col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6" style="grid-row: 2;">
                     <div class="space-y-3">
                         <div class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-4">
                             <h2 id="player-detail-title" class="text-lg font-bold text-white leading-tight">Video Title</h2>
@@ -255,7 +259,7 @@
                 </div>
 
                 <!-- Right: Queue Sidebar — spans both the player and detail rows -->
-                <div id="player-side-col" class="lg:col-span-4 lg:row-span-2 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col" style="height: fit-content; position: sticky; top: 1rem; max-height: calc(100vh - 6rem); overflow: hidden;">
+                <div id="player-side-col" class="col-span-4 row-span-2 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col" style="height: fit-content; position: sticky; top: 1rem; max-height: calc(100vh - 6rem); overflow: hidden;">
                     <div class="border-b border-zinc-800 pb-3 mb-4 space-y-2">
                         <h4 class="text-xs font-black text-white font-mono uppercase tracking-wider flex items-center">
                             <svg class="w-3.5 h-3.5 text-zinc-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -277,9 +281,9 @@
 
     <!-- ── Tab: Download ───────────────────────────────────────── -->
     <div id="tab-content-download" class="hidden space-y-6">
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="grid grid-cols-3 gap-6">
             <!-- Left panel: Settings Form -->
-            <form onsubmit="submitArchiveTask(event)" class="lg:col-span-2 bg-zinc-950 border-2 border-zinc-800 p-6 space-y-5">
+            <form onsubmit="submitArchiveTask(event)" class="col-span-2 bg-zinc-950 border-2 border-zinc-800 p-6 space-y-5">
                 <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider border-b-2 border-zinc-800 pb-3 flex items-center">
                     <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
@@ -431,7 +435,7 @@
                     + {{ _('video_archiver', 'create_playlist') }}
                 </button>
             </div>
-            <div id="playlists-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div id="playlists-container" class="grid grid-cols-3 gap-6">
                 <!-- Dynamic Playlists Grid -->
             </div>
         </div>
@@ -443,15 +447,19 @@
                     &larr; {{ _('video_archiver', 'back_to_playlists') }}
                 </button>
                 <div class="flex items-center gap-2">
+                    <button onclick="sendToOutpost('/api/video-archiver/playlists/' + currentPlaylist.id + '/sync-manifest')"
+                            class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors mr-2">
+                        Save to Device
+                    </button>
                     <button onclick="toggleTheaterModePlaylist()" id="btn-theater-mode-playlist" class="bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
                         {{ _('video_archiver', 'theater_mode') }}
                     </button>
                 </div>
             </div>
 
-            <div id="playlist-player-wrapper" class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950">
+            <div id="playlist-player-wrapper" class="grid grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950">
                 <!-- Left Column: Standardized HTML5 Video Player + Video Details -->
-                <div id="playlist-player-main" class="lg:col-span-8 space-y-6">
+                <div id="playlist-player-main" class="col-span-8 space-y-6">
                     <div class="relative aspect-video bg-black border-2 border-zinc-800 overflow-hidden flex items-center justify-center">
                         <!-- Initial placeholder state -->
                         <div id="playlist-player-placeholder" class="text-center font-mono space-y-2 p-6 z-20">
@@ -586,7 +594,7 @@
                 </div>
 
                 <!-- Right Column: Playlist Sidebar -->
-                <div id="playlist-player-sidebar" class="lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[650px] space-y-4">
+                <div id="playlist-player-sidebar" class="col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[650px] space-y-4">
                     <div class="border-b border-zinc-800 pb-3 space-y-2">
                         <div class="flex justify-between items-start gap-2">
                             <h4 id="sidebar-playlist-title" class="text-sm font-black text-white font-mono uppercase tracking-wider truncate">Playlist Title</h4>
@@ -1187,19 +1195,19 @@
         const wrapper = document.getElementById('player-grid-wrapper');
 
         // Always keep 12 columns grid wrapper
-        wrapper.className = 'grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950';
+        wrapper.className = 'grid grid-cols-12 gap-6 border-2 border-zinc-800 p-6 bg-zinc-950';
 
         if (isLibraryTheater) {
             // Theater mode: Video is 12 columns, details and queue below it side-by-side (8 and 4)
-            mainCol.className = 'lg:col-span-12 space-y-6';
+            mainCol.className = 'col-span-12 space-y-6';
             mainCol.style.gridRow = '1';
             
             if (detailCol) {
-                detailCol.className = 'lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6';
+                detailCol.className = 'col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6';
                 detailCol.style.gridRow = '2';
             }
             
-            sideCol.className = 'lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col';
+            sideCol.className = 'col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col';
             sideCol.style.gridRow = '2';
             sideCol.style.height = '';
             
@@ -1210,15 +1218,15 @@
             if (btn) btn.classList.add('text-teal-400');
         } else {
             // Standard mode: Video 8 cols, Details 8 cols below it, Queue 4 cols spanning both rows on the right
-            mainCol.className = 'lg:col-span-8 space-y-6';
+            mainCol.className = 'col-span-8 space-y-6';
             mainCol.style.gridRow = '1';
             
             if (detailCol) {
-                detailCol.className = 'lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6';
+                detailCol.className = 'col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-6 space-y-6';
                 detailCol.style.gridRow = '2';
             }
             
-            sideCol.className = 'lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col';
+            sideCol.className = 'col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col';
             sideCol.style.gridRow = '1 / span 2';
             sideCol.style.height = '';
             
@@ -1602,12 +1610,12 @@
         const btn = document.getElementById('btn-theater-mode-playlist');
 
         if (isPlaylistTheater) {
-            main.className = "lg:col-span-12 space-y-6";
+            main.className = "col-span-12 space-y-6";
             sidebar.className = "hidden";
             btn.innerHTML = `[${i18n.show_sidebar}]`;
         } else {
-            main.className = "lg:col-span-8 space-y-6";
-            sidebar.className = "lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[650px] space-y-4";
+            main.className = "col-span-8 space-y-6";
+            sidebar.className = "col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[650px] space-y-4";
             btn.innerHTML = `[${i18n.theater_mode}]`;
         }
     };

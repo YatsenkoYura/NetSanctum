@@ -4,7 +4,7 @@
             <button onclick="toggleDownloadDrawer()" class="text-emerald-400 hover:text-emerald-300 font-bold transition-colors border border-emerald-400/30 px-3 py-1 bg-emerald-950/20 hover:bg-emerald-900/40 uppercase text-[10px] whitespace-nowrap">
                 + Download
             </button>
-            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider hidden sm:inline-block whitespace-nowrap">
+            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider inline-block whitespace-nowrap">
                 {{ _('music', 'downloaded_songs') }}
             </span>
             <input type="text" name="search" value="{{ search }}"
@@ -134,14 +134,21 @@
                 <div class="flex-1 min-w-0 flex flex-col justify-center">
                     <div class="flex justify-between items-start">
                         <p class="text-xs font-semibold text-zinc-100 truncate group-hover:text-teal-400 transition-colors" title="{{ song.title }}">{{ song.title }}</p>
-                        <button hx-delete="/music/ui/songs/{{ song.id }}" 
-                                hx-target="closest .song-card" 
-                                hx-swap="outerHTML" 
-                                onclick="event.stopPropagation();" 
-                                class="text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2 focus:outline-none" 
-                                title="Delete Song">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                        </button>
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="event.stopPropagation(); sendToOutpost('/music/api/songs/{{ song.id }}/sync-manifest')"
+                                    class="outpost-only text-zinc-650 hover:text-teal-400 opacity-0 group-hover:opacity-100 transition-opacity ml-2 focus:outline-none"
+                                    title="Save to Device">
+                                <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            </button>
+                            <button hx-delete="/music/ui/songs/{{ song.id }}" 
+                                    hx-target="closest .song-card" 
+                                    hx-swap="outerHTML" 
+                                    onclick="event.stopPropagation();" 
+                                    class="text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2 focus:outline-none" 
+                                    title="Delete Song">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
                     </div>
                     <p class="text-[10px] text-zinc-400 truncate mt-0.5">
                         {{ song.author or 'Unknown' }}
@@ -166,18 +173,8 @@
 <style>
     .view-mode-grid {
         display: grid;
-        grid-template-columns: repeat(1, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 1rem;
-    }
-    @media (min-width: 768px) {
-        .view-mode-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-    }
-    @media (min-width: 1024px) {
-        .view-mode-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
     }
     
     .view-mode-list {

@@ -5,7 +5,7 @@
 {% block content %}
 <div class="space-y-6">
     <!-- Header / Branding -->
-    <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-row items-center justify-between gap-4">
         <div class="flex items-center gap-3">
             <div class="p-2.5 bg-teal-950/20 border border-teal-900/40 text-teal-400">
                 <!-- Book/Read icon -->
@@ -52,8 +52,8 @@
     <!-- ── Tab: Library ── -->
     <div id="tab-content-library" class="space-y-6">
         <!-- Search -->
-        <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
+        <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-row items-center justify-between gap-4">
+            <div class="flex flex-1 flex-row items-center gap-3">
                 <input type="text" id="library-search" name="search" oninput="ranobeApplyFilters()"
                        placeholder="{{ _('ranobelib', 'search_placeholder') }}" 
                        class="flex-1 bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors">

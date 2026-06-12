@@ -12,9 +12,9 @@
     </div>
 
     <!-- Info Grid -->
-    <div class="flex flex-col md:flex-row gap-8">
+    <div class="flex flex-row gap-8">
         <!-- Left: Cover & Quick Stats -->
-        <div class="w-full md:w-64 flex-shrink-0 flex flex-col items-center gap-4">
+        <div class="w-64 flex-shrink-0 flex flex-col items-center gap-4">
             <div class="w-48 h-64 sm:w-56 sm:h-76 bg-zinc-900 border border-zinc-800 overflow-hidden relative shadow-lg">
                 <img src="/ranobelib/api/cover/{{ novel.id }}" class="w-full h-full object-cover" loading="lazy">
             </div>
@@ -77,6 +77,15 @@
                     </svg>
                     <span>{{ _t('read', lang) }}</span>
                 </a>
+
+                <!-- SAVE TO OUTPOST BUTTON -->
+                <button onclick="sendToOutpost('/ranobelib/api/novel/{{ novel.id }}/sync-manifest')"
+                        class="outpost-only border border-teal-400 text-teal-400 font-mono font-bold text-xs uppercase tracking-wider py-3 px-5 hover:bg-teal-400/10 transition-all cursor-pointer flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span>Save to Device</span>
+                </button>
 
                 <!-- SYNC BUTTON -->
                 <button hx-post="/ranobelib/api/novel/{{ novel.id }}/sync"

@@ -463,6 +463,15 @@ async def get_novel_sync_manifest(
         raise HTTPException(status_code=404, detail="Novel not found")
 
     resources = [
+        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/static/placeholder.jpg", "type": "image"},
+        {"url": "/ranobelib/dashboard", "type": "html"},
+        {"url": "/ranobelib/ui/library", "type": "html"},
+        {"url": "/ranobelib/ui/library_tab", "type": "html"},
+        {"url": "/ranobelib/ui/active_downloads", "type": "html"},
+        {"url": f"/ranobelib/reader/{novel_id}", "type": "html"},
+        {"url": f"/ranobelib/ui/novel/{novel_id}", "type": "html"},
         {"url": "/api/novels", "type": "json"},
         {"url": f"/api/novel/{novel_id}", "type": "json"},
         {"url": f"/api/novel/{novel_id}/export", "type": "binary"},
@@ -470,8 +479,19 @@ async def get_novel_sync_manifest(
     if novel.cover_path:
         resources.append({"url": f"/api/cover/{novel_id}", "type": "image"})
 
+    # Fetch all chapters to cache their reading views
+    chapters_stmt = select(RanobeChapter).where(RanobeChapter.novel_id == novel_id)
+    chapters_res = await db.execute(chapters_stmt)
+    chapters = chapters_res.scalars().all()
+    for ch in chapters:
+        resources.append({"url": f"/ranobelib/ui/chapter/{ch.id}", "type": "html"})
+
     return {
         "package_id": f"novel_{novel_id}",
+        "package_title": f"Novel: {novel.title}",
+        "package_name": f"Novel: {novel.title}",
+        "title": f"Novel: {novel.title}",
+        "name": f"Novel: {novel.title}",
         "root_url": f"/ranobelib/reader/{novel_id}",
         "resources": resources,
     }

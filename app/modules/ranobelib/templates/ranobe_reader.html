@@ -3,10 +3,10 @@
 {% block title %}{{ novel.title }} — Reader{% endblock %}
 
 {% block content %}
-<div class="flex flex-col lg:flex-row gap-6 min-h-[calc(100vh-12rem)] relative">
+<div class="flex flex-row gap-6 min-h-[calc(100vh-12rem)] relative">
     
-    <!-- Left Sidebar: Chapter List (Collapsible on mobile) -->
-    <div id="reader-sidebar" class="w-full lg:w-80 bg-zinc-950/80 border border-zinc-900 p-4 flex flex-col gap-4 h-[500px] lg:h-[calc(100vh-12rem)] sticky top-24 overflow-y-auto z-20">
+    <!-- Left Sidebar: Chapter List -->
+    <div id="reader-sidebar" class="w-80 flex-shrink-0 bg-zinc-950/80 border border-zinc-900 p-4 flex flex-col gap-4 h-[calc(100vh-12rem)] sticky top-24 overflow-y-auto z-20">
         <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
             <h2 class="text-xs font-black uppercase text-zinc-400 font-mono tracking-wider">Chapters</h2>
             <a href="/ranobelib/dashboard" class="text-[10px] font-mono text-teal-400 hover:text-teal-300 font-bold">
