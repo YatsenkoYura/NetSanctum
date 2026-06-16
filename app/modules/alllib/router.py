@@ -43,7 +43,56 @@ def _t(key: str, lang: str = "en") -> str:
     return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, TRANSLATIONS["en"].get(key, key))
 
 
-# ── UI Pages ─────────────────────────────────────────────
+@router.get("/helper.user.js", include_in_schema=False)
+def get_helper_userscript():
+    """Return the Tampermonkey helper userscript for direct installation."""
+    userscript_content = """// ==UserScript==
+// @name         NetSanctum Autofill Helper
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Autofills Lib network titles/tokens to NetSanctum
+// @match        https://*.mangalib.me/*
+// @match        https://*.ranobelib.me/*
+// @match        https://*.hentailib.org/*
+// @match        https://*.slashlib.me/*
+// @match        https://*.comixlib.me/*
+// @match        https://*.anilib.me/*
+// @grant        none
+// ==UserScript==
+
+(function() {
+    'use strict';
+    if (window.self !== window.top) {
+        function sendUpdate() {
+            let token = localStorage.getItem('token') || localStorage.getItem('authorization');
+            if (!token) {
+                for (let i = 0; i < localStorage.length; i++) {
+                    let key = localStorage.key(i);
+                    if (key && key.toLowerCase().includes('token')) {
+                        let val = localStorage.getItem(key);
+                        if (val && val.length > 20) { token = val; break; }
+                    }
+                }
+            }
+            window.parent.postMessage({
+                type: 'netsanctum-nav',
+                url: window.location.href,
+                token: token
+            }, '*');
+        }
+
+        sendUpdate();
+        let lastUrl = window.location.href;
+        new MutationObserver(() => {
+            if (window.location.href !== lastUrl) {
+                lastUrl = window.location.href;
+                sendUpdate();
+            }
+        }).observe(document, {subtree: true, childList: true});
+    }
+})();
+"""
+    return Response(content=userscript_content, media_type="application/javascript")
 
 
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)

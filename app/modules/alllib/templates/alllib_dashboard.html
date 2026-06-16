@@ -160,6 +160,20 @@
                     Because of browser security rules (Same-Origin Policy), NetSanctum cannot read the URL or cookies/tokens from the iframe directly.
                     Install this small userscript in Tampermonkey or Violentmonkey. It automatically detects when you browse any Lib network page inside the iframe, extracts the authorization token, and fills it into NetSanctum in real-time.
                 </p>
+                <div class="flex flex-wrap items-center gap-3 bg-zinc-950/40 p-3 border border-zinc-900/60">
+                    <a href="/alllib/helper.user.js" target="_blank"
+                       class="px-3 py-1.5 bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider hover:bg-black hover:text-teal-400 border border-teal-400 transition-all flex items-center gap-1.5 cursor-pointer">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>Install Automatically / Установить авто</span>
+                    </a>
+                    <span class="text-zinc-600 font-mono text-[9px] uppercase tracking-wider">Get Extension:</span>
+                    <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank"
+                       class="text-[10px] font-mono text-zinc-400 hover:text-teal-400 underline transition-colors">Chrome</a>
+                    <a href="https://addons.mozilla.org/ru/firefox/addon/tampermonkey/" target="_blank"
+                       class="text-[10px] font-mono text-zinc-400 hover:text-teal-400 underline transition-colors">Firefox</a>
+                </div>
                 <div class="relative bg-zinc-950 p-3 border border-zinc-900">
                     <pre id="userscript-code" class="text-[10px] font-mono text-zinc-500 overflow-x-auto select-all max-h-48 leading-normal">
 // ==UserScript==
@@ -391,7 +405,7 @@
                             Вкладка <span class="text-white font-bold">"Найти"</span> содержит встроенный фрейм с ресурсами. Чтобы автоматизировать перенос ссылок и авторизацию из фрейма, мы создали вспомогательный скрипт.
                         </p>
                         <p>
-                            Нажмите кнопку <span class="text-teal-400 font-bold">"Autofill Helper"</span>, скопируйте код скрипта и установите его в расширение (например, <span class="text-white">Tampermonkey</span>). Теперь при переходе на любую страницу произведения внутри фрейма, его URL и токен будут автоматически подгружаться в форму скачивания в фоне.
+                            Вы можете <a href="/alllib/helper.user.js" target="_blank" class="text-teal-400 font-bold hover:underline">установить скрипт в один клик</a>, если у вас уже установлена библиотека расширений (<a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" class="text-white hover:underline">Tampermonkey для Chrome</a> или <a href="https://addons.mozilla.org/ru/firefox/addon/tampermonkey/" target="_blank" class="text-white hover:underline">для Firefox</a>). После установки скрипта, при переходе на любую страницу произведения внутри фрейма, его URL и токен авторизации будут автоматически заполняться на вкладке NetSanctum.
                         </p>
                     </div>
                 </div>
@@ -411,7 +425,7 @@
                             <li><span class="text-zinc-400">Аниме:</span> Видеофайлы скачиваются в исходном качестве (.mp4/.mkv).</li>
                         </ul>
                         <p>
-                            Также доступен экспорт на ПК или синхронизация с мобильным приложением <span class="text-teal-400">NetOutpost</span>.
+                            Также доступен экспорт на ПК или синхронизация с мобильным приложением <a href="https://github.com/YatsenkoYura/netsanctum-android" target="_blank" class="text-teal-400 font-bold hover:underline">NetOutpost (Android)</a>.
                         </p>
                     </div>
                 </div>
