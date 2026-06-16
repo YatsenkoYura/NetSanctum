@@ -95,6 +95,55 @@ def get_helper_userscript(request: Request):
     }}
 
     if (window.self !== window.top) {{
+        // Check if we are on an auth/login page inside the iframe
+        if (window.location.href.includes('/auth/login') || window.location.pathname.startsWith('/auth/')) {{
+            const overlay = document.createElement('div');
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.backgroundColor = 'rgba(9, 9, 11, 0.98)';
+            overlay.style.zIndex = '999999';
+            overlay.style.display = 'flex';
+            overlay.style.flexDirection = 'column';
+            overlay.style.justifyContent = 'center';
+            overlay.style.alignItems = 'center';
+            overlay.style.fontFamily = 'monospace';
+            overlay.style.color = '#fff';
+            overlay.style.padding = '20px';
+            overlay.style.textAlign = 'center';
+
+            overlay.innerHTML = `
+                <div style="border: 2px solid #14b8a6; padding: 30px; background: #000; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                    <h2 style="color: #14b8a6; font-size: 18px; margin-top: 0; margin-bottom: 15px; text-transform: uppercase;">NetSanctum Auth Helper</h2>
+                    <p style="font-size: 11px; line-height: 1.6; color: #a1a1aa; margin-bottom: 20px;">
+                        Вход внутри фрейма заблокирован вашим браузером из-за защиты cookies (ошибка 419).<br><br>
+                        Нажмите кнопку ниже, чтобы открыть страницу авторизации в отдельной вкладке. После успешного входа токен будет сохранен автоматически!
+                    </p>
+                    <button id="breakout-btn" style="background: #14b8a6; color: #000; border: none; padding: 10px 20px; font-weight: bold; font-family: monospace; font-size: 11px; cursor: pointer; text-transform: uppercase; transition: all 0.2s;">
+                        Войти в новой вкладке / Open in New Tab
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            const btn = overlay.querySelector('#breakout-btn');
+            btn.addEventListener('click', () => {{
+                window.open(window.location.href, '_blank');
+            }});
+            btn.addEventListener('mouseover', () => {{
+                btn.style.background = '#000';
+                btn.style.color = '#14b8a6';
+                btn.style.outline = '1px solid #14b8a6';
+            }});
+            btn.addEventListener('mouseout', () => {{
+                btn.style.background = '#14b8a6';
+                btn.style.color = '#000';
+                btn.style.outline = 'none';
+            }});
+        }}
+
         function sendUpdate() {{
             let token = extractToken();
             console.log("[NetSanctum Helper] Sending iframe update:", {{ url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null }});
@@ -120,7 +169,30 @@ def get_helper_userscript(request: Request):
             console.log("[NetSanctum Helper] Found token in top window, sending to server:", serverUrl);
             fetch(serverUrl + '/alllib/api/save_token_external?token=' + encodeURIComponent(token))
                 .then(resp => resp.text())
-                .then(text => console.log("[NetSanctum Helper] Server response for token sync:", text))
+                .then(text => {{
+                    console.log("[NetSanctum Helper] Server response for token sync:", text);
+                    if (text === "SAVED") {{
+                        const banner = document.createElement('div');
+                        banner.style.position = 'fixed';
+                        banner.style.top = '15px';
+                        banner.style.right = '15px';
+                        banner.style.background = '#000';
+                        banner.style.border = '2px solid #14b8a6';
+                        banner.style.color = '#14b8a6';
+                        banner.style.padding = '15px';
+                        banner.style.zIndex = '999999';
+                        banner.style.fontFamily = 'monospace';
+                        banner.style.fontSize = '12px';
+                        banner.style.maxWidth = '320px';
+                        banner.style.boxShadow = '0 5px 15px rgba(0,0,0,0.5)';
+                        banner.innerHTML = `
+                            <div style="font-weight: bold; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px;">✓ NetSanctum Synced</div>
+                            <div style="color: #a1a1aa; font-size: 10px; line-height: 1.4;">Токен авторизации успешно передан в NetSanctum. Вы можете закрыть эту вкладку.</div>
+                        `;
+                        document.body.appendChild(banner);
+                        setTimeout(() => banner.remove(), 10000);
+                    }}
+                }})
                 .catch(err => console.error("[NetSanctum Helper] Failed to sync token to server:", err));
         }}
     }}
