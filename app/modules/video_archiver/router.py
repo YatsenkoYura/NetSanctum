@@ -2,6 +2,7 @@ import json
 import mimetypes
 import subprocess
 
+import anyio
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
@@ -291,18 +292,28 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
         return StreamingResponse(iter_audio(), media_type="audio/mpeg")
     else:
         # S3 on-the-fly streaming: pipe input file stream into ffmpeg stdin
+        import threading
+
         cmd = ["ffmpeg", "-i", "pipe:0", "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-        def iter_audio_s3():
+        def feed_stdin():
             try:
-                # Stream file stream into process stdin in chunks
-                # Starlette StreamingResponse reads in chunks as well
                 with storage.get_file_stream(video.file_path) as s3_stream:
                     while chunk := s3_stream.read(65536):
                         proc.stdin.write(chunk)
-                proc.stdin.close()
+            except Exception:
+                pass
+            finally:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
 
+        def iter_audio_s3():
+            feeder = threading.Thread(target=feed_stdin, daemon=True)
+            feeder.start()
+            try:
                 while True:
                     chunk = proc.stdout.read(16384)
                     if not chunk:
@@ -524,8 +535,9 @@ async def remove_video_from_playlist(
 
 # ── Storage Cleanup Hooks Registration ───────────────────
 try:
+    from sqlalchemy import delete, select, update
+
     from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
-    from sqlalchemy import update, delete, select
 
     async def video_file_deletion_hook(db: AsyncSession, path: str):
         if path.startswith("video_archiver/videos/"):

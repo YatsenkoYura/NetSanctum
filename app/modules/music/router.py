@@ -630,8 +630,9 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
 
 # ── Storage Cleanup Hooks Registration ───────────────────
 try:
+    from sqlalchemy import delete, update
+
     from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
-    from sqlalchemy import update, delete
 
     async def music_file_deletion_hook(db: AsyncSession, path: str):
         if path.startswith("music/audio/"):

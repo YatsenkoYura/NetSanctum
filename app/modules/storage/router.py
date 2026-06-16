@@ -2,22 +2,21 @@
 Storage module router.
 """
 
+import asyncio
+import logging
 import os
 import shutil
-import logging
-import mimetypes
 from pathlib import Path
 
 import redis
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select, update, delete
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
 from app.core.config import get_settings
+from app.core.database import get_db
 from app.core.security import OwnerUser, get_current_user
-from app.core.storage import get_storage, LocalStorage, S3Storage
+from app.core.storage import get_storage
 from app.core.templates import templates
 
 logger = logging.getLogger(__name__)
@@ -191,7 +190,7 @@ async def cleanup_database_for_module(db: AsyncSession, module: str):
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def storage_dashboard(request: Request, user=Depends(get_current_user)):
     lang = request.cookies.get("lang") or "en"
-    stats = _get_storage_stats()
+    stats = await asyncio.to_thread(_get_storage_stats)
     return templates.TemplateResponse(
         request, "storage_dashboard.html", {"user": user, "lang": lang, "stats": stats}
     )
@@ -199,7 +198,7 @@ async def storage_dashboard(request: Request, user=Depends(get_current_user)):
 
 @router.post("/api/recalculate", response_class=HTMLResponse, include_in_schema=False)
 async def api_recalculate(request: Request, user=Depends(get_current_user)):
-    stats = _get_storage_stats()
+    stats = await asyncio.to_thread(_get_storage_stats)
     lang = request.cookies.get("lang") or "en"
     return templates.TemplateResponse(
         request, "storage_dashboard.html", {"user": user, "lang": lang, "stats": stats, "only_stats": True}
@@ -211,12 +210,12 @@ async def delete_file(
     request: Request, path: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     storage = get_storage()
-    if storage.file_exists(path):
-        storage.delete_file(path)
+    if await asyncio.to_thread(storage.file_exists, path):
+        await asyncio.to_thread(storage.delete_file, path)
         await cleanup_database_for_file(db, path)
         await db.commit()
 
-    stats = _get_storage_stats()
+    stats = await asyncio.to_thread(_get_storage_stats)
     lang = request.cookies.get("lang") or "en"
     return templates.TemplateResponse(
         request, "storage_dashboard.html", {"user": user, "lang": lang, "stats": stats, "only_stats": True}
@@ -230,31 +229,34 @@ async def clean_module(
     if module not in ("ranobelib", "music", "video_archiver", "other"):
         raise HTTPException(status_code=400, detail="Invalid module")
 
-    storage = get_storage()
-    storage_root = Path(settings.LOCAL_STORAGE_ROOT).resolve()
+    def do_clean():
+        storage = get_storage()
+        storage_root = Path(settings.LOCAL_STORAGE_ROOT).resolve()
 
-    if settings.STORAGE_BACKEND == "s3":
-        try:
-            client = storage._client
-            bucket = storage._bucket
-            paginator = client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=bucket, Prefix=f"{module}/")
+        if settings.STORAGE_BACKEND == "s3":
+            try:
+                client = storage._client
+                bucket = storage._bucket
+                paginator = client.get_paginator("list_objects_v2")
+                pages = paginator.paginate(Bucket=bucket, Prefix=f"{module}/")
 
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    storage.delete_file(obj["Key"])
-        except Exception as e:
-            logger.error(f"Failed to clear S3 module folder: {e}")
-    else:
-        module_path = storage_root / module
-        if module_path.exists() and module_path.is_dir():
-            shutil.rmtree(module_path)
-            module_path.mkdir(parents=True, exist_ok=True)
+                for page in pages:
+                    for obj in page.get("Contents", []):
+                        storage.delete_file(obj["Key"])
+            except Exception as e:
+                logger.error(f"Failed to clear S3 module folder: {e}")
+        else:
+            module_path = storage_root / module
+            if module_path.exists() and module_path.is_dir():
+                shutil.rmtree(module_path)
+                module_path.mkdir(parents=True, exist_ok=True)
+
+    await asyncio.to_thread(do_clean)
 
     await cleanup_database_for_module(db, module)
     await db.commit()
 
-    stats = _get_storage_stats()
+    stats = await asyncio.to_thread(_get_storage_stats)
     lang = request.cookies.get("lang") or "en"
     return templates.TemplateResponse(
         request, "storage_dashboard.html", {"user": user, "lang": lang, "stats": stats, "only_stats": True}

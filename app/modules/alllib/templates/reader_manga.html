@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+{% block title %}{{ novel.title }} — Manga Reader{% endblock %}
+
+{% block content %}
+<div class="fixed inset-0 bg-black flex flex-col overflow-hidden" style="z-index:50;">
+
+  <!-- TOP BAR: chapter title + mode controls -->
+  <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300">
+    <div class="flex items-center gap-3">
+      <a href="/alllib/dashboard" class="text-zinc-600 hover:text-teal-400 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      </a>
+      <span id="top-title" class="text-[11px] font-mono text-zinc-400 truncate max-w-xs">{{ novel.title }}</span>
+    </div>
+    <!-- Mode switcher -->
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1 bg-black border border-zinc-800 p-0.5">
+        <button onclick="setMode('webtoon')" id="btn-webtoon" class="px-2 py-0.5 text-[10px] font-mono uppercase transition-colors">{{ _('alllib', 'mode_webtoon') }}</button>
+        <button onclick="setMode('single')" id="btn-single" class="px-2 py-0.5 text-[10px] font-mono uppercase transition-colors">{{ _('alllib', 'mode_single') }}</button>
+        <button onclick="setMode('double')" id="btn-double" class="px-2 py-0.5 text-[10px] font-mono uppercase transition-colors">{{ _('alllib', 'mode_double') }}</button>
+      </div>
+      <!-- Double-page offset toggle (visible only in double mode) -->
+      <div id="offset-controls" class="hidden items-center gap-1">
+        <span class="text-[9px] font-mono text-zinc-600 uppercase">{{ _('alllib', 'offset') }}:</span>
+        <button onclick="setOffset(0)" id="btn-off0" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors">3|4</button>
+        <button onclick="setOffset(1)" id="btn-off1" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors">4|3</button>
+      </div>
+      <!-- Zen toggle -->
+      <button onclick="setZenMode(true)"
+              class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 hover:border-teal-400/50 hover:text-teal-400 transition-colors uppercase bg-black text-zinc-400 flex items-center gap-1 rounded cursor-pointer">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        {{ _('alllib', 'zen_mode') }}
+      </button>
+    </div>
+  </div>
+
+  <!-- FLOATING EXIT BUTTON (Visible only in Zen mode, returns to normal reader) -->
+  <button id="float-exit-btn" onclick="setZenMode(false)"
+     class="hidden fixed bottom-4 left-4 z-50 items-center gap-1.5 px-3.5 py-2 border border-zinc-800/85 bg-black/90 text-zinc-500 hover:text-red-500 hover:border-red-500/80 hover:bg-red-950/20 rounded font-mono text-[11px] uppercase tracking-wider transition-all duration-300 opacity-40 hover:opacity-100 shadow-xl select-none cursor-pointer">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+    </svg>
+    {{ _('alllib', 'exit_zen') }}
+  </button>
+
+  <!-- MAIN READER AREA -->
+  <div id="reader-area" class="flex-1 overflow-hidden relative select-none mt-9 mb-9">
+
+    <!-- WEBTOON view -->
+    <div id="view-webtoon" onclick="if(!zenMode) toggleUI(event)" class="absolute inset-0 overflow-y-auto hidden flex-col items-center py-4 gap-0
+        [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-black [&::-webkit-scrollbar-thumb]:bg-zinc-800">
+      <div id="webtoon-pages" class="w-full max-w-3xl mx-auto flex flex-col items-center gap-0"></div>
+      <!-- Webtoon bottom nav -->
+      <div class="mt-6 mb-4 flex items-center gap-4">
+        <button onclick="navigateChapter(-1); event.stopPropagation();" class="px-4 py-2 border border-zinc-800 text-[11px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-950">← {{ _('alllib', 'prev_chapter') }}</button>
+        <button onclick="navigateChapter(1); event.stopPropagation();" class="px-4 py-2 border border-zinc-800 text-[11px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-950">{{ _('alllib', 'next_chapter') }} →</button>
+      </div>
+    </div>
+
+    <!-- SINGLE / DOUBLE page view -->
+    <div id="view-paged" class="absolute inset-0 flex items-center justify-center hidden">
+      <!-- Left click zone -->
+      <div onclick="prevPage(); event.stopPropagation();" class="absolute left-0 top-0 bottom-0 w-1/3 cursor-pointer z-10 flex items-center justify-start pl-4 opacity-0 hover:opacity-100 transition-opacity">
+        <div class="bg-black/60 border border-zinc-800 p-3">
+          <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+        </div>
+      </div>
+      <!-- Center click zone to toggle UI -->
+      <div onclick="if(!zenMode) toggleUI(event)" class="absolute inset-x-1/3 top-0 bottom-0 cursor-pointer z-5"></div>
+      <!-- Right click zone -->
+      <div onclick="nextPage(); event.stopPropagation();" class="absolute right-0 top-0 bottom-0 w-1/3 cursor-pointer z-10 flex items-center justify-end pr-4 opacity-0 hover:opacity-100 transition-opacity">
+        <div class="bg-black/60 border border-zinc-800 p-3">
+          <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </div>
+      </div>
+      <!-- Pages display -->
+      <div id="paged-display" class="h-full w-full flex items-center justify-center gap-0 pointer-events-none"></div>
+    </div>
+
+  </div>
+
+  <!-- BOTTOM BAR: chapter nav + page indicator -->
+  <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
+    <!-- Exit button: subtle, red on hover -->
+    <a href="/alllib/dashboard"
+       class="group flex items-center gap-1.5 px-3 py-1.5 border border-zinc-800/60 text-zinc-500 hover:text-red-500 hover:border-red-500/50 transition-all duration-200 text-[10px] font-mono uppercase bg-zinc-900 rounded select-none">
+      <svg class="w-3 h-3 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      {{ _('alllib', 'exit') }}
+    </a>
+
+    <!-- Chapter navigation -->
+    <div class="flex items-center gap-2">
+      <button onclick="navigateChapter(-1)" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900">← {{ _('alllib', 'prev') }}</button>
+      <div class="relative">
+        <button onclick="toggleChapterList()" id="chapter-label" class="px-3 py-1.5 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:border-teal-400/60 transition-colors cursor-pointer min-w-32 text-center bg-zinc-900">—</button>
+        <!-- Chapter dropdown -->
+        <div id="chapter-dropdown" class="hidden absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-zinc-950 border border-zinc-800 shadow-2xl z-50 w-64 max-h-64 overflow-y-auto
+            [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-zinc-950 [&::-webkit-scrollbar-thumb]:bg-zinc-700">
+          {% for ch in chapters %}
+          <button onclick="loadChapter('{{ ch.id }}'); closeChapterList();"
+            data-ch-id="{{ ch.id }}"
+            class="ch-item w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-500 hover:bg-zinc-900 hover:text-teal-400 border-b border-zinc-900/50 transition-colors">
+            Vol.{{ ch.volume }} Ch.{{ ch.number }}{% if ch.name %} — {{ ch.name }}{% endif %}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      <button onclick="navigateChapter(1)" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900">{{ _('alllib', 'next') }} →</button>
+    </div>
+
+    <!-- Page counter -->
+    <span id="page-counter" class="text-[10px] font-mono text-zinc-600 min-w-20 text-right">— / —</span>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+  const CHAPTERS = [{% for ch in chapters %}{ id: '{{ ch.id }}', label: 'Vol.{{ ch.volume }} Ch.{{ ch.number }}{% if ch.name %} — {{ ch.name }}{% endif %}' },{% endfor %}];
+  let currentChapterId = null;
+  let pages = [];
+  let pageIndex = 0;
+  let mode = localStorage.getItem('manga_mode') || 'webtoon'; // webtoon | single | double
+  let pageOffset = parseInt(localStorage.getItem('manga_offset') || '0');
+  let uiVisible = true;
+  let zenMode = localStorage.getItem('manga_zen') === 'true';
+
+  // ── UI Visibility ──────────────────────────────────────
+  function toggleUI(event) {
+    if (zenMode) return; // In Zen mode, UI toggle is disabled (only floating button exits Zen mode)
+    if (event) {
+      if (event.target.closest('button') || event.target.closest('a') || event.target.closest('select') || event.target.closest('#chapter-dropdown')) return;
+    }
+    uiVisible = !uiVisible;
+    const topBar = document.getElementById('top-bar');
+    const bottomBar = document.getElementById('bottom-bar');
+    const readerArea = document.getElementById('reader-area');
+    if (uiVisible) {
+      topBar.classList.remove('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.remove('translate-y-full', 'opacity-0', 'pointer-events-none');
+      readerArea.classList.add('mt-9', 'mb-9');
+    } else {
+      topBar.classList.add('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.add('translate-y-full', 'opacity-0', 'pointer-events-none');
+      readerArea.classList.remove('mt-9', 'mb-9');
+    }
+  }
+
+  function setZenMode(val) {
+    zenMode = val;
+    localStorage.setItem('manga_zen', val ? 'true' : 'false');
+    applyZenMode();
+  }
+
+  function applyZenMode() {
+    const topBar = document.getElementById('top-bar');
+    const bottomBar = document.getElementById('bottom-bar');
+    const floatExit = document.getElementById('float-exit-btn');
+    const readerArea = document.getElementById('reader-area');
+
+    if (zenMode) {
+      topBar.classList.add('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.add('translate-y-full', 'opacity-0', 'pointer-events-none');
+      floatExit.classList.remove('hidden');
+      floatExit.classList.add('flex');
+      readerArea.classList.remove('mt-9', 'mb-9');
+      uiVisible = false;
+    } else {
+      topBar.classList.remove('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.remove('translate-y-full', 'opacity-0', 'pointer-events-none');
+      floatExit.classList.add('hidden');
+      floatExit.classList.remove('flex');
+      readerArea.classList.add('mt-9', 'mb-9');
+      uiVisible = true;
+    }
+  }
+
+  // ── Mode UI ────────────────────────────────────────────
+  function setMode(m) {
+    mode = m;
+    localStorage.setItem('manga_mode', m);
+    applyMode();
+  }
+
+  function setOffset(o) {
+    pageOffset = o;
+    localStorage.setItem('manga_offset', o);
+    renderPagedView();
+    updateOffsetBtns();
+  }
+
+  function applyMode() {
+    const webtoon = document.getElementById('view-webtoon');
+    const paged = document.getElementById('view-paged');
+    const offsetCtrl = document.getElementById('offset-controls');
+
+    ['btn-webtoon','btn-single','btn-double'].forEach(id => {
+      const btn = document.getElementById(id);
+      btn.className = 'px-2 py-0.5 text-[10px] font-mono uppercase transition-colors ' +
+        (id === 'btn-' + mode ? 'bg-zinc-800 text-teal-400' : 'text-zinc-500 hover:text-zinc-300');
+    });
+
+    if (mode === 'webtoon') {
+      webtoon.classList.remove('hidden'); webtoon.classList.add('flex');
+      paged.classList.add('hidden');
+      offsetCtrl.classList.add('hidden'); offsetCtrl.classList.remove('flex');
+    } else {
+      webtoon.classList.add('hidden'); webtoon.classList.remove('flex');
+      paged.classList.remove('hidden');
+      if (mode === 'double') {
+        offsetCtrl.classList.remove('hidden'); offsetCtrl.classList.add('flex');
+      } else {
+        offsetCtrl.classList.add('hidden'); offsetCtrl.classList.remove('flex');
+      }
+      renderPagedView();
+    }
+  }
+
+  function updateOffsetBtns() {
+    document.getElementById('btn-off0').className = 'px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors ' +
+      (pageOffset === 0 ? 'bg-zinc-800 text-teal-400' : 'text-zinc-500 hover:text-zinc-300');
+    document.getElementById('btn-off1').className = 'px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors ' +
+      (pageOffset === 1 ? 'bg-zinc-800 text-teal-400' : 'text-zinc-500 hover:text-zinc-300');
+  }
+
+  // ── Chapter loading ────────────────────────────────────
+  async function loadChapter(chId) {
+    currentChapterId = String(chId);
+    const ch = CHAPTERS.find(c => c.id === currentChapterId);
+    if (ch) {
+      document.getElementById('top-title').textContent = '{{ novel.title }} — ' + ch.label;
+      document.getElementById('chapter-label').textContent = ch.label;
+    }
+    // highlight in dropdown
+    document.querySelectorAll('.ch-item').forEach(b => {
+      b.classList.toggle('text-teal-400', b.dataset.chId === currentChapterId);
+      b.classList.toggle('bg-zinc-900/50', b.dataset.chId === currentChapterId);
+    });
+
+    // fetch chapter content to get pages list
+    const resp = await fetch(`/alllib/ui/chapter/${chId}`);
+    if (!resp.ok) return;
+    const html = await resp.text();
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const container = tmp.querySelector('#manga-chapter-container');
+    if (!container) return;
+    pages = JSON.parse(container.getAttribute('data-pages') || '[]');
+    pageIndex = 0;
+
+    if (mode === 'webtoon') {
+      buildWebtoon();
+    } else {
+      renderPagedView();
+    }
+    updateNav();
+  }
+
+  function buildWebtoon() {
+    const el = document.getElementById('webtoon-pages');
+    el.innerHTML = '';
+    pages.forEach(src => {
+      const img = document.createElement('img');
+      img.src = src;
+      img.className = 'w-full h-auto block';
+      img.loading = 'lazy';
+      el.appendChild(img);
+    });
+    document.getElementById('view-webtoon').scrollTop = 0;
+  }
+
+  function renderPagedView() {
+    const display = document.getElementById('paged-display');
+    display.innerHTML = '';
+
+    if (mode === 'single') {
+      if (pages[pageIndex]) display.appendChild(makeImg(pages[pageIndex], 'max-h-full max-w-full object-contain'));
+      document.getElementById('page-counter').textContent = `${pageIndex + 1} / ${pages.length}`;
+    } else {
+      // double page with offset
+      let leftIdx, rightIdx;
+      if (pageOffset === 1) {
+        if (pageIndex === 0) {
+          leftIdx = 0;
+          rightIdx = null;
+        } else {
+          leftIdx = (pageIndex - 1) * 2 + 1;
+          rightIdx = leftIdx + 1;
+        }
+      } else {
+        leftIdx = pageIndex * 2;
+        rightIdx = leftIdx + 1;
+      }
+
+      if (leftIdx < pages.length && pages[leftIdx]) {
+        display.appendChild(makeImg(pages[leftIdx], 'max-h-full max-w-[50vw] object-contain'));
+      }
+      if (rightIdx !== null && rightIdx < pages.length && pages[rightIdx]) {
+        display.appendChild(makeImg(pages[rightIdx], 'max-h-full max-w-[50vw] object-contain'));
+      }
+
+      // Update counter
+      let label = "";
+      if (pageOffset === 1 && pageIndex === 0) {
+        label = "1";
+      } else {
+        const start = leftIdx + 1;
+        const end = rightIdx !== null && rightIdx < pages.length ? rightIdx + 1 : null;
+        label = end ? `${start}-${end}` : `${start}`;
+      }
+      document.getElementById('page-counter').textContent = `${label} / ${pages.length}`;
+    }
+  }
+
+  function makeImg(src, cls) {
+    const img = document.createElement('img');
+    img.src = src;
+    img.className = cls;
+    return img;
+  }
+
+  function nextPage() {
+    if (mode === 'single') {
+      if (pageIndex < pages.length - 1) { pageIndex++; renderPagedView(); }
+      else navigateChapter(1);
+    } else {
+      let max;
+      if (pageOffset === 1) {
+        max = Math.ceil((pages.length - 1) / 2);
+      } else {
+        max = Math.ceil(pages.length / 2) - 1;
+      }
+      if (pageIndex < max) { pageIndex++; renderPagedView(); }
+      else navigateChapter(1);
+    }
+  }
+
+  function prevPage() {
+    if (pageIndex > 0) { pageIndex--; renderPagedView(); }
+    else navigateChapter(-1);
+  }
+
+  function navigateChapter(dir) {
+    const idx = CHAPTERS.findIndex(c => c.id === currentChapterId);
+    const next = CHAPTERS[idx + dir];
+    if (next) loadChapter(next.id);
+  }
+
+  function updateNav() {}
+
+  // ── Chapter dropdown ───────────────────────────────────
+  function toggleChapterList() {
+    document.getElementById('chapter-dropdown').classList.toggle('hidden');
+  }
+  function closeChapterList() {
+    document.getElementById('chapter-dropdown').classList.add('hidden');
+  }
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#chapter-label') && !e.target.closest('#chapter-dropdown'))
+      closeChapterList();
+  });
+
+  // ── Keyboard nav ───────────────────────────────────────
+  window.addEventListener('keydown', e => {
+    if (mode !== 'webtoon') {
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextPage(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prevPage(); }
+    }
+    if (e.key === 'ArrowRight' && e.altKey) { navigateChapter(1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft' && e.altKey) { navigateChapter(-1); e.preventDefault(); }
+    if (e.key === 'z' || e.key === 'Z') { setZenMode(!zenMode); }
+  });
+
+  // ── Init ───────────────────────────────────────────────
+  applyMode();
+  updateOffsetBtns();
+  applyZenMode();
+  {% if first_chapter_id %}
+  loadChapter('{{ first_chapter_id }}');
+  {% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,132 @@
+"""
+Localization strings for Lib Network (alllib) module.
+"""
+
+TRANSLATIONS = {
+    "ru": {
+        "module_title": "Lib Сеть",
+        "module_subtitle": "Единый каталог Ранобэ, Манги, Хентая и Комиксов",
+        "tab_library": "Библиотека",
+        "tab_download": "Скачать",
+        "tab_active_downloads": "Активные загрузки",
+        "search_placeholder": "Поиск по названию или описанию...",
+        "url_placeholder": "Вставьте ссылку (mangalib.me, ranobelib.me, hentailib.org...)",
+        "btn_download": "Скачать",
+        "chapters_count": "глав",
+        "details": "Детали",
+        "no_novels": "У вас пока нет скачанных тайтлов.",
+        "no_active": "Нет активных загрузок.",
+        "export": "Экспорт CBZ/EPUB",
+        "sync": "Синхронизировать",
+        "delete": "Удалить",
+
+        # Types / Formats
+        "type_novel": "Ранобэ",
+        "type_manga": "Манга",
+        "type_hentai": "Хентай (18+)",
+        "type_slash": "Яой / Слэш (18+)",
+        "type_comics": "Комикс",
+        "type_anime": "Аниме",
+        "filter_all": "Все форматы (без 18+)",
+        "filter_all_18plus": "Все форматы (с 18+)",
+
+        # UI controls
+        "back_to_dashboard": "Назад в библиотеку",
+        "btn_cancel_all": "Отменить все",
+        "hide_18plus": "Скрыть 18+ сайты",
+        "exit": "Выход",
+        "prev": "Назад",
+        "next": "Вперед",
+        "prev_chapter": "Пред. глава",
+        "next_chapter": "След. глава",
+        "page": "Страница",
+
+        # Reader specific
+        "mode_webtoon": "Вебтун",
+        "mode_single": "Постранично",
+        "mode_double": "Две страницы",
+        "offset": "Смещение",
+        "zen_mode": "Зен",
+        "exit_zen": "Выйти из Зен",
+
+        # Novel settings
+        "font_serif": "С засечками",
+        "font_sans": "Без засечек",
+        "size_compact": "Компактно",
+        "size_normal": "Обычный",
+        "size_wide": "Широкий",
+        "select_chapter": "Выберите главу ниже для начала чтения.",
+        "loading": "Загрузка...",
+        "failed_load": "Не удалось загрузить.",
+
+        # Anime player
+        "episode": "Серия",
+        "select_episode": "Выберите серию",
+        "loading_episode": "Загрузка серии...",
+        "loading_player": "Загрузка плеера...",
+        "failed_load_player": "Не удалось загрузить плеер серии.",
+    },
+    "en": {
+        "module_title": "Lib Network",
+        "module_subtitle": "Unified Library for Light Novels, Manga, Hentai & Comics",
+        "tab_library": "Library",
+        "tab_download": "Download",
+        "tab_active_downloads": "Active Downloads",
+        "search_placeholder": "Search by title or description...",
+        "url_placeholder": "Paste Lib URL (mangalib.me, ranobelib.me, hentailib.org...)",
+        "btn_download": "Download",
+        "chapters_count": "chapters",
+        "details": "Details",
+        "no_novels": "No downloaded titles yet.",
+        "no_active": "No active downloads.",
+        "export": "Export CBZ/EPUB",
+        "sync": "Synchronize",
+        "delete": "Delete",
+
+        # Types / Formats
+        "type_novel": "Light Novel",
+        "type_manga": "Manga",
+        "type_hentai": "Hentai (18+)",
+        "type_slash": "Yaoi / Slash (18+)",
+        "type_comics": "Comic",
+        "type_anime": "Anime",
+        "filter_all": "All Formats (no 18+)",
+        "filter_all_18plus": "All Formats (with 18+)",
+
+        # UI controls
+        "back_to_dashboard": "Back to Library",
+        "btn_cancel_all": "Cancel All",
+        "hide_18plus": "Hide 18+ sites",
+        "exit": "Exit",
+        "prev": "Prev",
+        "next": "Next",
+        "prev_chapter": "Prev Ch.",
+        "next_chapter": "Next Ch.",
+        "page": "Page",
+
+        # Reader specific
+        "mode_webtoon": "Webtoon",
+        "mode_single": "Single",
+        "mode_double": "Double",
+        "offset": "Offset",
+        "zen_mode": "Zen",
+        "exit_zen": "Exit Zen",
+
+        # Novel settings
+        "font_serif": "Serif",
+        "font_sans": "Sans",
+        "size_compact": "Compact",
+        "size_normal": "Normal",
+        "size_wide": "Wide",
+        "select_chapter": "Select a chapter below to start reading.",
+        "loading": "Loading...",
+        "failed_load": "Failed to load.",
+
+        # Anime player
+        "episode": "Episode",
+        "select_episode": "Select episode",
+        "loading_episode": "Loading episode...",
+        "loading_player": "Loading player...",
+        "failed_load_player": "Failed to load episode player.",
+    },
+}

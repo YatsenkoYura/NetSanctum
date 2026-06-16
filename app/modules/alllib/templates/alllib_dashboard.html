@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('alllib', 'module_title') }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header / Branding -->
+    <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-teal-950/20 border border-teal-900/40 text-teal-400">
+                <!-- Book/Library icon -->
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="text-2xl font-black text-white tracking-tight uppercase font-mono">
+                    {{ _('alllib', 'module_title') }}
+                </h1>
+                <p class="text-xs text-zinc-500 font-mono mt-1">
+                    {{ _('alllib', 'module_subtitle') }}
+                </p>
+            </div>
+        </div>
+        
+        <!-- Tab Buttons -->
+        <div class="flex flex-wrap gap-1 bg-black p-1 border border-zinc-800">
+            <button onclick="alllibSwitchTab('library')" id="btn-tab-library" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z" />
+                </svg>
+                <span>[{{ _('alllib', 'tab_library') }}]</span>
+            </button>
+            <button onclick="alllibSwitchTab('download')" id="btn-tab-download" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>{{ _('alllib', 'tab_download') }}</span>
+            </button>
+            <button onclick="alllibSwitchTab('active_downloads')" id="btn-tab-active_downloads" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>{{ _('alllib', 'tab_active_downloads') }}</span>
+            </button>
+            <button onclick="alllibSwitchTab('settings')" id="btn-tab-settings" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Settings</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Tab: Library ── -->
+    <div id="tab-content-library" class="space-y-6">
+        <!-- Search & Filters -->
+        <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
+                <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
+                       placeholder="{{ _('alllib', 'search_placeholder') }}" 
+                       class="flex-1 bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors">
+                
+                <select id="library-format" name="format_filter" onchange="alllibRefreshLibrary(); alllibApplyFilters();"
+                        class="bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-zinc-400 focus:outline-none transition-colors">
+                    <option value="all">{{ _('alllib', 'filter_all') }}</option>
+                    <option value="all_18plus">{{ _('alllib', 'filter_all_18plus') }}</option>
+                    <option value="novel">{{ _('alllib', 'type_novel') }}</option>
+                    <option value="manga">{{ _('alllib', 'type_manga') }}</option>
+                    <option value="hentai">{{ _('alllib', 'type_hentai') }}</option>
+                    <option value="slash">{{ _('alllib', 'type_slash') }}</option>
+                    <option value="comics">{{ _('alllib', 'type_comics') }}</option>
+                    <option value="anime">{{ _('alllib', 'type_anime') }}</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Grid Container -->
+        <div id="library-items"
+             hx-get="/alllib/ui/library"
+             hx-trigger="load, reloadLibrary from:body"
+             hx-include="#library-search, #library-format"
+             hx-swap="innerHTML"
+             hx-on::after-settle="alllibApplyFilters()">
+            <div class="text-center py-12 font-mono text-xs text-zinc-600">Loading library...</div>
+        </div>
+    </div>
+
+    <!-- ── Tab: Download ── -->
+    <div id="tab-content-download" class="hidden space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto space-y-5">
+            <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider border-b-2 border-zinc-800 pb-3 flex items-center">
+                <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>{{ _('alllib', 'tab_download') }}</span>
+            </h3>
+
+            <form onsubmit="alllibSubmitDownloadTask(event)" class="space-y-4">
+                <div class="space-y-1.5">
+                    <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Lib URL</label>
+                    <input type="url" required id="dl-url" 
+                           placeholder="{{ _('alllib', 'url_placeholder') }}"
+                           class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Bearer Token / JWT (Optional)</label>
+                    <input type="text" id="dl-token" 
+                           placeholder="Optional JWT token specifically for this download..."
+                           class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                    <p class="text-[9px] text-zinc-500 font-mono">If left blank, the global token from Settings will be used.</p>
+                </div>
+
+                <div id="anime-options-container" class="hidden border border-zinc-800 bg-black p-4 space-y-4">
+                    <div class="text-xs font-mono font-bold text-teal-400 uppercase border-b border-zinc-900 pb-2">Anime Download Options</div>
+                    
+                    <div id="anime-options-loading" class="hidden text-zinc-500 font-mono text-xs py-2">
+                         <span class="animate-pulse">Fetching anime seasons & voiceovers metadata...</span>
+                    </div>
+
+                    <div id="anime-options-fields" class="space-y-4">
+                        <div class="space-y-1.5">
+                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Title</label>
+                            <div id="anime-preview-title" class="text-xs font-sans font-bold text-white"></div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Select Seasons</label>
+                            <div id="anime-seasons-list" class="flex flex-wrap gap-2"></div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Episode Range</label>
+                            <input type="text" id="dl-anime-episodes" value="All"
+                                   placeholder="e.g. 1-12, 15, 20-25 or All"
+                                   class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Voiceover / Translation Team</label>
+                            <select id="dl-anime-team" 
+                                    class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                                <option value="any">Any (First Available)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" 
+                        class="w-full bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider py-3 px-4 rounded-none border border-teal-400 hover:bg-black hover:text-teal-400 transition-all cursor-pointer">
+                    {{ _('alllib', 'btn_download') }}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ── Tab: Active Downloads ── -->
+    <div id="tab-content-active_downloads" class="hidden space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto space-y-4">
+            <div class="flex justify-between items-center border-b-2 border-zinc-800 pb-3">
+                <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider flex items-center">
+                    <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>{{ _('alllib', 'tab_active_downloads') }}</span>
+                </h3>
+                <button hx-delete="/alllib/api/tasks/all" hx-swap="none"
+                        class="bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold font-mono px-2 py-1 uppercase hover:bg-red-900 transition-colors cursor-pointer">
+                    {{ _('alllib', 'btn_cancel_all') }}
+                </button>
+            </div>
+            
+            <!-- Auto-polling active downloads list -->
+            <div id="active-tasks-list" hx-get="/alllib/ui/active_downloads" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
+                <div class="text-center py-6 text-zinc-600 font-mono text-xs">No active downloads</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Tab: Settings ── -->
+    <div id="tab-content-settings" class="hidden space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto">
+            <div id="alllib-settings-container"
+                 hx-get="/alllib/ui/settings"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <div class="text-center py-6 text-zinc-600 font-mono text-xs">Loading settings...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    var alllibActiveTab = 'library';
+
+    window.alllibSwitchTab = function(tab) {
+        // Hide active
+        document.getElementById(`tab-content-${alllibActiveTab}`).classList.add('hidden');
+        
+        // Remove active class and brackets from old tab
+        const oldBtn = document.getElementById(`btn-tab-${alllibActiveTab}`);
+        oldBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center";
+        const oldSpan = oldBtn.querySelector('span');
+        if (oldSpan) {
+            oldSpan.innerText = oldSpan.innerText.replace(/^\[|\]$/g, '');
+        }
+
+        // Show new active and add brackets
+        document.getElementById(`tab-content-${tab}`).classList.remove('hidden');
+        const newBtn = document.getElementById(`btn-tab-${tab}`);
+        newBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center";
+        const newSpan = newBtn.querySelector('span');
+        if (newSpan && !newSpan.innerText.startsWith('[')) {
+            newSpan.innerText = `[${newSpan.innerText}]`;
+        }
+        
+        alllibActiveTab = tab;
+
+        if (tab === 'library') {
+            alllibReloadLibraryTab();
+        } else if (tab === 'active_downloads') {
+            const activeList = document.getElementById('active-tasks-list');
+            if (activeList) {
+                htmx.trigger(activeList, 'load');
+            }
+        } else if (tab === 'settings') {
+            const container = document.getElementById('alllib-settings-container');
+            if (container) {
+                htmx.trigger(container, 'load');
+            }
+        }
+    };
+
+    window.alllibReloadLibraryTab = function() {
+        if (!document.getElementById('library-search')) {
+            htmx.ajax('GET', '/alllib/ui/library_tab', {target: '#tab-content-library', swap: 'innerHTML'});
+        } else {
+            alllibRefreshLibrary();
+        }
+    };
+
+    window.alllibRefreshLibrary = function() {
+        const library = document.getElementById('library-items');
+        if (library) {
+            htmx.trigger(library, 'load');
+        }
+    };
+
+    window.alllibApplyFilters = function() {
+        const searchInput = document.getElementById('library-search');
+        if (!searchInput) return;
+
+        const search = searchInput.value.toLowerCase().trim();
+        const fmt = document.getElementById('library-format').value;
+        
+        const cards = document.querySelectorAll('.library-card');
+        let visibleCount = 0;
+
+        cards.forEach(card => {
+            const title = (card.getAttribute('data-title') || '').toLowerCase();
+            const eng = (card.getAttribute('data-eng-name') || '').toLowerCase();
+            const rus = (card.getAttribute('data-rus-name') || '').toLowerCase();
+            const siteId = parseInt(card.getAttribute('data-site-id') || '0');
+            const format = card.getAttribute('data-format') || '';
+            
+            // 1. Search term filter
+            const matchesSearch = !search || title.includes(search) || eng.includes(search) || rus.includes(search);
+            
+            // 2. Format filter
+            let matchesFormat = true;
+            if (fmt && fmt !== 'all' && fmt !== 'all_18plus') {
+                matchesFormat = (format === fmt);
+            }
+            
+            // 3. 18+ filter
+            let matches18 = true;
+            if (fmt !== 'all_18plus' && fmt !== 'hentai' && fmt !== 'slash') {
+                // Hide 18+ sites (SlashLib = 2, HentaiLib = 4)
+                if (siteId === 2 || siteId === 4) {
+                    matches18 = false;
+                }
+            }
+            
+            if (matchesSearch && matchesFormat && matches18) {
+                card.classList.remove('hidden');
+                visibleCount++;
+            } else {
+                card.classList.add('hidden');
+            }
+        });
+        
+        const emptyMessage = document.getElementById('library-empty-message');
+        if (emptyMessage) {
+            emptyMessage.classList.toggle('hidden', visibleCount > 0);
+        }
+    };
+
+    window.alllibSubmitDownloadTask = async function(e) {
+        e.preventDefault();
+        const url = document.getElementById('dl-url').value;
+        const tokenVal = document.getElementById('dl-token').value.trim();
+        const token = tokenVal ? tokenVal : null;
+
+        let payload = { url, token };
+        
+        if (url.includes('anilib')) {
+            const seasonBoxes = document.querySelectorAll('input[name="anime-season"]:checked');
+            const seasons = Array.from(seasonBoxes).map(box => box.value);
+            const episodes_range = document.getElementById('dl-anime-episodes').value.trim();
+            const translation_team = document.getElementById('dl-anime-team').value;
+            
+            payload.seasons = seasons.length > 0 ? seasons : null;
+            payload.episodes_range = episodes_range ? episodes_range : null;
+            payload.translation_team = translation_team !== 'any' ? translation_team : null;
+        }
+
+        const resp = await fetch('/alllib/api/download', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        
+        if (resp.ok) {
+            e.target.reset();
+            const container = document.getElementById('anime-options-container');
+            if (container) container.classList.add('hidden');
+            
+            // Switch to active downloads tab
+            alllibSwitchTab('active_downloads');
+            htmx.trigger(document.getElementById('active-tasks-list'), 'load');
+        } else {
+            alert('Failed to dispatch download task');
+        }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const dlUrlInput = document.getElementById('dl-url');
+        if (dlUrlInput) {
+            dlUrlInput.addEventListener('input', async (e) => {
+                const url = e.target.value.trim();
+                const container = document.getElementById('anime-options-container');
+                const loading = document.getElementById('anime-options-loading');
+                const fields = document.getElementById('anime-options-fields');
+                
+                if (url.includes('anilib')) {
+                    container.classList.remove('hidden');
+                    loading.classList.remove('hidden');
+                    fields.classList.add('hidden');
+                    
+                    try {
+                        const tokenVal = document.getElementById('dl-token').value.trim();
+                        const fetchUrl = `/alllib/api/anime-options?url=${encodeURIComponent(url)}` + (tokenVal ? `&token=${encodeURIComponent(tokenVal)}` : '');
+                        const resp = await fetch(fetchUrl);
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            
+                            document.getElementById('anime-preview-title').innerText = data.title;
+                            
+                            // Populate seasons
+                            const seasonsContainer = document.getElementById('anime-seasons-list');
+                            seasonsContainer.innerHTML = '';
+                            if (data.seasons && data.seasons.length > 0) {
+                                data.seasons.forEach(s => {
+                                    seasonsContainer.innerHTML += `
+                                        <label class="flex items-center gap-1.5 cursor-pointer text-xs font-mono text-zinc-400 bg-zinc-900 border border-zinc-800 px-2 py-1 select-none">
+                                            <input type="checkbox" name="anime-season" value="${s}" checked class="bg-black border-zinc-800 text-teal-400 focus:ring-0">
+                                            <span>Season ${s}</span>
+                                        </label>
+                                    `;
+                                });
+                            } else {
+                                seasonsContainer.innerHTML = '<span class="text-zinc-600 text-xs font-mono">No seasons listed</span>';
+                            }
+                            
+                            // Populate teams
+                            const teamSelect = document.getElementById('dl-anime-team');
+                            teamSelect.innerHTML = '<option value="any">Any (First Available)</option>';
+                            if (data.teams && data.teams.length > 0) {
+                                data.teams.forEach(team => {
+                                    teamSelect.innerHTML += `<option value="${team}">${team}</option>`;
+                                });
+                            }
+                            
+                            loading.classList.add('hidden');
+                            fields.classList.remove('hidden');
+                        } else {
+                            container.classList.add('hidden');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        container.classList.add('hidden');
+                    }
+                } else {
+                    container.classList.add('hidden');
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}
+
+{% block scripts_extra %}{% endblock %}

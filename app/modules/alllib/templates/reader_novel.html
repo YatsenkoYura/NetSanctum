@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}{{ novel.title }} — Reader{% endblock %}
+
+{% block content %}
+<div class="fixed inset-0 flex flex-col overflow-hidden bg-black" id="novel-reader-root" style="z-index:50;">
+
+  <!-- TOP BAR: title + typography controls -->
+  <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300">
+    <div class="flex items-center gap-3 min-w-0">
+      <a href="/alllib/dashboard" class="text-zinc-600 hover:text-teal-400 transition-colors flex-shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      </a>
+      <span id="top-title" class="text-[11px] font-mono text-zinc-400 truncate">{{ novel.title }}</span>
+    </div>
+    <!-- Controls -->
+    <div class="flex items-center gap-3 flex-shrink-0">
+      <!-- Font -->
+      <div class="flex items-center gap-1.5">
+        <button onclick="setFont('serif')" id="btn-serif" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors bg-zinc-900 text-teal-400 cursor-pointer">{{ _('alllib', 'font_serif') }}</button>
+        <button onclick="setFont('sans')" id="btn-sans" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors cursor-pointer">{{ _('alllib', 'font_sans') }}</button>
+      </div>
+      <!-- Size -->
+      <div class="flex items-center gap-1 border border-zinc-800">
+        <button onclick="adjSize(-1)" class="px-2 py-0.5 text-[10px] font-mono text-zinc-500 hover:text-white transition-colors cursor-pointer">A-</button>
+        <span id="size-lbl" class="px-1 text-[10px] font-mono text-zinc-600 min-w-8 text-center select-none">16px</span>
+        <button onclick="adjSize(1)" class="px-2 py-0.5 text-[10px] font-mono text-zinc-500 hover:text-white transition-colors cursor-pointer">A+</button>
+      </div>
+      <!-- Width -->
+      <div class="flex border border-zinc-800">
+        <button onclick="setWidth('compact')" id="btn-compact" class="px-2 py-0.5 text-[10px] font-mono transition-colors cursor-pointer">{{ _('alllib', 'size_compact') }}</button>
+        <button onclick="setWidth('normal')" id="btn-normal" class="px-2 py-0.5 text-[10px] font-mono transition-colors cursor-pointer">{{ _('alllib', 'size_normal') }}</button>
+        <button onclick="setWidth('wide')" id="btn-wide" class="px-2 py-0.5 text-[10px] font-mono transition-colors cursor-pointer">{{ _('alllib', 'size_wide') }}</button>
+      </div>
+      <!-- Theme dots -->
+      <div class="flex items-center gap-1.5">
+        <button onclick="setTheme('dark')" title="Dark" class="w-4 h-4 rounded-full bg-zinc-900 border border-zinc-600 hover:scale-110 transition-transform cursor-pointer"></button>
+        <button onclick="setTheme('sepia')" title="Sepia" class="w-4 h-4 rounded-full bg-[#f4ecd8] border border-amber-700/30 hover:scale-110 transition-transform cursor-pointer"></button>
+        <button onclick="setTheme('light')" title="Light" class="w-4 h-4 rounded-full bg-white border border-zinc-300 hover:scale-110 transition-transform cursor-pointer"></button>
+      </div>
+      <!-- Zen toggle -->
+      <button onclick="setZenMode(true)"
+              class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 hover:border-teal-400/50 hover:text-teal-400 transition-colors uppercase bg-black text-zinc-400 flex items-center gap-1 rounded cursor-pointer">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        {{ _('alllib', 'zen_mode') }}
+      </button>
+    </div>
+  </div>
+
+  <!-- FLOATING EXIT BUTTON (Visible only in Zen mode, returns to normal reader) -->
+  <button id="float-exit-btn" onclick="setZenMode(false)"
+     class="hidden fixed bottom-4 left-4 z-50 items-center gap-1.5 px-3.5 py-2 border border-zinc-800/85 bg-black/90 text-zinc-500 hover:text-red-500 hover:border-red-500/80 hover:bg-red-950/20 rounded font-mono text-[11px] uppercase tracking-wider transition-all duration-300 opacity-40 hover:opacity-100 shadow-xl select-none cursor-pointer">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+    </svg>
+    {{ _('alllib', 'exit_zen') }}
+  </button>
+
+  <!-- READER PANE -->
+  <div id="reader-pane" onclick="if(!zenMode) toggleUI(event)" class="flex-1 overflow-y-auto transition-colors duration-300 py-12
+      [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-zinc-950 [&::-webkit-scrollbar-thumb]:bg-zinc-700">
+    <div id="content-wrap" class="mx-auto px-6 py-10 transition-all duration-300 max-w-2xl mt-4">
+      <div id="chapter-content" class="leading-relaxed">
+        <div class="text-center py-32 text-zinc-600 font-mono text-xs">{{ _('alllib', 'select_chapter') }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
+    <!-- Exit button: subtle, red on hover -->
+    <a href="/alllib/dashboard"
+       class="group flex items-center gap-1.5 px-3 py-1.5 border border-zinc-800/60 text-zinc-500 hover:text-red-500 hover:border-red-500/50 transition-all duration-200 text-[10px] font-mono uppercase bg-zinc-900 rounded select-none">
+      <svg class="w-3 h-3 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+      {{ _('alllib', 'exit') }}
+    </a>
+
+    <!-- Chapter nav -->
+    <div class="flex items-center gap-2">
+      <button onclick="navigateChapter(-1); event.stopPropagation();" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900 rounded">← {{ _('alllib', 'prev') }}</button>
+      <div class="relative">
+        <button onclick="toggleChapterList(); event.stopPropagation();" id="chapter-label"
+          class="px-3 py-1.5 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:border-teal-400/60 transition-colors cursor-pointer min-w-40 text-center bg-zinc-900 rounded">—</button>
+        <div id="chapter-dropdown" class="hidden absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-zinc-950 border border-zinc-800 shadow-2xl z-50 w-72 max-h-64 overflow-y-auto
+            [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-zinc-950 [&::-webkit-scrollbar-thumb]:bg-zinc-700">
+          {% for ch in chapters %}
+          <button onclick="loadChapter('{{ ch.id }}'); closeChapterList();"
+            data-ch-id="{{ ch.id }}"
+            class="ch-item w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-500 hover:bg-zinc-900 hover:text-teal-400 border-b border-zinc-900/50 transition-colors">
+            Vol.{{ ch.volume }} Ch.{{ ch.number }}{% if ch.name %} — {{ ch.name }}{% endif %}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      <button onclick="navigateChapter(1); event.stopPropagation();" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900 rounded">{{ _('alllib', 'next') }} →</button>
+    </div>
+
+    <span class="text-[10px] font-mono text-zinc-700 min-w-20 text-right select-none">{{ _('alllib', 'type_novel') }}</span>
+  </div>
+
+</div>
+
+<style>
+  .theme-dark { background-color: #09090b; color: #d4d4d8; }
+  .theme-dark #content-wrap { color: #d4d4d8; }
+  .theme-sepia { background-color: #fbf0d9; color: #5c4033; }
+  .theme-sepia #content-wrap { color: #5c4033; }
+  .theme-light { background-color: #ffffff; color: #1c1917; }
+  .theme-light #content-wrap { color: #1c1917; }
+  #content-wrap.font-serif { font-family: Georgia, Cambria, "Times New Roman", serif; }
+  #content-wrap.font-sans { font-family: system-ui, -apple-system, sans-serif; }
+  #content-wrap.w-compact { max-width: 520px; }
+  #content-wrap.w-normal { max-width: 700px; }
+  #content-wrap.w-wide { max-width: 100%; }
+  #chapter-content p { margin-bottom: 1em; }
+  #chapter-content h1, #chapter-content h2 { margin: 1.5em 0 0.5em; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+  const CHAPTERS = [{% for ch in chapters %}{ id: '{{ ch.id }}', label: 'Vol.{{ ch.volume }} Ch.{{ ch.number }}{% if ch.name %} — {{ ch.name }}{% endif %}' },{% endfor %}];
+  let currentChapterId = null;
+  let uiVisible = true;
+  let zenMode = localStorage.getItem('novel_zen') === 'true';
+
+  let cfg = { font: 'serif', size: 16, width: 'normal', theme: 'dark' };
+  try { const s = localStorage.getItem('novel_cfg'); if (s) cfg = {...cfg, ...JSON.parse(s)}; } catch(e) {}
+
+  function saveConfig() { try { localStorage.setItem('novel_cfg', JSON.stringify(cfg)); } catch(e) {} }
+
+  // ── UI Visibility ──────────────────────────────────────
+  function toggleUI(event) {
+    if (zenMode) return; // Disable center-click toggle while in Zen Mode
+    if (event) {
+      if (event.target.closest('button') || event.target.closest('a') || event.target.closest('select') || event.target.closest('#chapter-dropdown')) return;
+    }
+    uiVisible = !uiVisible;
+    const topBar = document.getElementById('top-bar');
+    const bottomBar = document.getElementById('bottom-bar');
+    const wrap = document.getElementById('content-wrap');
+    if (uiVisible) {
+      topBar.classList.remove('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.remove('translate-y-full', 'opacity-0', 'pointer-events-none');
+      wrap.classList.add('mt-4');
+    } else {
+      topBar.classList.add('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.add('translate-y-full', 'opacity-0', 'pointer-events-none');
+      wrap.classList.remove('mt-4');
+    }
+  }
+
+  function setZenMode(val) {
+    zenMode = val;
+    localStorage.setItem('novel_zen', val ? 'true' : 'false');
+    applyZenMode();
+  }
+
+  function applyZenMode() {
+    const topBar = document.getElementById('top-bar');
+    const bottomBar = document.getElementById('bottom-bar');
+    const floatExit = document.getElementById('float-exit-btn');
+    const wrap = document.getElementById('content-wrap');
+
+    if (zenMode) {
+      topBar.classList.add('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.add('translate-y-full', 'opacity-0', 'pointer-events-none');
+      floatExit.classList.remove('hidden');
+      floatExit.classList.add('flex');
+      wrap.classList.remove('mt-4');
+      uiVisible = false;
+    } else {
+      topBar.classList.remove('-translate-y-full', 'opacity-0', 'pointer-events-none');
+      bottomBar.classList.remove('translate-y-full', 'opacity-0', 'pointer-events-none');
+      floatExit.classList.add('hidden');
+      floatExit.classList.remove('flex');
+      wrap.classList.add('mt-4');
+      uiVisible = true;
+    }
+  }
+
+  function setFont(f) { cfg.font = f; applyConfig(); saveConfig(); }
+  function adjSize(d) { cfg.size = Math.max(12, Math.min(28, cfg.size + d * 2)); applyConfig(); saveConfig(); }
+  function setWidth(w) { cfg.width = w; applyConfig(); saveConfig(); }
+  function setTheme(t) { cfg.theme = t; applyConfig(); saveConfig(); }
+
+  function applyConfig() {
+    const wrap = document.getElementById('content-wrap');
+    const pane = document.getElementById('reader-pane');
+    const root = document.getElementById('novel-reader-root');
+
+    // font
+    wrap.classList.toggle('font-serif', cfg.font === 'serif');
+    wrap.classList.toggle('font-sans', cfg.font !== 'serif');
+    document.getElementById('btn-serif').className = 'px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors ' +
+      (cfg.font === 'serif' ? 'bg-zinc-800 text-teal-400' : 'text-zinc-500 hover:text-zinc-300');
+    document.getElementById('btn-sans').className = 'px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors ' +
+      (cfg.font === 'sans' ? 'bg-zinc-800 text-teal-400' : 'text-zinc-500 hover:text-zinc-300');
+
+    // size
+    wrap.style.fontSize = cfg.size + 'px';
+    document.getElementById('size-lbl').textContent = cfg.size + 'px';
+
+    // width
+    wrap.classList.remove('w-compact', 'w-normal', 'w-wide');
+    wrap.classList.add('w-' + cfg.width);
+    ['compact','normal','wide'].forEach(w => {
+      document.getElementById('btn-' + w).className = 'px-2 py-0.5 text-[10px] font-mono transition-colors ' +
+        (cfg.width === w ? 'bg-zinc-800 text-teal-400' : 'text-zinc-500 hover:text-zinc-300');
+    });
+
+    // theme
+    pane.classList.remove('theme-dark', 'theme-sepia', 'theme-light');
+    pane.classList.add('theme-' + cfg.theme);
+    root.style.backgroundColor = cfg.theme === 'sepia' ? '#fbf0d9' : cfg.theme === 'light' ? '#fff' : '#09090b';
+  }
+
+  async function loadChapter(chId) {
+    currentChapterId = String(chId);
+    const ch = CHAPTERS.find(c => c.id === currentChapterId);
+    if (ch) {
+      document.getElementById('top-title').textContent = '{{ novel.title }} — ' + ch.label;
+      document.getElementById('chapter-label').textContent = ch.label;
+    }
+    document.querySelectorAll('.ch-item').forEach(b => {
+      b.classList.toggle('text-teal-400', b.dataset.chId === currentChapterId);
+    });
+
+    const content = document.getElementById('chapter-content');
+    content.innerHTML = '<div class="text-center py-24 text-zinc-500 font-mono text-xs">{{ _('alllib', 'loading') }}</div>';
+
+    const resp = await fetch(`/alllib/ui/chapter/${chId}`);
+    if (!resp.ok) { content.innerHTML = '<div class="text-red-500 text-xs font-mono py-12 text-center">{{ _('alllib', 'failed_load') }}</div>'; return; }
+    const html = await resp.text();
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    // Extract inner content from novel chapter partial
+    const inner = tmp.querySelector('.prose') || tmp;
+    content.innerHTML = inner.innerHTML || html;
+    document.getElementById('reader-pane').scrollTop = 0;
+  }
+
+  function navigateChapter(dir) {
+    const idx = CHAPTERS.findIndex(c => c.id === currentChapterId);
+    const next = CHAPTERS[idx + dir];
+    if (next) loadChapter(next.id);
+  }
+
+  function toggleChapterList() { document.getElementById('chapter-dropdown').classList.toggle('hidden'); }
+  function closeChapterList() { document.getElementById('chapter-dropdown').classList.add('hidden'); }
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#chapter-label') && !e.target.closest('#chapter-dropdown')) closeChapterList();
+  });
+
+  window.addEventListener('keydown', e => {
+    if (e.key === 'z' || e.key === 'Z') { setZenMode(!zenMode); }
+  });
+
+  applyConfig();
+  applyZenMode();
+  {% if first_chapter_id %}loadChapter('{{ first_chapter_id }}');{% endif %}
+</script>
+{% endblock %}

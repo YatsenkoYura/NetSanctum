@@ -17,9 +17,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.core.database import AsyncSessionLocal, Base, async_engine
+from app.core.database import AsyncSessionLocal, async_engine
 from app.core.security import OwnerUser
 from app.core.templates import templates
 
@@ -140,16 +141,8 @@ async def lifespan(application: FastAPI):
             except Exception as e:
                 logger.debug(f"Bypassed model discovery for {module_name}: {e}")
 
-    from sqlalchemy import select, text
-
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        try:
-            await conn.execute(text("ALTER TABLE archived_videos ADD COLUMN IF NOT EXISTS subtitles JSONB;"))
-            logger.info("Database auto-migration: verified subtitles column exists")
-        except Exception as e:
-            logger.debug(f"Subtitles column migration bypassed: {e}")
-    logger.info("Database schemas verified")
+    # 2. Schema creation (Migrated to Alembic)
+    logger.info("Database schemas verified (managed by Alembic)")
 
     # Purge pending Celery tasks (generic cleanup)
     try:
