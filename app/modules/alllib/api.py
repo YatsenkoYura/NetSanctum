@@ -129,38 +129,53 @@ class LibAPI:
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
 
-        try:
-            resp = self.session.get(url, params=params, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                ct = resp.headers.get("Content-Type", "")
-                if "application/json" in ct or resp.text.strip().startswith("{"):
-                    return resp.json()
-                else:
-                    # HTML response — likely Cloudflare or auth-gated 404 page
-                    logger.warning(
-                        f"Non-JSON response from {url} (Content-Type: {ct}). Auth may be required."
-                    )
-                    return {}
-            elif resp.status_code == 401 or resp.status_code == 403:
-                logger.error(
-                    f"Auth required for {url} (HTTP {resp.status_code}). Site requires login for 18+ content."
-                )
-                return {"__auth_required": True}
-            elif resp.status_code == 404:
-                ct = resp.headers.get("Content-Type", "")
-                if "application/json" in ct:
-                    try:
+        max_retries = 3
+        delay = 1.0
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self.session.get(url, params=params, headers=headers, timeout=15)
+                if resp.status_code == 200:
+                    ct = resp.headers.get("Content-Type", "")
+                    if "application/json" in ct or resp.text.strip().startswith("{"):
                         return resp.json()
-                    except Exception:
-                        pass
-                logger.warning(f"404 for {url} — likely auth-gated or non-existent content.")
-                return {}
-            else:
-                logger.error(f"Request failed with status {resp.status_code}: {resp.text[:200]}")
-                return {}
-        except Exception as e:
-            logger.error(f"Network error: {e}")
-            return {}
+                    else:
+                        # HTML response — likely Cloudflare or auth-gated 404 page
+                        logger.warning(
+                            f"Non-JSON response from {url} (Content-Type: {ct}). Auth may be required."
+                        )
+                        return {}
+                elif resp.status_code == 401 or resp.status_code == 403:
+                    logger.error(
+                        f"Auth required for {url} (HTTP {resp.status_code}). Site requires login for 18+ content."
+                    )
+                    return {"__auth_required": True}
+                elif resp.status_code == 404:
+                    ct = resp.headers.get("Content-Type", "")
+                    if "application/json" in ct:
+                        try:
+                            return resp.json()
+                        except Exception:
+                            pass
+                    logger.warning(f"404 for {url} — likely auth-gated or non-existent content.")
+                    return {}
+                elif resp.status_code in (502, 503, 504):
+                    logger.warning(
+                        f"Attempt {attempt}/{max_retries} received server error {resp.status_code} for {url}."
+                    )
+                    if attempt == max_retries:
+                        logger.error(f"Request failed with status {resp.status_code}: {resp.text[:200]}")
+                        return {}
+                else:
+                    logger.error(f"Request failed with status {resp.status_code}: {resp.text[:200]}")
+                    return {}
+            except Exception as e:
+                logger.warning(f"Attempt {attempt}/{max_retries} failed for {url}: {e}")
+                if attempt == max_retries:
+                    logger.error(f"Network error after {max_retries} attempts: {e}")
+                    return {}
+            time.sleep(delay)
+            delay *= 2
 
     def get_image_servers(self, site_id: int = 1, domain: str = "mangalib.me") -> list[str]:
         """Retrieve active CDN server base URLs dynamically from Lib Network constants."""
