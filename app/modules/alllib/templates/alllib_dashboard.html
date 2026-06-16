@@ -133,6 +133,76 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                         </svg>
                     </a>
+                    <button onclick="alllibToggleHelperScript()"
+                       class="px-3 py-1.5 bg-zinc-900 border border-zinc-850 hover:border-teal-400 hover:text-teal-400 text-xs font-mono text-zinc-400 transition-colors flex items-center gap-1.5 cursor-pointer">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        <span>Autofill Helper</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tampermonkey Helper Script Panel -->
+            <div id="helper-script-panel" class="hidden bg-black border border-zinc-900 p-4 space-y-3">
+                <div class="flex justify-between items-center border-b border-zinc-900 pb-2">
+                    <h4 class="text-xs font-mono font-bold text-teal-400 uppercase">Tampermonkey / Violentmonkey Helper Script</h4>
+                    <button onclick="alllibToggleHelperScript()" class="text-zinc-500 hover:text-white font-mono text-xs">✕ Close</button>
+                </div>
+                <p class="text-[10px] font-mono text-zinc-450 leading-relaxed">
+                    Because of browser security rules (Same-Origin Policy), NetSanctum cannot read the URL or cookies/tokens from the iframe directly.
+                    Install this small userscript in Tampermonkey or Violentmonkey. It automatically detects when you browse any Lib network page inside the iframe, extracts the authorization token, and fills it into NetSanctum in real-time.
+                </p>
+                <div class="relative bg-zinc-950 p-3 border border-zinc-900">
+                    <pre id="userscript-code" class="text-[10px] font-mono text-zinc-500 overflow-x-auto select-all max-h-48 leading-normal">
+// ==UserScript==
+// @name         NetSanctum Autofill Helper
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Autofills Lib network titles/tokens to NetSanctum
+// @match        https://*.mangalib.me/*
+// @match        https://*.ranobelib.me/*
+// @match        https://*.hentailib.org/*
+// @match        https://*.slashlib.me/*
+// @match        https://*.comixlib.me/*
+// @match        https://*.anilib.me/*
+// @grant        none
+// ==UserScript==
+
+(function() {
+    'use strict';
+    if (window.self !== window.top) {
+        function sendUpdate() {
+            let token = localStorage.getItem('token') || localStorage.getItem('authorization');
+            if (!token) {
+                for (let i = 0; i < localStorage.length; i++) {
+                    let key = localStorage.key(i);
+                    if (key && key.toLowerCase().includes('token')) {
+                        let val = localStorage.getItem(key);
+                        if (val && val.length > 20) { token = val; break; }
+                    }
+                }
+            }
+            window.parent.postMessage({
+                type: 'netsanctum-nav',
+                url: window.location.href,
+                token: token
+            }, '*');
+        }
+
+        sendUpdate();
+        let lastUrl = window.location.href;
+        new MutationObserver(() => {
+            if (window.location.href !== lastUrl) {
+                lastUrl = window.location.href;
+                sendUpdate();
+            }
+        }).observe(document, {subtree: true, childList: true});
+    }
+})();</pre>
+                    <button onclick="alllibCopyHelperScript()" class="absolute top-2 right-2 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:border-teal-400 hover:text-teal-400 text-[9px] font-mono text-zinc-400 transition-colors cursor-pointer">
+                        Copy
+                    </button>
                 </div>
             </div>
 
@@ -467,6 +537,47 @@
             alert('Failed to dispatch download task');
         }
     };
+
+    window.alllibToggleHelperScript = function() {
+        const panel = document.getElementById('helper-script-panel');
+        if (panel) {
+            panel.classList.toggle('hidden');
+        }
+    };
+
+    window.alllibCopyHelperScript = function() {
+        const code = document.getElementById('userscript-code').innerText;
+        navigator.clipboard.writeText(code).then(() => {
+            alert('Helper script copied to clipboard!');
+        }).catch(err => {
+            console.error('Failed to copy: ', err);
+        });
+    };
+
+    window.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'netsanctum-nav') {
+            const url = event.data.url;
+            const token = event.data.token;
+            
+            const findUrlInput = document.getElementById('find-dl-url');
+            if (findUrlInput) {
+                findUrlInput.value = url;
+            }
+            
+            const dlUrlInput = document.getElementById('dl-url');
+            if (dlUrlInput) {
+                dlUrlInput.value = url;
+                dlUrlInput.dispatchEvent(new Event('input'));
+            }
+            
+            if (token) {
+                const dlTokenInput = document.getElementById('dl-token');
+                if (dlTokenInput) {
+                    dlTokenInput.value = token;
+                }
+            }
+        }
+    });
 
     document.addEventListener('DOMContentLoaded', () => {
         const dlUrlInput = document.getElementById('dl-url');
