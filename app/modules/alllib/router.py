@@ -247,7 +247,7 @@ async def alllib_dashboard(
     """Render the primary Lib Network dashboard."""
     base_url = str(request.base_url).rstrip("/")
     from app.modules.settings import service as settings_service
-    setting = await settings_service.get_setting(db, key="lib_auth_token", scope="module", module_name="alllib")
+    setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
     global_token = setting.value if (setting and setting.value) else ""
     return templates.TemplateResponse(
         request, 
@@ -1381,7 +1381,7 @@ async def get_global_token(
 ):
     """Fetch current global lib network auth token."""
     from app.modules.settings import service as settings_service
-    setting = await settings_service.get_setting(db, key="lib_auth_token", scope="module", module_name="alllib")
+    setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
     val = setting.value if (setting and setting.value) else ""
     return Response(content=val, media_type="text/plain")
 
