@@ -46,6 +46,13 @@
                 </svg>
                 <span>{{ _('alllib', 'tab_download') }}</span>
             </button>
+            <button onclick="alllibSwitchTab('faq')" id="btn-tab-faq" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{{ _('alllib', 'tab_faq') }}</span>
+            </button>
             <button onclick="alllibSwitchTab('settings')" id="btn-tab-settings" 
                     class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
                 <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -333,6 +340,95 @@
                 <!-- Auto-polling active downloads list -->
                 <div id="active-tasks-list" hx-get="/alllib/ui/active_downloads" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
                     <div class="text-center py-6 text-zinc-600 font-mono text-xs">No active downloads</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Tab: FAQ ── -->
+    <div id="tab-content-faq" class="hidden space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-4xl mx-auto space-y-8">
+            <!-- Header -->
+            <div class="border-b border-zinc-800 pb-4">
+                <h2 class="text-lg font-black text-white font-mono uppercase tracking-wider flex items-center">
+                    <svg class="w-5 h-5 text-teal-400 mr-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    FAQ / Справка
+                </h2>
+                <p class="text-[10px] text-zinc-500 font-mono mt-1">
+                    Руководство по использованию модуля скачивания и интеграции с Lib Network
+                </p>
+            </div>
+
+            <!-- FAQ Grid / Accordion -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Section 1: How to download -->
+                <div class="bg-black border border-zinc-900 p-5 space-y-3">
+                    <h3 class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider border-b border-zinc-900 pb-2">
+                        1. Как качать тайтлы / How to Download
+                    </h3>
+                    <div class="text-[11px] font-mono text-zinc-400 space-y-2 leading-relaxed">
+                        <p>
+                            Чтобы поставить тайтл на закачку, перейдите на вкладку <span class="text-white font-bold">"Скачать"</span> (или <span class="text-white font-bold">"Найти"</span>) и введите ссылку на главную страницу произведения из сети сайтов Lib Network (MangaLib, RanobeLib, AniLib и др.).
+                        </p>
+                        <p class="text-zinc-500">
+                            Пример рабочей ссылки: <code class="text-zinc-400 bg-zinc-950 px-1 py-0.5 select-all">https://mangalib.me/manga/chainsaw-man</code>
+                        </p>
+                        <p>
+                            Для скачивания манги, ранобэ или аниме нажмите кнопку скачивания. Задача отправится в Celery воркер, а прогресс скачивания отобразится в правой колонке вкладки "Скачать".
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Section 2: Find Tab & Autofill -->
+                <div class="bg-black border border-zinc-900 p-5 space-y-3">
+                    <h3 class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider border-b border-zinc-900 pb-2">
+                        2. Вкладка "Найти" и Помощник / Find Tab & Autofill
+                    </h3>
+                    <div class="text-[11px] font-mono text-zinc-400 space-y-2 leading-relaxed">
+                        <p>
+                            Вкладка <span class="text-white font-bold">"Найти"</span> содержит встроенный фрейм с ресурсами. Чтобы автоматизировать перенос ссылок и авторизацию из фрейма, мы создали вспомогательный скрипт.
+                        </p>
+                        <p>
+                            Нажмите кнопку <span class="text-teal-400 font-bold">"Autofill Helper"</span>, скопируйте код скрипта и установите его в расширение (например, <span class="text-white">Tampermonkey</span>). Теперь при переходе на любую страницу произведения внутри фрейма, его URL и токен будут автоматически подгружаться в форму скачивания в фоне.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Section 3: File Formats & Sync -->
+                <div class="bg-black border border-zinc-900 p-5 space-y-3">
+                    <h3 class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider border-b border-zinc-900 pb-2">
+                        3. Форматы файлов и Чтение / File Formats & Sync
+                    </h3>
+                    <div class="text-[11px] font-mono text-zinc-400 space-y-2 leading-relaxed">
+                        <p>
+                            Все скачанные материалы хранятся локально в оптимизированных форматах:
+                        </p>
+                        <ul class="list-disc pl-4 space-y-1 text-zinc-500">
+                            <li><span class="text-zinc-400">Манга/Хентай:</span> Сохраняется в архивах <span class="text-white font-semibold">.cbz</span>. Читать можно через наш встроенный премиум-ридер во вкладке "Библиотека".</li>
+                            <li><span class="text-zinc-400">Ранобэ/Книги:</span> Сохраняется в формате <span class="text-white font-semibold">.epub</span> со всеми иллюстрациями.</li>
+                            <li><span class="text-zinc-400">Аниме:</span> Видеофайлы скачиваются в исходном качестве (.mp4/.mkv).</li>
+                        </ul>
+                        <p>
+                            Также доступен экспорт на ПК или синхронизация с мобильным приложением <span class="text-teal-400">NetOutpost</span>.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Section 4: Authentication & Restrictions -->
+                <div class="bg-black border border-zinc-900 p-5 space-y-3">
+                    <h3 class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider border-b border-zinc-900 pb-2">
+                        4. Авторизация и Ограничения / Auth & Limits
+                    </h3>
+                    <div class="text-[11px] font-mono text-zinc-400 space-y-2 leading-relaxed">
+                        <p>
+                            Для скачивания некоторых глав, имеющих возрастные ограничения или ранний платный доступ, необходимо быть авторизованным на целевом сайте.
+                        </p>
+                        <p>
+                            <span class="text-amber-400 font-bold">Важно:</span> Вход через Google/Yandex внутри iframe заблокирован провайдерами OAuth. Для авторизации воспользуйтесь кнопкой <span class="text-white font-bold">"Open in New Tab"</span>, зайдите в свой профиль, скопируйте ваш токен авторизации и укажите его глобально во вкладке "Настройки" или вставьте в форму скачивания.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
