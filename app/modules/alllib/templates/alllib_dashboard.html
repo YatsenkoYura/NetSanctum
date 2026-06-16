@@ -198,6 +198,7 @@
 
 (function() {
     'use strict';
+    console.log("[NetSanctum Helper] Userscript loaded inside frame:", window.location.href);
     if (window.self !== window.top) {
         function sendUpdate() {
             let token = localStorage.getItem('token') || localStorage.getItem('authorization');
@@ -210,6 +211,19 @@
                     }
                 }
             }
+            if (!token) {
+                let cookies = document.cookie.split(';');
+                for (let c of cookies) {
+                    let [name, val] = c.trim().split('=');
+                    if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {
+                        if (val && val.length > 20) {
+                            token = decodeURIComponent(val);
+                            break;
+                        }
+                    }
+                }
+            }
+            console.log("[NetSanctum Helper] Sending update:", { url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null });
             window.parent.postMessage({
                 type: 'netsanctum-nav',
                 url: window.location.href,
@@ -225,6 +239,8 @@
                 sendUpdate();
             }
         }).observe(document, {subtree: true, childList: true});
+    } else {
+        console.log("[NetSanctum Helper] Running in top window, skipping parent postMessage.");
     }
 })();</pre>
                     <button onclick="alllibCopyHelperScript()" class="absolute top-2 right-2 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:border-teal-400 hover:text-teal-400 text-[9px] font-mono text-zinc-400 transition-colors cursor-pointer">
@@ -677,6 +693,7 @@
         if (event.data && event.data.type === 'netsanctum-nav') {
             const url = event.data.url;
             const token = event.data.token;
+            console.log("[NetSanctum Parent] Received navigation from iframe:", { url: url, token: token ? (token.substring(0, 10) + "...") : null });
             
             const findUrlInput = document.getElementById('find-dl-url');
             if (findUrlInput) {

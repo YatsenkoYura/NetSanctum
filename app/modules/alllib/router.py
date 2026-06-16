@@ -63,6 +63,7 @@ def get_helper_userscript():
 
 (function() {
     'use strict';
+    console.log("[NetSanctum Helper] Userscript loaded inside frame:", window.location.href);
     if (window.self !== window.top) {
         function sendUpdate() {
             let token = localStorage.getItem('token') || localStorage.getItem('authorization');
@@ -75,6 +76,19 @@ def get_helper_userscript():
                     }
                 }
             }
+            if (!token) {
+                let cookies = document.cookie.split(';');
+                for (let c of cookies) {
+                    let [name, val] = c.trim().split('=');
+                    if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {
+                        if (val && val.length > 20) {
+                            token = decodeURIComponent(val);
+                            break;
+                        }
+                    }
+                }
+            }
+            console.log("[NetSanctum Helper] Sending update:", { url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null });
             window.parent.postMessage({
                 type: 'netsanctum-nav',
                 url: window.location.href,
@@ -90,6 +104,8 @@ def get_helper_userscript():
                 sendUpdate();
             }
         }).observe(document, {subtree: true, childList: true});
+    } else {
+        console.log("[NetSanctum Helper] Running in top window, skipping parent postMessage.");
     }
 })();
 """
