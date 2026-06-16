@@ -3,11 +3,11 @@ import pkgutil
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine
-from alembic import context
 
+import app.modules as modules_pkg
+from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
-import app.modules as modules_pkg
 
 # Discover and load all models so they register on Base.metadata
 for _importer, module_name, is_pkg in pkgutil.iter_modules(modules_pkg.__path__, prefix="app.modules."):
