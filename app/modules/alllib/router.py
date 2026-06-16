@@ -58,7 +58,7 @@ def get_helper_userscript():
 // @match        https://*.comixlib.me/*
 // @match        https://*.anilib.me/*
 // @grant        none
-// ==UserScript==
+// ==/UserScript==
 
 (function() {
     'use strict';
