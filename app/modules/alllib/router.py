@@ -57,6 +57,7 @@ def get_helper_userscript():
 // @match        https://*.slashlib.me/*
 // @match        https://*.comixlib.me/*
 // @match        https://*.anilib.me/*
+// @allFrames    true
 // @grant        none
 // ==/UserScript==
 
