@@ -174,6 +174,11 @@
                     <a href="https://addons.mozilla.org/ru/firefox/addon/tampermonkey/" target="_blank"
                        class="text-[10px] font-mono text-zinc-400 hover:text-teal-400 underline transition-colors">Firefox</a>
                 </div>
+                <div class="bg-amber-950/20 border border-amber-900/40 p-3 text-amber-500 font-mono text-[10px] leading-relaxed">
+                    <span class="font-bold">Если авто-установка не сработала / If auto-install fails:</span><br>
+                    Из-за политик безопасности браузеров на <code class="text-white px-1 bg-black">localhost</code> расширение может заблокировать фоновую загрузку скрипта. 
+                    Скопируйте код ниже кнопкой <span class="text-white font-bold">"Copy"</span> и вставьте вручную: откройте панель Tampermonkey -> Создать новый скрипт -> вставьте код -> Файл -> Сохранить.
+                </div>
                 <div class="relative bg-zinc-950 p-3 border border-zinc-900">
                     <pre id="userscript-code" class="text-[10px] font-mono text-zinc-500 overflow-x-auto select-all max-h-48 leading-normal">
 // ==UserScript==
@@ -406,6 +411,9 @@
                         </p>
                         <p>
                             Вы можете <a href="/alllib/helper.user.js" target="_blank" class="text-teal-400 font-bold hover:underline">установить скрипт в один клик</a>, если у вас уже установлена библиотека расширений (<a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" class="text-white hover:underline">Tampermonkey для Chrome</a> или <a href="https://addons.mozilla.org/ru/firefox/addon/tampermonkey/" target="_blank" class="text-white hover:underline">для Firefox</a>). После установки скрипта, при переходе на любую страницу произведения внутри фрейма, его URL и токен авторизации будут автоматически заполняться на вкладке NetSanctum.
+                        </p>
+                        <p class="text-amber-500/80 text-[10px]">
+                            <i>Примечание: Если автоматическая установка на localhost блокируется политиками безопасности расширения, скопируйте код скрипта вручную из панели "Autofill Helper" на вкладке "Найти" (кнопка копирования и код доступны там).</i>
                         </p>
                     </div>
                 </div>
