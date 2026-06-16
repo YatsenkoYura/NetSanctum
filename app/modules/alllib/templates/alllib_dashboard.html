@@ -203,29 +203,65 @@
 
     // Common logic to extract authorization token
     function extractToken() {
-        let token = localStorage.getItem('token') || localStorage.getItem('authorization');
-        if (!token) {
-            for (let i = 0; i < localStorage.length; i++) {
-                let key = localStorage.key(i);
-                if (key && key.toLowerCase().includes('token')) {
-                    let val = localStorage.getItem(key);
-                    if (val && val.length > 20) { token = val; break; }
-                }
-            }
+        function isValidJwt(val) {
+            return val && (val.startsWith('eyJhbG') || val.startsWith('eyJ0eX'));
         }
-        if (!token) {
-            let cookies = document.cookie.split(';');
-            for (let c of cookies) {
-                let [name, val] = c.trim().split('=');
-                if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {
-                    if (val && val.length > 20) {
-                        token = decodeURIComponent(val);
-                        break;
+
+        // 1. Check direct keys in localStorage & sessionStorage
+        const targets = ['token', 'authorization', 'auth_token', 'accessToken', 'access_token', 'user'];
+        for (let t of targets) {
+            let val = localStorage.getItem(t) || sessionStorage.getItem(t);
+            if (isValidJwt(val)) return val;
+        }
+
+        // 2. Scan all of localStorage
+        for (let i = 0; i < localStorage.length; i++) {
+            let key = localStorage.key(i);
+            if (key) {
+                let val = localStorage.getItem(key);
+                if (isValidJwt(val)) return val;
+                try {
+                    let parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (let k in parsed) {
+                            if (k.toLowerCase().includes('token') && isValidJwt(parsed[k])) {
+                                return parsed[k];
+                            }
+                        }
                     }
-                }
+                } catch(e) {}
             }
         }
-        return token;
+
+        // 3. Scan all of sessionStorage
+        for (let i = 0; i < sessionStorage.length; i++) {
+            let key = sessionStorage.key(i);
+            if (key) {
+                let val = sessionStorage.getItem(key);
+                if (isValidJwt(val)) return val;
+                try {
+                    let parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        for (let k in parsed) {
+                            if (k.toLowerCase().includes('token') && isValidJwt(parsed[k])) {
+                                return parsed[k];
+                            }
+                        }
+                    }
+                } catch(e) {}
+            }
+        }
+
+        // 4. Scan cookies
+        let cookies = document.cookie.split(';');
+        for (let c of cookies) {
+            let [name, val] = c.trim().split('=');
+            if (val) {
+                let decoded = decodeURIComponent(val);
+                if (isValidJwt(decoded)) return decoded;
+            }
+        }
+        return null;
     }
 
     if (window.self !== window.top) {
@@ -399,6 +435,7 @@
                     <div class="space-y-1.5">
                         <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Bearer Token / JWT (Optional)</label>
                         <input type="text" id="dl-token" 
+                               value="{{ global_token if global_token else '' }}"
                                placeholder="Optional JWT token specifically for this download..."
                                class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
                         <p class="text-[9px] text-zinc-500 font-mono">If left blank, the global token from Settings will be used.</p>
@@ -637,7 +674,7 @@
         }
     };
 
-    window.alllibFindDownloadTrigger = function() {
+    window.alllibFindDownloadTrigger = async function() {
         const urlInput = document.getElementById('find-dl-url');
         if (!urlInput) return;
         const url = urlInput.value.trim();
@@ -645,6 +682,18 @@
             alert('Please paste the URL of the title first / Пожалуйста, сначала вставьте ссылку на тайтл');
             urlInput.focus();
             return;
+        }
+
+        // Fetch latest global token to pre-fill it
+        try {
+            const tokenResp = await fetch('/alllib/api/get_global_token');
+            const tokenVal = await tokenResp.text();
+            const dlTokenInput = document.getElementById('dl-token');
+            if (dlTokenInput && tokenVal) {
+                dlTokenInput.value = tokenVal.trim();
+            }
+        } catch (e) {
+            console.error('Failed to sync global token:', e);
         }
 
         // Pre-fill the download form URL
@@ -726,9 +775,23 @@
     window.alllibSubmitDownloadTask = async function(e) {
         e.preventDefault();
         const url = document.getElementById('dl-url').value;
-        const tokenVal = document.getElementById('dl-token').value.trim();
-        const token = tokenVal ? tokenVal : null;
+        let tokenVal = document.getElementById('dl-token').value.trim();
 
+        // If the token field is empty, attempt to dynamically fetch the global token from the database
+        if (!tokenVal) {
+            try {
+                const tokenResp = await fetch('/alllib/api/get_global_token');
+                const tokenDb = await tokenResp.text();
+                if (tokenDb) {
+                    tokenVal = tokenDb.trim();
+                    document.getElementById('dl-token').value = tokenVal;
+                }
+            } catch (err) {
+                console.error('Failed to fetch global token:', err);
+            }
+        }
+
+        const token = tokenVal ? tokenVal : null;
         let payload = { url, token };
         
         if (url.includes('anilib')) {

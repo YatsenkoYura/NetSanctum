@@ -69,29 +69,65 @@ def get_helper_userscript(request: Request):
 
     // Common logic to extract authorization token
     function extractToken() {{
-        let token = localStorage.getItem('token') || localStorage.getItem('authorization');
-        if (!token) {{
-            for (let i = 0; i < localStorage.length; i++) {{
-                let key = localStorage.key(i);
-                if (key && key.toLowerCase().includes('token')) {{
-                    let val = localStorage.getItem(key);
-                    if (val && val.length > 20) {{ token = val; break; }}
-                }}
-            }}
+        function isValidJwt(val) {{
+            return val && (val.startsWith('eyJhbG') || val.startsWith('eyJ0eX'));
         }}
-        if (!token) {{
-            let cookies = document.cookie.split(';');
-            for (let c of cookies) {{
-                let [name, val] = c.trim().split('=');
-                if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {{
-                    if (val && val.length > 20) {{
-                        token = decodeURIComponent(val);
-                        break;
+
+        // 1. Check direct keys in localStorage & sessionStorage
+        const targets = ['token', 'authorization', 'auth_token', 'accessToken', 'access_token', 'user'];
+        for (let t of targets) {{
+            let val = localStorage.getItem(t) || sessionStorage.getItem(t);
+            if (isValidJwt(val)) return val;
+        }}
+
+        // 2. Scan all of localStorage
+        for (let i = 0; i < localStorage.length; i++) {{
+            let key = localStorage.key(i);
+            if (key) {{
+                let val = localStorage.getItem(key);
+                if (isValidJwt(val)) return val;
+                try {{
+                    let parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {{
+                        for (let k in parsed) {{
+                            if (k.toLowerCase().includes('token') && isValidJwt(parsed[k])) {{
+                                return parsed[k];
+                            }}
+                        }}
                     }}
-                }}
+                }} catch(e) {{}}
             }}
         }}
-        return token;
+
+        // 3. Scan all of sessionStorage
+        for (let i = 0; i < sessionStorage.length; i++) {{
+            let key = sessionStorage.key(i);
+            if (key) {{
+                let val = sessionStorage.getItem(key);
+                if (isValidJwt(val)) return val;
+                try {{
+                    let parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {{
+                        for (let k in parsed) {{
+                            if (k.toLowerCase().includes('token') && isValidJwt(parsed[k])) {{
+                                return parsed[k];
+                            }}
+                        }}
+                    }}
+                }} catch(e) {{}}
+            }}
+        }}
+
+        // 4. Scan cookies
+        let cookies = document.cookie.split(';');
+        for (let c of cookies) {{
+            let [name, val] = c.trim().split('=');
+            if (val) {{
+                let decoded = decodeURIComponent(val);
+                if (isValidJwt(decoded)) return decoded;
+            }}
+        }}
+        return null;
     }}
 
     if (window.self !== window.top) {{
@@ -204,12 +240,20 @@ def get_helper_userscript(request: Request):
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def alllib_dashboard(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
     lang: str = Depends(_get_lang),
 ):
     """Render the primary Lib Network dashboard."""
     base_url = str(request.base_url).rstrip("/")
-    return templates.TemplateResponse(request, "alllib_dashboard.html", {"user": user, "lang": lang, "base_url": base_url})
+    from app.modules.settings import service as settings_service
+    setting = await settings_service.get_setting(db, key="lib_auth_token", scope="module", module_name="alllib")
+    global_token = setting.value if (setting and setting.value) else ""
+    return templates.TemplateResponse(
+        request, 
+        "alllib_dashboard.html", 
+        {"user": user, "lang": lang, "base_url": base_url, "global_token": global_token}
+    )
 
 
 @router.get("/reader/{media_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -1307,7 +1351,7 @@ async def save_token_external(
 ):
     """Save authorization token received from external userscript."""
     token = token.strip()
-    if token and len(token) > 20:
+    if token and len(token) > 20 and (token.startswith("eyJhbG") or token.startswith("eyJ0eX")):
         from app.modules.settings import service as settings_service
         await settings_service.upsert_setting(
             db,
@@ -1328,6 +1372,18 @@ async def save_token_external(
         content="INVALID_TOKEN",
         headers={"Access-Control-Allow-Origin": "*"}
     )
+
+
+@router.get("/api/get_global_token", response_class=Response, include_in_schema=False)
+async def get_global_token(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user)
+):
+    """Fetch current global lib network auth token."""
+    from app.modules.settings import service as settings_service
+    setting = await settings_service.get_setting(db, key="lib_auth_token", scope="module", module_name="alllib")
+    val = setting.value if (setting and setting.value) else ""
+    return Response(content=val, media_type="text/plain")
 
 
 try:
