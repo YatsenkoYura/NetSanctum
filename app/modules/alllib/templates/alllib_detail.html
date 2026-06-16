@@ -224,7 +224,7 @@
 <script>
     function alllibOnSyncTriggered() {
         setTimeout(() => {
-            alllibSwitchTab('active_downloads');
+            alllibSwitchTab('download');
             htmx.trigger(document.getElementById('active-tasks-list'), 'load');
         }, 300);
     }

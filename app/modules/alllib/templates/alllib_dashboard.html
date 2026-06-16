@@ -32,6 +32,13 @@
                 </svg>
                 <span>[{{ _('alllib', 'tab_library') }}]</span>
             </button>
+            <button onclick="alllibSwitchTab('find')" id="btn-tab-find" 
+                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
+                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <span>{{ _('alllib', 'tab_find') }}</span>
+            </button>
             <button onclick="alllibSwitchTab('download')" id="btn-tab-download" 
                     class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
                 <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -39,17 +46,10 @@
                 </svg>
                 <span>{{ _('alllib', 'tab_download') }}</span>
             </button>
-            <button onclick="alllibSwitchTab('active_downloads')" id="btn-tab-active_downloads" 
-                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
-                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                <span>{{ _('alllib', 'tab_active_downloads') }}</span>
-            </button>
             <button onclick="alllibSwitchTab('settings')" id="btn-tab-settings" 
                     class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
                 <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
                 <span>Settings</span>
@@ -91,94 +91,168 @@
         </div>
     </div>
 
-    <!-- ── Tab: Download ── -->
-    <div id="tab-content-download" class="hidden space-y-6">
-        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto space-y-5">
-            <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider border-b-2 border-zinc-800 pb-3 flex items-center">
-                <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                <span>{{ _('alllib', 'tab_download') }}</span>
-            </h3>
-
-            <form onsubmit="alllibSubmitDownloadTask(event)" class="space-y-4">
-                <div class="space-y-1.5">
-                    <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Lib URL</label>
-                    <input type="url" required id="dl-url" 
-                           placeholder="{{ _('alllib', 'url_placeholder') }}"
-                           class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
-                </div>
-
-                <div class="space-y-1.5">
-                    <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Bearer Token / JWT (Optional)</label>
-                    <input type="text" id="dl-token" 
-                           placeholder="Optional JWT token specifically for this download..."
-                           class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
-                    <p class="text-[9px] text-zinc-500 font-mono">If left blank, the global token from Settings will be used.</p>
-                </div>
-
-                <div id="anime-options-container" class="hidden border border-zinc-800 bg-black p-4 space-y-4">
-                    <div class="text-xs font-mono font-bold text-teal-400 uppercase border-b border-zinc-900 pb-2">Anime Download Options</div>
-                    
-                    <div id="anime-options-loading" class="hidden text-zinc-500 font-mono text-xs py-2">
-                         <span class="animate-pulse">Fetching anime seasons & voiceovers metadata...</span>
+    <!-- ── Tab: Find ── -->
+    <div id="tab-content-find" class="hidden space-y-6">
+        <div class="bg-zinc-950 border border-zinc-800 p-6 space-y-5">
+            <!-- Header/Controls -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+                <div class="flex items-center gap-3">
+                    <div class="p-2 bg-teal-950/20 border border-teal-900/40 text-teal-400">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
                     </div>
-
-                    <div id="anime-options-fields" class="space-y-4">
-                        <div class="space-y-1.5">
-                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Title</label>
-                            <div id="anime-preview-title" class="text-xs font-sans font-bold text-white"></div>
-                        </div>
-
-                        <div class="space-y-1.5">
-                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Select Seasons</label>
-                            <div id="anime-seasons-list" class="flex flex-wrap gap-2"></div>
-                        </div>
-
-                        <div class="space-y-1.5">
-                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Episode Range</label>
-                            <input type="text" id="dl-anime-episodes" value="All"
-                                   placeholder="e.g. 1-12, 15, 20-25 or All"
-                                   class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
-                        </div>
-
-                        <div class="space-y-1.5">
-                            <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Voiceover / Translation Team</label>
-                            <select id="dl-anime-team" 
-                                    class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
-                                <option value="any">Any (First Available)</option>
-                            </select>
-                        </div>
+                    <div>
+                        <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider">
+                            {{ _('alllib', 'tab_find') }}
+                        </h3>
+                        <p class="text-[10px] text-zinc-500 font-mono">
+                            {{ _('alllib', 'find_subtitle') }}
+                        </p>
                     </div>
                 </div>
 
-                <button type="submit" 
-                        class="w-full bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider py-3 px-4 rounded-none border border-teal-400 hover:bg-black hover:text-teal-400 transition-all cursor-pointer">
-                    {{ _('alllib', 'btn_download') }}
-                </button>
-            </form>
+                <!-- Source Select + External link -->
+                <div class="flex flex-wrap items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <label class="text-[10px] font-mono font-bold text-zinc-400 uppercase">Resource:</label>
+                        <select id="find-source-select" onchange="alllibChangeFindSource()"
+                                class="bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs font-mono text-white focus:outline-none transition-colors">
+                            <option value="https://mangalib.me">MangaLib</option>
+                            <option value="https://ranobelib.me">RanobeLib</option>
+                            <option value="https://hentailib.org">HentaiLib (18+)</option>
+                            <option value="https://slashlib.me">SlashLib (18+)</option>
+                            <option value="https://comixlib.me">ComixLib</option>
+                            <option value="https://anilib.me">AniLib</option>
+                        </select>
+                    </div>
+                    <a id="find-external-btn" href="https://mangalib.me" target="_blank"
+                       class="px-3 py-1.5 bg-zinc-900 border border-zinc-850 hover:border-teal-400 hover:text-teal-400 text-xs font-mono text-zinc-400 transition-colors flex items-center gap-1.5 cursor-pointer">
+                        <span>Open in New Tab</span>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Iframe Container -->
+            <div class="relative w-full h-[650px] bg-black border border-zinc-900">
+                <iframe id="find-iframe" src="https://mangalib.me" 
+                        class="w-full h-full border-none"
+                        allow="fullscreen"></iframe>
+            </div>
+
+            <!-- Bottom Download Action Panel -->
+            <div class="bg-black border border-zinc-900 p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+                <div class="flex-1 space-y-1">
+                    <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">URL to download / Ссылка для скачивания</label>
+                    <input type="url" id="find-dl-url" 
+                           placeholder="Paste title URL from iframe here / Вставьте ссылку на тайтл из фрейма сюда..."
+                           class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="alllibFindDownloadTrigger()"
+                            class="h-[38px] px-8 bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider border border-teal-400 hover:bg-black hover:text-teal-400 transition-all cursor-pointer shadow-[0_0_15px_rgba(45,212,191,0.4)] hover:shadow-[0_0_25px_rgba(45,212,191,0.7)] flex items-center justify-center">
+                        <svg class="w-4 h-4 mr-2 animate-pulse" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        <span>{{ _('alllib', 'btn_download') }}</span>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- ── Tab: Active Downloads ── -->
-    <div id="tab-content-active_downloads" class="hidden space-y-6">
-        <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto space-y-4">
-            <div class="flex justify-between items-center border-b-2 border-zinc-800 pb-3">
-                <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider flex items-center">
+    <!-- ── Tab: Download (Combined) ── -->
+    <div id="tab-content-download" class="hidden space-y-6">
+        <div class="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-6 items-start">
+            <!-- Left Column: Download Form -->
+            <div class="bg-zinc-950 border-2 border-zinc-800 p-6 space-y-5">
+                <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider border-b-2 border-zinc-800 pb-3 flex items-center">
                     <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                     </svg>
-                    <span>{{ _('alllib', 'tab_active_downloads') }}</span>
+                    <span>{{ _('alllib', 'tab_download') }}</span>
                 </h3>
-                <button hx-delete="/alllib/api/tasks/all" hx-swap="none"
-                        class="bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold font-mono px-2 py-1 uppercase hover:bg-red-900 transition-colors cursor-pointer">
-                    {{ _('alllib', 'btn_cancel_all') }}
-                </button>
+
+                <form onsubmit="alllibSubmitDownloadTask(event)" class="space-y-4">
+                    <div class="space-y-1.5">
+                        <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Lib URL</label>
+                        <input type="url" required id="dl-url" 
+                               placeholder="{{ _('alllib', 'url_placeholder') }}"
+                               class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                    </div>
+
+                    <div class="space-y-1.5">
+                        <label class="block text-[10px] font-mono font-bold text-zinc-400 uppercase">Bearer Token / JWT (Optional)</label>
+                        <input type="text" id="dl-token" 
+                               placeholder="Optional JWT token specifically for this download..."
+                               class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                        <p class="text-[9px] text-zinc-500 font-mono">If left blank, the global token from Settings will be used.</p>
+                    </div>
+
+                    <div id="anime-options-container" class="hidden border border-zinc-800 bg-black p-4 space-y-4">
+                        <div class="text-xs font-mono font-bold text-teal-400 uppercase border-b border-zinc-900 pb-2">Anime Download Options</div>
+                        
+                        <div id="anime-options-loading" class="hidden text-zinc-500 font-mono text-xs py-2">
+                             <span class="animate-pulse">Fetching anime seasons & voiceovers metadata...</span>
+                        </div>
+
+                        <div id="anime-options-fields" class="space-y-4">
+                            <div class="space-y-1.5">
+                                <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Title</label>
+                                <div id="anime-preview-title" class="text-xs font-sans font-bold text-white"></div>
+                            </div>
+
+                            <div class="space-y-1.5">
+                                <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Select Seasons</label>
+                                <div id="anime-seasons-list" class="flex flex-wrap gap-2"></div>
+                            </div>
+
+                            <div class="space-y-1.5">
+                                <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Episode Range</label>
+                                <input type="text" id="dl-anime-episodes" value="All"
+                                       placeholder="e.g. 1-12, 15, 20-25 or All"
+                                       class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                            </div>
+
+                            <div class="space-y-1.5">
+                                <label class="block text-[9px] font-mono font-bold text-zinc-500 uppercase">Voiceover / Translation Team</label>
+                                <select id="dl-anime-team" 
+                                        class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                                    <option value="any">Any (First Available)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" 
+                            class="w-full bg-teal-400 text-black font-mono font-bold text-xs uppercase tracking-wider py-3 px-4 rounded-none border border-teal-400 hover:bg-black hover:text-teal-400 transition-all cursor-pointer">
+                        {{ _('alllib', 'btn_download') }}
+                    </button>
+                </form>
             </div>
-            
-            <!-- Auto-polling active downloads list -->
-            <div id="active-tasks-list" hx-get="/alllib/ui/active_downloads" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
-                <div class="text-center py-6 text-zinc-600 font-mono text-xs">No active downloads</div>
+
+            <!-- Right Column: Active Downloads -->
+            <div class="bg-zinc-950 border-2 border-zinc-800 p-6 space-y-4">
+                <div class="flex justify-between items-center border-b-2 border-zinc-800 pb-3">
+                    <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider flex items-center">
+                        <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span>{{ _('alllib', 'tab_active_downloads') }}</span>
+                    </h3>
+                    <button hx-delete="/alllib/api/tasks/all" hx-swap="none"
+                            class="bg-red-950 text-red-400 border border-red-800 text-[10px] font-bold font-mono px-2 py-1 uppercase hover:bg-red-900 transition-colors cursor-pointer">
+                        {{ _('alllib', 'btn_cancel_all') }}
+                    </button>
+                </div>
+                
+                <!-- Auto-polling active downloads list -->
+                <div id="active-tasks-list" hx-get="/alllib/ui/active_downloads" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
+                    <div class="text-center py-6 text-zinc-600 font-mono text-xs">No active downloads</div>
+                </div>
             </div>
         </div>
     </div>
@@ -201,30 +275,40 @@
 
     window.alllibSwitchTab = function(tab) {
         // Hide active
-        document.getElementById(`tab-content-${alllibActiveTab}`).classList.add('hidden');
+        const activeContent = document.getElementById(`tab-content-${alllibActiveTab}`);
+        if (activeContent) {
+            activeContent.classList.add('hidden');
+        }
         
         // Remove active class and brackets from old tab
         const oldBtn = document.getElementById(`btn-tab-${alllibActiveTab}`);
-        oldBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center";
-        const oldSpan = oldBtn.querySelector('span');
-        if (oldSpan) {
-            oldSpan.innerText = oldSpan.innerText.replace(/^\[|\]$/g, '');
+        if (oldBtn) {
+            oldBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center";
+            const oldSpan = oldBtn.querySelector('span');
+            if (oldSpan) {
+                oldSpan.innerText = oldSpan.innerText.replace(/^\[|\]$/g, '');
+            }
         }
 
         // Show new active and add brackets
-        document.getElementById(`tab-content-${tab}`).classList.remove('hidden');
+        const newContent = document.getElementById(`tab-content-${tab}`);
+        if (newContent) {
+            newContent.classList.remove('hidden');
+        }
         const newBtn = document.getElementById(`btn-tab-${tab}`);
-        newBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center";
-        const newSpan = newBtn.querySelector('span');
-        if (newSpan && !newSpan.innerText.startsWith('[')) {
-            newSpan.innerText = `[${newSpan.innerText}]`;
+        if (newBtn) {
+            newBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center";
+            const newSpan = newBtn.querySelector('span');
+            if (newSpan && !newSpan.innerText.startsWith('[')) {
+                newSpan.innerText = `[${newSpan.innerText}]`;
+            }
         }
         
         alllibActiveTab = tab;
 
         if (tab === 'library') {
             alllibReloadLibraryTab();
-        } else if (tab === 'active_downloads') {
+        } else if (tab === 'download') {
             const activeList = document.getElementById('active-tasks-list');
             if (activeList) {
                 htmx.trigger(activeList, 'load');
@@ -235,6 +319,40 @@
                 htmx.trigger(container, 'load');
             }
         }
+    };
+
+    window.alllibChangeFindSource = function() {
+        const select = document.getElementById('find-source-select');
+        const iframe = document.getElementById('find-iframe');
+        const externalBtn = document.getElementById('find-external-btn');
+        if (select && iframe) {
+            iframe.src = select.value;
+            if (externalBtn) {
+                externalBtn.href = select.value;
+            }
+        }
+    };
+
+    window.alllibFindDownloadTrigger = function() {
+        const urlInput = document.getElementById('find-dl-url');
+        if (!urlInput) return;
+        const url = urlInput.value.trim();
+        if (!url) {
+            alert('Please paste the URL of the title first / Пожалуйста, сначала вставьте ссылку на тайтл');
+            urlInput.focus();
+            return;
+        }
+
+        // Pre-fill the download form URL
+        const dlUrlInput = document.getElementById('dl-url');
+        if (dlUrlInput) {
+            dlUrlInput.value = url;
+            // Dispatch input event to trigger any reactive features (like AniLib check)
+            dlUrlInput.dispatchEvent(new Event('input'));
+        }
+
+        // Switch to download tab
+        alllibSwitchTab('download');
     };
 
     window.alllibReloadLibraryTab = function() {
@@ -331,8 +449,8 @@
             const container = document.getElementById('anime-options-container');
             if (container) container.classList.add('hidden');
             
-            // Switch to active downloads tab
-            alllibSwitchTab('active_downloads');
+            // Switch to download tab
+            alllibSwitchTab('download');
             htmx.trigger(document.getElementById('active-tasks-list'), 'load');
         } else {
             alert('Failed to dispatch download task');
