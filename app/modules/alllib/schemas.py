@@ -11,4 +11,3 @@ class DownloadRequest(BaseModel):
     seasons: list[str] | None = None
     episodes_range: str | None = None
     translation_team: str | None = None
-

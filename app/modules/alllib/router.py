@@ -228,18 +228,18 @@ async def get_library_ui(
         # Determine type badge color and name
         badge_cls = "border-teal-400 text-teal-400"
         type_key = f"type_{m.media_type}"
-        if m.site_id == 3: # Novel
+        if m.site_id == 3:  # Novel
             badge_cls = "border-amber-400 text-amber-400"
-        elif m.site_id == 4: # Hentai
+        elif m.site_id == 4:  # Hentai
             badge_cls = "border-red-400 text-red-400"
             type_key = "type_hentai"
-        elif m.site_id == 2: # Slash
+        elif m.site_id == 2:  # Slash
             badge_cls = "border-purple-400 text-purple-400"
             type_key = "type_slash"
-        elif m.site_id == 5: # Comics
+        elif m.site_id == 5:  # Comics
             badge_cls = "border-blue-400 text-blue-400"
             type_key = "type_comics"
-        elif m.site_id == 6: # Anime
+        elif m.site_id == 6:  # Anime
             badge_cls = "border-green-400 text-green-400"
             type_key = "type_anime"
 
@@ -257,9 +257,9 @@ async def get_library_ui(
             fmt_slug = "anime"
 
         # Escaping quotes to prevent HTML layout break
-        safe_title = m.title.replace('"', '&quot;')
-        safe_eng = (m.eng_name or '').replace('"', '&quot;')
-        safe_rus = (m.rus_name or '').replace('"', '&quot;')
+        safe_title = m.title.replace('"', "&quot;")
+        safe_eng = (m.eng_name or "").replace('"', "&quot;")
+        safe_rus = (m.rus_name or "").replace('"', "&quot;")
 
         html += f"""
         <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-col justify-between p-4 transition-all duration-300"
@@ -321,7 +321,10 @@ async def get_chapter_ui(
 
     # Determine layout based on media type
     if media.media_type == "novel":
-        content = chapter.content_html or '<div class="text-center text-zinc-500 text-xs py-8">No content downloaded for this chapter.</div>'
+        content = (
+            chapter.content_html
+            or '<div class="text-center text-zinc-500 text-xs py-8">No content downloaded for this chapter.</div>'
+        )
         html = f"""
         <div class="max-w-2xl mx-auto px-4 py-8">
             <div class="border-b border-zinc-800 pb-4 mb-6 text-center">
@@ -334,7 +337,11 @@ async def get_chapter_ui(
         """
         return HTMLResponse(html)
     elif media.media_type == "anime":
-        video_url = f"/alllib/api/video/stream?path={urllib.parse.quote(chapter.video_path)}" if chapter.video_path else ""
+        video_url = (
+            f"/alllib/api/video/stream?path={urllib.parse.quote(chapter.video_path)}"
+            if chapter.video_path
+            else ""
+        )
         if not video_url:
             html = f"""
             <div class="w-full mx-auto px-4 py-8 text-center">
@@ -528,13 +535,10 @@ async def get_active_downloads_ui(
 
 
 @router.get("/api/anime-options")
-async def get_anime_options(
-    url: str,
-    token: str | None = None,
-    user=Depends(get_current_user)
-):
+async def get_anime_options(url: str, token: str | None = None, user=Depends(get_current_user)):
     """Fetch available seasons, episode count, and translation teams for an AnimeLib URL."""
     from app.modules.alllib.api import LibAPI
+
     api = LibAPI(auth_token=token)
 
     site_id, domain = api.get_site_info_from_url(url)
@@ -554,7 +558,9 @@ async def get_anime_options(
         raise HTTPException(status_code=400, detail="No episodes found for this anime")
 
     # Group by seasons and collect season numbers
-    seasons = sorted({str(ep.get("volume", "1")) for ep in episodes}, key=lambda x: int(x) if x.isdigit() else 0)
+    seasons = sorted(
+        {str(ep.get("volume", "1")) for ep in episodes}, key=lambda x: int(x) if x.isdigit() else 0
+    )
 
     # Collect unique translation/voiceover teams
     # We query the first episode to see the most common translation teams
@@ -562,7 +568,9 @@ async def get_anime_options(
     if episodes:
         first_episode = episodes[0]
         try:
-            players = await asyncio.to_thread(api.get_episode_players, first_episode["id"], site_id=site_id, domain=domain)
+            players = await asyncio.to_thread(
+                api.get_episode_players, first_episode["id"], site_id=site_id, domain=domain
+            )
             for pl in players:
                 team_name = pl.get("team", {}).get("name")
                 if team_name and team_name not in teams:
@@ -574,7 +582,9 @@ async def get_anime_options(
     if len(episodes) > 1:
         last_episode = episodes[-1]
         try:
-            players_last = await asyncio.to_thread(api.get_episode_players, last_episode["id"], site_id=site_id, domain=domain)
+            players_last = await asyncio.to_thread(
+                api.get_episode_players, last_episode["id"], site_id=site_id, domain=domain
+            )
             for pl in players_last:
                 team_name = pl.get("team", {}).get("name")
                 if team_name and team_name not in teams:
@@ -660,9 +670,7 @@ async def delete_media(
 
 
 @router.post("/api/novel/{media_id}/sync")
-async def sync_media(
-    media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
-):
+async def sync_media(media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Re-trigger download to fetch updates."""
     media = await db.get(LibMedia, media_id)
     if not media or not media.source_url:
@@ -673,9 +681,7 @@ async def sync_media(
 
 
 @router.get("/api/novel/{media_id}/export")
-async def export_media(
-    media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
-):
+async def export_media(media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Export downloaded media to EPUB (for novels) or CBZ (for manga/hentai/comics)."""
     media = await db.get(LibMedia, media_id)
     if not media:
@@ -693,7 +699,9 @@ async def export_media(
         # Export as EPUB
         raw_epub_bytes = await asyncio.to_thread(EPUBBuilder.build_epub, media, chapters)
         epub_buffer = io.BytesIO(raw_epub_bytes)
-        safe_title = "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        safe_title = (
+            "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        )
         filename = f"{safe_title or media.slug}.epub"
 
         return StreamingResponse(
@@ -731,7 +739,9 @@ async def export_media(
             return zip_buffer
 
         zip_buffer = await asyncio.to_thread(build_cbz_sync)
-        safe_title = "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        safe_title = (
+            "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
+        )
         filename = f"{safe_title or media.slug}.cbz"
 
         return StreamingResponse(
@@ -789,6 +799,7 @@ async def get_page(path: str, user=Depends(get_current_user)):
 async def stream_anime_video(path: str, user=Depends(get_current_user)):
     """Stream anime video file with seek capability."""
     from app.core.storage import LocalStorage
+
     storage = get_storage()
     if not storage.file_exists(path):
         raise HTTPException(status_code=404, detail="Video file not found")
@@ -819,6 +830,7 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
     }
     try:
         import requests as requests_lib
+
         resp = await asyncio.to_thread(requests_lib.get, url, headers=headers, timeout=15)
         if resp.status_code == 200:
             mime_type = resp.headers.get("content-type", "image/jpeg")
@@ -879,13 +891,21 @@ async def get_all_media(db: AsyncSession = Depends(get_db), user=Depends(get_cur
     stmt = select(LibMedia).order_by(LibMedia.title.asc())
     res = await db.execute(stmt)
     items = res.scalars().all()
-    return [{"id": m.id, "title": m.title, "slug": m.slug, "cover_path": m.cover_path, "type": m.media_type, "site_id": m.site_id} for m in items]
+    return [
+        {
+            "id": m.id,
+            "title": m.title,
+            "slug": m.slug,
+            "cover_path": m.cover_path,
+            "type": m.media_type,
+            "site_id": m.site_id,
+        }
+        for m in items
+    ]
 
 
 @router.get("/api/novel/{media_id}")
-async def get_media_json(
-    media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
-):
+async def get_media_json(media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API endpoint: get detailed metadata JSON for a single media item."""
     media = await db.get(LibMedia, media_id)
     if not media:
@@ -983,6 +1003,7 @@ async def get_media_sync_manifest(
 
 # ── Settings API ──────────────────────────────────────────
 
+
 @router.get("/ui/settings", response_class=HTMLResponse, include_in_schema=False)
 async def get_settings_ui(
     request: Request,
@@ -994,6 +1015,7 @@ async def get_settings_ui(
     from sqlalchemy import and_
 
     from app.modules.settings.models import Setting
+
     result = await db.execute(
         select(Setting.value).where(
             and_(
@@ -1004,7 +1026,9 @@ async def get_settings_ui(
         )
     )
     current_token = result.scalar_one_or_none() or ""
-    token_preview = f"…{current_token[-12:]}" if len(current_token) > 12 else ("Set" if current_token else "Not set")
+    token_preview = (
+        f"…{current_token[-12:]}" if len(current_token) > 12 else ("Set" if current_token else "Not set")
+    )
     has_token = bool(current_token.strip())
 
     html = f"""
@@ -1106,7 +1130,6 @@ async def save_settings(
     </div>
     """
     return HTMLResponse(html)
-
 
 
 try:

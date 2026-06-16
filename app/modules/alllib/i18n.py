@@ -19,7 +19,6 @@ TRANSLATIONS = {
         "export": "Экспорт CBZ/EPUB",
         "sync": "Синхронизировать",
         "delete": "Удалить",
-
         # Types / Formats
         "type_novel": "Ранобэ",
         "type_manga": "Манга",
@@ -29,7 +28,6 @@ TRANSLATIONS = {
         "type_anime": "Аниме",
         "filter_all": "Все форматы (без 18+)",
         "filter_all_18plus": "Все форматы (с 18+)",
-
         # UI controls
         "back_to_dashboard": "Назад в библиотеку",
         "btn_cancel_all": "Отменить все",
@@ -40,7 +38,6 @@ TRANSLATIONS = {
         "prev_chapter": "Пред. глава",
         "next_chapter": "След. глава",
         "page": "Страница",
-
         # Reader specific
         "mode_webtoon": "Вебтун",
         "mode_single": "Постранично",
@@ -48,7 +45,6 @@ TRANSLATIONS = {
         "offset": "Смещение",
         "zen_mode": "Зен",
         "exit_zen": "Выйти из Зен",
-
         # Novel settings
         "font_serif": "С засечками",
         "font_sans": "Без засечек",
@@ -58,7 +54,6 @@ TRANSLATIONS = {
         "select_chapter": "Выберите главу ниже для начала чтения.",
         "loading": "Загрузка...",
         "failed_load": "Не удалось загрузить.",
-
         # Anime player
         "episode": "Серия",
         "select_episode": "Выберите серию",
@@ -82,7 +77,6 @@ TRANSLATIONS = {
         "export": "Export CBZ/EPUB",
         "sync": "Synchronize",
         "delete": "Delete",
-
         # Types / Formats
         "type_novel": "Light Novel",
         "type_manga": "Manga",
@@ -92,7 +86,6 @@ TRANSLATIONS = {
         "type_anime": "Anime",
         "filter_all": "All Formats (no 18+)",
         "filter_all_18plus": "All Formats (with 18+)",
-
         # UI controls
         "back_to_dashboard": "Back to Library",
         "btn_cancel_all": "Cancel All",
@@ -103,7 +96,6 @@ TRANSLATIONS = {
         "prev_chapter": "Prev Ch.",
         "next_chapter": "Next Ch.",
         "page": "Page",
-
         # Reader specific
         "mode_webtoon": "Webtoon",
         "mode_single": "Single",
@@ -111,7 +103,6 @@ TRANSLATIONS = {
         "offset": "Offset",
         "zen_mode": "Zen",
         "exit_zen": "Exit Zen",
-
         # Novel settings
         "font_serif": "Serif",
         "font_sans": "Sans",
@@ -121,7 +112,6 @@ TRANSLATIONS = {
         "select_chapter": "Select a chapter below to start reading.",
         "loading": "Loading...",
         "failed_load": "Failed to load.",
-
         # Anime player
         "episode": "Episode",
         "select_episode": "Select episode",

@@ -87,6 +87,7 @@ def _make_storage_key(slug: str, site_id: int) -> str:
     """
     if site_id in (2, 4):
         import hashlib
+
         return hashlib.sha256(slug.encode()).hexdigest()[:24]
     return slug
 
@@ -144,7 +145,9 @@ def download_lib_task(
         desc = info.get("summary") or info.get("description") or ""
 
         # For sensitive sites, use a neutral label in task status / logs
-        task_display_title = media_title if site_id not in (2, 4) else f"[Content #{_make_storage_key(slug, site_id)[:8]}]"
+        task_display_title = (
+            media_title if site_id not in (2, 4) else f"[Content #{_make_storage_key(slug, site_id)[:8]}]"
+        )
 
         # Handle Tiptap document description
         if isinstance(desc, dict):
@@ -171,9 +174,13 @@ def download_lib_task(
         if info.get("tags"):
             meta["tags"] = [t.get("name") for t in info["tags"] if isinstance(t, dict) and t.get("name")]
         if info.get("authors"):
-            meta["authors"] = [a.get("name") for a in info["authors"] if isinstance(a, dict) and a.get("name")]
+            meta["authors"] = [
+                a.get("name") for a in info["authors"] if isinstance(a, dict) and a.get("name")
+            ]
         if info.get("artists"):
-            meta["artists"] = [a.get("name") for a in info["artists"] if isinstance(a, dict) and a.get("name")]
+            meta["artists"] = [
+                a.get("name") for a in info["artists"] if isinstance(a, dict) and a.get("name")
+            ]
         if info.get("teams"):
             meta["teams"] = [t.get("name") for t in info["teams"] if isinstance(t, dict) and t.get("name")]
         if info.get("format"):
@@ -198,7 +205,9 @@ def download_lib_task(
         chapters_data = api.get_novel_chapters(slug, site_id, domain)
         if not chapters_data:
             # Check if the chapters endpoint returned an auth requirement
-            raise Exception("No chapters found. This title may require account authentication (18+ content on HentaiLib/SlashLib requires login).")
+            raise Exception(
+                "No chapters found. This title may require account authentication (18+ content on HentaiLib/SlashLib requires login)."
+            )
 
         branch_id = select_best_branch(chapters_data)
 
@@ -281,7 +290,11 @@ def download_lib_task(
             if episodes_range and episodes_range.lower().strip() != "all":
                 allowed_numbers = parse_range_string(episodes_range)
                 if allowed_numbers:
-                    filtered_chapters = [x for x in filtered_chapters if parse_float(x[0].get("number", "0")) in allowed_numbers]
+                    filtered_chapters = [
+                        x
+                        for x in filtered_chapters
+                        if parse_float(x[0].get("number", "0")) in allowed_numbers
+                    ]
 
         total_chapters = len(filtered_chapters)
         if total_chapters == 0 and not sync_only:
@@ -351,15 +364,21 @@ def download_lib_task(
                         content = chapter_data.get("content")
                         html = ""
                         if content:
-                            if isinstance(content, dict) and content.get("type") == "doc" and content.get("content"):
-                                html = parser.json_to_html(content.get("content", []), chapter_data.get("attachments", []))
+                            if (
+                                isinstance(content, dict)
+                                and content.get("type") == "doc"
+                                and content.get("content")
+                            ):
+                                html = parser.json_to_html(
+                                    content.get("content", []), chapter_data.get("attachments", [])
+                                )
                             elif isinstance(content, str):
                                 html = content
 
                         stmt_ch = select(LibChapter).where(
-                            (LibChapter.media_id == media_db_id) &
-                            (LibChapter.volume == vol) &
-                            (LibChapter.number == num)
+                            (LibChapter.media_id == media_db_id)
+                            & (LibChapter.volume == vol)
+                            & (LibChapter.number == num)
                         )
                         db_chapter = session.execute(stmt_ch).scalar_one_or_none()
 
@@ -423,7 +442,11 @@ def download_lib_task(
                                 continue
 
                             rel_path = page_url_path.lstrip("/")
-                            page_filename = "".join(c for c in page.get("image", f"page_{page_idx}.jpg") if c.isalnum() or c in (".", "_", "-"))
+                            page_filename = "".join(
+                                c
+                                for c in page.get("image", f"page_{page_idx}.jpg")
+                                if c.isalnum() or c in (".", "_", "-")
+                            )
 
                             success = False
                             headers = {
@@ -442,16 +465,22 @@ def download_lib_task(
                                         is_sensitive = site_id in (2, 4)
                                         storage_key = _make_storage_key(slug, site_id)
                                         if is_sensitive:
-                                            page_storage_path = f"alllib/manga/{storage_key}/{vol}_{num}/{page_filename}.enc"
+                                            page_storage_path = (
+                                                f"alllib/manga/{storage_key}/{vol}_{num}/{page_filename}.enc"
+                                            )
                                             storage.save_file_encrypted(resp.content, page_storage_path)
                                         else:
-                                            page_storage_path = f"alllib/manga/{storage_key}/{vol}_{num}/{page_filename}"
+                                            page_storage_path = (
+                                                f"alllib/manga/{storage_key}/{vol}_{num}/{page_filename}"
+                                            )
                                             storage.save_file(resp.content, page_storage_path)
                                         downloaded_pages_paths.append(page_storage_path)
                                         success = True
                                         break
                                     else:
-                                        logger.debug(f"CDN {server} returned status {resp.status_code} or small/empty content ({len(resp.content)} bytes)")
+                                        logger.debug(
+                                            f"CDN {server} returned status {resp.status_code} or small/empty content ({len(resp.content)} bytes)"
+                                        )
                                 except Exception as e:
                                     logger.debug(f"CDN {server} failed: {e}")
                                     continue
@@ -460,9 +489,9 @@ def download_lib_task(
                                 raise Exception(f"Failed to download page {page_idx} from any CDN")
 
                         stmt_ch = select(LibChapter).where(
-                            (LibChapter.media_id == media_db_id) &
-                            (LibChapter.volume == vol) &
-                            (LibChapter.number == num)
+                            (LibChapter.media_id == media_db_id)
+                            & (LibChapter.volume == vol)
+                            & (LibChapter.number == num)
                         )
                         db_chapter = session.execute(stmt_ch).scalar_one_or_none()
 
@@ -550,7 +579,12 @@ def download_lib_task(
                             if player_name == "animelib":
                                 video_qualities = selected_player.get("video", {}).get("quality", [])
                                 if video_qualities:
-                                    video_qualities.sort(key=lambda x: int(x.get("quality", 0)) if str(x.get("quality")).isdigit() else 0, reverse=True)
+                                    video_qualities.sort(
+                                        key=lambda x: (
+                                            int(x.get("quality", 0)) if str(x.get("quality")).isdigit() else 0
+                                        ),
+                                        reverse=True,
+                                    )
                                     best_qual = video_qualities[0]
                                     href = best_qual.get("href")
                                     if href:
@@ -559,10 +593,12 @@ def download_lib_task(
                                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                                             "Referer": "https://v3.animelib.org",
                                         }
-                                        resp = api.session.get(direct_url, headers=headers, stream=True, timeout=30)
+                                        resp = api.session.get(
+                                            direct_url, headers=headers, stream=True, timeout=30
+                                        )
                                         if resp.status_code == 200:
                                             with open(temp_output_path, "wb") as f:
-                                                for chunk in resp.iter_content(chunk_size=1024*1024):
+                                                for chunk in resp.iter_content(chunk_size=1024 * 1024):
                                                     if not redis_client.exists(f"alllib_dl:{task_id}"):
                                                         logger.info(f"Task {task_id} cancelled. Stopping.")
                                                         return "Cancelled"
@@ -582,16 +618,27 @@ def download_lib_task(
                                         cmd = [
                                             "ffmpeg",
                                             "-y",
-                                            "-i", m3u8_url,
-                                            "-c", "copy",
-                                            "-bsf:a", "aac_adtstoasc",
-                                            temp_output_path
+                                            "-i",
+                                            m3u8_url,
+                                            "-c",
+                                            "copy",
+                                            "-bsf:a",
+                                            "aac_adtstoasc",
+                                            temp_output_path,
                                         ]
                                         res = subprocess.run(cmd, capture_output=True, text=True)
-                                        if res.returncode == 0 and os.path.exists(temp_output_path) and os.path.getsize(temp_output_path) > 0:
+                                        if (
+                                            res.returncode == 0
+                                            and os.path.exists(temp_output_path)
+                                            and os.path.getsize(temp_output_path) > 0
+                                        ):
                                             success = True
 
-                            if not success or not os.path.exists(temp_output_path) or os.path.getsize(temp_output_path) == 0:
+                            if (
+                                not success
+                                or not os.path.exists(temp_output_path)
+                                or os.path.getsize(temp_output_path) == 0
+                            ):
                                 raise Exception("Failed to retrieve episode video content.")
 
                             is_sensitive = site_id in (2, 4)
@@ -606,9 +653,9 @@ def download_lib_task(
                                     storage.save_file(f.read(), video_storage_path)
 
                             stmt_ch = select(LibChapter).where(
-                                (LibChapter.media_id == media_db_id) &
-                                (LibChapter.volume == vol) &
-                                (LibChapter.number == num)
+                                (LibChapter.media_id == media_db_id)
+                                & (LibChapter.volume == vol)
+                                & (LibChapter.number == num)
                             )
                             db_chapter = session.execute(stmt_ch).scalar_one_or_none()
 

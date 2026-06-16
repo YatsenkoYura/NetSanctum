@@ -114,7 +114,9 @@ class LibAPI:
             return path_parts[-1]
         return None
 
-    def make_request(self, url: str, params: dict | None = None, site_id: int = 1, domain: str = "mangalib.me") -> dict[str, Any]:
+    def make_request(
+        self, url: str, params: dict | None = None, site_id: int = 1, domain: str = "mangalib.me"
+    ) -> dict[str, Any]:
         """Execute request with rate limit and correct WAF-bypass headers."""
         self.wait_for_rate_limit()
 
@@ -135,10 +137,14 @@ class LibAPI:
                     return resp.json()
                 else:
                     # HTML response — likely Cloudflare or auth-gated 404 page
-                    logger.warning(f"Non-JSON response from {url} (Content-Type: {ct}). Auth may be required.")
+                    logger.warning(
+                        f"Non-JSON response from {url} (Content-Type: {ct}). Auth may be required."
+                    )
                     return {}
             elif resp.status_code == 401 or resp.status_code == 403:
-                logger.error(f"Auth required for {url} (HTTP {resp.status_code}). Site requires login for 18+ content.")
+                logger.error(
+                    f"Auth required for {url} (HTTP {resp.status_code}). Site requires login for 18+ content."
+                )
                 return {"__auth_required": True}
             elif resp.status_code == 404:
                 ct = resp.headers.get("Content-Type", "")
@@ -212,7 +218,9 @@ class LibAPI:
 
         return data.get("data", {})
 
-    def get_novel_chapters(self, slug: str, site_id: int = 1, domain: str = "mangalib.me") -> list[dict[str, Any]]:
+    def get_novel_chapters(
+        self, slug: str, site_id: int = 1, domain: str = "mangalib.me"
+    ) -> list[dict[str, Any]]:
         """Fetch full chapter list or episodes list for any media item."""
         if site_id == 6:
             # AnimeLib episodes API endpoint
@@ -223,13 +231,15 @@ class LibAPI:
             # Map episodes to unified chapter schema
             mapped_episodes = []
             for ep in episodes:
-                mapped_episodes.append({
-                    "id": ep["id"],
-                    "name": ep.get("name") or f"Episode {ep['number']}",
-                    "number": str(ep["number"]),
-                    "volume": str(ep.get("season") or "1"),
-                    "branches": [{"branch_id": 0}]  # Stub to bypass branch filtering
-                })
+                mapped_episodes.append(
+                    {
+                        "id": ep["id"],
+                        "name": ep.get("name") or f"Episode {ep['number']}",
+                        "number": str(ep["number"]),
+                        "volume": str(ep.get("season") or "1"),
+                        "branches": [{"branch_id": 0}],  # Stub to bypass branch filtering
+                    }
+                )
             return mapped_episodes
 
         url = f"{self.api_url}{slug}/chapters"
@@ -267,13 +277,14 @@ class LibAPI:
         data = self.make_request(url, params=params, site_id=site_id, domain=domain)
         return data.get("data", {})
 
-    def get_episode_players(self, episode_id: int, site_id: int = 6, domain: str = "anilib.me") -> list[dict[str, Any]]:
+    def get_episode_players(
+        self, episode_id: int, site_id: int = 6, domain: str = "anilib.me"
+    ) -> list[dict[str, Any]]:
         """Fetch player details for a specific anime episode by its ID."""
         url = f"https://api.cdnlibs.org/api/episodes/{episode_id}"
         # Use site_id=5 for the actual API call header
         data = self.make_request(url, site_id=5, domain=domain)
         return data.get("data", {}).get("players", [])
-
 
     def wait_for_rate_limit(self) -> None:
         """Rate limit coordinator."""

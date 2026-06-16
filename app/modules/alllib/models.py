@@ -17,7 +17,9 @@ class LibMedia(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     site_id: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
-    media_type: Mapped[str] = mapped_column(String(50), nullable=False, default="novel")  # "novel", "manga", "anime"
+    media_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="novel"
+    )  # "novel", "manga", "anime"
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     rus_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

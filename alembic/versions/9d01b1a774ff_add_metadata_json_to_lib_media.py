@@ -5,20 +5,21 @@ Revises: 8c67bff5bfcb
 Create Date: 2026-06-16 02:10:00.000000
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = '9d01b1a774ff'
-down_revision: Union[str, None] = '8c67bff5bfcb'
+revision: str = "9d01b1a774ff"
+down_revision: Union[str, None] = "8c67bff5bfcb"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('lib_media', sa.Column('metadata_json', sa.JSON(), nullable=True))
+    op.add_column("lib_media", sa.Column("metadata_json", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column('lib_media', 'metadata_json')
+    op.drop_column("lib_media", "metadata_json")
