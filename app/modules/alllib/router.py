@@ -44,9 +44,10 @@ def _t(key: str, lang: str = "en") -> str:
 
 
 @router.get("/helper.user.js", include_in_schema=False)
-def get_helper_userscript():
+def get_helper_userscript(request: Request):
     """Return the Tampermonkey helper userscript for direct installation."""
-    userscript_content = """// ==UserScript==
+    base_url = str(request.base_url).rstrip("/")
+    userscript_content = f"""// ==UserScript==
 // @name         NetSanctum Autofill Helper
 // @namespace    http://tampermonkey.net/
 // @version      0.1
@@ -61,53 +62,69 @@ def get_helper_userscript():
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function() {{
     'use strict';
+    const serverUrl = "{base_url}";
     console.log("[NetSanctum Helper] Userscript loaded inside frame:", window.location.href);
-    if (window.self !== window.top) {
-        function sendUpdate() {
-            let token = localStorage.getItem('token') || localStorage.getItem('authorization');
-            if (!token) {
-                for (let i = 0; i < localStorage.length; i++) {
-                    let key = localStorage.key(i);
-                    if (key && key.toLowerCase().includes('token')) {
-                        let val = localStorage.getItem(key);
-                        if (val && val.length > 20) { token = val; break; }
-                    }
-                }
-            }
-            if (!token) {
-                let cookies = document.cookie.split(';');
-                for (let c of cookies) {
-                    let [name, val] = c.trim().split('=');
-                    if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {
-                        if (val && val.length > 20) {
-                            token = decodeURIComponent(val);
-                            break;
-                        }
-                    }
-                }
-            }
-            console.log("[NetSanctum Helper] Sending update:", { url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null });
-            window.parent.postMessage({
+
+    // Common logic to extract authorization token
+    function extractToken() {{
+        let token = localStorage.getItem('token') || localStorage.getItem('authorization');
+        if (!token) {{
+            for (let i = 0; i < localStorage.length; i++) {{
+                let key = localStorage.key(i);
+                if (key && key.toLowerCase().includes('token')) {{
+                    let val = localStorage.getItem(key);
+                    if (val && val.length > 20) {{ token = val; break; }}
+                }}
+            }}
+        }}
+        if (!token) {{
+            let cookies = document.cookie.split(';');
+            for (let c of cookies) {{
+                let [name, val] = c.trim().split('=');
+                if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {{
+                    if (val && val.length > 20) {{
+                        token = decodeURIComponent(val);
+                        break;
+                    }}
+                }}
+            }}
+        }}
+        return token;
+    }}
+
+    if (window.self !== window.top) {{
+        function sendUpdate() {{
+            let token = extractToken();
+            console.log("[NetSanctum Helper] Sending iframe update:", {{ url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null }});
+            window.parent.postMessage({{
                 type: 'netsanctum-nav',
                 url: window.location.href,
                 token: token
-            }, '*');
-        }
+            }}, '*');
+        }}
 
         sendUpdate();
         let lastUrl = window.location.href;
-        new MutationObserver(() => {
-            if (window.location.href !== lastUrl) {
+        new MutationObserver(() => {{
+            if (window.location.href !== lastUrl) {{
                 lastUrl = window.location.href;
                 sendUpdate();
-            }
-        }).observe(document, {subtree: true, childList: true});
-    } else {
-        console.log("[NetSanctum Helper] Running in top window, skipping parent postMessage.");
-    }
-})();
+            }}
+        }}).observe(document, {{subtree: true, childList: true}});
+    }} else {{
+        console.log("[NetSanctum Helper] Running in top window.");
+        let token = extractToken();
+        if (token) {{
+            console.log("[NetSanctum Helper] Found token in top window, sending to server:", serverUrl);
+            fetch(serverUrl + '/alllib/api/save_token_external?token=' + encodeURIComponent(token))
+                .then(resp => resp.text())
+                .then(text => console.log("[NetSanctum Helper] Server response for token sync:", text))
+                .catch(err => console.error("[NetSanctum Helper] Failed to sync token to server:", err));
+        }}
+    }}
+}})();
 """
     return Response(content=userscript_content, media_type="application/javascript")
 
@@ -119,7 +136,8 @@ async def alllib_dashboard(
     lang: str = Depends(_get_lang),
 ):
     """Render the primary Lib Network dashboard."""
-    return templates.TemplateResponse(request, "alllib_dashboard.html", {"user": user, "lang": lang})
+    base_url = str(request.base_url).rstrip("/")
+    return templates.TemplateResponse(request, "alllib_dashboard.html", {"user": user, "lang": lang, "base_url": base_url})
 
 
 @router.get("/reader/{media_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -1196,6 +1214,48 @@ async def save_settings(
     </div>
     """
     return HTMLResponse(html)
+
+
+@router.options("/api/save_token_external", include_in_schema=False)
+async def save_token_external_options():
+    return Response(
+        status_code=204,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+
+@router.get("/api/save_token_external", include_in_schema=False)
+async def save_token_external(
+    token: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Save authorization token received from external userscript."""
+    token = token.strip()
+    if token and len(token) > 20:
+        from app.modules.settings import service as settings_service
+        await settings_service.upsert_setting(
+            db,
+            key="lib_auth_token",
+            value=token,
+            scope="module",
+            module_name="alllib",
+            description="Bearer token for Lib Network API (HentaiLib/SlashLib auth)",
+            value_type="string",
+            is_secret=True,
+        )
+        await db.commit()
+        return Response(
+            content="SAVED",
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+    return Response(
+        content="INVALID_TOKEN",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 
 try:

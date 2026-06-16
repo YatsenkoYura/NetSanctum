@@ -198,32 +198,40 @@
 
 (function() {
     'use strict';
+    const serverUrl = "{{ base_url }}";
     console.log("[NetSanctum Helper] Userscript loaded inside frame:", window.location.href);
+
+    // Common logic to extract authorization token
+    function extractToken() {
+        let token = localStorage.getItem('token') || localStorage.getItem('authorization');
+        if (!token) {
+            for (let i = 0; i < localStorage.length; i++) {
+                let key = localStorage.key(i);
+                if (key && key.toLowerCase().includes('token')) {
+                    let val = localStorage.getItem(key);
+                    if (val && val.length > 20) { token = val; break; }
+                }
+            }
+        }
+        if (!token) {
+            let cookies = document.cookie.split(';');
+            for (let c of cookies) {
+                let [name, val] = c.trim().split('=');
+                if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {
+                    if (val && val.length > 20) {
+                        token = decodeURIComponent(val);
+                        break;
+                    }
+                }
+            }
+        }
+        return token;
+    }
+
     if (window.self !== window.top) {
         function sendUpdate() {
-            let token = localStorage.getItem('token') || localStorage.getItem('authorization');
-            if (!token) {
-                for (let i = 0; i < localStorage.length; i++) {
-                    let key = localStorage.key(i);
-                    if (key && key.toLowerCase().includes('token')) {
-                        let val = localStorage.getItem(key);
-                        if (val && val.length > 20) { token = val; break; }
-                    }
-                }
-            }
-            if (!token) {
-                let cookies = document.cookie.split(';');
-                for (let c of cookies) {
-                    let [name, val] = c.trim().split('=');
-                    if (name && (name.toLowerCase().includes('token') || name.toLowerCase().includes('auth') || name.toLowerCase() === '_session')) {
-                        if (val && val.length > 20) {
-                            token = decodeURIComponent(val);
-                            break;
-                        }
-                    }
-                }
-            }
-            console.log("[NetSanctum Helper] Sending update:", { url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null });
+            let token = extractToken();
+            console.log("[NetSanctum Helper] Sending iframe update:", { url: window.location.href, token: token ? (token.substring(0, 10) + "...") : null });
             window.parent.postMessage({
                 type: 'netsanctum-nav',
                 url: window.location.href,
@@ -240,7 +248,15 @@
             }
         }).observe(document, {subtree: true, childList: true});
     } else {
-        console.log("[NetSanctum Helper] Running in top window, skipping parent postMessage.");
+        console.log("[NetSanctum Helper] Running in top window.");
+        let token = extractToken();
+        if (token) {
+            console.log("[NetSanctum Helper] Found token in top window, sending to server:", serverUrl);
+            fetch(serverUrl + '/alllib/api/save_token_external?token=' + encodeURIComponent(token))
+                .then(resp => resp.text())
+                .then(text => console.log("[NetSanctum Helper] Server response for token sync:", text))
+                .catch(err => console.error("[NetSanctum Helper] Failed to sync token to server:", err));
+        }
     }
 })();</pre>
                     <button onclick="alllibCopyHelperScript()" class="absolute top-2 right-2 px-2 py-1 bg-zinc-900 border border-zinc-800 hover:border-teal-400 hover:text-teal-400 text-[9px] font-mono text-zinc-400 transition-colors cursor-pointer">
