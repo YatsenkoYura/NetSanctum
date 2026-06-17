@@ -103,6 +103,14 @@
     pointer-events: auto !important;
   }
 
+  /* Constrain player container in portrait (vertical) orientation so controls attach to the video bottom */
+  @media (orientation: portrait) {
+    .custom-video-player {
+      height: auto !important;
+      aspect-ratio: 16/9 !important;
+    }
+  }
+
   /* Mobile/Touch optimizations */
   @media (max-width: 768px) {
     /* Larger control buttons */
