@@ -93,6 +93,65 @@
     width: 100% !important;
     height: 100% !important;
   }
+  /* Show controls when container has show-controls class */
+  .custom-video-player.show-controls .custom-controls {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+  .custom-video-player.show-controls .center-play-btn {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  /* Mobile/Touch optimizations */
+  @media (max-width: 768px) {
+    /* Larger control buttons */
+    .custom-controls button {
+      padding: 10px !important;
+    }
+    .custom-controls svg {
+      width: 20px !important;
+      height: 20px !important;
+    }
+    .center-play-btn svg {
+      width: 28px !important;
+      height: 28px !important;
+    }
+    .center-play-btn {
+      padding: 16px !important;
+    }
+    
+    /* Make progress bar easier to tap */
+    .progress-container {
+      height: 6px !important;
+      margin-top: 4px;
+      margin-bottom: 4px;
+    }
+    .progress-container:hover, .progress-container:active {
+      height: 10px !important;
+    }
+
+    /* Hide volume slider on mobile to save space, rely on mute button and hardware keys */
+    .vol-slider {
+      display: none !important;
+    }
+
+    /* Larger text size for clock and duration */
+    .time-display {
+      font-size: 11px !important;
+    }
+
+    /* Shift layout of control bar slightly for touch */
+    .custom-controls {
+      padding: 12px 16px !important;
+      background: rgba(9, 9, 11, 0.96) !important;
+    }
+
+    /* Top bar adjustment on small screens */
+    #anime-title {
+      display: none; /* Hide title on mobile to avoid overlap */
+    }
+  }
 </style>
 {% endblock %}
 
@@ -214,6 +273,23 @@
       return `${pad(m)}:${pad(s)}`;
   }
 
+  let controlsTimeout = null;
+  function showControlsTemporarily() {
+      const video = document.getElementById('anime-video-player');
+      if (!video) return;
+      const container = video.closest('.custom-video-player');
+      if (!container) return;
+      container.classList.add('show-controls');
+      
+      if (controlsTimeout) clearTimeout(controlsTimeout);
+      
+      if (!video.paused) {
+          controlsTimeout = setTimeout(() => {
+              container.classList.remove('show-controls');
+          }, 3500);
+      }
+  }
+
   function bindVideoEvents(videoId) {
       const video = document.getElementById(videoId);
       if (!video) return;
@@ -245,26 +321,36 @@
           if (durTimeSpan) durTimeSpan.innerText = formatDuration(video.duration);
       });
 
-      video.addEventListener('click', () => {
+      // Controls visibility togglery
+      container.addEventListener('pointermove', showControlsTemporarily);
+      container.addEventListener('click', showControlsTemporarily);
+
+      video.addEventListener('click', (e) => {
+          e.stopPropagation();
           toggleCustomPlay(videoId);
+          showControlsTemporarily();
       });
 
       video.addEventListener('play', () => {
           if (centerPlayBtn) centerPlayBtn.classList.add('hidden');
           const playBtn = container.querySelector('.play-btn');
           if (playBtn) playBtn.innerHTML = PAUSE_ICON;
+          showControlsTemporarily();
       });
 
       video.addEventListener('pause', () => {
           if (centerPlayBtn) centerPlayBtn.classList.remove('hidden');
           const playBtn = container.querySelector('.play-btn');
           if (playBtn) playBtn.innerHTML = PLAY_ICON;
+          showControlsTemporarily();
       });
 
       // Auto play next episode on end
       video.addEventListener('ended', () => {
           navigateEp(1);
       });
+
+      showControlsTemporarily();
   }
 
   // ── Keyboard keys for player ────────────────────────────
