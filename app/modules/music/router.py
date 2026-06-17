@@ -2,6 +2,7 @@
 Music module router.
 """
 
+import asyncio
 import json
 import mimetypes
 
@@ -588,7 +589,7 @@ async def get_audio(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
         raise HTTPException(status_code=404, detail="Audio not found")
 
     storage = get_storage()
-    if not storage.file_exists(song.audio_file_id):
+    if not await asyncio.to_thread(storage.file_exists, song.audio_file_id):
         raise HTTPException(status_code=404, detail="File missing from storage")
 
     mime_type, _ = mimetypes.guess_type(song.audio_file_id)
@@ -601,12 +602,8 @@ async def get_audio(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
         full_path = storage._full_path(song.audio_file_id)
         return FileResponse(full_path, media_type=mime_type or "audio/mpeg")
 
-    def iterfile():
-        with storage.get_file_stream(song.audio_file_id) as f:
-            while chunk := f.read(8192):
-                yield chunk
-
-    return StreamingResponse(iterfile(), media_type=mime_type or "audio/mpeg")
+    stream = await asyncio.to_thread(storage.get_file_stream, song.audio_file_id)
+    return StreamingResponse(stream, media_type=mime_type or "audio/mpeg")
 
 
 @router.get("/cover/{song_id}")
@@ -617,15 +614,12 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
         raise HTTPException(status_code=404, detail="Cover not found")
 
     storage = get_storage()
-    if not storage.file_exists(song.cover_file_id):
+    if not await asyncio.to_thread(storage.file_exists, song.cover_file_id):
         raise HTTPException(status_code=404, detail="File missing from storage")
 
     mt, _ = mimetypes.guess_type(song.cover_file_id)
-    import anyio
-
-    with storage.get_file_stream(song.cover_file_id) as f:
-        content = await anyio.to_thread.run_sync(f.read)
-    return Response(content=content, media_type=mt or "image/jpeg")
+    stream = await asyncio.to_thread(storage.get_file_stream, song.cover_file_id)
+    return StreamingResponse(stream, media_type=mt or "image/jpeg")
 
 
 # ── Storage Cleanup Hooks Registration ───────────────────

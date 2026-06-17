@@ -966,7 +966,7 @@ async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
         return RedirectResponse(url="/static/placeholder.jpg")
 
     storage = get_storage()
-    if not storage.file_exists(media.cover_path):
+    if not await asyncio.to_thread(storage.file_exists, media.cover_path):
         return RedirectResponse(url="/static/placeholder.jpg")
 
     # Transparently decrypt .enc files
@@ -975,9 +975,9 @@ async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
     mime_type, _ = mimetypes.guess_type(base_path)
 
     if is_encrypted:
-        stream = storage.get_file_stream_decrypted(media.cover_path)
+        stream = await asyncio.to_thread(storage.get_file_stream_decrypted, media.cover_path)
     else:
-        stream = storage.get_file_stream(media.cover_path)
+        stream = await asyncio.to_thread(storage.get_file_stream, media.cover_path)
 
     return StreamingResponse(stream, media_type=mime_type or "image/jpeg")
 
@@ -986,7 +986,7 @@ async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
 async def get_page(path: str, user=Depends(get_current_user)):
     """Serve a downloaded page image from the storage backend (auto-decrypts encrypted pages)."""
     storage = get_storage()
-    if not storage.file_exists(path):
+    if not await asyncio.to_thread(storage.file_exists, path):
         raise HTTPException(status_code=404, detail="Page not found")
 
     # Transparently decrypt .enc files
@@ -995,9 +995,9 @@ async def get_page(path: str, user=Depends(get_current_user)):
     mime_type, _ = mimetypes.guess_type(base_path)
 
     if is_encrypted:
-        stream = storage.get_file_stream_decrypted(path)
+        stream = await asyncio.to_thread(storage.get_file_stream_decrypted, path)
     else:
-        stream = storage.get_file_stream(path)
+        stream = await asyncio.to_thread(storage.get_file_stream, path)
 
     return StreamingResponse(stream, media_type=mime_type or "image/jpeg")
 
@@ -1008,22 +1008,23 @@ async def stream_anime_video(path: str, user=Depends(get_current_user)):
     from app.core.storage import LocalStorage
 
     storage = get_storage()
-    if not storage.file_exists(path):
+    if not await asyncio.to_thread(storage.file_exists, path):
         raise HTTPException(status_code=404, detail="Video file not found")
 
-    mime_type, _ = mimetypes.guess_type(path)
+    is_encrypted = path.endswith(".enc")
+    base_path = path[:-4] if is_encrypted else path
+    mime_type, _ = mimetypes.guess_type(base_path)
     if not mime_type:
         mime_type = "video/mp4"
 
-    if isinstance(storage, LocalStorage):
+    if isinstance(storage, LocalStorage) and not is_encrypted:
         full_path = storage._full_path(path)
         return FileResponse(full_path, media_type=mime_type)
 
-    is_encrypted = path.endswith(".enc")
     if is_encrypted:
-        stream = storage.get_file_stream_decrypted(path)
+        stream = await asyncio.to_thread(storage.get_file_stream_decrypted, path)
     else:
-        stream = storage.get_file_stream(path)
+        stream = await asyncio.to_thread(storage.get_file_stream, path)
 
     return StreamingResponse(stream, media_type=mime_type)
 

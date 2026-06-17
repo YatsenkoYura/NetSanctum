@@ -244,7 +244,7 @@ async def stream_video(video_id: str, db: AsyncSession = Depends(get_db), user=D
         raise HTTPException(status_code=404, detail="Video not found")
 
     storage = get_storage()
-    if not storage.file_exists(video.file_path):
+    if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
         raise HTTPException(status_code=404, detail="Video file missing from storage")
 
     mime_type, _ = mimetypes.guess_type(video.file_path)
@@ -254,12 +254,8 @@ async def stream_video(video_id: str, db: AsyncSession = Depends(get_db), user=D
         return FileResponse(full_path, media_type=mime_type or "video/mp4")
 
     # S3 Chunked streaming
-    def iterfile():
-        with storage.get_file_stream(video.file_path) as f:
-            while chunk := f.read(65536):
-                yield chunk
-
-    return StreamingResponse(iterfile(), media_type=mime_type or "video/mp4")
+    stream = await anyio.to_thread.run_sync(storage.get_file_stream, video.file_path)
+    return StreamingResponse(stream, media_type=mime_type or "video/mp4")
 
 
 @router.get("/api/video-archiver/videos/{video_id}/audio", include_in_schema=False)
@@ -270,7 +266,7 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
         raise HTTPException(status_code=404, detail="Video not found")
 
     storage = get_storage()
-    if not storage.file_exists(video.file_path):
+    if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
         raise HTTPException(status_code=404, detail="Video file missing from storage")
 
     if isinstance(storage, LocalStorage):
@@ -278,16 +274,16 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
         cmd = ["ffmpeg", "-i", str(abs_path), "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-        def iter_audio():
+        async def iter_audio():
             try:
                 while True:
-                    chunk = proc.stdout.read(16384)
+                    chunk = await anyio.to_thread.run_sync(proc.stdout.read, 16384)
                     if not chunk:
                         break
                     yield chunk
             finally:
-                proc.terminate()
-                proc.wait()
+                await anyio.to_thread.run_sync(proc.terminate)
+                await anyio.to_thread.run_sync(proc.wait)
 
         return StreamingResponse(iter_audio(), media_type="audio/mpeg")
     else:
@@ -310,18 +306,18 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
                 except Exception:
                     pass
 
-        def iter_audio_s3():
+        async def iter_audio_s3():
             feeder = threading.Thread(target=feed_stdin, daemon=True)
             feeder.start()
             try:
                 while True:
-                    chunk = proc.stdout.read(16384)
+                    chunk = await anyio.to_thread.run_sync(proc.stdout.read, 16384)
                     if not chunk:
                         break
                     yield chunk
             finally:
-                proc.terminate()
-                proc.wait()
+                await anyio.to_thread.run_sync(proc.terminate)
+                await anyio.to_thread.run_sync(proc.wait)
 
         return StreamingResponse(iter_audio_s3(), media_type="audio/mpeg")
 
@@ -334,15 +330,12 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     storage = get_storage()
-    if not storage.file_exists(video.thumbnail_path):
+    if not await anyio.to_thread.run_sync(storage.file_exists, video.thumbnail_path):
         raise HTTPException(status_code=404, detail="Thumbnail missing from storage")
 
     mt, _ = mimetypes.guess_type(video.thumbnail_path)
-    import anyio
-
-    with storage.get_file_stream(video.thumbnail_path) as f:
-        content = await anyio.to_thread.run_sync(f.read)
-    return Response(content=content, media_type=mt or "image/jpeg")
+    stream = await anyio.to_thread.run_sync(storage.get_file_stream, video.thumbnail_path)
+    return StreamingResponse(stream, media_type=mt or "image/jpeg")
 
 
 @router.get("/api/video-archiver/videos/{video_id}/subtitles/{lang}", include_in_schema=False)
@@ -356,12 +349,12 @@ async def get_subtitle(
 
     subtitle_path = video.subtitles[lang]
     storage = get_storage()
-    if not storage.file_exists(subtitle_path):
+    if not await anyio.to_thread.run_sync(storage.file_exists, subtitle_path):
         raise HTTPException(status_code=404, detail="Subtitle file missing from storage")
 
-    with storage.get_file_stream(subtitle_path) as f:
-        content = await anyio.to_thread.run_sync(f.read)
-    return Response(content=content, media_type="text/vtt")
+    mt, _ = mimetypes.guess_type(subtitle_path)
+    stream = await anyio.to_thread.run_sync(storage.get_file_stream, subtitle_path)
+    return StreamingResponse(stream, media_type=mt or "text/vtt")
 
 
 # ── Active Tasks API ─────────────────────────────────────
