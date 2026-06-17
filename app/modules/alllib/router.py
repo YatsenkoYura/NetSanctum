@@ -620,6 +620,13 @@ async def get_chapter_ui(
                                     </div>
                                 </div>
                             </div>
+                            <!-- Picture-in-Picture button -->
+                            <button onclick="togglePiPCustom('anime-video-player')" class="pip-btn font-bold hover:text-teal-400 transition-colors uppercase p-1" title="Picture-in-Picture">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a2 2 0 012 2v5a2 2 0 01-2 2h-5a2 2 0 01-2-2v-5a2 2 0 012-2h5z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h6" />
+                                </svg>
+                            </button>
                             <!-- Fullscreen button -->
                             <button onclick="toggleFullscreenCustom('anime-video-container')" class="fullscreen-btn font-bold hover:text-teal-400 transition-colors uppercase p-1">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M4 16v4h4m8-12h4V4m-4 16h4v-4"/></svg>
