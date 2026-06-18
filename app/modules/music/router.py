@@ -2,19 +2,16 @@
 Music module router.
 """
 
-import asyncio
 import json
-import mimetypes
 
 import redis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.storage import get_storage
 from app.core.templates import templates
 
 redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)

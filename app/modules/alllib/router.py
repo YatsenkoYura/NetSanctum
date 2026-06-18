@@ -6,14 +6,13 @@ import asyncio
 import io
 import json
 import logging
-import mimetypes
 import re
 import urllib.parse
 import zipfile
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -250,8 +249,8 @@ async def alllib_dashboard(
     setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
     global_token = setting.value if (setting and setting.value) else ""
     return templates.TemplateResponse(
-        request, 
-        "alllib_dashboard.html", 
+        request,
+        "alllib_dashboard.html",
         {"user": user, "lang": lang, "base_url": base_url, "global_token": global_token}
     )
 

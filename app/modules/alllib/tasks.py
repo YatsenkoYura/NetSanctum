@@ -96,8 +96,8 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, api, stora
     """Download external images in novel chapter content and save them to local storage,
     rewriting image sources to point to local page endpoints.
     """
-    import re
     import hashlib
+    import re
     import urllib.parse
 
     img_tag_pattern = re.compile(r'<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
@@ -107,7 +107,7 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, api, stora
 
     is_sensitive = site_id in (2, 4)
     storage_key = _make_storage_key(slug, site_id)
-    
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://ranobelib.me/",
@@ -135,7 +135,7 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, api, stora
             ext = "png"
         elif ".gif" in img_url.lower():
             ext = "gif"
-        
+
         filename = f"{url_hash}.{ext}"
         if is_sensitive:
             page_storage_path = f"alllib/novel/{storage_key}/images/{filename}.enc"
@@ -446,7 +446,7 @@ def download_lib_task(
                                 )
                             elif isinstance(content, str):
                                 html = content
-                            
+
                             # Localize external images to local storage
                             if html:
                                 html = localize_novel_images(html, slug, site_id, api, storage)

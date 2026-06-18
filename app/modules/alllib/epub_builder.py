@@ -1,12 +1,11 @@
 import html
 import io
 import logging
+import mimetypes
 import re
 import urllib.parse
 import uuid
 import zipfile
-
-import requests
 
 from app.core.storage import get_storage
 from app.modules.alllib.models import LibChapter, LibMedia
@@ -104,7 +103,6 @@ class EPUBBuilder:
 
             img_tag_pattern = re.compile(r'<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
             image_counter = 0
-            url_to_epub_path = {}
 
             for idx, ch in enumerate(chapters, start=1):
                 ch_id = f"chapter_{idx}"

@@ -1,12 +1,13 @@
-import os
-import io
-import struct
 import mimetypes
+import os
 import urllib.parse
-from typing import AsyncGenerator
-from fastapi import Request, HTTPException, Response
+from collections.abc import AsyncGenerator
+
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+
 from app.core.storage import get_storage
+
 
 async def bytes_chunk_generator(data: bytes, chunk_size: int = 262144) -> AsyncGenerator[bytes, None]:
     """Yield bytes in fixed chunk sizes to avoid blocking the event loop."""
@@ -57,7 +58,7 @@ async def range_storage_generator(
                 yield chunk
                 remaining -= len(chunk)
 
-def serve_bytes_chunked(data: bytes, media_type: str, filename: str = None) -> StreamingResponse:
+def serve_bytes_chunked(data: bytes, media_type: str, filename: str | None = None) -> StreamingResponse:
     """Serve raw in-memory bytes as an asynchronous chunked stream."""
     headers = {}
     if filename:
@@ -68,7 +69,7 @@ def serve_bytes_chunked(data: bytes, media_type: str, filename: str = None) -> S
         headers=headers
     )
 
-def serve_storage_file_chunked(file_path: str, media_type: str = None) -> StreamingResponse:
+def serve_storage_file_chunked(file_path: str, media_type: str | None = None) -> StreamingResponse:
     """Serve a storage file as an asynchronous chunked stream."""
     storage = get_storage()
     if not storage.file_exists(file_path):
@@ -83,9 +84,8 @@ def serve_storage_file_chunked(file_path: str, media_type: str = None) -> Stream
         media_type=media_type
     )
 
-def serve_media_stream(request: Request, file_path: str, media_type: str = None) -> Response:
+def serve_media_stream(request: Request, file_path: str, media_type: str | None = None) -> Response:
     """Serve a media file supporting HTTP 206 Range requests dynamically and asynchronously."""
-    import asyncio
     storage = get_storage()
     if not storage.file_exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")

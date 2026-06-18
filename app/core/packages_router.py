@@ -1,9 +1,10 @@
 import json
-import struct
 import logging
-from typing import AsyncGenerator
+import struct
+from collections.abc import AsyncGenerator
+
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.database import AsyncSessionLocal
@@ -35,7 +36,9 @@ async def get_resources_for_package(pkg_id: str) -> list:
             return manifest.get("resources", [])
 
         elif pkg_id.startswith("video_playlist_"):
-            from app.modules.video_archiver.router import get_playlist_sync_manifest as get_video_playlist_sync_manifest
+            from app.modules.video_archiver.router import (
+                get_playlist_sync_manifest as get_video_playlist_sync_manifest,
+            )
             playlist_id = int(pkg_id.split("_")[2])
             manifest = await get_video_playlist_sync_manifest(playlist_id, db=db, hybrid=False)
             return manifest.get("resources", [])
@@ -51,6 +54,7 @@ async def get_resources_for_package(pkg_id: str) -> list:
 
 
 import asyncio
+
 
 async def fetch_nsp_resource(
     res: dict, client: httpx.AsyncClient, headers: dict, cookies: dict, semaphore: asyncio.Semaphore
@@ -95,7 +99,7 @@ async def generate_nsp(resources: list, client: httpx.AsyncClient, headers: dict
             continue
         content = res_data["content"]
         length = len(content)
-        
+
         index[res_data["url"]] = {
             "offset": offset,
             "length": length,
