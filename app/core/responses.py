@@ -12,17 +12,22 @@ from app.core.storage import get_storage
 async def bytes_chunk_generator(data: bytes, chunk_size: int = 262144) -> AsyncGenerator[bytes, None]:
     """Yield bytes in fixed chunk sizes to avoid blocking the event loop."""
     for i in range(0, len(data), chunk_size):
-        yield data[i:i + chunk_size]
+        yield data[i : i + chunk_size]
 
-async def storage_chunk_generator(storage, file_path: str, chunk_size: int = 262144) -> AsyncGenerator[bytes, None]:
+
+async def storage_chunk_generator(
+    storage, file_path: str, chunk_size: int = 262144
+) -> AsyncGenerator[bytes, None]:
     """Yield file content chunks from storage, decrypting on-the-fly if necessary."""
     import asyncio
+
     is_enc = file_path.endswith(".enc")
     if is_enc:
         data = await asyncio.to_thread(storage.get_file_decrypted, file_path)
         async for chunk in bytes_chunk_generator(data, chunk_size):
             yield chunk
     else:
+
         def read_chunk(f):
             return f.read(chunk_size)
 
@@ -33,18 +38,21 @@ async def storage_chunk_generator(storage, file_path: str, chunk_size: int = 262
                     break
                 yield chunk
 
+
 async def range_storage_generator(
     storage, file_path: str, start: int, end: int, chunk_size: int = 262144
 ) -> AsyncGenerator[bytes, None]:
     """Yield a specific byte range of a file from storage."""
     import asyncio
+
     is_enc = file_path.endswith(".enc")
     if is_enc:
         data = await asyncio.to_thread(storage.get_file_decrypted, file_path)
-        sliced_data = data[start:end + 1]
+        sliced_data = data[start : end + 1]
         async for chunk in bytes_chunk_generator(sliced_data, chunk_size):
             yield chunk
     else:
+
         def read_range_chunk(f, remaining):
             return f.read(min(chunk_size, remaining))
 
@@ -58,16 +66,14 @@ async def range_storage_generator(
                 yield chunk
                 remaining -= len(chunk)
 
+
 def serve_bytes_chunked(data: bytes, media_type: str, filename: str | None = None) -> StreamingResponse:
     """Serve raw in-memory bytes as an asynchronous chunked stream."""
     headers = {}
     if filename:
         headers["Content-Disposition"] = f'attachment; filename="{urllib.parse.quote(filename)}"'
-    return StreamingResponse(
-        bytes_chunk_generator(data),
-        media_type=media_type,
-        headers=headers
-    )
+    return StreamingResponse(bytes_chunk_generator(data), media_type=media_type, headers=headers)
+
 
 def serve_storage_file_chunked(file_path: str, media_type: str | None = None) -> StreamingResponse:
     """Serve a storage file as an asynchronous chunked stream."""
@@ -79,10 +85,8 @@ def serve_storage_file_chunked(file_path: str, media_type: str | None = None) ->
         media_type, _ = mimetypes.guess_type(file_path)
         media_type = media_type or "application/octet-stream"
 
-    return StreamingResponse(
-        storage_chunk_generator(storage, file_path),
-        media_type=media_type
-    )
+    return StreamingResponse(storage_chunk_generator(storage, file_path), media_type=media_type)
+
 
 def serve_media_stream(request: Request, file_path: str, media_type: str | None = None) -> Response:
     """Serve a media file supporting HTTP 206 Range requests dynamically and asynchronously."""
@@ -113,10 +117,7 @@ def serve_media_stream(request: Request, file_path: str, media_type: str | None 
             raise HTTPException(status_code=416, detail="Invalid Range Header")
 
         if start >= file_size:
-            return Response(
-                status_code=416,
-                headers={"Content-Range": f"bytes */{file_size}"}
-            )
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
 
         if end >= file_size:
             end = file_size - 1
@@ -133,7 +134,7 @@ def serve_media_stream(request: Request, file_path: str, media_type: str | None 
             range_storage_generator(storage, file_path, start, end),
             status_code=206,
             media_type=media_type,
-            headers=headers
+            headers=headers,
         )
 
     headers = {
@@ -142,7 +143,5 @@ def serve_media_stream(request: Request, file_path: str, media_type: str | None 
         "Access-Control-Allow-Origin": "*",
     }
     return StreamingResponse(
-        storage_chunk_generator(storage, file_path),
-        media_type=media_type,
-        headers=headers
+        storage_chunk_generator(storage, file_path), media_type=media_type, headers=headers
     )

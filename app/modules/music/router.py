@@ -531,6 +531,7 @@ async def get_song_sync_manifest(
     }
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
+
         return make_hybrid_manifest(pkg_id, manifest)
     return manifest
 
@@ -583,6 +584,7 @@ async def get_playlist_sync_manifest(
     }
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
+
         return make_hybrid_manifest(pkg_id, manifest)
     return manifest
 
@@ -591,13 +593,16 @@ async def get_playlist_sync_manifest(
 
 
 @router.get("/audio/{song_id}")
-async def get_audio(request: Request, song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def get_audio(
+    request: Request, song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
     """Stream audio file from storage (supports cookie and bearer token)."""
     song = await db.get(Song, song_id)
     if not song or not song.audio_file_id:
         raise HTTPException(status_code=404, detail="Audio not found")
 
     from app.core.responses import serve_media_stream
+
     return serve_media_stream(request, song.audio_file_id)
 
 
@@ -609,6 +614,7 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
         raise HTTPException(status_code=404, detail="Cover not found")
 
     from app.core.responses import serve_storage_file_chunked
+
     return serve_storage_file_chunked(song.cover_file_id)
 
 

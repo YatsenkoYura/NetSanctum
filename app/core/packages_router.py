@@ -14,23 +14,27 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/packages", tags=["packages"])
 
+
 async def get_resources_for_package(pkg_id: str) -> list:
     """Resolve package_id to its full list of resource dictionaries by querying database."""
     async with AsyncSessionLocal() as db:
         if pkg_id.startswith("manga_") or pkg_id.startswith("novel_") or pkg_id.startswith("anime_"):
             from app.modules.alllib.router import get_media_sync_manifest
+
             media_id = int(pkg_id.split("_")[1])
             manifest = await get_media_sync_manifest(media_id, db=db, hybrid=False)
             return manifest.get("resources", [])
 
         elif pkg_id.startswith("song_"):
             from app.modules.music.router import get_song_sync_manifest
+
             song_id = int(pkg_id.split("_")[1])
             manifest = await get_song_sync_manifest(song_id, db=db, hybrid=False)
             return manifest.get("resources", [])
 
         elif pkg_id.startswith("playlist_"):
             from app.modules.music.router import get_playlist_sync_manifest
+
             playlist_id = int(pkg_id.split("_")[1])
             manifest = await get_playlist_sync_manifest(playlist_id, db=db, hybrid=False)
             return manifest.get("resources", [])
@@ -39,12 +43,14 @@ async def get_resources_for_package(pkg_id: str) -> list:
             from app.modules.video_archiver.router import (
                 get_playlist_sync_manifest as get_video_playlist_sync_manifest,
             )
+
             playlist_id = int(pkg_id.split("_")[2])
             manifest = await get_video_playlist_sync_manifest(playlist_id, db=db, hybrid=False)
             return manifest.get("resources", [])
 
         elif pkg_id.startswith("video_"):
             from app.modules.video_archiver.router import get_video_sync_manifest
+
             video_id = pkg_id.split("_")[1]
             manifest = await get_video_sync_manifest(video_id, db=db, hybrid=False)
             return manifest.get("resources", [])
@@ -68,7 +74,7 @@ async def fetch_nsp_resource(
                 return {
                     "url": url,
                     "content": response.content,
-                    "mime": response.headers.get("content-type", "application/octet-stream")
+                    "mime": response.headers.get("content-type", "application/octet-stream"),
                 }
             else:
                 logger.warning(f"NSP pack failed for {url} with code {response.status_code}")
@@ -77,17 +83,16 @@ async def fetch_nsp_resource(
     return None
 
 
-async def generate_nsp(resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict) -> AsyncGenerator[bytes, None]:
+async def generate_nsp(
+    resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict
+) -> AsyncGenerator[bytes, None]:
     """Asynchronously stream NSP container payload chunk by chunk on the fly."""
     # Exclude large binary streams (videos, audio, epub exports) from being packed inside NSP
     packable_resources = [res for res in resources if res.get("type") != "binary"]
 
     # Use a Semaphore to prevent excessive resource allocation/concurrency spikes (max 20 parallel requests)
     semaphore = asyncio.Semaphore(20)
-    tasks = [
-        fetch_nsp_resource(res, client, headers, cookies, semaphore)
-        for res in packable_resources
-    ]
+    tasks = [fetch_nsp_resource(res, client, headers, cookies, semaphore) for res in packable_resources]
 
     index = {}
     offset = 0
@@ -100,11 +105,7 @@ async def generate_nsp(resources: list, client: httpx.AsyncClient, headers: dict
         content = res_data["content"]
         length = len(content)
 
-        index[res_data["url"]] = {
-            "offset": offset,
-            "length": length,
-            "mime": res_data["mime"]
-        }
+        index[res_data["url"]] = {"offset": offset, "length": length, "mime": res_data["mime"]}
 
         yield content
         offset += length
@@ -119,11 +120,7 @@ async def generate_nsp(resources: list, client: httpx.AsyncClient, headers: dict
 
 
 @router.get("/{package_id}/nsp", include_in_schema=False)
-async def download_package_nsp(
-    package_id: str,
-    request: Request,
-    user=Depends(get_current_user)
-):
+async def download_package_nsp(package_id: str, request: Request, user=Depends(get_current_user)):
     """Serve the complete NetSanctum Package container (.nsp) on-the-fly for the requested package_id."""
     # Resolve all resources to be packed
     resources = await get_resources_for_package(package_id)
@@ -143,6 +140,7 @@ async def download_package_nsp(
 
     # Build internal httpx client targeting our own FastAPI instance
     from app.main import app
+
     try:
         transport = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(transport=transport, base_url="http://netsanctum.internal")
@@ -160,7 +158,7 @@ async def download_package_nsp(
     return StreamingResponse(
         nsp_stream(),
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

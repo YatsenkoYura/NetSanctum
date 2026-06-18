@@ -246,12 +246,13 @@ async def alllib_dashboard(
     """Render the primary Lib Network dashboard."""
     base_url = str(request.base_url).rstrip("/")
     from app.modules.settings import service as settings_service
+
     setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
     global_token = setting.value if (setting and setting.value) else ""
     return templates.TemplateResponse(
         request,
         "alllib_dashboard.html",
-        {"user": user, "lang": lang, "base_url": base_url, "global_token": global_token}
+        {"user": user, "lang": lang, "base_url": base_url, "global_token": global_token},
     )
 
 
@@ -968,6 +969,7 @@ async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
         return RedirectResponse(url="/static/placeholder.jpg")
 
     from app.core.responses import serve_storage_file_chunked
+
     try:
         return serve_storage_file_chunked(media.cover_path)
     except Exception:
@@ -978,6 +980,7 @@ async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
 async def get_page(path: str, user=Depends(get_current_user)):
     """Serve a downloaded page image from the storage backend (auto-decrypts encrypted pages)."""
     from app.core.responses import serve_storage_file_chunked
+
     return serve_storage_file_chunked(path)
 
 
@@ -985,6 +988,7 @@ async def get_page(path: str, user=Depends(get_current_user)):
 async def stream_anime_video(request: Request, path: str, user=Depends(get_current_user)):
     """Stream anime video file with seek capability."""
     from app.core.responses import serve_media_stream
+
     return serve_media_stream(request, path)
 
 
@@ -1174,6 +1178,7 @@ async def get_media_sync_manifest(
     }
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
+
         return make_hybrid_manifest(pkg_id, manifest)
     return manifest
 
@@ -1317,19 +1322,17 @@ async def save_token_external_options():
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "*",
-        }
+        },
     )
 
 
 @router.get("/api/save_token_external", include_in_schema=False)
-async def save_token_external(
-    token: str,
-    db: AsyncSession = Depends(get_db)
-):
+async def save_token_external(token: str, db: AsyncSession = Depends(get_db)):
     """Save authorization token received from external userscript."""
     token = token.strip()
     if token and len(token) > 20 and (token.startswith("eyJhbG") or token.startswith("eyJ0eX")):
         from app.modules.settings import service as settings_service
+
         await settings_service.upsert_setting(
             db,
             key="lib_auth_token",
@@ -1341,23 +1344,15 @@ async def save_token_external(
             is_secret=True,
         )
         await db.commit()
-        return Response(
-            content="SAVED",
-            headers={"Access-Control-Allow-Origin": "*"}
-        )
-    return Response(
-        content="INVALID_TOKEN",
-        headers={"Access-Control-Allow-Origin": "*"}
-    )
+        return Response(content="SAVED", headers={"Access-Control-Allow-Origin": "*"})
+    return Response(content="INVALID_TOKEN", headers={"Access-Control-Allow-Origin": "*"})
 
 
 @router.get("/api/get_global_token", response_class=Response, include_in_schema=False)
-async def get_global_token(
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user)
-):
+async def get_global_token(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Fetch current global lib network auth token."""
     from app.modules.settings import service as settings_service
+
     setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
     val = setting.value if (setting and setting.value) else ""
     return Response(content=val, media_type="text/plain")

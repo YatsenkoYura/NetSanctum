@@ -188,6 +188,7 @@ async def get_video_sync_manifest(
     }
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
+
         return make_hybrid_manifest(pkg_id, manifest)
     return manifest
 
@@ -240,6 +241,7 @@ async def get_playlist_sync_manifest(
     }
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
+
         return make_hybrid_manifest(pkg_id, manifest)
     return manifest
 
@@ -248,13 +250,16 @@ async def get_playlist_sync_manifest(
 
 
 @router.get("/api/video-archiver/videos/{video_id}/stream", include_in_schema=False)
-async def stream_video(request: Request, video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def stream_video(
+    request: Request, video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
     """Streams the archived video file with seek capability."""
     video = await db.get(ArchivedVideo, video_id)
     if not video or not video.file_path:
         raise HTTPException(status_code=404, detail="Video not found")
 
     from app.core.responses import serve_media_stream
+
     return serve_media_stream(request, video.file_path)
 
 
@@ -330,6 +335,7 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     from app.core.responses import serve_storage_file_chunked
+
     return serve_storage_file_chunked(video.thumbnail_path)
 
 
@@ -344,6 +350,7 @@ async def get_subtitle(
 
     subtitle_path = video.subtitles[lang]
     from app.core.responses import serve_storage_file_chunked
+
     return serve_storage_file_chunked(subtitle_path)
 
 
