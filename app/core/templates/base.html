@@ -519,6 +519,40 @@
                 setTimeout(detectBridge, 2000);
             }
         })();
+
+        // Package context preservation and request interception
+        (function() {
+            // Read and persist package_id from URL query params
+            const urlParams = new URLSearchParams(window.location.search);
+            const pkgId = urlParams.get('package_id');
+            if (pkgId) {
+                sessionStorage.setItem('active_package_id', pkgId);
+            }
+
+            // HTMX request interceptor to append package_id to parameters
+            document.addEventListener('htmx:configRequest', function(evt) {
+                const activePkgId = sessionStorage.getItem('active_package_id');
+                if (activePkgId && !evt.detail.parameters['package_id']) {
+                    evt.detail.parameters['package_id'] = activePkgId;
+                }
+            });
+
+            // Native fetch interceptor to append package_id to outgoing URLs
+            const originalFetch = window.fetch;
+            window.fetch = function(input, init) {
+                const activePkgId = sessionStorage.getItem('active_package_id');
+                if (activePkgId && typeof input === 'string') {
+                    try {
+                        const url = new URL(input, window.location.origin);
+                        if (!url.searchParams.has('package_id') && url.origin === window.location.origin) {
+                            url.searchParams.set('package_id', activePkgId);
+                            input = url.pathname + url.search;
+                        }
+                    } catch(e) {}
+                }
+                return originalFetch(input, init);
+            };
+        })();
     </script>
 
 

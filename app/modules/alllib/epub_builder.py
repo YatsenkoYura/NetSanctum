@@ -120,55 +120,40 @@ class EPUBBuilder:
                     nonlocal image_counter
                     original_tag = match.group(0)
                     src = match.group(1)
-                    img_url = src
 
-                    if "/alllib/api/proxy-image?url=" in src:
+                    # Check if it's a local page path
+                    if "/alllib/api/page?path=" in src:
                         try:
                             parsed = urllib.parse.urlparse(src)
                             query = urllib.parse.parse_qs(parsed.query)
-                            if query.get("url"):
-                                img_url = query["url"][0]
-                        except Exception as parse_err:
-                            logger.warning(f"Failed to parse proxied image url: {parse_err}")
+                            if query.get("path"):
+                                storage_path = query["path"][0]
+                                storage = get_storage()
+                                if storage.file_exists(storage_path):
+                                    image_counter += 1
+                                    # Read bytes (auto-decrypting if .enc)
+                                    if storage_path.endswith(".enc"):
+                                        content_bytes = storage.get_file_decrypted(storage_path)
+                                    else:
+                                        with storage.get_file_stream(storage_path) as f:
+                                            content_bytes = f.read()
 
-                    if not (img_url.startswith("http://") or img_url.startswith("https://")):
-                        return original_tag
+                                    content_type, _ = mimetypes.guess_type(storage_path)
+                                    content_type = content_type or "image/jpeg"
+                                    ext = "png" if "png" in content_type else "jpg"
 
-                    if img_url in url_to_epub_path:
-                        epub_href, media_type = url_to_epub_path[img_url]
-                    else:
-                        headers = {
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Referer": "https://ranobelib.me/",
-                        }
-                        try:
-                            res = requests.get(img_url, headers=headers, timeout=15)
-                            if res.status_code == 200:
-                                image_counter += 1
-                                content_type = res.headers.get("content-type", "").lower()
-                                if "png" in content_type:
-                                    ext = "png"
-                                    media_type = "image/png"
-                                elif "gif" in content_type:
-                                    ext = "gif"
-                                    media_type = "image/gif"
-                                else:
-                                    ext = "jpg"
-                                    media_type = "image/jpeg"
+                                    epub_href = f"images/img_{image_counter}.{ext}"
+                                    epub.writestr(f"OEBPS/{epub_href}", content_bytes)
 
-                                epub_href = f"images/img_{image_counter}.{ext}"
-                                epub.writestr(f"OEBPS/{epub_href}", res.content)
-                                url_to_epub_path[img_url] = (epub_href, media_type)
-                                manifest_items.append(
-                                    f'<item id="img_{image_counter}" href="{epub_href}" media-type="{media_type}"/>'
-                                )
-                            else:
-                                return original_tag
-                        except Exception as img_err:
-                            logger.warning(f"Error downloading image: {img_err}")
-                            return original_tag
+                                    manifest_items.append(
+                                        f'<item id="img_{image_counter}" href="{epub_href}" media-type="{content_type}"/>'
+                                    )
+                                    return f'<img src="{epub_href}" alt="Image" />'
+                        except Exception as e:
+                            logger.warning(f"Failed to bundle local image into EPUB: {e}")
 
-                    return f'<img src="{epub_href}" alt="Image" />'
+                    # Do not fetch external/remote images during EPUB build to avoid external network dependencies.
+                    return original_tag
 
                 ch_body_processed = img_tag_pattern.sub(replace_img_tags, ch_body)
 

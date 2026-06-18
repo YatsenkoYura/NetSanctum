@@ -723,6 +723,9 @@
     };
 
     window.alllibRefreshLibrary = function() {
+        if (sessionStorage.getItem('active_package_id')) {
+            return;
+        }
         const library = document.getElementById('library-items');
         if (library) {
             htmx.trigger(library, 'load');

@@ -151,18 +151,20 @@ async def sync_all(user=Depends(get_current_user)):
 
 @router.get("/api/video-archiver/videos/{video_id}/sync-manifest")
 async def get_video_sync_manifest(
-    video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
 ):
     """API: Generates a NetOutpost sync manifest for a specific video."""
     video = await db.get(ArchivedVideo, video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
+    pkg_id = f"video_{video_id}"
     resources = [
         {"url": "/static/tailwind.min.js", "type": "js"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/video-archiver/dashboard", "type": "html"},
-        {"url": "/api/video-archiver/videos", "type": "json"},
+        {"url": f"/video-archiver/dashboard?package_id={pkg_id}", "type": "html"},
+        {"url": f"/api/video-archiver/videos?package_id={pkg_id}", "type": "json"},
         {"url": f"/api/video-archiver/videos/{video_id}", "type": "json"},
     ]
     if video.file_path:
@@ -176,20 +178,24 @@ async def get_video_sync_manifest(
                 {"url": f"/api/video-archiver/videos/{video_id}/subtitles/{lang}", "type": "text"}
             )
 
-    return {
-        "package_id": f"video_{video_id}",
+    manifest = {
+        "package_id": pkg_id,
         "package_title": f"Video: {video.title}",
         "package_name": f"Video: {video.title}",
         "title": f"Video: {video.title}",
         "name": f"Video: {video.title}",
-        "root_url": "/video-archiver/dashboard",
+        "root_url": f"/video-archiver/dashboard?package_id={pkg_id}",
         "resources": resources,
     }
+    if hybrid:
+        from app.core.packages_router import make_hybrid_manifest
+        return make_hybrid_manifest(pkg_id, manifest)
+    return manifest
 
 
 @router.get("/api/video-archiver/playlists/{playlist_id}/sync-manifest")
 async def get_playlist_sync_manifest(
-    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
 ):
     """API: Generates a NetOutpost sync manifest for an entire video playlist."""
     playlist = await db.get(VideoPlaylist, playlist_id)
@@ -203,12 +209,14 @@ async def get_playlist_sync_manifest(
     )
     videos = res.scalars().all()
 
+    pkg_id = f"video_playlist_{playlist_id}"
     resources = [
         {"url": "/static/tailwind.min.js", "type": "js"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/video-archiver/dashboard", "type": "html"},
-        {"url": "/api/video-archiver/playlists", "type": "json"},
-        {"url": f"/api/video-archiver/playlists/{playlist_id}", "type": "json"},
+        {"url": f"/video-archiver/dashboard?package_id={pkg_id}", "type": "html"},
+        {"url": f"/api/video-archiver/playlists?package_id={pkg_id}", "type": "json"},
+        {"url": f"/api/video-archiver/playlists/{playlist_id}?package_id={pkg_id}", "type": "json"},
     ]
     for video in videos:
         resources.append({"url": f"/api/video-archiver/videos/{video.id}", "type": "json"})
@@ -222,40 +230,33 @@ async def get_playlist_sync_manifest(
                     {"url": f"/api/video-archiver/videos/{video.id}/subtitles/{lang}", "type": "text"}
                 )
 
-    return {
-        "package_id": f"video_playlist_{playlist_id}",
+    manifest = {
+        "package_id": pkg_id,
         "package_title": f"Playlist: {playlist.name}",
         "package_name": f"Playlist: {playlist.name}",
         "title": f"Playlist: {playlist.name}",
         "name": f"Playlist: {playlist.name}",
-        "root_url": "/video-archiver/dashboard",
+        "root_url": f"/video-archiver/dashboard?package_id={pkg_id}",
         "resources": resources,
     }
+    if hybrid:
+        from app.core.packages_router import make_hybrid_manifest
+        return make_hybrid_manifest(pkg_id, manifest)
+    return manifest
 
 
 # ── Streaming ────────────────────────────────────────────
 
 
 @router.get("/api/video-archiver/videos/{video_id}/stream", include_in_schema=False)
-async def stream_video(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def stream_video(request: Request, video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Streams the archived video file with seek capability."""
     video = await db.get(ArchivedVideo, video_id)
     if not video or not video.file_path:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    storage = get_storage()
-    if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
-        raise HTTPException(status_code=404, detail="Video file missing from storage")
-
-    mime_type, _ = mimetypes.guess_type(video.file_path)
-
-    if isinstance(storage, LocalStorage):
-        full_path = storage._full_path(video.file_path)
-        return FileResponse(full_path, media_type=mime_type or "video/mp4")
-
-    # S3 Chunked streaming
-    stream = await anyio.to_thread.run_sync(storage.get_file_stream, video.file_path)
-    return StreamingResponse(stream, media_type=mime_type or "video/mp4")
+    from app.core.responses import serve_media_stream
+    return serve_media_stream(request, video.file_path)
 
 
 @router.get("/api/video-archiver/videos/{video_id}/audio", include_in_schema=False)
@@ -329,13 +330,8 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=
     if not video or not video.thumbnail_path:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-    storage = get_storage()
-    if not await anyio.to_thread.run_sync(storage.file_exists, video.thumbnail_path):
-        raise HTTPException(status_code=404, detail="Thumbnail missing from storage")
-
-    mt, _ = mimetypes.guess_type(video.thumbnail_path)
-    stream = await anyio.to_thread.run_sync(storage.get_file_stream, video.thumbnail_path)
-    return StreamingResponse(stream, media_type=mt or "image/jpeg")
+    from app.core.responses import serve_storage_file_chunked
+    return serve_storage_file_chunked(video.thumbnail_path)
 
 
 @router.get("/api/video-archiver/videos/{video_id}/subtitles/{lang}", include_in_schema=False)
@@ -348,13 +344,8 @@ async def get_subtitle(
         raise HTTPException(status_code=404, detail="Subtitle not found")
 
     subtitle_path = video.subtitles[lang]
-    storage = get_storage()
-    if not await anyio.to_thread.run_sync(storage.file_exists, subtitle_path):
-        raise HTTPException(status_code=404, detail="Subtitle file missing from storage")
-
-    mt, _ = mimetypes.guess_type(subtitle_path)
-    stream = await anyio.to_thread.run_sync(storage.get_file_stream, subtitle_path)
-    return StreamingResponse(stream, media_type=mt or "text/vtt")
+    from app.core.responses import serve_storage_file_chunked
+    return serve_storage_file_chunked(subtitle_path)
 
 
 # ── Active Tasks API ─────────────────────────────────────

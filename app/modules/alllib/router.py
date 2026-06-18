@@ -311,6 +311,8 @@ async def get_library_tab_ui(
     lang: str = Depends(_get_lang),
 ):
     """HTMX partial: render the library tab search bar, formats selector, and grid wrapper."""
+    pkg_id = request.query_params.get("package_id")
+    pkg_suffix = f"?package_id={pkg_id}" if pkg_id else ""
     html = f"""
     <!-- Search and Filter Bar -->
     <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -335,7 +337,7 @@ async def get_library_tab_ui(
 
     <!-- Grid Container -->
     <div id="library-items"
-         hx-get="/alllib/ui/library"
+         hx-get="/alllib/ui/library{pkg_suffix}"
          hx-trigger="load"
          hx-include="#library-search, #library-format"
          hx-swap="innerHTML">
@@ -461,6 +463,8 @@ async def get_library_ui(
         safe_eng = (m.eng_name or "").replace('"', "&quot;")
         safe_rus = (m.rus_name or "").replace('"', "&quot;")
 
+        pkg_id = f"{m.media_type}_{m.id}"
+        pkg_suffix = f"?package_id={pkg_id}"
         html += f"""
         <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-col justify-between p-4 transition-all duration-300"
              data-title="{safe_title}"
@@ -469,7 +473,7 @@ async def get_library_ui(
              data-site-id="{m.site_id}"
              data-format="{fmt_slug}">
             <!-- Cover image -->
-            <button hx-get="/alllib/ui/novel/{m.id}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-full aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
+            <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-full aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
                 <img src="{cover_url}" class="w-full h-full object-cover filter brightness-90 group-hover:brightness-100 group-hover:scale-105 transition-all duration-500" loading="lazy">
             </button>
 
@@ -477,7 +481,7 @@ async def get_library_ui(
             <div class="flex-1 flex flex-col justify-between min-w-0 mt-4">
                 <div class="space-y-1.5">
                     <div class="flex items-center gap-1.5">{type_badge}</div>
-                    <button hx-get="/alllib/ui/novel/{m.id}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
+                    <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
                         <h3 class="text-xs font-bold text-zinc-100 line-clamp-2 hover:text-teal-400 transition-colors" title="{m.title}">{m.title}</h3>
                     </button>
                     <p class="text-[9px] text-zinc-500 font-mono mt-0.5 truncate">{m.eng_name or m.rus_name or ""}</p>
@@ -488,7 +492,7 @@ async def get_library_ui(
                         <span class="text-[9px] font-mono text-zinc-500">{ch_count} {_t("chapters_count", lang)}</span>
                     </div>
 
-                    <button hx-get="/alllib/ui/novel/{m.id}" hx-target="#tab-content-library" hx-swap="innerHTML"
+                    <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML"
                        class="w-full text-center bg-teal-400 text-black border border-teal-400 font-mono font-bold text-[10px] uppercase py-2 transition-all block hover:bg-black hover:text-teal-400 cursor-pointer">
                         {_t("details", lang)}
                     </button>
@@ -905,14 +909,13 @@ async def export_media(media_id: int, db: AsyncSession = Depends(get_db), user=D
     if media.media_type == "novel":
         # Export as EPUB
         raw_epub_bytes = await asyncio.to_thread(EPUBBuilder.build_epub, media, chapters)
-        epub_buffer = io.BytesIO(raw_epub_bytes)
         safe_title = (
             "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
         )
         filename = f"{safe_title or media.slug}.epub"
 
-        return StreamingResponse(
-            epub_buffer,
+        return Response(
+            content=raw_epub_bytes,
             media_type="application/epub+zip",
             headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'},
         )
@@ -951,8 +954,8 @@ async def export_media(media_id: int, db: AsyncSession = Depends(get_db), user=D
         )
         filename = f"{safe_title or media.slug}.cbz"
 
-        return StreamingResponse(
-            zip_buffer,
+        return Response(
+            content=zip_buffer.getvalue(),
             media_type="application/zip",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
@@ -965,68 +968,25 @@ async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
     if not media or not media.cover_path:
         return RedirectResponse(url="/static/placeholder.jpg")
 
-    storage = get_storage()
-    if not await asyncio.to_thread(storage.file_exists, media.cover_path):
+    from app.core.responses import serve_storage_file_chunked
+    try:
+        return serve_storage_file_chunked(media.cover_path)
+    except Exception:
         return RedirectResponse(url="/static/placeholder.jpg")
-
-    # Transparently decrypt .enc files
-    is_encrypted = media.cover_path.endswith(".enc")
-    base_path = media.cover_path[:-4] if is_encrypted else media.cover_path
-    mime_type, _ = mimetypes.guess_type(base_path)
-
-    if is_encrypted:
-        stream = await asyncio.to_thread(storage.get_file_stream_decrypted, media.cover_path)
-    else:
-        stream = await asyncio.to_thread(storage.get_file_stream, media.cover_path)
-
-    return StreamingResponse(stream, media_type=mime_type or "image/jpeg")
 
 
 @router.get("/api/page", include_in_schema=False)
 async def get_page(path: str, user=Depends(get_current_user)):
     """Serve a downloaded page image from the storage backend (auto-decrypts encrypted pages)."""
-    storage = get_storage()
-    if not await asyncio.to_thread(storage.file_exists, path):
-        raise HTTPException(status_code=404, detail="Page not found")
-
-    # Transparently decrypt .enc files
-    is_encrypted = path.endswith(".enc")
-    base_path = path[:-4] if is_encrypted else path
-    mime_type, _ = mimetypes.guess_type(base_path)
-
-    if is_encrypted:
-        stream = await asyncio.to_thread(storage.get_file_stream_decrypted, path)
-    else:
-        stream = await asyncio.to_thread(storage.get_file_stream, path)
-
-    return StreamingResponse(stream, media_type=mime_type or "image/jpeg")
+    from app.core.responses import serve_storage_file_chunked
+    return serve_storage_file_chunked(path)
 
 
 @router.get("/api/video/stream", include_in_schema=False)
-async def stream_anime_video(path: str, user=Depends(get_current_user)):
+async def stream_anime_video(request: Request, path: str, user=Depends(get_current_user)):
     """Stream anime video file with seek capability."""
-    from app.core.storage import LocalStorage
-
-    storage = get_storage()
-    if not await asyncio.to_thread(storage.file_exists, path):
-        raise HTTPException(status_code=404, detail="Video file not found")
-
-    is_encrypted = path.endswith(".enc")
-    base_path = path[:-4] if is_encrypted else path
-    mime_type, _ = mimetypes.guess_type(base_path)
-    if not mime_type:
-        mime_type = "video/mp4"
-
-    if isinstance(storage, LocalStorage) and not is_encrypted:
-        full_path = storage._full_path(path)
-        return FileResponse(full_path, media_type=mime_type)
-
-    if is_encrypted:
-        stream = await asyncio.to_thread(storage.get_file_stream_decrypted, path)
-    else:
-        stream = await asyncio.to_thread(storage.get_file_stream, path)
-
-    return StreamingResponse(stream, media_type=mime_type)
+    from app.core.responses import serve_media_stream
+    return serve_media_stream(request, path)
 
 
 @router.get("/api/proxy-image", include_in_schema=False)
@@ -1151,24 +1111,28 @@ async def get_media_json(media_id: int, db: AsyncSession = Depends(get_db), user
 
 @router.get("/api/novel/{media_id}/sync-manifest")
 async def get_media_sync_manifest(
-    media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
 ):
     """API endpoint: Generates a NetOutpost sync manifest for offline caching."""
     media = await db.get(LibMedia, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
+    pkg_prefix = media.media_type
+    pkg_id = f"{pkg_prefix}_{media_id}"
     resources = [
         {"url": "/static/tailwind.min.js", "type": "js"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/alllib/dashboard", "type": "html"},
-        {"url": "/alllib/ui/library", "type": "html"},
-        {"url": "/alllib/ui/library_tab", "type": "html"},
-        {"url": "/alllib/ui/active_downloads", "type": "html"},
+        {"url": f"/alllib/dashboard?package_id={pkg_id}", "type": "html"},
+        {"url": f"/alllib/ui/library?package_id={pkg_id}", "type": "html"},
+        {"url": f"/alllib/ui/library_tab?package_id={pkg_id}", "type": "html"},
+        {"url": f"/alllib/ui/active_downloads?package_id={pkg_id}", "type": "html"},
         {"url": f"/alllib/reader/{media_id}", "type": "html"},
-        {"url": f"/alllib/ui/novel/{media_id}", "type": "html"},
-        {"url": "/alllib/api/novels", "type": "json"},
-        {"url": f"/alllib/api/novel/{media_id}", "type": "json"},
+        {"url": f"/alllib/reader/{media_id}?package_id={pkg_id}", "type": "html"},
+        {"url": f"/alllib/ui/novel/{media_id}?package_id={pkg_id}", "type": "html"},
+        {"url": f"/alllib/api/novels?package_id={pkg_id}", "type": "json"},
+        {"url": f"/alllib/api/novel/{media_id}?package_id={pkg_id}", "type": "json"},
     ]
 
     # Export endpoint is only valid for novels
@@ -1188,6 +1152,9 @@ async def get_media_sync_manifest(
             found_urls = re.findall(r'["\'](/alllib/api/proxy-image\?url=[^"\']+)["\']', ch.content_html)
             for url_path in found_urls:
                 resources.append({"url": url_path, "type": "image"})
+            found_page_urls = re.findall(r'["\'](/alllib/api/page\?path=[^"\']+)["\']', ch.content_html)
+            for url_path in found_page_urls:
+                resources.append({"url": url_path, "type": "image"})
         elif media.media_type == "manga" and ch.pages_list:
             for page_path in ch.pages_list:
                 encoded_path = urllib.parse.quote(page_path)
@@ -1196,17 +1163,20 @@ async def get_media_sync_manifest(
             encoded_path = urllib.parse.quote(ch.video_path)
             resources.append({"url": f"/alllib/api/video/stream?path={encoded_path}", "type": "binary"})
 
-    pkg_prefix = media.media_type
     pkg_title = f"{media.media_type.capitalize()}: {media.title}"
-    return {
-        "package_id": f"{pkg_prefix}_{media_id}",
+    manifest = {
+        "package_id": pkg_id,
         "package_title": pkg_title,
         "package_name": pkg_title,
         "title": pkg_title,
         "name": pkg_title,
-        "root_url": f"/alllib/reader/{media_id}",
+        "root_url": f"/alllib/reader/{media_id}?package_id={pkg_id}",
         "resources": resources,
     }
+    if hybrid:
+        from app.core.packages_router import make_hybrid_manifest
+        return make_hybrid_manifest(pkg_id, manifest)
+    return manifest
 
 
 # ── Settings API ──────────────────────────────────────────

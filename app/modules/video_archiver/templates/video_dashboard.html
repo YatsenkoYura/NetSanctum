@@ -983,9 +983,23 @@
         grid.innerHTML = '<div class="col-span-full py-12 text-center text-zinc-500 font-mono text-sm">...</div>';
 
         try {
-            const url = search ? `/api/video-archiver/videos?search=${encodeURIComponent(search)}` : '/api/video-archiver/videos';
+            const urlParams = new URLSearchParams(window.location.search);
+            const packageId = urlParams.get('package_id');
+            let url = '/api/video-archiver/videos';
+            if (packageId) {
+                url += `?package_id=${encodeURIComponent(packageId)}`;
+            } else if (search) {
+                url += `?search=${encodeURIComponent(search)}`;
+            }
             const resp = await fetch(url);
-            const videos = await resp.json();
+            let videos = await resp.json();
+            if (packageId && search) {
+                const s = search.toLowerCase();
+                videos = videos.filter(v => 
+                    (v.title && v.title.toLowerCase().includes(s)) || 
+                    (v.description && v.description.toLowerCase().includes(s))
+                );
+            }
             allLibraryVideos = videos;
 
             if (videos.length === 0) {
@@ -1388,7 +1402,13 @@
     async function loadPlaylists() {
         const container = document.getElementById('playlists-container');
         try {
-            const resp = await fetch('/api/video-archiver/playlists');
+            const urlParams = new URLSearchParams(window.location.search);
+            const packageId = urlParams.get('package_id');
+            let url = '/api/video-archiver/playlists';
+            if (packageId) {
+                url += `?package_id=${encodeURIComponent(packageId)}`;
+            }
+            const resp = await fetch(url);
             playlists = await resp.json();
 
             if (playlists.length === 0) {
@@ -1426,7 +1446,13 @@
         document.getElementById('playlist-detail-view').classList.remove('hidden');
 
         try {
-            const resp = await fetch(`/api/video-archiver/playlists/${playlistId}`);
+            const urlParams = new URLSearchParams(window.location.search);
+            const packageId = urlParams.get('package_id');
+            let url = `/api/video-archiver/playlists/${playlistId}`;
+            if (packageId) {
+                url += `?package_id=${encodeURIComponent(packageId)}`;
+            }
+            const resp = await fetch(url);
             const data = await resp.json();
             currentPlaylist = data;
             playlistVideos = data.videos;
@@ -2020,7 +2046,13 @@
         bindVideoEvents('shared-video-player');
         bindVideoEvents('playlist-video-player');
         // Load playlists in background to populate variables
-        fetch('/api/video-archiver/playlists')
+        const urlParams = new URLSearchParams(window.location.search);
+        const packageId = urlParams.get('package_id');
+        let url = '/api/video-archiver/playlists';
+        if (packageId) {
+            url += `?package_id=${encodeURIComponent(packageId)}`;
+        }
+        fetch(url)
             .then(r => r.json())
             .then(data => { playlists = data; });
     }

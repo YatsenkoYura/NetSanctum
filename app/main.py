@@ -268,6 +268,9 @@ app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 for module_router in _discover_modules_and_routers():
     app.include_router(module_router)
 
+from app.core.packages_router import router as packages_router
+app.include_router(packages_router)
+
 templates.env.globals["active_modules"] = ACTIVE_MODULES
 
 

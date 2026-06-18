@@ -92,6 +92,78 @@ def _make_storage_key(slug: str, site_id: int) -> str:
     return slug
 
 
+def localize_novel_images(html_content: str, slug: str, site_id: int, api, storage) -> str:
+    """Download external images in novel chapter content and save them to local storage,
+    rewriting image sources to point to local page endpoints.
+    """
+    import re
+    import hashlib
+    import urllib.parse
+
+    img_tag_pattern = re.compile(r'<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
+    urls = img_tag_pattern.findall(html_content)
+    if not urls:
+        return html_content
+
+    is_sensitive = site_id in (2, 4)
+    storage_key = _make_storage_key(slug, site_id)
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://ranobelib.me/",
+    }
+    if api._auth_token:
+        headers["Authorization"] = f"Bearer {api._auth_token}"
+
+    for src in set(urls):
+        img_url = src
+        if "/alllib/api/proxy-image?url=" in src:
+            try:
+                parsed = urllib.parse.urlparse(src)
+                query = urllib.parse.parse_qs(parsed.query)
+                if query.get("url"):
+                    img_url = query["url"][0]
+            except Exception:
+                pass
+
+        if not (img_url.startswith("http://") or img_url.startswith("https://")):
+            continue
+
+        url_hash = hashlib.md5(img_url.encode("utf-8")).hexdigest()
+        ext = "jpg"
+        if ".png" in img_url.lower():
+            ext = "png"
+        elif ".gif" in img_url.lower():
+            ext = "gif"
+        
+        filename = f"{url_hash}.{ext}"
+        if is_sensitive:
+            page_storage_path = f"alllib/novel/{storage_key}/images/{filename}.enc"
+        else:
+            page_storage_path = f"alllib/novel/{storage_key}/images/{filename}"
+
+        if not storage.file_exists(page_storage_path):
+            try:
+                resp = api.session.get(img_url, headers=headers, timeout=15)
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    if is_sensitive:
+                        storage.save_file_encrypted(resp.content, page_storage_path)
+                    else:
+                        storage.save_file(resp.content, page_storage_path)
+                else:
+                    logger.warning(f"Failed to download novel image {img_url}: status {resp.status_code}")
+                    continue
+            except Exception as e:
+                logger.warning(f"Failed to download novel image {img_url}: {e}")
+                continue
+
+        local_src = f"/alllib/api/page?path={urllib.parse.quote(page_storage_path)}"
+        html_content = html_content.replace(f'src="{src}"', f'src="{local_src}"')
+        html_content = html_content.replace(f"src='{src}'", f"src='{local_src}'")
+
+    return html_content
+
+
 @celery_app.task(bind=True)
 def download_lib_task(
     self,
@@ -374,6 +446,10 @@ def download_lib_task(
                                 )
                             elif isinstance(content, str):
                                 html = content
+                            
+                            # Localize external images to local storage
+                            if html:
+                                html = localize_novel_images(html, slug, site_id, api, storage)
 
                         stmt_ch = select(LibChapter).where(
                             (LibChapter.media_id == media_db_id)

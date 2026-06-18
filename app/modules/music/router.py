@@ -502,39 +502,45 @@ async def cancel_download_ui(task_id: str, request: Request, user=Depends(get_cu
 
 @router.get("/api/songs/{song_id}/sync-manifest")
 async def get_song_sync_manifest(
-    song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
 ):
     """API: Generates a NetOutpost sync manifest for a specific song."""
     song = await db.get(Song, song_id)
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
 
+    pkg_id = f"song_{song_id}"
     resources = [
         {"url": "/static/tailwind.min.js", "type": "js"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/music/dashboard", "type": "html"},
-        {"url": "/music/ui/player", "type": "html"},
-        {"url": "/music/api/songs", "type": "json"},
+        {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},
+        {"url": f"/music/ui/player?package_id={pkg_id}", "type": "html"},
+        {"url": f"/music/api/songs?package_id={pkg_id}", "type": "json"},
         {"url": f"/music/audio/{song_id}", "type": "binary"},
     ]
     if song.cover_file_id:
         resources.append({"url": f"/music/cover/{song_id}", "type": "image"})
 
     title_str = f"Song: {song.title}" + (f" - {song.author}" if song.author else "")
-    return {
-        "package_id": f"song_{song_id}",
+    manifest = {
+        "package_id": pkg_id,
         "package_title": title_str,
         "package_name": title_str,
         "title": title_str,
         "name": title_str,
-        "root_url": "/music/dashboard",
+        "root_url": f"/music/dashboard?package_id={pkg_id}",
         "resources": resources,
     }
+    if hybrid:
+        from app.core.packages_router import make_hybrid_manifest
+        return make_hybrid_manifest(pkg_id, manifest)
+    return manifest
 
 
 @router.get("/api/playlists/{playlist_id}/sync-manifest")
 async def get_playlist_sync_manifest(
-    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
 ):
     """API: Generates a NetOutpost sync manifest for an entire playlist."""
     playlist = await db.get(Playlist, playlist_id)
@@ -551,15 +557,17 @@ async def get_playlist_sync_manifest(
     )
     songs = result.scalars().all()
 
+    pkg_id = f"playlist_{playlist_id}"
     resources = [
         {"url": "/static/tailwind.min.js", "type": "js"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/music/dashboard", "type": "html"},
-        {"url": "/music/ui/player", "type": "html"},
-        {"url": f"/music/ui/playlists/{playlist_id}", "type": "html"},
-        {"url": "/music/ui/playlists", "type": "html"},
-        {"url": "/music/api/playlists", "type": "json"},
-        {"url": f"/music/api/playlists/{playlist_id}/songs", "type": "json"},
+        {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},
+        {"url": f"/music/ui/player?package_id={pkg_id}", "type": "html"},
+        {"url": f"/music/ui/playlists/{playlist_id}?package_id={pkg_id}", "type": "html"},
+        {"url": f"/music/ui/playlists?package_id={pkg_id}", "type": "html"},
+        {"url": f"/music/api/playlists?package_id={pkg_id}", "type": "json"},
+        {"url": f"/music/api/playlists/{playlist_id}/songs?package_id={pkg_id}", "type": "json"},
     ]
     for song in songs:
         resources.append({"url": f"/music/audio/{song.id}", "type": "binary"})
@@ -567,43 +575,33 @@ async def get_playlist_sync_manifest(
             resources.append({"url": f"/music/cover/{song.id}", "type": "image"})
 
     playlist_title = f"Music Playlist: {playlist.name}"
-    return {
-        "package_id": f"playlist_{playlist_id}",
+    manifest = {
+        "package_id": pkg_id,
         "package_title": playlist_title,
         "package_name": playlist_title,
         "title": playlist_title,
         "name": playlist_title,
-        "root_url": "/music/dashboard",
+        "root_url": f"/music/dashboard?package_id={pkg_id}",
         "resources": resources,
     }
+    if hybrid:
+        from app.core.packages_router import make_hybrid_manifest
+        return make_hybrid_manifest(pkg_id, manifest)
+    return manifest
 
 
 # ── Shared Media Endpoints ───────────────────────────────
 
 
 @router.get("/audio/{song_id}")
-async def get_audio(song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def get_audio(request: Request, song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Stream audio file from storage (supports cookie and bearer token)."""
     song = await db.get(Song, song_id)
     if not song or not song.audio_file_id:
         raise HTTPException(status_code=404, detail="Audio not found")
 
-    storage = get_storage()
-    if not await asyncio.to_thread(storage.file_exists, song.audio_file_id):
-        raise HTTPException(status_code=404, detail="File missing from storage")
-
-    mime_type, _ = mimetypes.guess_type(song.audio_file_id)
-
-    from fastapi.responses import FileResponse
-
-    from app.core.storage import LocalStorage
-
-    if isinstance(storage, LocalStorage):
-        full_path = storage._full_path(song.audio_file_id)
-        return FileResponse(full_path, media_type=mime_type or "audio/mpeg")
-
-    stream = await asyncio.to_thread(storage.get_file_stream, song.audio_file_id)
-    return StreamingResponse(stream, media_type=mime_type or "audio/mpeg")
+    from app.core.responses import serve_media_stream
+    return serve_media_stream(request, song.audio_file_id)
 
 
 @router.get("/cover/{song_id}")
@@ -613,13 +611,8 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
     if not song or not song.cover_file_id:
         raise HTTPException(status_code=404, detail="Cover not found")
 
-    storage = get_storage()
-    if not await asyncio.to_thread(storage.file_exists, song.cover_file_id):
-        raise HTTPException(status_code=404, detail="File missing from storage")
-
-    mt, _ = mimetypes.guess_type(song.cover_file_id)
-    stream = await asyncio.to_thread(storage.get_file_stream, song.cover_file_id)
-    return StreamingResponse(stream, media_type=mt or "image/jpeg")
+    from app.core.responses import serve_storage_file_chunked
+    return serve_storage_file_chunked(song.cover_file_id)
 
 
 # ── Storage Cleanup Hooks Registration ───────────────────

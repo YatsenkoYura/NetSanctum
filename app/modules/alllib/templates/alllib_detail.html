@@ -88,7 +88,7 @@
 
             <!-- Action Buttons -->
             <div class="p-4 space-y-2 border-t border-zinc-800">
-                <a href="/alllib/reader/{{ media.id }}"
+                <a href="/alllib/reader/{{ media.id }}{% if request.query_params.get('package_id') %}?package_id={{ request.query_params.get('package_id') }}{% endif %}"
                    class="w-full bg-teal-400 text-black font-mono font-black text-xs uppercase tracking-widest py-3 px-4 hover:bg-teal-300 transition-all cursor-pointer flex items-center justify-center gap-2">
                     {% if media.media_type == 'anime' %}
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
