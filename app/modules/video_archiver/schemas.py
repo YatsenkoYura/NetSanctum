@@ -12,6 +12,7 @@ class DownloadRequest(BaseModel):
     comments_replies: bool = True
     replies_limit: int = 5
     auto_update: bool = False
+    cookie_platform: str | None = None
     cookies_text: str | None = None
     compress_video: bool = False
     download_subtitles: bool = False
@@ -20,6 +21,10 @@ class DownloadRequest(BaseModel):
 class PlaylistCreate(BaseModel):
     name: str
     description: str | None = None
+
+
+class SyncAllRequest(BaseModel):
+    dates: list[str] = []
 
 
 class CommentSchema(BaseModel):

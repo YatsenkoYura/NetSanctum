@@ -10,7 +10,7 @@ import re
 import urllib.parse
 import zipfile
 
-import redis
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
@@ -30,7 +30,7 @@ from app.modules.alllib.tasks import download_lib_task
 
 router = APIRouter(prefix="/alllib", tags=["alllib"])
 settings = get_settings()
-redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 logger = logging.getLogger(__name__)
 
 
@@ -416,14 +416,21 @@ async def get_library_ui(
     res = await db.execute(stmt)
     media_items = res.scalars().all()
 
+    # Batch-fetch chapter counts with a single GROUP BY query (eliminates N+1)
+    from sqlalchemy import func as sql_func
+
+    ch_count_stmt = select(LibChapter.media_id, sql_func.count(LibChapter.id).label("cnt")).group_by(
+        LibChapter.media_id
+    )
+    ch_count_res = await db.execute(ch_count_stmt)
+    ch_counts: dict[int, int] = {row.media_id: row.cnt for row in ch_count_res}
+
     html = '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 w-full">'
     empty_hidden = "hidden" if media_items else ""
     html += f'<div id="library-empty-message" class="{empty_hidden} col-span-full text-center py-12 font-mono text-xs text-zinc-500">{_t("no_novels", lang)}</div>'
 
     for m in media_items:
-        ch_count_stmt = select(LibChapter).where(LibChapter.media_id == m.id)
-        ch_count_res = await db.execute(ch_count_stmt)
-        ch_count = len(ch_count_res.scalars().all())
+        ch_count = ch_counts.get(m.id, 0)
 
         cover_url = f"/alllib/api/cover/{m.id}" if m.cover_path else "/static/placeholder.jpg"
 
@@ -527,10 +534,10 @@ async def get_chapter_ui(
     if media.media_type == "novel":
         content = (
             chapter.content_html
-            or '<div class="text-center text-zinc-500 text-xs py-8">No content downloaded for this chapter.</div>'
+            or '<div class="text-center text-zinc-500 text-xs">No content downloaded for this chapter.</div>'
         )
         html = f"""
-        <div class="max-w-2xl mx-auto px-4 py-8">
+        <div class="max-w-2xl mx-auto px-4">
             <div class="border-b border-zinc-800 pb-4 mb-6 text-center">
                 <h1 class="text-2xl md:text-3xl font-serif font-bold text-zinc-100">{title}</h1>
             </div>
@@ -548,7 +555,7 @@ async def get_chapter_ui(
         )
         if not video_url:
             html = f"""
-            <div class="w-full mx-auto px-4 py-8 text-center">
+            <div class="w-full mx-auto px-4 text-center">
                 <div class="border-b border-zinc-800 pb-4 mb-6">
                     <h1 class="text-xl md:text-2xl font-bold text-zinc-100 font-sans">{title}</h1>
                 </div>
@@ -646,24 +653,29 @@ async def get_chapter_ui(
         pages = chapter.pages_list or []
         pages_json = json.dumps([f"/alllib/api/page?path={urllib.parse.quote(p)}" for p in pages])
 
+        # Build webtoon rows with data-src (not src) so sequential JS loader controls order
+        webtoon_rows = ""
+        for i, page_path in enumerate(pages):
+            encoded_path = urllib.parse.quote(page_path)
+            webtoon_rows += f"""
+            <div class="w-full max-w-2xl bg-zinc-950/20 border border-zinc-900 overflow-hidden relative shadow-lg">
+                <img data-src="/alllib/api/page?path={encoded_path}"
+                     data-page-index="{i}"
+                     class="manga-page-img w-full h-auto object-contain transition-opacity duration-300 opacity-0"
+                     style="min-height:4px"
+                     alt="Page {i + 1}" />
+            </div>
+            """
+
         html = f"""
         <div class="space-y-6" id="manga-chapter-container" data-pages='{pages_json}'>
             <div class="border-b border-zinc-800 pb-4 mb-6 text-center">
                 <h1 class="text-xl md:text-2xl font-bold text-zinc-100 font-sans">{title}</h1>
             </div>
 
-            <!-- Webtoon continuous vertical scroll -->
+            <!-- Webtoon continuous vertical scroll (sequential loader) -->
             <div id="manga-webtoon-view" class="space-y-4 flex flex-col items-center">
-        """
-        for page_path in pages:
-            encoded_path = urllib.parse.quote(page_path)
-            html += f"""
-            <div class="w-full max-w-2xl bg-zinc-950/20 border border-zinc-900 overflow-hidden relative shadow-lg">
-                <img src="/alllib/api/page?path={encoded_path}" class="manga-page-img w-full h-auto object-contain transition-all duration-300" loading="lazy" />
-            </div>
-            """
-
-        html += """
+                {webtoon_rows}
             </div>
 
             <!-- Paginated single page view -->
@@ -685,6 +697,59 @@ async def get_chapter_ui(
                 </div>
             </div>
         </div>
+        <script>
+        (function() {{'use strict';
+          // Sequential top-to-bottom manga page loader.
+          // Pages are loaded one at a time in order: page N+1 only starts after page N finishes.
+          // An IntersectionObserver additionally pre-fetches the next page when the current one
+          // enters the viewport so there is no perceptible wait while scrolling.
+          const imgs = Array.from(document.querySelectorAll('.manga-page-img[data-src]'))
+            .sort((a, b) => parseInt(a.dataset.pageIndex) - parseInt(b.dataset.pageIndex));
+
+          if (!imgs.length) return;
+
+          let loadedCount = 0;
+
+          function loadImg(img) {{
+            return new Promise(resolve => {{
+              if (img.dataset.loaded) {{ resolve(); return; }}
+              img.dataset.loaded = '1';
+              img.onload = () => {{ img.classList.remove('opacity-0'); resolve(); }};
+              img.onerror = () => {{ img.classList.remove('opacity-0'); resolve(); }};
+              img.src = img.dataset.src;
+            }});
+          }}
+
+          // Load pages sequentially: next starts after previous completes
+          async function loadSequential() {{
+            for (const img of imgs) {{
+              await loadImg(img);
+            }}
+          }}
+
+          // Additionally use IntersectionObserver to eagerly pre-load when near viewport
+          if ('IntersectionObserver' in window) {{
+            const io = new IntersectionObserver((entries) => {{
+              entries.forEach(entry => {{
+                if (entry.isIntersecting) {{
+                  const img = entry.target;
+                  if (!img.dataset.loaded) {{
+                    img.dataset.loaded = '1';
+                    img.onload = () => img.classList.remove('opacity-0');
+                    img.onerror = () => img.classList.remove('opacity-0');
+                    img.src = img.dataset.src;
+                  }}
+                  io.unobserve(img);
+                }}
+              }});
+            }}, {{ rootMargin: '200px 0px' }});
+            imgs.forEach(img => io.observe(img));
+          }}
+
+          // Start sequential load regardless of observer
+          loadSequential();
+        }})();
+        </script>
         """
         return HTMLResponse(html)
 
@@ -696,11 +761,11 @@ async def get_active_downloads_ui(
     lang: str = Depends(_get_lang),
 ):
     """HTMX partial: list active download tasks."""
-    keys = redis_client.keys("alllib_dl:*")
+    keys = await redis_client.keys("alllib_dl:*")
     tasks = []
     for k in keys:
         try:
-            val = redis_client.get(k)
+            val = await redis_client.get(k)
             if val:
                 tasks.append(json.loads(val))
         except Exception:
@@ -708,7 +773,7 @@ async def get_active_downloads_ui(
 
     if not tasks:
         return HTMLResponse(
-            f'<div class="text-center py-8 font-mono text-xs text-zinc-600">{_t("no_active", lang)}</div>'
+            f'<div class="text-center font-mono text-xs text-zinc-600">{_t("no_active", lang)}</div>'
         )
 
     html = '<div class="space-y-3">'
@@ -831,7 +896,7 @@ async def trigger_download(
         "status": "Queued",
         "progress": "0%",
     }
-    redis_client.setex(f"alllib_dl:{task.id}", 86400, json.dumps(data))
+    await redis_client.setex(f"alllib_dl:{task.id}", 86400, json.dumps(data))
 
     return {"task_id": task.id, "status": "Queued"}
 
@@ -1015,16 +1080,16 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
 @router.delete("/api/tasks/all")
 async def cancel_all_tasks(user=Depends(get_current_user)):
     """Cancel all active downloads."""
-    keys = redis_client.keys("alllib_dl:*")
+    keys = await redis_client.keys("alllib_dl:*")
     for k in keys:
         try:
-            val = redis_client.get(k)
+            val = await redis_client.get(k)
             if val:
                 data = json.loads(val)
                 task_id = data.get("task_id")
                 if task_id:
                     celery_app.control.revoke(task_id, terminate=True)
-            redis_client.delete(k)
+            await redis_client.delete(k)
         except Exception:
             pass
     return {"message": "All tasks cancelled."}
@@ -1041,17 +1106,17 @@ async def cancel_task(
         celery_app.control.revoke(task_id, terminate=True)
     except Exception:
         pass
-    keys = redis_client.keys("alllib_dl:*")
+    keys = await redis_client.keys("alllib_dl:*")
     for k in keys:
         try:
-            val = redis_client.get(k)
+            val = await redis_client.get(k)
             if val:
                 data = json.loads(val)
                 if data.get("task_id") == task_id:
-                    redis_client.delete(k)
+                    await redis_client.delete(k)
         except Exception:
             pass
-    redis_client.delete(f"alllib_dl:{task_id}")
+    await redis_client.delete(f"alllib_dl:{task_id}")
     response.headers["HX-Trigger"] = "reloadActiveTasks"
     return {"message": f"Task {task_id} cancelled."}
 

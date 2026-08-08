@@ -2,10 +2,10 @@ import json
 import subprocess
 
 import anyio
-import redis
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -13,25 +13,31 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.storage import LocalStorage, get_storage
 from app.core.templates import templates
-from app.modules.video_archiver.models import ArchivedVideo, VideoPlaylist, video_playlist_association
-from app.modules.video_archiver.schemas import DownloadRequest, PlaylistCreate
+from app.modules.settings.models import Setting
+from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
+from app.modules.video_archiver.providers import PlatformRegistry
+from app.modules.video_archiver.schemas import DownloadRequest, PlaylistCreate, SyncAllRequest
+from app.modules.video_archiver.services import (
+    ChannelService,
+    PlatformDetector,
+    PlaylistService,
+    VideoService,
+)
 from app.modules.video_archiver.tasks import (
     process_video_url_task,
     sync_all_videos_task,
     sync_video_metadata_task,
+    youtube_oauth2_task,
 )
 
 router = APIRouter()
 settings = get_settings()
-redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 async def _get_lang(request: Request) -> str:
     """Resolve active language cookie or fall back to DB config/default."""
-    lang = request.cookies.get("lang")
-    if lang:
-        return lang
-    return "en"
+    return request.cookies.get("lang", "en")
 
 
 # ── UI Pages ─────────────────────────────────────────────
@@ -54,7 +60,21 @@ async def video_dashboard(
 async def trigger_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
-    """Schedules a video/playlist download task."""
+    """Schedules a video/playlist download task with automatic platform detection."""
+    from app.modules.settings.models import Setting
+
+    if req.cookies_text and req.cookie_platform:
+        key = f"{req.cookie_platform}_cookies"
+        res = await db.execute(select(Setting).where(Setting.key == key))
+        setting = res.scalar_one_or_none()
+        if setting:
+            setting.value = req.cookies_text
+        else:
+            setting = Setting(key=key, value=req.cookies_text, scope="module", is_secret=True)
+            db.add(setting)
+        await db.commit()
+
+    detected_platform = PlatformDetector.detect_platform(req.url)
     task = process_video_url_task.delay(
         url=req.url,
         quality=req.quality,
@@ -69,69 +89,52 @@ async def trigger_download(
         download_subtitles=req.download_subtitles,
     )
 
-    # Store initial state in Redis
     data = {
         "task_id": task.id,
         "url": req.url,
+        "platform": detected_platform,
         "title": "Resolving URL...",
         "status": "Processing",
         "progress": "0%",
     }
-    redis_client.setex(f"video_dl:{task.id}", 86400, json.dumps(data))
+    await redis_client.setex(f"video_dl:{task.id}", 86400, json.dumps(data))
 
-    return {"task_id": task.id, "message": "Download task dispatched."}
+    return {"task_id": task.id, "platform": detected_platform, "message": "Download task dispatched."}
 
 
 @router.get("/api/video-archiver/videos")
 async def list_videos(
     search: str | None = None,
+    channel_id: str | None = None,
+    platform: str | None = None,
     status: str | None = None,
     is_deleted: bool | None = None,
+    sort_by: str = "archived_at",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """API: Lists archived videos."""
-    query = select(ArchivedVideo)
-    if search:
-        query = query.where(
-            ArchivedVideo.title.ilike(f"%{search}%") | ArchivedVideo.channel_name.ilike(f"%{search}%")
-        )
-    if status:
-        query = query.where(ArchivedVideo.status == status)
-    if is_deleted is not None:
-        query = query.where(ArchivedVideo.is_deleted_on_youtube == is_deleted)
-
-    query = query.order_by(ArchivedVideo.archived_at.desc())
-    res = await db.execute(query)
-    videos = res.scalars().all()
-    return videos
+    """API: Lists archived videos with optional filtering by platform, channel, or search query."""
+    return await VideoService.list_videos(
+        db,
+        search=search,
+        channel_id=channel_id,
+        platform=platform,
+        status=status,
+        is_deleted=is_deleted,
+        sort_by=sort_by,
+    )
 
 
 @router.get("/api/video-archiver/videos/{video_id}")
 async def get_video(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API: Get video metadata."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    return video
+    return await VideoService.get_video(db, video_id)
 
 
 @router.delete("/api/video-archiver/videos/{video_id}")
 async def delete_video(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API: Deletes archived video files & DB record."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    storage = get_storage()
-    if video.file_path:
-        storage.delete_file(video.file_path)
-    if video.thumbnail_path:
-        storage.delete_file(video.thumbnail_path)
-
-    await db.delete(video)
-    await db.commit()
-    return {"message": "Video successfully deleted."}
+    return await VideoService.delete_video(db, video_id)
 
 
 @router.post("/api/video-archiver/videos/{video_id}/sync")
@@ -141,112 +144,172 @@ async def sync_video(video_id: str, db: AsyncSession = Depends(get_db), user=Dep
     return {"task_id": task.id, "message": "Sync task dispatched."}
 
 
+@router.get("/api/video-archiver/sync-dates")
+async def get_sync_dates(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """API: Returns unique update dates, platform breakdowns and cookie statuses for metadata sync UI."""
+    stmt = select(ArchivedVideo.updated_at, ArchivedVideo.archived_at, ArchivedVideo.platform).where(
+        ArchivedVideo.status == "completed"
+    )
+    res = await db.execute(stmt)
+
+    dates_map = {}
+    never_count = 0
+    platform_map = {}
+
+    for row in res.all():
+        updated_at, archived_at, platform = row[0], row[1], row[2] or "youtube"
+        platform_map[platform] = platform_map.get(platform, 0) + 1
+
+        # Consider 'never' if missing or matches archived_at exactly
+        if not updated_at or updated_at == archived_at:
+            never_count += 1
+        else:
+            d_str = updated_at.strftime("%Y-%m-%d")
+            dates_map[d_str] = dates_map.get(d_str, 0) + 1
+
+    sorted_dates = [{"date": d, "count": dates_map[d]} for d in sorted(dates_map.keys(), reverse=True)]
+
+    # Check stored cookies for each platform
+    platform_info = []
+    for p, count in platform_map.items():
+        key = f"{p}_cookies"
+        res_cookie = await db.execute(select(Setting).where(Setting.key == key))
+        c_setting = res_cookie.scalar_one_or_none()
+        cookies_text = c_setting.value if (c_setting and c_setting.value) else ""
+
+        provider = PlatformRegistry.get_provider_by_id(p)
+        val_res = provider.validate_cookies(cookies_text)
+
+        platform_info.append(
+            {
+                "platform": p,
+                "count": count,
+                "has_cookies": val_res["has_cookies"],
+                "is_valid": val_res["is_valid"],
+                "status": val_res["status"],
+                "message": val_res["message"],
+            }
+        )
+
+    return {"never": never_count, "dates": sorted_dates, "platforms": platform_info}
+
+
 @router.post("/api/video-archiver/sync-all")
-async def sync_all(user=Depends(get_current_user)):
+async def sync_all(req: SyncAllRequest, user=Depends(get_current_user)):
     """API: Dispatches sync for all archived videos."""
-    task = sync_all_videos_task.delay()
+    task = sync_all_videos_task.delay(dates=req.dates)
     return {"task_id": task.id, "message": "Global sync dispatched."}
 
 
-@router.get("/api/video-archiver/videos/{video_id}/sync-manifest")
-async def get_video_sync_manifest(
-    video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
-):
-    """API: Generates a NetOutpost sync manifest for a specific video."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
+@router.post("/api/video-archiver/sync-all/cancel/{task_id}")
+async def cancel_sync_all(task_id: str, user=Depends(get_current_user)):
+    """API: Cancels a running global sync task."""
+    from app.core.scheduler import celery_app
 
-    pkg_id = f"video_{video_id}"
-    resources = [
-        {"url": "/static/tailwind.min.js", "type": "js"},
-        {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/video-archiver/dashboard", "type": "html"},
-        {"url": f"/video-archiver/dashboard?package_id={pkg_id}", "type": "html"},
-        {"url": f"/api/video-archiver/videos?package_id={pkg_id}", "type": "json"},
-        {"url": f"/api/video-archiver/videos/{video_id}", "type": "json"},
-    ]
-    if video.file_path:
-        resources.append({"url": f"/api/video-archiver/videos/{video_id}/stream", "type": "binary"})
-    if video.thumbnail_path:
-        resources.append({"url": f"/api/video-archiver/videos/{video_id}/thumbnail", "type": "image"})
+    celery_app.control.revoke(task_id, terminate=True)
+    await redis_client.delete(f"video_dl:{task_id}")
+    return {"message": "Task cancelled."}
 
-    if video.subtitles:
-        for lang in video.subtitles.keys():
-            resources.append(
-                {"url": f"/api/video-archiver/videos/{video_id}/subtitles/{lang}", "type": "text"}
-            )
 
-    manifest = {
-        "package_id": pkg_id,
-        "package_title": f"Video: {video.title}",
-        "package_name": f"Video: {video.title}",
-        "title": f"Video: {video.title}",
-        "name": f"Video: {video.title}",
-        "root_url": f"/video-archiver/dashboard?package_id={pkg_id}",
-        "resources": resources,
+@router.post("/api/video-archiver/youtube-oauth")
+async def start_youtube_oauth(user=Depends(get_current_user)):
+    """API: Starts YouTube OAuth2 flow."""
+    task = youtube_oauth2_task.delay()
+    return {"task_id": task.id, "message": "OAuth2 task started."}
+
+
+@router.get("/api/video-archiver/cookies/{platform}")
+async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """API: Gets saved cookies and auth status for a platform."""
+    import os
+
+    from app.modules.settings.models import Setting
+
+    key = f"{platform}_cookies"
+    res = await db.execute(select(Setting).where(Setting.key == key))
+    setting = res.scalar_one_or_none()
+
+    auth_active = False
+    if platform == "youtube":
+        auth_active = os.path.exists("/app/storage/.youtube_oauth_enabled")
+
+    return {
+        "platform": platform,
+        "cookies_text": setting.value if setting else "",
+        "auth_active": auth_active,
     }
-    if hybrid:
-        from app.core.packages_router import make_hybrid_manifest
-
-        return make_hybrid_manifest(pkg_id, manifest)
-    return manifest
 
 
-@router.get("/api/video-archiver/playlists/{playlist_id}/sync-manifest")
-async def get_playlist_sync_manifest(
-    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
+@router.delete("/api/video-archiver/cookies/{platform}")
+async def clear_cookies(platform: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """API: Clears saved cookies for a platform."""
+    import os
+
+    from app.modules.settings.models import Setting
+
+    key = f"{platform}_cookies"
+    res = await db.execute(select(Setting).where(Setting.key == key))
+    setting = res.scalar_one_or_none()
+    if setting:
+        await db.delete(setting)
+        await db.commit()
+    # If youtube, also disable OAuth
+    if platform == "youtube":
+        try:
+            os.remove("/app/storage/.youtube_oauth_enabled")
+        except FileNotFoundError:
+            pass
+    return {"message": f"Cookies for {platform} cleared."}
+
+
+@router.get("/api/video-archiver/youtube-oauth/status/{task_id}")
+async def get_youtube_oauth_status(task_id: str, user=Depends(get_current_user)):
+    """API: Polls OAuth2 status and device code."""
+    data = await redis_client.get(f"video_oauth:{task_id}")
+    if not data:
+        return {"status": "not_found"}
+    return json.loads(data)
+
+
+# ── Channels API ─────────────────────────────────────────
+
+
+@router.get("/api/video-archiver/channels", include_in_schema=False)
+async def list_channels(
+    platform: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
-    """API: Generates a NetOutpost sync manifest for an entire video playlist."""
-    playlist = await db.get(VideoPlaylist, playlist_id)
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
-
-    res = await db.execute(
-        select(ArchivedVideo)
-        .join(video_playlist_association)
-        .where(video_playlist_association.c.playlist_id == playlist_id)
-    )
-    videos = res.scalars().all()
-
-    pkg_id = f"video_playlist_{playlist_id}"
-    resources = [
-        {"url": "/static/tailwind.min.js", "type": "js"},
-        {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/video-archiver/dashboard", "type": "html"},
-        {"url": f"/video-archiver/dashboard?package_id={pkg_id}", "type": "html"},
-        {"url": f"/api/video-archiver/playlists?package_id={pkg_id}", "type": "json"},
-        {"url": f"/api/video-archiver/playlists/{playlist_id}?package_id={pkg_id}", "type": "json"},
-    ]
-    for video in videos:
-        resources.append({"url": f"/api/video-archiver/videos/{video.id}", "type": "json"})
-        if video.file_path:
-            resources.append({"url": f"/api/video-archiver/videos/{video.id}/stream", "type": "binary"})
-        if video.thumbnail_path:
-            resources.append({"url": f"/api/video-archiver/videos/{video.id}/thumbnail", "type": "image"})
-        if video.subtitles:
-            for lang in video.subtitles.keys():
-                resources.append(
-                    {"url": f"/api/video-archiver/videos/{video.id}/subtitles/{lang}", "type": "text"}
-                )
-
-    manifest = {
-        "package_id": pkg_id,
-        "package_title": f"Playlist: {playlist.name}",
-        "package_name": f"Playlist: {playlist.name}",
-        "title": f"Playlist: {playlist.name}",
-        "name": f"Playlist: {playlist.name}",
-        "root_url": f"/video-archiver/dashboard?package_id={pkg_id}",
-        "resources": resources,
-    }
-    if hybrid:
-        from app.core.packages_router import make_hybrid_manifest
-
-        return make_hybrid_manifest(pkg_id, manifest)
-    return manifest
+    """API: Lists all channels with video counts and avatar paths."""
+    return await ChannelService.list_channels(db, platform=platform)
 
 
-# ── Streaming ────────────────────────────────────────────
+@router.get("/api/video-archiver/channels/{channel_id}/avatar", include_in_schema=False)
+async def get_channel_avatar_by_id(
+    channel_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """Serve channel avatar by channel ID."""
+    ch = await db.get(VideoChannel, channel_id)
+    avatar_url = ch.avatar_path if ch else None
+
+    if not avatar_url:
+        stmt = (
+            select(ArchivedVideo.channel_avatar_url)
+            .where((ArchivedVideo.channel_id == channel_id) & (ArchivedVideo.channel_avatar_url.isnot(None)))
+            .limit(1)
+        )
+        res = await db.execute(stmt)
+        avatar_url = res.scalar_one_or_none()
+
+    if not avatar_url:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+
+    from app.core.responses import serve_storage_file_chunked
+
+    return serve_storage_file_chunked(avatar_url)
+
+
+# ── Streaming & Subtitles ────────────────────────────────
 
 
 @router.get("/api/video-archiver/videos/{video_id}/stream", include_in_schema=False)
@@ -254,9 +317,9 @@ async def stream_video(
     request: Request, video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Streams the archived video file with seek capability."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video or not video.file_path:
-        raise HTTPException(status_code=404, detail="Video not found")
+    video = await VideoService.get_video(db, video_id)
+    if not video.file_path:
+        raise HTTPException(status_code=404, detail="Video file missing")
 
     from app.core.responses import serve_media_stream
 
@@ -266,9 +329,9 @@ async def stream_video(
 @router.get("/api/video-archiver/videos/{video_id}/audio", include_in_schema=False)
 async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Pipes extracted audio (MP3) on-the-fly using FFmpeg without taking storage."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video or not video.file_path:
-        raise HTTPException(status_code=404, detail="Video not found")
+    video = await VideoService.get_video(db, video_id)
+    if not video.file_path:
+        raise HTTPException(status_code=404, detail="Video file missing")
 
     storage = get_storage()
     if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
@@ -292,7 +355,6 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
 
         return StreamingResponse(iter_audio(), media_type="audio/mpeg")
     else:
-        # S3 on-the-fly streaming: pipe input file stream into ffmpeg stdin
         import threading
 
         cmd = ["ffmpeg", "-i", "pipe:0", "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
@@ -330,8 +392,8 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
 @router.get("/api/video-archiver/videos/{video_id}/thumbnail", include_in_schema=False)
 async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Serve local thumbnail from storage."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video or not video.thumbnail_path:
+    video = await VideoService.get_video(db, video_id)
+    if not video.thumbnail_path:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
     from app.core.responses import serve_storage_file_chunked
@@ -339,13 +401,34 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=
     return serve_storage_file_chunked(video.thumbnail_path)
 
 
+@router.get("/api/video-archiver/videos/{video_id}/avatar", include_in_schema=False)
+async def get_video_channel_avatar(
+    video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """Serve local channel avatar for a video from storage."""
+    video = await VideoService.get_video(db, video_id)
+    avatar_url = video.channel_avatar_url
+
+    if not avatar_url and video.channel_id:
+        ch = await db.get(VideoChannel, video.channel_id)
+        if ch:
+            avatar_url = ch.avatar_path
+
+    if not avatar_url:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+
+    from app.core.responses import serve_storage_file_chunked
+
+    return serve_storage_file_chunked(avatar_url)
+
+
 @router.get("/api/video-archiver/videos/{video_id}/subtitles/{lang}", include_in_schema=False)
 async def get_subtitle(
     video_id: str, lang: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Serve subtitle file from storage."""
-    video = await db.get(ArchivedVideo, video_id)
-    if not video or not video.subtitles or lang not in video.subtitles:
+    video = await VideoService.get_video(db, video_id)
+    if not video.subtitles or lang not in video.subtitles:
         raise HTTPException(status_code=404, detail="Subtitle not found")
 
     subtitle_path = video.subtitles[lang]
@@ -360,11 +443,11 @@ async def get_subtitle(
 @router.get("/api/video-archiver/tasks/active")
 async def active_downloads(user=Depends(get_current_user)):
     """Fetch active download statuses from Redis."""
-    keys = redis_client.keys("video_dl:*")
+    keys = await redis_client.keys("video_dl:*")
     tasks = []
     for k in keys:
         try:
-            val = redis_client.get(k)
+            val = await redis_client.get(k)
             if val:
                 tasks.append(json.loads(val))
         except Exception:
@@ -382,16 +465,16 @@ async def cancel_all_downloads(user=Depends(get_current_user)):
     except Exception:
         pass
 
-    keys = redis_client.keys("video_dl:*")
+    keys = await redis_client.keys("video_dl:*")
     for k in keys:
         try:
-            val = redis_client.get(k)
+            val = await redis_client.get(k)
             if val:
                 data = json.loads(val)
                 task_id = data.get("task_id")
                 if task_id:
                     celery_app.control.revoke(task_id, terminate=True)
-            redis_client.delete(k)
+            await redis_client.delete(k)
         except Exception:
             pass
     return {"message": "All downloads cancelled and queue purged."}
@@ -406,19 +489,17 @@ async def cancel_single_download(task_id: str, user=Depends(get_current_user)):
         celery_app.control.revoke(task_id, terminate=True)
     except Exception:
         pass
-    # Locate key if it contains the task_id
-    keys = redis_client.keys("video_dl:*")
+    keys = await redis_client.keys("video_dl:*")
     for k in keys:
         try:
-            val = redis_client.get(k)
+            val = await redis_client.get(k)
             if val:
                 data = json.loads(val)
                 if data.get("task_id") == task_id:
-                    redis_client.delete(k)
+                    await redis_client.delete(k)
         except Exception:
             pass
-    # Fallback delete
-    redis_client.delete(f"video_dl:{task_id}")
+    await redis_client.delete(f"video_dl:{task_id}")
     return {"message": f"Task {task_id} cancelled."}
 
 
@@ -430,18 +511,13 @@ async def create_playlist(
     req: PlaylistCreate, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Create a new custom video playlist."""
-    playlist = VideoPlaylist(name=req.name, description=req.description)
-    db.add(playlist)
-    await db.commit()
-    await db.refresh(playlist)
-    return playlist
+    return await PlaylistService.create_playlist(db, req.name, req.description)
 
 
 @router.get("/api/video-archiver/playlists")
 async def list_playlists(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """List all custom video playlists."""
-    res = await db.execute(select(VideoPlaylist).order_by(VideoPlaylist.created_at.desc()))
-    return res.scalars().all()
+    return await PlaylistService.list_playlists(db)
 
 
 @router.get("/api/video-archiver/playlists/{playlist_id}")
@@ -453,13 +529,7 @@ async def get_playlist_detail(
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    # Load videos
-    res = await db.execute(
-        select(ArchivedVideo)
-        .join(video_playlist_association)
-        .where(video_playlist_association.c.playlist_id == playlist_id)
-    )
-    videos = res.scalars().all()
+    videos = await PlaylistService.get_playlist_videos(db, playlist_id)
     return {
         "id": playlist.id,
         "name": playlist.name,
@@ -474,12 +544,7 @@ async def delete_playlist(
     playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Delete a custom playlist (does not delete the actual videos)."""
-    playlist = await db.get(VideoPlaylist, playlist_id)
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
-    await db.delete(playlist)
-    await db.commit()
-    return {"message": "Playlist deleted."}
+    return await PlaylistService.delete_playlist(db, playlist_id)
 
 
 @router.post("/api/video-archiver/playlists/{playlist_id}/videos/{video_id}")
@@ -487,26 +552,7 @@ async def add_video_to_playlist(
     playlist_id: int, video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Link an archived video to a custom playlist."""
-    playlist = await db.get(VideoPlaylist, playlist_id)
-    video = await db.get(ArchivedVideo, video_id)
-    if not playlist or not video:
-        raise HTTPException(status_code=404, detail="Playlist or Video not found")
-
-    # Check if link already exists
-    res = await db.execute(
-        select(video_playlist_association).where(
-            (video_playlist_association.c.playlist_id == playlist_id)
-            & (video_playlist_association.c.video_id == video_id)
-        )
-    )
-    if res.first():
-        return {"message": "Video already linked to playlist."}
-
-    # Append
-    stmt = video_playlist_association.insert().values(video_id=video_id, playlist_id=playlist_id)
-    await db.execute(stmt)
-    await db.commit()
-    return {"message": "Video linked to playlist."}
+    return await PlaylistService.add_video(db, playlist_id, video_id)
 
 
 @router.delete("/api/video-archiver/playlists/{playlist_id}/videos/{video_id}")
@@ -514,13 +560,7 @@ async def remove_video_from_playlist(
     playlist_id: int, video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Unlink an archived video from a custom playlist."""
-    stmt = delete(video_playlist_association).where(
-        (video_playlist_association.c.playlist_id == playlist_id)
-        & (video_playlist_association.c.video_id == video_id)
-    )
-    await db.execute(stmt)
-    await db.commit()
-    return {"message": "Video unlinked from playlist."}
+    return await PlaylistService.remove_video(db, playlist_id, video_id)
 
 
 # ── Storage Cleanup Hooks Registration ───────────────────

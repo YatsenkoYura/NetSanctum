@@ -99,7 +99,7 @@ async def ui_login(
 
     # Success: Generate session ID and store in Redis
     session_id = str(uuid.uuid4())
-    redis_client.setex(f"session:{session_id}", 86400 * 7, "1")
+    await redis_client.setex(f"session:{session_id}", 86400 * 7, "1")
     response = templates.TemplateResponse(request, "auth_success.html")
     response.set_cookie(
         key="access_token",
@@ -116,7 +116,7 @@ async def logout_page(request: Request):
     """Clear session cookie, remove from Redis, and redirect to login terminal."""
     session_id = request.cookies.get("access_token")
     if session_id:
-        redis_client.delete(f"session:{session_id}")
+        await redis_client.delete(f"session:{session_id}")
 
     response = RedirectResponse(url="/auth/login-page", status_code=302)
     response.delete_cookie("access_token")

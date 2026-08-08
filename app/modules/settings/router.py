@@ -222,7 +222,7 @@ async def _get_user_from_cookie(request: Request, db: AsyncSession):
     session_id = request.cookies.get("access_token")
     if not session_id:
         return None
-    if redis_client.get(f"session:{session_id}") == "1":
+    if await redis_client.get(f"session:{session_id}") == "1":
         return OwnerUser()
     return None
 

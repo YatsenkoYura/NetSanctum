@@ -10,7 +10,6 @@ import hashlib
 import hmac
 from datetime import UTC, datetime
 
-import redis
 from fastapi import Header, HTTPException, Request, status
 from passlib.context import CryptContext
 
@@ -36,8 +35,10 @@ from pathlib import Path
 
 TOKEN_FILE_PATH = Path("/app/access_token.hash")
 
-# Redis connection for sessions
-redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+# Async Redis for non-blocking session lookups in async request handlers
+import redis.asyncio as aioredis
+
+redis_client = aioredis.Redis(host="redis", port=6379, db=0, decode_responses=True)
 
 
 def verify_access_token(token: str) -> bool:
@@ -94,7 +95,7 @@ async def get_current_user(request: Request):
     # 2. Check Session Cookie (UI)
     session_id = request.cookies.get("access_token")
     if session_id:
-        user_data = redis_client.get(f"session:{session_id}")
+        user_data = await redis_client.get(f"session:{session_id}")
         if user_data == "1":
             return OwnerUser()
 
@@ -105,7 +106,7 @@ async def get_current_user(request: Request):
         if verify_access_token(query_token):
             return OwnerUser()
         # Or check if it is a session ID
-        user_data = redis_client.get(f"session:{query_token}")
+        user_data = await redis_client.get(f"session:{query_token}")
         if user_data == "1":
             return OwnerUser()
 

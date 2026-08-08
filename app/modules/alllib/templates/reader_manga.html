@@ -260,14 +260,62 @@
   function buildWebtoon() {
     const el = document.getElementById('webtoon-pages');
     el.innerHTML = '';
-    pages.forEach(src => {
+
+    // Build placeholder elements first so layout is stable
+    const imgs = pages.map((src, i) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'w-full';
       const img = document.createElement('img');
-      img.src = src;
-      img.className = 'w-full h-auto block';
-      img.loading = 'lazy';
-      el.appendChild(img);
+      img.dataset.src = src;
+      img.dataset.pageIndex = i;
+      img.className = 'w-full h-auto block transition-opacity duration-300 opacity-0';
+      img.style.minHeight = '4px';
+      img.alt = `Page ${i + 1}`;
+      wrapper.appendChild(img);
+      el.appendChild(wrapper);
+      return img;
     });
+
     document.getElementById('view-webtoon').scrollTop = 0;
+
+    // Sequential loader: each page waits for previous to finish
+    function loadImg(img) {
+      return new Promise(resolve => {
+        if (img.dataset.loaded) { resolve(); return; }
+        img.dataset.loaded = '1';
+        img.onload = () => { img.classList.remove('opacity-0'); resolve(); };
+        img.onerror = () => { img.classList.remove('opacity-0'); resolve(); };
+        img.src = img.dataset.src;
+      });
+    }
+
+    async function loadSequential() {
+      for (const img of imgs) {
+        await loadImg(img);
+      }
+    }
+
+    // IntersectionObserver for eager pre-loading near viewport
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const img = entry.target;
+            if (!img.dataset.loaded) {
+              img.dataset.loaded = '1';
+              img.onload = () => img.classList.remove('opacity-0');
+              img.onerror = () => img.classList.remove('opacity-0');
+              img.src = img.dataset.src;
+            }
+            io.unobserve(img);
+          }
+        });
+      }, { rootMargin: '300px 0px' });
+      imgs.forEach(img => io.observe(img));
+    }
+
+    // Always run sequential baseline
+    loadSequential();
   }
 
   function renderPagedView() {

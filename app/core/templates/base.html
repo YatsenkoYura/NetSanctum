@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html lang="{% if lang %}{{ lang }}{% else %}en{% endif %}" class="antialiased">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=1280">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>{% block title %}NetSanctum{% endblock %}</title>
     <meta name="description" content="NetSanctum — Modular Monolith Control Panel">
 
@@ -22,112 +23,176 @@
     </script>
 
     <!-- Google Fonts (Asynchronous fallback to prevent offline blocking) -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        media="print" onload="this.media='all'">
 
     <!-- HTMX (Local for Offline/Self-Hosted usage) -->
     <script src="/static/htmx.min.js"></script>
 
     <style>
-        * { font-family: 'Inter', system-ui, sans-serif; }
-        code, pre, .font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+        * {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        code,
+        pre,
+        .font-mono {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        }
 
         /* Premium Minimal Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #000; }
-        ::-webkit-scrollbar-thumb { background: #27272a; border: 1px solid #000; }
-        ::-webkit-scrollbar-thumb:hover { background: #2dd4bf; }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #000;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #27272a;
+            border: 1px solid #000;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #2dd4bf;
+        }
 
         /* HTMX Loading Indicator */
-        .htmx-indicator { display: none; }
-        .htmx-request .htmx-indicator { display: inline-block; }
-        .htmx-request.htmx-indicator { display: inline-block; }
+        .htmx-indicator {
+            display: none;
+        }
+
+        .htmx-request .htmx-indicator {
+            display: inline-block;
+        }
+
+        .htmx-request.htmx-indicator {
+            display: inline-block;
+        }
 
         /* NetOutpost Bridge Styles */
         .outpost-only {
             display: none !important;
         }
+
         .has-outpost-bridge .outpost-only {
             display: inline-flex !important;
         }
+
         .has-outpost-bridge button.outpost-only {
             display: inline-flex !important;
         }
+
         .has-outpost-bridge a.outpost-only {
             display: inline-flex !important;
         }
-        .has-outpost-bridge div.outpost-only {
-            display: block !important;
+
+        /* Utility to hide scrollbars for module bar */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
         }
     </style>
 
     {% block head_extra %}{% endblock %}
 </head>
 
-<body class="bg-black text-zinc-300 min-h-screen font-sans antialiased">
+<body class="bg-black text-zinc-300 min-h-screen font-sans antialiased pb-24 sm:pb-6">
 
-    <!-- ── Top Navigation Bar ──────────────────────────── -->
-    <nav class="bg-black border-b-2 border-zinc-800 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        
-        <!-- Logo and Module Switcher -->
-        <div class="flex items-center gap-6">
-            <a href="/" class="text-xl font-black tracking-tight text-white uppercase font-mono flex items-center gap-2">
-                <span class="w-3.5 h-3.5 bg-teal-400 inline-block"></span>
-                NetSanctum
-            </a>
-            
-            {% if user %}
-            <!-- Module Switcher (Horizontal stark tabs) -->
-            <div class="flex items-center gap-2 border-l-2 border-zinc-800 pl-6" hx-boost="true" hx-target="#main-content" hx-select="#main-content">
-                {% if active_modules %}
+    <!-- ── Top Navigation Bar (Mobile & Desktop Cleaned) ──────────────────────────── -->
+    <nav class="bg-black border-b-2 border-zinc-800 px-3 sm:px-6 py-3">
+        <div class="flex items-center justify-between gap-2">
+            <!-- Logo & Left Section -->
+            <div class="flex items-center gap-3">
+                <a href="/"
+                    class="text-base sm:text-xl font-black tracking-tight text-white uppercase font-mono flex items-center gap-2 shrink-0">
+                    <span class="w-3 h-3 sm:w-3.5 sm:h-3.5 bg-teal-400 inline-block"></span>
+                    <span>NetSanctum</span>
+                </a>
+
+                {% if user %}
+                <!-- Desktop Module Switcher (Horizontal stark tabs) -->
+                <div class="hidden md:flex items-center gap-2 border-l-2 border-zinc-800 pl-4" hx-boost="true"
+                    hx-target="#main-content" hx-select="#main-content">
+                    {% if active_modules %}
                     {% for mod in active_modules %}
-                    <a href="{{ mod.dashboard_url }}" class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase">
+                    <a href="{{ mod.dashboard_url }}"
+                        class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase whitespace-nowrap">
                         {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
                     </a>
                     {% endfor %}
+                    {% endif %}
+                    <a href="/dashboard"
+                        class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase whitespace-nowrap">
+                        {% if lang == 'ru' %}Конфигурация{% else %}Configuration{% endif %}
+                    </a>
+                </div>
                 {% endif %}
-                <a href="/dashboard" class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase">
-                    {% if lang == 'ru' %}Конфигурация{% else %}Configuration{% endif %}
-                </a>
             </div>
-            {% endif %}
-        </div>
-        
-        <!-- Dropdown Language Switcher and Logout -->
-        <div class="flex items-center gap-4 self-end sm:self-auto">
-            
-            <!-- Stark Dropdown Language Selector -->
-            <select onchange="window.location.href=this.value;" 
-                    class="bg-black border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 font-mono text-xs px-2.5 py-1.5 rounded-none focus:outline-none focus:border-teal-400 transition-colors cursor-pointer select-none">
-                <option value="/set-language?lang=en" {% if lang == 'en' or not lang %}selected{% endif %}>EN</option>
-                <option value="/set-language?lang=ru" {% if lang == 'ru' %}selected{% endif %}>RU</option>
-            </select>
-            
-            {% if user %}
-            <a href="/auth/logout-page"
-               class="text-xs font-mono text-zinc-400 border border-zinc-800 rounded-none px-3 py-1.5 hover:bg-zinc-900 hover:text-white hover:border-zinc-700 transition-all uppercase tracking-wider">
-                Logout
-            </a>
-            {% endif %}
+
+            <!-- Right Controls: Mobile Select / Language / Logout -->
+            <div class="flex items-center gap-2 shrink-0">
+                {% if user %}
+                <!-- Mobile Module Dropdown (Visible only on sm/xs screens) -->
+                <div class="block md:hidden">
+                    <select onchange="if(this.value) window.location.href=this.value;"
+                        class="bg-zinc-950 border border-teal-500/50 text-teal-400 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 font-bold uppercase cursor-pointer max-w-[130px] truncate">
+                        {% if active_modules %}
+                        {% for mod in active_modules %}
+                        <option value="{{ mod.dashboard_url }}" {% if request.url.path.startswith(mod.dashboard_url) %}selected{% endif %}>
+                            {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
+                        </option>
+                        {% endfor %}
+                        {% endif %}
+                        <option value="/dashboard" {% if request.url.path == '/dashboard' %}selected{% endif %}>
+                            {% if lang == 'ru' %}Конфигурация{% else %}Config{% endif %}
+                        </option>
+                    </select>
+                </div>
+                {% endif %}
+
+                <!-- Stark Dropdown Language Selector -->
+                <select onchange="window.location.href=this.value;"
+                    class="bg-black border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 transition-colors cursor-pointer select-none">
+                    <option value="/set-language?lang=en" {% if lang=='en' or not lang %}selected{% endif %}>EN</option>
+                    <option value="/set-language?lang=ru" {% if lang=='ru' %}selected{% endif %}>RU</option>
+                </select>
+
+                {% if user %}
+                <a href="/auth/logout-page"
+                    class="text-xs font-mono text-zinc-400 border border-zinc-800 rounded-none px-2 py-1.5 hover:bg-zinc-900 hover:text-white hover:border-zinc-700 transition-all uppercase tracking-wider">
+                    Logout
+                </a>
+                {% endif %}
+            </div>
         </div>
     </nav>
 
     <!-- ── Main Content Area ───────────────────────────── -->
-    <main id="main-content" class="px-6 py-8 transition-all duration-500">
+    <main id="main-content" class="px-3 sm:px-6 py-2 transition-all duration-500 max-w-full overflow-x-hidden">
         {% block content %}{% endblock %}
     </main>
-    
-    <!-- ── Global Music Player ───────────────────────────── -->
-    <!-- Global Floating Player -->
-    <div id="global-player" class="fixed bottom-6 right-6 w-80 bg-zinc-950/90 backdrop-blur-xl border border-zinc-800/80 rounded-2xl shadow-2xl transition-all duration-500 transform translate-y-full opacity-0 z-50 flex flex-col">
+
+    <!-- ── Global Music Player (Mobile Responsive Bottom Sheet / Floating Card) ───────────────────────────── -->
+    <div id="global-player"
+        class="fixed bottom-0 left-0 right-0 sm:left-auto sm:right-6 sm:bottom-6 sm:w-80 bg-zinc-950/95 sm:bg-zinc-950/90 backdrop-blur-xl border-t sm:border border-zinc-800 transition-all duration-500 transform translate-y-full opacity-0 z-50 flex flex-col rounded-none sm:rounded-2xl shadow-2xl">
         <!-- Header / Collapse handle -->
-        <div class="flex justify-between items-center px-4 py-2 bg-zinc-900/50 border-b border-zinc-800/50 cursor-pointer rounded-t-2xl hover:bg-zinc-800/50 transition-colors" onclick="window.musicPlayer.toggleCollapse()">
+        <div class="flex justify-between items-center px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/80 cursor-pointer sm:rounded-t-2xl hover:bg-zinc-800/50 transition-colors"
+            onclick="window.musicPlayer.toggleCollapse()">
             <div class="flex items-center gap-2">
                 <div class="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></div>
-                <span id="gp-header-text" class="text-[9px] font-mono text-zinc-400 uppercase tracking-widest">Now Playing</span>
+                <span id="gp-header-text" class="text-[9px] font-mono text-zinc-400 uppercase tracking-widest">Now
+                    Playing</span>
             </div>
-            <button id="gp-collapse-btn" class="text-zinc-500 hover:text-white transition-transform duration-300">▼</button>
+            <button id="gp-collapse-btn"
+                class="text-zinc-500 hover:text-white transition-transform duration-300">▼</button>
         </div>
-        
+
         <div id="gp-expanded-content" class="p-4 flex flex-col gap-5">
             <div class="flex gap-4 items-center">
                 <img id="gp-cover" src="" class="w-16 h-16 rounded-lg object-cover bg-zinc-900 shadow-md">
@@ -136,39 +201,64 @@
                     <div id="gp-artist" class="text-[11px] text-zinc-400 truncate mt-1"></div>
                 </div>
             </div>
-            
+
             <!-- Controls -->
             <div class="flex flex-col gap-3">
                 <!-- Progress -->
                 <div class="flex items-center gap-3 text-[9px] font-mono text-zinc-500">
                     <span id="gp-time-current" class="w-8 text-right">0:00</span>
-                    <div class="flex-1 h-1.5 bg-zinc-900 rounded-full cursor-pointer relative overflow-hidden group hover:h-2 transition-all" onclick="window.musicPlayer.seek(event)">
-                        <div id="gp-progress" class="absolute left-0 top-0 bottom-0 bg-teal-500 w-0 pointer-events-none group-hover:bg-teal-400 transition-all duration-100"></div>
+                    <div class="flex-1 h-1.5 bg-zinc-900 rounded-full cursor-pointer relative overflow-hidden group hover:h-2 transition-all"
+                        onclick="window.musicPlayer.seek(event)">
+                        <div id="gp-progress"
+                            class="absolute left-0 top-0 bottom-0 bg-teal-500 w-0 pointer-events-none group-hover:bg-teal-400 transition-all duration-100">
+                        </div>
                     </div>
                     <span id="gp-time-total" class="w-8">0:00</span>
                 </div>
-                
+
                 <!-- Buttons -->
                 <div class="flex items-center justify-between gap-2 mt-1">
-                    <button id="gp-cycle-btn" onclick="window.musicPlayer.togglePlaybackMode()" class="text-zinc-600 hover:text-white transition-colors" title="Playback Mode">
+                    <button id="gp-cycle-btn" onclick="window.musicPlayer.togglePlaybackMode()"
+                        class="text-zinc-600 hover:text-white transition-colors" title="Playback Mode">
                         <!-- Icon injected by JS -->
                     </button>
                     <div class="flex items-center gap-3 justify-center flex-1">
-                        <button onclick="window.musicPlayer.seekRelative(-5)" class="text-zinc-600 hover:text-white transition-colors" title="Rewind 5s">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"></path></svg>
+                        <button onclick="window.musicPlayer.seekRelative(-5)"
+                            class="text-zinc-600 hover:text-white transition-colors" title="Rewind 5s">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.334 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z">
+                                </path>
+                            </svg>
                         </button>
-                        <button onclick="window.musicPlayer.prev()" class="text-zinc-600 hover:text-white transition-colors" title="Previous Song">
-                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M19 20L9 12l10-8v16zM5 19h2V5H5v14z"></path></svg>
+                        <button onclick="window.musicPlayer.prev()"
+                            class="text-zinc-600 hover:text-white transition-colors" title="Previous Song">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M19 20L9 12l10-8v16zM5 19h2V5H5v14z"></path>
+                            </svg>
                         </button>
-                        <button id="gp-play-btn" onclick="window.musicPlayer.togglePlay()" class="w-11 h-11 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 hover:bg-teal-50 transition-all shadow-lg">
-                            <svg id="gp-icon-play" class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>
-                            <svg id="gp-icon-pause" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>
+                        <button id="gp-play-btn" onclick="window.musicPlayer.togglePlay()"
+                            class="w-11 h-11 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 hover:bg-teal-50 transition-all shadow-lg">
+                            <svg id="gp-icon-play" class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z"></path>
+                            </svg>
+                            <svg id="gp-icon-pause" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path>
+                            </svg>
                         </button>
-                        <button onclick="window.musicPlayer.next()" class="text-zinc-600 hover:text-white transition-colors" title="Next Song">
-                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M5 4l10 8-10 8V4zm14 1h-2v14h2V5z"></path></svg>
+                        <button onclick="window.musicPlayer.next()"
+                            class="text-zinc-600 hover:text-white transition-colors" title="Next Song">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M5 4l10 8-10 8V4zm14 1h-2v14h2V5z"></path>
+                            </svg>
                         </button>
-                        <button onclick="window.musicPlayer.seekRelative(5)" class="text-zinc-600 hover:text-white transition-colors" title="Forward 5s">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zM19.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z"></path></svg>
+                        <button onclick="window.musicPlayer.seekRelative(5)"
+                            class="text-zinc-600 hover:text-white transition-colors" title="Forward 5s">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M11.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zM19.934 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z">
+                                </path>
+                            </svg>
                         </button>
                     </div>
                     <!-- Empty balance placeholder -->
@@ -177,7 +267,7 @@
             </div>
         </div>
     </div>
-    
+
     <script>
         // Global Music Player Logic (Preserved across HTMX navigation)
         window.musicPlayer = {
@@ -195,7 +285,7 @@
                 this.audio.addEventListener('loadedmetadata', () => {
                     document.getElementById('gp-time-total').innerText = this.formatTime(this.audio.duration);
                 });
-                
+
                 // Set initial mode UI
                 this.updatePlaybackModeUI();
             },
@@ -215,13 +305,13 @@
             updatePlaybackModeUI() {
                 const btn = document.getElementById('gp-cycle-btn');
                 if (!btn) return;
-                
+
                 const icons = {
                     normal: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12h18M3 6h18M3 18h18"></path></svg>`,
                     repeat: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.656 48.656 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7C4.547 9.547 4.5 10.768 4.5 12s.047 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.092-1.209.138-2.43.138-3.662Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12H21m-21 0h1.5"></path></svg>`,
                     shuffle: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.656 48.656 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7C4.547 9.547 4.5 10.768 4.5 12s.047 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.092-1.209.138-2.43.138-3.662Z" style="opacity: 0.4;"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5L8.5 15.5M8.5 8.5l7 7"></path></svg>`
                 };
-                
+
                 btn.innerHTML = icons[this.playbackMode];
                 if (this.playbackMode === 'normal') {
                     btn.className = "text-zinc-500 hover:text-teal-400 transition-colors";
@@ -279,7 +369,7 @@
                 } else {
                     document.getElementById('gp-cover').classList.add('hidden');
                 }
-                
+
                 const fullAudioUrl = song.audio_url.startsWith('http') ? song.audio_url : (window.location.origin + song.audio_url);
                 if (this.audio.src !== fullAudioUrl) {
                     this.audio.src = song.audio_url;
@@ -293,7 +383,7 @@
             },
             next() {
                 if (!this.currentQueue || this.currentQueue.length === 0) return;
-                
+
                 if (this.playbackMode === 'shuffle') {
                     const randIdx = Math.floor(Math.random() * this.currentQueue.length);
                     this.currentIndex = randIdx;
@@ -306,7 +396,7 @@
             },
             prev() {
                 if (!this.currentQueue || this.currentQueue.length === 0) return;
-                
+
                 if (this.playbackMode === 'shuffle') {
                     const randIdx = Math.floor(Math.random() * this.currentQueue.length);
                     this.currentIndex = randIdx;
@@ -336,7 +426,7 @@
                         root = songsContainer;
                     }
                 }
-                
+
                 const elements = root.querySelectorAll('[data-song-id]');
                 elements.forEach(el => {
                     songs.push({
@@ -354,11 +444,11 @@
             updateHeaderText() {
                 const headerText = document.getElementById('gp-header-text');
                 if (!headerText) return;
-                
+
                 const lang = document.documentElement.lang || 'en';
                 const nowPlayingStr = lang === 'ru' ? 'Сейчас играет' : 'Now Playing';
                 const albumStr = lang === 'ru' ? 'Альбом' : 'Album';
-                
+
                 if (this.expanded && this.currentSong && this.currentSong.playlist_name) {
                     headerText.innerText = albumStr + ': ' + this.currentSong.playlist_name;
                 } else {
@@ -368,20 +458,24 @@
             updateUI(playing) {
                 const playIcon = document.getElementById('gp-icon-play');
                 const pauseIcon = document.getElementById('gp-icon-pause');
-                if (playing) {
-                    playIcon.classList.add('hidden');
-                    pauseIcon.classList.remove('hidden');
-                } else {
-                    playIcon.classList.remove('hidden');
-                    pauseIcon.classList.add('hidden');
+                if (playIcon && pauseIcon) {
+                    if (playing) {
+                        playIcon.classList.add('hidden');
+                        pauseIcon.classList.remove('hidden');
+                    } else {
+                        playIcon.classList.remove('hidden');
+                        pauseIcon.classList.add('hidden');
+                    }
                 }
             },
             updateProgress() {
                 const current = this.audio.currentTime || 0;
                 const duration = this.audio.duration || 1;
                 const percent = (current / duration) * 100;
-                document.getElementById('gp-progress').style.width = percent + '%';
-                document.getElementById('gp-time-current').innerText = this.formatTime(current);
+                const progressBar = document.getElementById('gp-progress');
+                const timeCurrent = document.getElementById('gp-time-current');
+                if (progressBar) progressBar.style.width = percent + '%';
+                if (timeCurrent) timeCurrent.innerText = this.formatTime(current);
             },
             seek(event) {
                 const rect = event.currentTarget.getBoundingClientRect();
@@ -414,7 +508,7 @@
         });
 
         // Global UI functions for dynamically loaded content
-        window.toggleDownloadDrawer = function() {
+        window.toggleDownloadDrawer = function () {
             const drawer = document.getElementById('songs-download-drawer');
             if (drawer) {
                 if (drawer.classList.contains('hidden')) {
@@ -431,60 +525,47 @@
             }
         };
 
-        window.switchTab = function(tabName) {
+        window.switchMusicTab = function(tabName) {
             const cSongs = document.getElementById('content-songs');
             const cPlaylists = document.getElementById('content-playlists');
             const cDetail = document.getElementById('content-playlist-detail');
-            
+
             if (cSongs) cSongs.classList.add('hidden');
             if (cPlaylists) cPlaylists.classList.add('hidden');
             if (cDetail) cDetail.classList.add('hidden');
-            
-            const tSongs = document.getElementById('tab-songs');
-            const tPlaylists = document.getElementById('tab-playlists');
 
-            if (tSongs) {
-                tSongs.className = "text-zinc-600 hover:text-zinc-400 transition-colors";
-                tSongs.innerHTML = "Songs";
-            }
-            if (tPlaylists) {
-                tPlaylists.className = "text-zinc-600 hover:text-zinc-400 transition-colors";
-                tPlaylists.innerHTML = "Playlists";
-            }
+            const tabToggles = document.querySelectorAll('.music-tab-toggle');
 
             if (tabName === 'songs') {
                 if (cSongs) cSongs.classList.remove('hidden');
-                if (tSongs) {
-                    tSongs.className = "text-teal-400 font-bold transition-colors";
-                    tSongs.innerHTML = "[Songs]";
-                }
-            } else if (tabName === 'playlists') {
-                if (cPlaylists) cPlaylists.classList.remove('hidden');
-                if (tPlaylists) {
-                    tPlaylists.className = "text-teal-400 font-bold transition-colors";
-                    tPlaylists.innerHTML = "[Playlists]";
-                }
-            } else if (tabName === 'playlist-detail') {
-                if (cDetail) cDetail.classList.remove('hidden');
-                if (tPlaylists) {
-                    tPlaylists.className = "text-teal-400 font-bold transition-colors";
-                    tPlaylists.innerHTML = "[Playlists]";
-                }
+                tabToggles.forEach(btn => {
+                    btn.setAttribute('onclick', "switchMusicTab('playlists')");
+                    btn.setAttribute('title', "Плейлисты");
+                    btn.innerHTML = `<svg class="w-4 h-4 text-zinc-300 group-hover:text-teal-400 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path></svg>`;
+                });
+            } else if (tabName === 'playlists' || tabName === 'playlist-detail') {
+                if (tabName === 'playlists' && cPlaylists) cPlaylists.classList.remove('hidden');
+                if (tabName === 'playlist-detail' && cDetail) cDetail.classList.remove('hidden');
+                tabToggles.forEach(btn => {
+                    btn.setAttribute('onclick', "switchMusicTab('songs')");
+                    btn.setAttribute('title', "Треки");
+                    btn.innerHTML = `<svg class="w-4 h-4 text-teal-400 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>`;
+                });
             }
         };
 
         // NetOutpost Bridge helper & detection
-        window.sendToOutpost = async function(manifestUrl) {
+        window.sendToOutpost = async function (manifestUrl) {
             try {
                 const response = await fetch(manifestUrl);
                 if (!response.ok) throw new Error("Failed to fetch sync manifest");
                 const manifest = await response.json();
-                
+
                 const payload = JSON.stringify({
                     action: "DOWNLOAD_PACKAGE",
                     manifest: manifest
                 });
-                
+
                 if (window.NetOutpostBridge && window.NetOutpostBridge.postMessage) {
                     window.NetOutpostBridge.postMessage(payload);
                     alert("Package sync requested.");
@@ -504,7 +585,7 @@
             }
         };
 
-        (function() {
+        (function () {
             function detectBridge() {
                 if (window.NetOutpostBridge || window.flutter_inappwebview || navigator.userAgent.includes("NetOutpost")) {
                     document.documentElement.classList.add("has-outpost-bridge");
@@ -521,7 +602,7 @@
         })();
 
         // Package context preservation and request interception
-        (function() {
+        (function () {
             // Read and persist package_id from URL query params
             const urlParams = new URLSearchParams(window.location.search);
             const pkgId = urlParams.get('package_id');
@@ -530,7 +611,7 @@
             }
 
             // HTMX request interceptor to append package_id to parameters
-            document.addEventListener('htmx:configRequest', function(evt) {
+            document.addEventListener('htmx:configRequest', function (evt) {
                 const activePkgId = sessionStorage.getItem('active_package_id');
                 if (activePkgId && !evt.detail.parameters['package_id']) {
                     evt.detail.parameters['package_id'] = activePkgId;
@@ -539,7 +620,7 @@
 
             // Native fetch interceptor to append package_id to outgoing URLs
             const originalFetch = window.fetch;
-            window.fetch = function(input, init) {
+            window.fetch = function (input, init) {
                 const activePkgId = sessionStorage.getItem('active_package_id');
                 if (activePkgId && typeof input === 'string') {
                     try {
@@ -548,7 +629,7 @@
                             url.searchParams.set('package_id', activePkgId);
                             input = url.pathname + url.search;
                         }
-                    } catch(e) {}
+                    } catch (e) { }
                 }
                 return originalFetch(input, init);
             };
@@ -558,4 +639,5 @@
 
     {% block scripts_extra %}{% endblock %}
 </body>
+
 </html>

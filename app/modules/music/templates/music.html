@@ -3,22 +3,7 @@
 {% block title %}NetSanctum — {{ _('music', 'module_title') }}{% endblock %}
 
 {% block content %}
-<div class="flex flex-col space-y-4">
-
-    <!-- Top Bar -->
-    <div class="flex justify-start items-center font-mono text-[10px] uppercase tracking-wider mb-2">
-        <div class="flex gap-6">
-            <button onclick="switchTab('songs')" id="tab-songs" class="text-teal-400 font-bold transition-colors">
-                [Songs]
-            </button>
-            <button onclick="switchTab('playlists')" id="tab-playlists" class="text-zinc-600 hover:text-zinc-400 transition-colors">
-                Playlists
-            </button>
-        </div>
-    </div>
-
-
-
+<div class="flex flex-col">
     <!-- Dynamic Content Area (HTMX) -->
     <div class="w-full">
         <!-- Songs Tab Container -->

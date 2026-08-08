@@ -702,7 +702,9 @@ def download_lib_task(
                                             "aac_adtstoasc",
                                             temp_output_path,
                                         ]
-                                        res = subprocess.run(cmd, capture_output=True, text=True)
+                                        res = subprocess.run(
+                                            cmd, capture_output=True, text=True, timeout=3600
+                                        )
                                         if (
                                             res.returncode == 0
                                             and os.path.exists(temp_output_path)

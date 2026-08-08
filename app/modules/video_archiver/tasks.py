@@ -2,7 +2,9 @@ import datetime
 import json
 import logging
 import os
+import random
 import tempfile
+import time
 
 import redis
 import requests
@@ -13,13 +15,24 @@ from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
-from app.modules.video_archiver.models import ArchivedVideo, VideoPlaylist
+from app.modules.settings.models import Setting
+from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
+from app.modules.video_archiver.providers import PlatformRegistry
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Initialize Redis client using dynamic REDIS_URL
 redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+def _get_platform_cookies(platform_id: str) -> str | None:
+    """Fetch global cookies for a specific platform from settings DB."""
+    with SyncSessionLocal() as session:
+        setting = session.query(Setting).filter_by(key=f"{platform_id}_cookies", scope="global").first()
+        if setting and setting.value and setting.value.strip():
+            return setting.value
+    return None
 
 
 def _create_temp_cookies_file(cookies_text: str | None) -> str | None:
@@ -60,13 +73,18 @@ def process_video_url_task(
 
     update_status("Fetching info...")
 
-    ydl_opts = {
-        "quiet": True,
-        "extract_flat": "in_playlist",
-        "extractor_args": {"youtube": {"player_client": ["android", "web"], "client": ["android", "web"]}},
-        "js_runtimes": {"node": {}},
-        "remote_components": {"ejs:github": {}},
-    }
+    provider = PlatformRegistry.get_provider(url)
+    if not cookies_text:
+        cookies_text = _get_platform_cookies(provider.platform_id)
+
+    ydl_opts = provider.get_ydl_opts(
+        {
+            "quiet": True,
+            "extract_flat": "in_playlist",
+            "js_runtimes": {"node": {}},
+            "remote_components": {"ejs:github": {}},
+        }
+    )
 
     cookie_path = _create_temp_cookies_file(cookies_text)
     if cookie_path:
@@ -191,26 +209,26 @@ def download_video_task(
     update_redis("Extracting full metadata...", "5%")
 
     temp_dir = tempfile.mkdtemp()
+    provider = PlatformRegistry.get_provider(url)
+    if not cookies_text:
+        cookies_text = _get_platform_cookies(provider.platform_id)
+
     cookie_path = _create_temp_cookies_file(cookies_text)
 
-    # Configure yt-dlp options to download capped video
-    ydl_opts = {
-        "format": f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best[height<={quality}]",
-        "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
-        "merge_output_format": "mp4",
-        "progress_hooks": [ydl_progress_hook],
-        "getcomments": comments_enabled,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-                "client": ["android", "web"],
-                "comment_sort": ["top" if comments_type == "top" else "new"],
-            }
-        },
-        "js_runtimes": {"node": {}},
-        "remote_components": {"ejs:github": {}},
-        "ignoreerrors": True,
-    }
+    # Configure yt-dlp options using platform provider strategy
+    ydl_opts = provider.get_ydl_opts(
+        {
+            "format": f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best[height<={quality}]/best",
+            "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+            "merge_output_format": "mp4",
+            "progress_hooks": [ydl_progress_hook],
+            "getcomments": comments_enabled,
+            "extractor_retries": 1,
+            "js_runtimes": {"node": {}},
+            "remote_components": {"ejs:github": {}},
+            "ignoreerrors": True,
+        }
+    )
 
     if cookie_path:
         ydl_opts["cookiefile"] = cookie_path
@@ -368,16 +386,24 @@ def download_video_task(
 
         # Save / Update Database
         with SyncSessionLocal() as session:
-            # Check if video exists
+            channel = _get_or_create_channel(session, info_dict)
             video = session.get(ArchivedVideo, video_id)
             if not video:
                 video = ArchivedVideo(id=video_id)
                 session.add(video)
 
+            platform = PlatformRegistry.detect_platform(
+                url, info_dict.get("extractor_key") or info_dict.get("extractor")
+            )
             video.title = title
             video.description = info_dict.get("description")
-            video.channel_name = info_dict.get("uploader", "Unknown Channel")
-            video.channel_id = info_dict.get("uploader_id", "Unknown")
+            video.platform = platform
+            video.channel_name = channel.name if channel else info_dict.get("uploader", "Unknown Channel")
+            video.channel_id = (
+                channel.id if channel else info_dict.get("uploader_id") or info_dict.get("channel_id")
+            )
+            if channel and channel.avatar_path:
+                video.channel_avatar_url = channel.avatar_path
             video.duration = int(info_dict.get("duration") or 0)
             video.resolution = f"{quality}p"
             video.file_path = video_storage_path
@@ -410,9 +436,16 @@ def download_video_task(
         return f"Successfully archived video {video_id}"
 
     except Exception as e:
-        logger.error(f"Failed to process video {url}: {e}")
-        update_redis(f"Failed: {str(e)[:50]}...", "Error")
-        return f"Error downloading video: {e}"
+        err_msg = str(e)
+        logger.error(f"Failed to process video {url}: {err_msg}")
+
+        if "Sign in to confirm" in err_msg or "cookie" in err_msg.lower():
+            status_msg = "Failed: Cookies are outdated or invalid. Please update."
+        else:
+            status_msg = f"Failed: {err_msg[:50]}..."
+
+        update_redis(status_msg, "Error")
+        return f"Error downloading video: {err_msg}"
     finally:
         # Clean up temporary directory
         if cookie_path and os.path.exists(cookie_path):
@@ -428,33 +461,136 @@ def download_video_task(
             pass
 
 
-@celery_app.task
-def sync_video_metadata_task(video_id: str) -> str:
-    """Checks if a video still exists on YouTube and refreshes description/comments."""
+def _get_or_create_channel(session, info_dict: dict | None) -> VideoChannel | None:
+    """Fetch or create VideoChannel entity and download avatar if available."""
+    if not info_dict:
+        return None
+
+    channel_id = info_dict.get("uploader_id") or info_dict.get("channel_id")
+    if not channel_id:
+        return None
+
+    channel_name = info_dict.get("uploader") or info_dict.get("channel") or "Unknown Channel"
+
+    platform = PlatformRegistry.detect_platform(
+        info_dict.get("webpage_url", ""), info_dict.get("extractor_key") or info_dict.get("extractor")
+    )
+    channel = session.get(VideoChannel, channel_id)
+    if not channel:
+        channel = VideoChannel(
+            id=channel_id,
+            name=channel_name,
+            platform=platform,
+            custom_url=info_dict.get("uploader_url") or info_dict.get("channel_url"),
+        )
+        session.add(channel)
+        session.flush()
+    else:
+        if channel_name and channel.name != channel_name and channel_name != "Unknown Channel":
+            channel.name = channel_name
+        if platform and channel.platform != platform:
+            channel.platform = platform
+
+    avatar_url = (
+        info_dict.get("channel_thumbnail")
+        or info_dict.get("uploader_avatar")
+        or info_dict.get("channel_avatar")
+    )
+    if not avatar_url:
+        for t in info_dict.get("thumbnails") or []:
+            u = t.get("url", "")
+            if "yt3.googleusercontent.com" in u or "yt3.ggpht.com" in u:
+                avatar_url = u
+                break
+
+    if avatar_url:
+        try:
+            resp = requests.get(avatar_url, timeout=10)
+            if resp.status_code == 200:
+                storage = get_storage()
+                ext = "jpg"
+                ct = resp.headers.get("Content-Type", "")
+                if "webp" in ct:
+                    ext = "webp"
+                elif "png" in ct:
+                    ext = "png"
+                avatar_storage_path = f"video_archiver/avatars/{channel_id}.{ext}"
+                storage.save_file(resp.content, avatar_storage_path)
+                channel.avatar_path = avatar_storage_path
+        except Exception as err:
+            logger.warning(f"Failed to download channel avatar for {channel_id}: {err}")
+
+    return channel
+
+
+def _download_channel_avatar(info_dict: dict, channel_id: str) -> str | None:
+    """Compatibility wrapper for channel avatar fetching."""
+    with SyncSessionLocal() as session:
+        ch = _get_or_create_channel(session, info_dict)
+        if ch:
+            session.commit()
+            return ch.avatar_path
+    return None
+
+
+def _sync_video_metadata(video_id: str, task_id: str | None = None) -> str:
+    """Checks if a video still exists and refreshes metadata using correct platform context."""
     with SyncSessionLocal() as session:
         video = session.get(ArchivedVideo, video_id)
         if not video:
             return "Video not found in local database."
 
-        url = f"https://www.youtube.com/watch?v={video_id}"
+        platform_id = video.platform or "youtube"
 
-    # Query info only
-    ydl_opts = {
-        "quiet": True,
-        "getcomments": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"], "client": ["android", "web"]}},
-    }
+    provider = PlatformRegistry.get_provider_by_id(platform_id)
+    url = provider.build_video_url(video_id)
+    cookies_text = _get_platform_cookies(platform_id)
+
+    if task_id:
+        data = {
+            "task_id": task_id,
+            "url": url,
+            "title": f"Syncing {video_id}",
+            "status": "Fetching Metadata...",
+            "progress": "50%",
+        }
+        redis_client.setex(f"video_dl:{task_id}", 86400, json.dumps(data))
+
+    # Configure yt-dlp options using platform provider strategy
+    ydl_opts = provider.get_ydl_opts(
+        {
+            "quiet": True,
+            "getcomments": False,  # Skip comments during background sync to avoid YouTube rate-limiting / slow retries
+            "extractor_retries": 0,
+            "ignoreerrors": True,
+            "js_runtimes": {"node": {}},
+            "remote_components": {"ejs:github": {}},
+        }
+    )
+
+    cookie_path = _create_temp_cookies_file(cookies_text)
+    if cookie_path:
+        ydl_opts["cookiefile"] = cookie_path
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
 
+        if not info_dict:
+            raise yt_dlp.utils.DownloadError("No data received. Possibly blocked by authentication wall.")
+
         # Update database with fresh metadata
         with SyncSessionLocal() as session:
+            channel = _get_or_create_channel(session, info_dict)
             video = session.get(ArchivedVideo, video_id)
             if video:
                 video.title = info_dict.get("title", video.title)
                 video.description = info_dict.get("description", video.description)
+                if channel:
+                    video.channel_id = channel.id
+                    video.channel_name = channel.name
+                    if channel.avatar_path:
+                        video.channel_avatar_url = channel.avatar_path
                 video.is_deleted_on_youtube = False
                 video.like_count = info_dict.get("like_count", video.like_count)
                 video.view_count = info_dict.get("view_count", video.view_count)
@@ -481,24 +617,160 @@ def sync_video_metadata_task(video_id: str) -> str:
     except Exception as e:
         # Check if error implies video is deleted or private
         err_msg = str(e).lower()
-        if "unavailable" in err_msg or "private" in err_msg or "removed" in err_msg or "404" in err_msg:
+        if "sign in" in err_msg or "login" in err_msg or "confirm you" in err_msg:
+            with SyncSessionLocal() as session:
+                video = session.get(ArchivedVideo, video_id)
+                if video:
+                    video.status = "auth_required"
+                    session.commit()
+            return f"Failed to sync video {video_id}: Auth required. Check {platform_id}_cookies."
+        elif "unavailable" in err_msg or "private" in err_msg or "removed" in err_msg or "404" in err_msg:
             with SyncSessionLocal() as session:
                 video = session.get(ArchivedVideo, video_id)
                 if video:
                     video.is_deleted_on_youtube = True
                     session.commit()
-            return f"Video {video_id} is unavailable on YouTube. Marked as deleted."
+            if task_id:
+                redis_client.delete(f"video_dl:{task_id}")
+            return f"Video {video_id} is unavailable on remote platform. Marked as deleted."
         else:
+            if task_id:
+                redis_client.delete(f"video_dl:{task_id}")
             return f"Failed to sync video {video_id}: {e}"
+    finally:
+        if "cookie_path" in locals() and cookie_path and os.path.exists(cookie_path):
+            os.remove(cookie_path)
+        if "task_id" in locals() and task_id:
+            redis_client.delete(f"video_dl:{task_id}")
 
 
-@celery_app.task
-def sync_all_videos_task() -> str:
-    """Syncs metadata for all completed local videos."""
+@celery_app.task(bind=True)
+def sync_video_metadata_task(self, video_id: str) -> str:
+    return _sync_video_metadata(video_id, self.request.id)
+
+
+class OAuth2Logger:
+    def __init__(self, task_id):
+        self.task_id = task_id
+
+    def debug(self, msg):
+        pass
+
+    def info(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
+    def warning(self, msg):
+        if "google.com/device" in msg:
+            redis_client.setex(
+                f"video_oauth:{self.task_id}", 3600, json.dumps({"status": "pending", "message": msg})
+            )
+
+
+@celery_app.task(bind=True)
+def youtube_oauth2_task(self) -> str:
+    """Initiates YouTube OAuth2 device flow to cache a permanent token."""
+    task_id = self.request.id
+    redis_client.setex(f"video_oauth:{task_id}", 3600, json.dumps({"status": "starting"}))
+
+    ydl_opts = {
+        "cachedir": "/app/storage/.cache/yt-dlp",
+        "username": "oauth2",
+        "password": "",
+        "logger": OAuth2Logger(task_id),
+        "extract_flat": True,
+        "quiet": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # We just need to trigger an extraction that requires auth or checks it
+            # Fetching a known video to trigger token generation
+            ydl.extract_info("https://www.youtube.com/watch?v=BaW_jenozKc", download=False)
+        redis_client.setex(f"video_oauth:{task_id}", 3600, json.dumps({"status": "success"}))
+
+        # Touch the flag file so YouTubeProvider knows to use oauth2
+        with open("/app/storage/.youtube_oauth_enabled", "w") as f:
+            f.write("1")
+
+        return "OAuth2 token generated and cached."
+    except Exception as e:
+        redis_client.setex(f"video_oauth:{task_id}", 3600, json.dumps({"status": "error", "message": str(e)}))
+        return f"OAuth2 failed: {e}"
+
+
+@celery_app.task(bind=True)
+def sync_all_videos_task(self, dates: list[str] | None = None) -> str:
+    """Syncs metadata for all completed local videos synchronously with global progress."""
+    task_id = self.request.id or "global_sync"
+
     with SyncSessionLocal() as session:
-        videos = session.scalars(select(ArchivedVideo.id).where(ArchivedVideo.status == "completed")).all()
+        all_videos = session.scalars(select(ArchivedVideo).where(ArchivedVideo.status == "completed")).all()
 
-    for vid_id in videos:
-        sync_video_metadata_task.delay(vid_id)
+        videos = []
+        for v in all_videos:
+            is_never = v.updated_at == v.archived_at or not v.updated_at
+            d_str = v.updated_at.strftime("%Y-%m-%d") if v.updated_at else None
 
-    return f"Dispatched sync tasks for {len(videos)} videos."
+            if dates is None:
+                videos.append(v.id)
+                continue
+
+            if len(dates) == 0:
+                continue
+
+            if "never" in dates and is_never:
+                videos.append(v.id)
+                continue
+
+            if not is_never and d_str in dates:
+                videos.append(v.id)
+
+    total = len(videos)
+    if total == 0:
+        return "No videos to sync."
+
+    def update_progress(current, success, failed, current_vid, step_name="Updating metadata"):
+        data = {
+            "task_id": task_id,
+            "url": "sync_all",
+            "title": f"Global Metadata Sync ({step_name})",
+            "status": f"{current} of {total} processed. Success: {success}, Failed: {failed}",
+            "progress": f"{int((current / total) * 100)}%",
+            "type": "global_sync",
+            "success_count": success,
+            "failed_count": failed,
+            "total_count": total,
+            "current_video": current_vid,
+        }
+        redis_client.setex(f"video_dl:{task_id}", 86400, json.dumps(data))
+
+    success_count = 0
+    failed_count = 0
+    update_progress(0, 0, 0, "")
+
+    for i, vid_id in enumerate(videos, 1):
+        try:
+            res = _sync_video_metadata(vid_id)
+            if "Auth required" in res:
+                failed_count += 1
+                update_progress(i, success_count, failed_count, vid_id, "Aborted: Auth Required")
+                return "Sync aborted due to expired cookies."
+            elif "Failed" in res:
+                failed_count += 1
+            else:
+                success_count += 1
+        except Exception:
+            failed_count += 1
+
+        update_progress(i, success_count, failed_count, vid_id)
+
+        # Anti-bot delay
+        if i < total:
+            time.sleep(random.uniform(4.0, 9.0))
+
+    # Allow UI to show final state for a while before cleaning up
+    update_progress(total, success_count, failed_count, "", "Finished")
+
+    return f"Synced {total} videos. Success: {success_count}, Failed: {failed_count}."

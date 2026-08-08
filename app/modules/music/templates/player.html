@@ -1,36 +1,44 @@
-<div class="pt-2">
-    <div class="flex items-center justify-between border-b border-zinc-800/60 pb-3 mb-6 gap-4 relative">
-        <div class="flex items-center gap-4 flex-1">
-            <button onclick="toggleDownloadDrawer()" class="text-emerald-400 hover:text-emerald-300 font-bold transition-colors border border-emerald-400/30 px-3 py-1 bg-emerald-950/20 hover:bg-emerald-900/40 uppercase text-[10px] whitespace-nowrap">
-                + Download
-            </button>
-            <span class="text-xs font-mono text-zinc-500 uppercase tracking-wider inline-block whitespace-nowrap">
-                {{ _('music', 'downloaded_songs') }}
-            </span>
+<div class="pt-1">
+    <!-- Single Row Header: Search, Tab Toggle Icon Button, Download Icon Button -->
+    <div class="flex items-center gap-2 pb-3 mb-4 relative border-b border-zinc-800/80">
+        <!-- Search Input Field -->
+        <div class="relative flex-1">
+            <svg class="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path>
+            </svg>
             <input type="text" name="search" value="{{ search }}"
-                   placeholder="Search songs, artists..." 
+                   placeholder="{{ _('music', 'search_placeholder') }}" 
                    hx-get="/music/ui/player" 
                    hx-trigger="keyup changed delay:300ms, search" 
                    hx-target="#content-songs"
                    hx-push-url="false"
-                   class="flex-1 max-w-md bg-zinc-950 border border-zinc-800 rounded-none px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+                   class="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-teal-400 focus:outline-none transition-all shadow-sm rounded-none">
         </div>
-        <div class="flex items-center gap-3">
-            <div class="flex border border-zinc-800/60 p-0.5 bg-zinc-950 font-mono text-[9px] uppercase">
-                <button onclick="setSongsViewMode('grid')" id="btn-songs-view-grid" class="px-2 py-0.5 text-teal-400 bg-teal-950/20 font-bold transition-all focus:outline-none">Grid</button>
-                <button onclick="setSongsViewMode('list')" id="btn-songs-view-list" class="px-2 py-0.5 text-zinc-500 hover:text-zinc-300 transition-all focus:outline-none">List</button>
-            </div>
-            <span class="text-xs font-mono text-teal-400 bg-teal-950/20 px-2 py-0.5 border border-teal-900/40 whitespace-nowrap">
-                {{ songs|length }}
-            </span>
-        </div>
+
+        <!-- Combined Single Tab Switcher Icon Button (Shows target view) -->
+        <button onclick="switchMusicTab('playlists')" 
+                title="Плейлисты"
+                class="music-tab-toggle h-[34px] w-[34px] shrink-0 bg-zinc-900/90 border border-zinc-800 hover:border-teal-500/50 hover:bg-zinc-800/80 transition-all flex items-center justify-center cursor-pointer rounded-none group">
+            <svg class="w-4 h-4 text-zinc-300 group-hover:text-teal-400 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
+            </svg>
+        </button>
+
+        <!-- Download Green Plus Button -->
+        <button onclick="toggleDownloadDrawer()" 
+                title="{{ _('music', 'download') }}"
+                class="h-[34px] w-[34px] shrink-0 text-emerald-400 hover:text-emerald-300 font-bold transition-all border border-emerald-500/40 bg-emerald-950/40 hover:bg-emerald-900/70 flex items-center justify-center shadow-sm cursor-pointer rounded-none">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"></path>
+            </svg>
+        </button>
     </div>
 
-    <!-- Slide-out Download Drawer inside Songs Tab -->
-    <div id="songs-download-drawer" class="absolute top-0 right-0 w-80 bg-black border-l border-b border-zinc-800 transform translate-x-full hidden transition-transform duration-300 ease-in-out z-40 flex flex-col h-[80vh] shadow-2xl">
-        <div class="p-4 border-b border-zinc-900 flex justify-between items-center bg-zinc-950/50">
-            <h3 class="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">
-                {{ _('music', 'download_new') }}
+    <!-- Slide-out Download Drawer inside Songs Tab (Responsive) -->
+    <div id="songs-download-drawer" class="fixed sm:absolute inset-y-0 right-0 w-full sm:w-80 bg-zinc-950 border-l border-zinc-800 transform translate-x-full hidden transition-transform duration-300 ease-in-out z-50 flex flex-col h-full sm:h-[80vh] shadow-2xl">
+        <div class="p-4 border-b border-zinc-900 flex justify-between items-center bg-zinc-900/40">
+            <h3 class="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                <span>{{ _('music', 'download_new') }}</span>
             </h3>
             <button onclick="toggleDownloadDrawer()" class="text-zinc-500 hover:text-white font-mono text-lg leading-none">&times;</button>
         </div>
@@ -41,10 +49,11 @@
                   class="flex flex-col gap-4">
                 
                 <div>
-                    <label class="block text-[10px] font-mono text-zinc-500 mb-1">YouTube URL</label>
+                    <label class="block text-[10px] font-mono text-zinc-400 mb-1">Track or Playlist URL</label>
                     <input type="text" name="url" required
-                           placeholder="{{ _('music', 'url_placeholder') }}"
-                           class="w-full bg-zinc-950 border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+                           placeholder="YouTube, Spotify, SoundCloud..."
+                           class="w-full bg-black border border-zinc-800 rounded-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-700 focus:border-teal-400 focus:outline-none transition-colors">
+                    <p class="text-[9px] font-mono text-zinc-500 mt-1">Supports YouTube, Spotify & SoundCloud links.</p>
                 </div>
 
                 <div class="flex items-center gap-2 mt-2">
@@ -102,7 +111,7 @@
     </div>
 
     {% if songs and songs|length > 0 %}
-    <div id="songs-list-container" class="view-mode-grid">
+    <div id="songs-list-container" class="songs-grid">
         {% for song in songs %}
         <div onclick="window.musicPlayer.playSongElement(this)"
              data-song-id="{{ song.id }}"
@@ -111,121 +120,621 @@
              data-song-original="{{ song.original_artist or '' | escape }}"
              data-song-audio="{{ song.audio_url }}"
              data-song-cover="{{ song.cover_url or '' }}"
-             class="song-card border border-zinc-800/80 bg-zinc-950/40 backdrop-blur-sm flex flex-col p-4 hover:border-teal-500/50 hover:bg-zinc-900/60 transition-all cursor-pointer group relative overflow-hidden rounded-xl">
+             class="song-card group relative cursor-pointer">
             
-            <!-- Play Overlay (Visible on Hover) -->
-            <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-10 pointer-events-none">
-                <div class="w-12 h-12 rounded-full bg-teal-500/90 text-black flex items-center justify-center shadow-lg shadow-teal-500/20 transform translate-y-4 group-hover:translate-y-0 transition-transform">
-                    <svg class="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
+            <!-- Square Cover Art -->
+            <div class="song-cover-wrapper">
+                {% if song.cover_url %}
+                    <img src="{{ song.cover_url }}" alt="Cover" 
+                         class="song-cover-img"
+                         style="object-position: {{ song.cover_offset_x|default(50) }}% {{ song.cover_offset_y|default(50) }}%;">
+                {% else %}
+                    <div class="song-cover-placeholder">
+                        <svg class="w-10 h-10 text-zinc-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+                    </div>
+                {% endif %}
+
+                <!-- Play button overlay (center) -->
+                <div class="play-overlay">
+                    <div class="play-btn">
+                        <svg class="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
+                    </div>
+                </div>
+
+                {% if song.cover_url %}
+                <!-- Cover Reposition Button (top-right, appears on hover) -->
+                <button onclick="event.stopPropagation(); openCoverEditor(this.closest('.song-card'), {{ song.id }})" 
+                        class="reposition-btn" title="Adjust cover position">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"></path></svg>
+                </button>
+                {% endif %}
+
+                <!-- Action buttons (bottom-right, appears on hover) -->
+                <div class="card-actions">
+                    <button onclick="event.stopPropagation(); openEditSongModal(this.closest('.song-card'), {{ song.id }})"
+                            class="action-btn" title="Edit title and artist">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
+                    </button>
+                    <button onclick="event.stopPropagation(); sendToOutpost('/music/api/songs/{{ song.id }}/sync-manifest')"
+                            class="outpost-only action-btn" title="Save to Device">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    </button>
+                    <button hx-delete="/music/ui/songs/{{ song.id }}" 
+                            hx-target="closest .song-card" 
+                            hx-swap="outerHTML" 
+                            onclick="event.stopPropagation();" 
+                            class="action-btn action-btn-danger" title="Delete Song">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
                 </div>
             </div>
-
-            <div class="flex gap-4 relative z-0 items-center">
-                <!-- Cover Image -->
-                <div class="song-cover w-16 h-16 rounded-md bg-zinc-900 border border-zinc-800 flex-shrink-0 flex items-center justify-center overflow-hidden shadow-md">
-                    {% if song.cover_url %}
-                        <img src="{{ song.cover_url }}" alt="Cover" class="w-full h-full object-cover">
-                    {% else %}
-                        <svg class="w-6 h-6 text-zinc-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
-                    {% endif %}
-                </div>
-                
-                <!-- Info -->
-                <div class="flex-1 min-w-0 flex flex-col justify-center">
-                    <div class="flex justify-between items-start">
-                        <p class="text-xs font-semibold text-zinc-100 truncate group-hover:text-teal-400 transition-colors" title="{{ song.title }}">{{ song.title }}</p>
-                        <div class="flex items-center gap-1.5">
-                            <button onclick="event.stopPropagation(); sendToOutpost('/music/api/songs/{{ song.id }}/sync-manifest')"
-                                    class="outpost-only text-zinc-650 hover:text-teal-400 opacity-0 group-hover:opacity-100 transition-opacity ml-2 focus:outline-none"
-                                    title="Save to Device">
-                                <svg class="w-4.5 h-4.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                            </button>
-                            <button hx-delete="/music/ui/songs/{{ song.id }}" 
-                                    hx-target="closest .song-card" 
-                                    hx-swap="outerHTML" 
-                                    onclick="event.stopPropagation();" 
-                                    class="text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-2 focus:outline-none" 
-                                    title="Delete Song">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                            </button>
-                        </div>
-                    </div>
-                    <p class="text-[10px] text-zinc-400 truncate mt-0.5">
-                        {{ song.author or 'Unknown' }}
-                    </p>
-                    {% if song.original_artist %}
-                    <p class="text-[9px] text-zinc-500 uppercase tracking-wider truncate mt-0.5">
-                        Orig: {{ song.original_artist }}
-                    </p>
-                    {% endif %}
+            
+            <!-- Song Info -->
+            <div class="song-info flex justify-between items-start">
+                <div class="min-w-0 flex-1">
+                    <p class="song-title cursor-pointer hover:text-teal-400 transition-colors" onclick="event.stopPropagation(); openEditSongModal(this.closest('.song-card'), {{ song.id }})" title="Click to edit: {{ song.title }}">{{ song.title }}</p>
+                    <p class="song-artist hover:text-teal-400 hover:underline cursor-pointer transition-colors inline-block"
+                       onclick="event.stopPropagation(); filterByArtist('{{ song.author | escape }}');"
+                       title="Show all by {{ song.author }}">{{ song.author or 'Unknown' }}</p>
                 </div>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <div class="py-12 text-center text-zinc-600 font-mono text-xs">
+    <div class="py-16 text-center text-zinc-600 font-mono text-xs">
         {{ _('music', 'no_songs') }}
     </div>
     {% endif %}
 </div>
 
+<!-- Cover Reposition Modal -->
+<div id="cover-editor-modal" class="cover-editor-modal hidden">
+    <div class="cover-editor-backdrop" onclick="closeCoverEditor()"></div>
+    <div class="cover-editor-panel">
+        <div class="cover-editor-header">
+            <span class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Adjust Cover Position</span>
+            <button onclick="closeCoverEditor()" class="text-zinc-500 hover:text-white text-lg leading-none">&times;</button>
+        </div>
+        <div class="cover-editor-body">
+            <div class="cover-preview-container" id="cover-preview-container">
+                <img id="cover-preview-img" src="" class="cover-preview-img" draggable="false">
+            </div>
+            <div class="cover-controls">
+                <div class="control-group">
+                    <label class="control-label">Horizontal</label>
+                    <div class="control-row">
+                        <button onclick="nudgeCover('x', -10)" class="nudge-btn">◀◀</button>
+                        <button onclick="nudgeCover('x', -2)" class="nudge-btn">◀</button>
+                        <input type="range" id="cover-offset-x" min="0" max="100" value="50" 
+                               oninput="updateCoverPreview()" class="cover-slider">
+                        <button onclick="nudgeCover('x', 2)" class="nudge-btn">▶</button>
+                        <button onclick="nudgeCover('x', 10)" class="nudge-btn">▶▶</button>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Vertical</label>
+                    <div class="control-row">
+                        <button onclick="nudgeCover('y', -10)" class="nudge-btn">▲▲</button>
+                        <button onclick="nudgeCover('y', -2)" class="nudge-btn">▲</button>
+                        <input type="range" id="cover-offset-y" min="0" max="100" value="50" 
+                               oninput="updateCoverPreview()" class="cover-slider">
+                        <button onclick="nudgeCover('y', 2)" class="nudge-btn">▼</button>
+                        <button onclick="nudgeCover('y', 10)" class="nudge-btn">▼▼</button>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-3">
+                    <button onclick="resetCoverPosition()" class="text-[10px] font-mono text-zinc-500 border border-zinc-800 px-3 py-1.5 hover:bg-zinc-900 transition-colors">
+                        Reset
+                    </button>
+                    <button onclick="saveCoverPosition()" class="flex-1 text-[10px] font-mono font-bold text-emerald-400 border border-emerald-500/40 bg-emerald-950/20 px-3 py-1.5 hover:bg-emerald-500 hover:text-black transition-all">
+                        Save Position
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Quick Edit Song Modal ──────────────── -->
+<div id="edit-song-modal" class="cover-editor-modal hidden">
+    <div class="cover-editor-backdrop" onclick="closeEditSongModal()"></div>
+    <div class="cover-editor-panel p-4">
+        <div class="flex justify-between items-center pb-3 mb-4 border-b border-zinc-800">
+            <span class="text-xs font-mono font-bold text-teal-400 uppercase tracking-wider">{{ _('music', 'edit_track_details') }}</span>
+            <button onclick="closeEditSongModal()" class="text-zinc-500 hover:text-white text-xs">✕</button>
+        </div>
+        <div class="space-y-4 font-mono text-xs">
+            <div>
+                <label class="block text-zinc-500 text-[10px] uppercase mb-1">{{ _('music', 'track_title') }}</label>
+                <input type="text" id="edit-song-title-input" class="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:border-teal-400 focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-zinc-500 text-[10px] uppercase mb-1">{{ _('music', 'artist_author') }}</label>
+                <input type="text" id="edit-song-author-input" class="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:border-teal-400 focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-zinc-500 text-[10px] uppercase mb-1">{{ _('music', 'original_artist_optional') }}</label>
+                <input type="text" id="edit-song-original-input" class="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-1.5 text-zinc-100 focus:border-zinc-400 focus:outline-none">
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button onclick="closeEditSongModal()" class="flex-1 bg-zinc-900 border border-zinc-800 text-zinc-400 py-1.5 rounded hover:bg-zinc-800 transition-colors">
+                    {{ _('music', 'cancel') }}
+                </button>
+                <button onclick="saveSongDetails()" class="flex-1 bg-teal-500/20 border border-teal-500/40 text-teal-400 font-bold py-1.5 rounded hover:bg-teal-500 hover:text-black transition-colors">
+                    {{ _('music', 'save_changes') }}
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
-    .view-mode-grid {
+    /* ── Responsive Square Card Grid (Neo-Brutalist) ──────────────── */
+    .songs-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 1rem;
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 12px;
     }
-    
-    .view-mode-list {
+    @media (min-width: 640px) {
+        .songs-grid {
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 16px;
+        }
+    }
+
+    /* ── Song Card (Neo-Brutalist Sharp Aesthetic) ──────────────── */
+    .song-card {
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        background: #09090b;
+        border: 1px solid #27272a;
+        border-radius: 0px;
+        padding: 10px;
+        transition: border-color 0.2s ease, background-color 0.2s ease;
     }
-    
-    .view-mode-list .song-card {
-        padding: 0.5rem 1rem !important;
-        border-radius: 0.5rem !important;
+    .song-card:hover {
+        background: #18181b;
+        border-color: rgba(20, 184, 166, 0.6);
     }
-    
-    .view-mode-list .song-cover {
-        width: 2.25rem !important;
-        height: 2.25rem !important;
+
+    /* ── Cover Art Wrapper (Square Sharp) ──────────────── */
+    .song-cover-wrapper {
+        position: relative;
+        width: 100%;
+        padding-bottom: 100%; /* 1:1 aspect ratio */
+        border-radius: 0px;
+        overflow: hidden;
+        background: #09090b;
+        border: 1px solid #27272a;
+    }
+    .song-cover-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.3s ease;
+    }
+    .song-card:hover .song-cover-img {
+        transform: scale(1.04);
+    }
+    .song-cover-placeholder {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #09090b;
+    }
+
+    /* ── Play Button Overlay (Square Neo-Brutalist) ──────────────── */
+    .play-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        pointer-events: none;
+    }
+    .song-card:hover .play-overlay {
+        opacity: 1;
+    }
+    .play-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 0px;
+        background: #14b8a6;
+        color: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #2dd4bf;
+        box-shadow: 0 4px 12px rgba(20, 184, 166, 0.4);
+        transform: translateY(4px);
+        transition: transform 0.2s ease, background 0.2s ease;
+    }
+    .song-card:hover .play-btn {
+        transform: translateY(0);
+    }
+
+    /* ── Reposition Button ──────────────── */
+    .reposition-btn {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        width: 26px;
+        height: 26px;
+        border-radius: 0px;
+        background: #09090b;
+        color: #a1a1aa;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.2s ease, color 0.15s ease, border-color 0.15s ease;
+        z-index: 15;
+        border: 1px solid #27272a;
+        cursor: pointer;
+    }
+    .reposition-btn:hover {
+        color: #fff;
+        border-color: #2dd4bf;
+    }
+    .song-card:hover .reposition-btn {
+        opacity: 1;
+    }
+
+    /* ── Card Action Buttons ──────────────── */
+    .card-actions {
+        position: absolute;
+        bottom: 6px;
+        right: 6px;
+        display: flex;
+        gap: 4px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        z-index: 15;
+    }
+    .song-card:hover .card-actions {
+        opacity: 1;
+    }
+    .action-btn {
+        width: 26px;
+        height: 26px;
+        border-radius: 0px;
+        background: #09090b;
+        color: #a1a1aa;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #27272a;
+        cursor: pointer;
+        transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .action-btn:hover {
+        color: #fff;
+        border-color: #2dd4bf;
+    }
+    .action-btn-danger:hover {
+        color: #ef4444;
+    }
+
+    /* ── Song Info ──────────────── */
+    .song-info {
+        padding-top: 10px;
+    }
+    .song-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #e4e4e7;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.3;
+        transition: color 0.15s ease;
+    }
+    .song-card:hover .song-title {
+        color: #fff;
+    }
+    .song-artist {
+        font-size: 11px;
+        color: #71717a;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: 2px;
+        line-height: 1.3;
+    }
+
+    /* ── Cover Editor Modal ──────────────── */
+    .cover-editor-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .cover-editor-modal.hidden {
+        display: none;
+    }
+    .cover-editor-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0,0,0,0.75);
+        backdrop-filter: blur(4px);
+    }
+    .cover-editor-panel {
+        position: relative;
+        width: 360px;
+        background: #0a0a0a;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+    }
+    .cover-editor-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        border-bottom: 1px solid #1c1c1e;
+    }
+    .cover-editor-body {
+        padding: 16px;
+    }
+    .cover-preview-container {
+        width: 100%;
+        padding-bottom: 100%;
+        position: relative;
+        border-radius: 6px;
+        overflow: hidden;
+        background: #18181b;
+        margin-bottom: 16px;
+    }
+    .cover-preview-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .cover-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .control-label {
+        font-size: 9px;
+        font-family: 'JetBrains Mono', monospace;
+        color: #52525b;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+    .control-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .nudge-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 4px;
+        background: #18181b;
+        border: 1px solid #27272a;
+        color: #71717a;
+        font-size: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+    }
+    .nudge-btn:hover {
+        background: #27272a;
+        color: #fff;
+        border-color: #3f3f46;
+    }
+    .cover-slider {
+        flex: 1;
+        -webkit-appearance: none;
+        appearance: none;
+        height: 4px;
+        background: #27272a;
+        border-radius: 2px;
+        outline: none;
+    }
+    .cover-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #14b8a6;
+        cursor: pointer;
+        border: 2px solid #0a0a0a;
+        transition: box-shadow 0.15s ease;
+    }
+    .cover-slider::-webkit-slider-thumb:hover {
+        box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.2);
+    }
+    .cover-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #14b8a6;
+        cursor: pointer;
+        border: 2px solid #0a0a0a;
     }
 </style>
 
 <script>
-    (function() {
-        const mode = localStorage.getItem('music_view_mode') || 'grid';
-        setSongsViewMode(mode, false);
-    })();
-    
-    function setSongsViewMode(mode, save = true) {
-        const container = document.getElementById('songs-list-container');
-        if (!container) return;
-        
-        const btnGrid = document.getElementById('btn-songs-view-grid');
-        const btnList = document.getElementById('btn-songs-view-list');
-        
-        if (mode === 'list') {
-            container.className = 'view-mode-list';
-            if (btnList) {
-                btnList.className = 'px-2 py-0.5 text-teal-400 bg-teal-950/20 font-bold transition-all focus:outline-none';
-            }
-            if (btnGrid) {
-                btnGrid.className = 'px-2 py-0.5 text-zinc-500 hover:text-zinc-300 transition-all focus:outline-none';
-            }
-        } else {
-            container.className = 'view-mode-grid';
-            if (btnGrid) {
-                btnGrid.className = 'px-2 py-0.5 text-teal-400 bg-teal-950/20 font-bold transition-all focus:outline-none';
-            }
-            if (btnList) {
-                btnList.className = 'px-2 py-0.5 text-zinc-500 hover:text-zinc-300 transition-all focus:outline-none';
-            }
+    function filterByArtist(artistName) {
+        if (!artistName || artistName === 'None' || artistName === 'Unknown') return;
+        const searchInput = document.querySelector('input[name="search"]');
+        if (searchInput) {
+            searchInput.value = artistName;
+            htmx.trigger(searchInput, 'search');
         }
-        if (save) {
-            localStorage.setItem('music_view_mode', mode);
+    }
+
+    // ── Cover Editor State ──────────────────
+    let _coverEditorSongId = null;
+    let _coverEditorCardEl = null;
+
+    function openCoverEditor(cardEl, songId) {
+        _coverEditorSongId = songId;
+        _coverEditorCardEl = cardEl;
+        
+        const img = cardEl.querySelector('.song-cover-img');
+        if (!img) return;
+        
+        const previewImg = document.getElementById('cover-preview-img');
+        previewImg.src = img.src;
+        
+        // Parse current object-position
+        const pos = img.style.objectPosition || '50% 50%';
+        const parts = pos.split(/\s+/);
+        const ox = parseFloat(parts[0]) || 50;
+        const oy = parseFloat(parts[1]) || 50;
+        
+        document.getElementById('cover-offset-x').value = ox;
+        document.getElementById('cover-offset-y').value = oy;
+        
+        previewImg.style.objectPosition = ox + '% ' + oy + '%';
+        document.getElementById('cover-editor-modal').classList.remove('hidden');
+    }
+
+    function closeCoverEditor() {
+        document.getElementById('cover-editor-modal').classList.add('hidden');
+        _coverEditorSongId = null;
+        _coverEditorCardEl = null;
+    }
+
+    function updateCoverPreview() {
+        const ox = document.getElementById('cover-offset-x').value;
+        const oy = document.getElementById('cover-offset-y').value;
+        document.getElementById('cover-preview-img').style.objectPosition = ox + '% ' + oy + '%';
+    }
+
+    function nudgeCover(axis, delta) {
+        const slider = document.getElementById('cover-offset-' + axis);
+        let val = parseFloat(slider.value) + delta;
+        val = Math.max(0, Math.min(100, val));
+        slider.value = val;
+        updateCoverPreview();
+    }
+
+    function resetCoverPosition() {
+        document.getElementById('cover-offset-x').value = 50;
+        document.getElementById('cover-offset-y').value = 50;
+        updateCoverPreview();
+    }
+
+    function saveCoverPosition() {
+        if (!_coverEditorSongId) return;
+        
+        const ox = document.getElementById('cover-offset-x').value;
+        const oy = document.getElementById('cover-offset-y').value;
+        
+        fetch('/music/api/songs/' + _coverEditorSongId + '/cover-position', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offset_x: parseFloat(ox), offset_y: parseFloat(oy) })
+        }).then(r => {
+            if (r.ok && _coverEditorCardEl) {
+                const img = _coverEditorCardEl.querySelector('.song-cover-img');
+                if (img) {
+                    img.style.objectPosition = ox + '% ' + oy + '%';
+                }
+            }
+            closeCoverEditor();
+        }).catch(() => {
+            closeCoverEditor();
+        });
+    }
+
+    // ── Quick Edit Song Metadata ──────────────
+    let _editSongId = null;
+    let _editSongCardEl = null;
+
+    function openEditSongModal(cardEl, songId) {
+        _editSongId = songId;
+        _editSongCardEl = cardEl;
+
+        const title = cardEl.getAttribute('data-song-title') || '';
+        const author = cardEl.getAttribute('data-song-artist') || '';
+        const original = cardEl.getAttribute('data-song-original') || '';
+
+        document.getElementById('edit-song-title-input').value = title;
+        document.getElementById('edit-song-author-input').value = author;
+        document.getElementById('edit-song-original-input').value = original;
+
+        document.getElementById('edit-song-modal').classList.remove('hidden');
+    }
+
+    function closeEditSongModal() {
+        document.getElementById('edit-song-modal').classList.add('hidden');
+        _editSongId = null;
+        _editSongCardEl = null;
+    }
+
+    async function saveSongDetails() {
+        if (!_editSongId) return;
+
+        const title = document.getElementById('edit-song-title-input').value.trim();
+        const author = document.getElementById('edit-song-author-input').value.trim();
+        const original = document.getElementById('edit-song-original-input').value.trim();
+
+        if (!title) {
+            alert('Название песни не может быть пустым');
+            return;
+        }
+
+        try {
+            const res = await fetch(`/music/api/songs/${_editSongId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: title,
+                    author: author,
+                    original_artist: original
+                })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                if (_editSongCardEl) {
+                    _editSongCardEl.setAttribute('data-song-title', data.title);
+                    _editSongCardEl.setAttribute('data-song-artist', data.author || 'Unknown');
+                    _editSongCardEl.setAttribute('data-song-original', data.original_artist || '');
+
+                    const titleEl = _editSongCardEl.querySelector('.song-title');
+                    const artistEl = _editSongCardEl.querySelector('.song-artist');
+
+                    if (titleEl) {
+                        titleEl.innerText = data.title;
+                        titleEl.title = 'Click to edit: ' + data.title;
+                    }
+                    if (artistEl) {
+                        artistEl.innerText = data.author || 'Unknown';
+                        artistEl.title = 'Show all by ' + (data.author || 'Unknown');
+                        artistEl.setAttribute('onclick', `event.stopPropagation(); filterByArtist('${data.author || ''}');`);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Error updating song:', e);
+        } finally {
+            closeEditSongModal();
         }
     }
 </script>

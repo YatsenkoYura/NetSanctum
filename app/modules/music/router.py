@@ -4,7 +4,7 @@ Music module router.
 
 import json
 
-import redis
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.templates import templates
 
-redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+redis_client = aioredis.Redis(host="redis", port=6379, db=0, decode_responses=True)
 from app.modules.music.models import Playlist, Song
 from app.modules.music.schemas import DownloadRequest
 from app.modules.music.tasks import process_youtube_url_task
@@ -36,9 +36,65 @@ router = APIRouter(prefix="/music", tags=["music"])
 
 @router.get("/api/playlists")
 async def api_list_playlists(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    """API: Return a list of all playlists."""
-    result = await db.execute(select(Playlist).order_by(Playlist.created_at.desc()))
-    return [{"id": p.id, "name": p.name, "description": p.description} for p in result.scalars().all()]
+    """API: Return a list of all playlists with computed cover URLs."""
+    from sqlalchemy.orm import selectinload
+
+    from app.modules.music.models import PlaylistSong
+
+    result = await db.execute(
+        select(Playlist)
+        .options(
+            selectinload(Playlist.cover_song),
+            selectinload(Playlist.playlist_songs).selectinload(PlaylistSong.song),
+        )
+        .order_by(Playlist.created_at.desc())
+    )
+    playlists = result.scalars().all()
+
+    out = []
+    for p in playlists:
+        cover_url = None
+        if p.cover_song and p.cover_song.cover_file_id:
+            cover_url = f"/music/cover/{p.cover_song.id}"
+        elif p.playlist_songs and len(p.playlist_songs) > 0:
+            first_song = p.playlist_songs[0].song
+            if first_song and first_song.cover_file_id:
+                cover_url = f"/music/cover/{first_song.id}"
+
+        len(p.playlist_songs) if p.playlist_songs else 0
+        out.append(
+            {
+                "id": p.id,
+                "name": p.name,
+                "cover_url": cover_url,
+                "cover_song_id": p.cover_song_id,
+                "songs": [ps.song_id for ps in p.playlist_songs] if p.playlist_songs else [],
+            }
+        )
+    return out
+
+
+@router.put("/api/playlists/{playlist_id}/cover")
+async def set_playlist_cover(
+    playlist_id: int, request: Request, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """API: Set a specific song's cover as the official playlist cover."""
+    body = await request.json()
+    song_id = body.get("song_id")
+    playlist = await db.get(Playlist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    if song_id is not None:
+        song = await db.get(Song, int(song_id))
+        if not song:
+            raise HTTPException(status_code=404, detail="Song not found")
+        playlist.cover_song_id = song.id
+    else:
+        playlist.cover_song_id = None
+
+    await db.commit()
+    return {"status": "ok", "playlist_id": playlist_id, "cover_song_id": playlist.cover_song_id}
 
 
 @router.get("/api/playlists/{playlist_id}/songs")
@@ -64,6 +120,8 @@ async def api_list_playlist_songs(
             "youtube_url": s.youtube_url,
             "audio_url": f"/music/audio/{s.id}",
             "cover_url": f"/music/cover/{s.id}" if s.cover_file_id else None,
+            "cover_offset_x": s.cover_offset_x,
+            "cover_offset_y": s.cover_offset_y,
         }
         for s in songs
     ]
@@ -97,9 +155,64 @@ async def api_list_songs(
             "youtube_url": s.youtube_url,
             "audio_url": f"/music/audio/{s.id}",
             "cover_url": f"/music/cover/{s.id}" if s.cover_file_id else None,
+            "cover_offset_x": s.cover_offset_x,
+            "cover_offset_y": s.cover_offset_y,
         }
         for s in songs
     ]
+
+
+@router.put("/api/songs/{song_id}/cover-position")
+async def update_cover_position(
+    song_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """API: Update the cover image crop position for a song."""
+    body = await request.json()
+    offset_x = float(body.get("offset_x", 50))
+    offset_y = float(body.get("offset_y", 50))
+    offset_x = max(0, min(100, offset_x))
+    offset_y = max(0, min(100, offset_y))
+
+    song = await db.get(Song, song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+    song.cover_offset_x = offset_x
+    song.cover_offset_y = offset_y
+    await db.commit()
+    return {"status": "ok", "offset_x": offset_x, "offset_y": offset_y}
+
+
+@router.put("/api/songs/{song_id}")
+async def update_song_metadata(
+    song_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """API: Quick edit song title, author, or original_artist."""
+    body = await request.json()
+    song = await db.get(Song, song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    if "title" in body and body["title"].strip():
+        song.title = body["title"].strip()
+    if "author" in body:
+        song.author = body["author"].strip() if body["author"] else None
+    if "original_artist" in body:
+        song.original_artist = body["original_artist"].strip() if body["original_artist"] else None
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "id": song.id,
+        "title": song.title,
+        "author": song.author,
+        "original_artist": song.original_artist,
+    }
 
 
 @router.post("/api/download")
@@ -138,7 +251,7 @@ async def api_download(
         "status": "Queued",
         "progress": "0%",
     }
-    redis_client.setex(f"music_dl:{task.id}", 86400, json.dumps(data))
+    await redis_client.setex(f"music_dl:{task.id}", 86400, json.dumps(data))
     return {"status": "dispatched", "url": req.url, "use_ai": req.use_ai}
 
 
@@ -436,10 +549,10 @@ async def start_download(
 @router.get("/ui/downloads_active", response_class=HTMLResponse, include_in_schema=False)
 async def active_downloads_ui(request: Request, user=Depends(get_current_user)):
     """HTMX endpoint to poll active downloads."""
-    keys = redis_client.keys("music_dl:*")
+    keys = await redis_client.keys("music_dl:*")
     downloads = []
     for k in keys:
-        data = redis_client.get(k)
+        data = await redis_client.get(k)
         if data:
             downloads.append(json.loads(data))
 
@@ -473,9 +586,9 @@ async def cancel_all_downloads_ui(request: Request, user=Depends(get_current_use
     celery_app.control.purge()
 
     # 2. Revoke and terminate all tasks tracked in Redis
-    keys = redis_client.keys("music_dl:*")
+    keys = await redis_client.keys("music_dl:*")
     for k in keys:
-        data = redis_client.get(k)
+        data = await redis_client.get(k)
         if data:
             import json
 
@@ -483,7 +596,7 @@ async def cancel_all_downloads_ui(request: Request, user=Depends(get_current_use
             task_id = parsed.get("task_id")
             if task_id:
                 celery_app.control.revoke(task_id, terminate=True)
-        redis_client.delete(k)
+        await redis_client.delete(k)
     return HTMLResponse('<div class="text-xs font-mono text-zinc-600">No active downloads</div>')
 
 
@@ -493,7 +606,7 @@ async def cancel_download_ui(task_id: str, request: Request, user=Depends(get_cu
     from app.core.scheduler import celery_app
 
     celery_app.control.revoke(task_id, terminate=True)
-    redis_client.delete(f"music_dl:{task_id}")
+    await redis_client.delete(f"music_dl:{task_id}")
     return HTMLResponse("")
 
 

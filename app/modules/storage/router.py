@@ -8,7 +8,7 @@ import os
 import shutil
 from pathlib import Path
 
-import redis
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,7 @@ from app.core.templates import templates
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
-redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 router = APIRouter(prefix="/storage", tags=["Storage"])
 
@@ -144,7 +144,7 @@ async def _get_user_from_cookie(request: Request) -> OwnerUser | None:
     session_id = request.cookies.get("access_token")
     if not session_id:
         return None
-    if redis_client.get(f"session:{session_id}") == "1":
+    if await redis_client.get(f"session:{session_id}") == "1":
         return OwnerUser()
     return None
 

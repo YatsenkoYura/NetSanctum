@@ -56,7 +56,7 @@ def process_youtube_url_task(
     openai_base_url: str | None = None,
     playlist_id: int | None = None,
 ) -> str:
-    """Entry point for processing a YouTube URL (video or playlist)."""
+    """Entry point for processing any supported music URL (YouTube, Spotify, SoundCloud, etc.)."""
     task_id = self.request.id
 
     def update_redis_status(status_text: str):
@@ -73,7 +73,20 @@ def process_youtube_url_task(
     ydl_opts = {
         "quiet": True,
         "extract_flat": "in_playlist",
-        "extractor_args": {"youtube": {"player_client": ["android", "web"], "client": ["android", "web"]}},
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["mweb", "tv", "android", "ios", "web"],
+                "client": ["mweb", "tv", "android", "ios", "web"],
+            },
+            "soundcloud": {
+                "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
+            },
+        },
         "js_runtimes": {"node": {}},
         "remote_components": {"ejs:github": {}},
     }
@@ -82,16 +95,66 @@ def process_youtube_url_task(
     if cookie_path:
         ydl_opts["cookiefile"] = cookie_path
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-    except Exception as e:
-        logger.error(f"Error fetching info for URL {url}: {e}")
-        update_redis_status(f"Error: {str(e)[:50]}...")
-        return f"Error: {e}"
-    finally:
-        if cookie_path and os.path.exists(cookie_path):
-            os.remove(cookie_path)
+    # Check if URL is Spotify
+    is_spotify = "spotify.com" in url.lower()
+    info_dict = None
+
+    if is_spotify:
+        logger.info(f"Spotify link detected ({url}), resolving metadata via oEmbed...")
+        try:
+            oembed_url = f"https://open.spotify.com/oembed?url={url}"
+            resp = requests.get(oembed_url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                spotify_title = data.get("title", "")
+                # Spotify oEmbed title is often "Track Title - song by Artist | Spotify" or "Track Title"
+                # Let's clean it up
+                clean_query = spotify_title.replace("| Spotify", "").strip()
+                logger.info(f"Resolved Spotify oEmbed query: '{clean_query}'")
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl_search:
+                    search_res = ydl_search.extract_info(f"ytsearch1:{clean_query}", download=False)
+                    if search_res and "entries" in search_res and len(search_res["entries"]) > 0:
+                        info_dict = search_res["entries"][0]
+                        url = info_dict.get("url") or f"https://www.youtube.com/watch?v={info_dict.get('id')}"
+        except Exception as oembed_err:
+            logger.warning(f"Spotify oEmbed resolution failed: {oembed_err}")
+
+    if not info_dict:
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info_dict = ydl.extract_info(url, download=False)
+        except Exception as e:
+            err_msg = str(e)
+            if "DRM" in err_msg or is_spotify:
+                logger.info(f"DRM restriction encountered for {url}, attempting YouTube fallback search...")
+                try:
+                    # Clean title from URL path (e.g., https://soundcloud.com/onsa-media/jailbreak -> onsa media jailbreak)
+                    url_clean = url.rstrip("/").split("?")[0]
+                    parts = url_clean.split("/")[-2:]
+                    search_query = " ".join(parts).replace("-", " ").replace("_", " ")
+                    logger.info(f"Fallback searching YouTube for: '{search_query}'")
+
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_search:
+                        search_res = ydl_search.extract_info(f"ytsearch1:{search_query}", download=False)
+                        if search_res and "entries" in search_res and len(search_res["entries"]) > 0:
+                            info_dict = search_res["entries"][0]
+                            url = (
+                                info_dict.get("url")
+                                or f"https://www.youtube.com/watch?v={info_dict.get('id')}"
+                            )
+                        else:
+                            raise Exception("No search results found")
+                except Exception as fb_err:
+                    update_redis_status("Error: Could not resolve track via fallback search")
+                    return f"Error: Fallback search failed ({fb_err})"
+            else:
+                logger.error(f"Error fetching info for URL {url}: {e}")
+                update_redis_status(f"Error: {str(e)[:50]}...")
+                return f"Error: {e}"
+        finally:
+            if cookie_path and os.path.exists(cookie_path):
+                os.remove(cookie_path)
 
     if "entries" in info_dict:
         # It's a playlist
@@ -202,12 +265,20 @@ def process_song_task(
         "extract_flat": False,
         "getcomments": use_ai,
         "max_comments": 50,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
         "extractor_args": {
             "youtube": {
                 "comment_sort": ["top"],
-                "player_client": ["android", "web"],
-                "client": ["android", "web"],
-            }
+                "player_client": ["mweb", "tv", "android", "ios", "web"],
+                "client": ["mweb", "tv", "android", "ios", "web"],
+            },
+            "soundcloud": {
+                "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
+            },
         },
         "js_runtimes": {"node": {}},
         "remote_components": {"ejs:github": {}},
@@ -325,7 +396,20 @@ def process_song_task(
         "writethumbnail": True,
         "quiet": True,
         "progress_hooks": [progress_hook],
-        "extractor_args": {"youtube": {"player_client": ["android", "web"], "client": ["android", "web"]}},
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["mweb", "tv", "android", "ios", "web"],
+                "client": ["mweb", "tv", "android", "ios", "web"],
+            },
+            "soundcloud": {
+                "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
+            },
+        },
         "js_runtimes": {"node": {}},
         "remote_components": {"ejs:github": {}},
         "outtmpl": f"{download_dir}/%(id)s.%(ext)s",

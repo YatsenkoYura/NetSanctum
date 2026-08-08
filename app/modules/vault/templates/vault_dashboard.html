@@ -1,0 +1,1401 @@
+{% extends "base.html" %}
+{% block title %}Vault — NetSanctum Workspaces{% endblock %}
+
+{% block head_extra %}
+<style>
+.vault-sidebar { width: 220px; flex-shrink: 0; transition: margin-left .2s ease, width .2s ease; }
+.vault-sidebar.collapsed { margin-left: -220px; }
+
+.ws-item { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; cursor:pointer; border-left:2px solid transparent; transition:all .12s; }
+.ws-item:hover { color:#e4e4e7; background:rgba(255,255,255,.03); }
+.ws-item.active { color:#2dd4bf; border-left-color:#2dd4bf; background:rgba(45,212,191,.06); }
+
+/* Tetris-Dense Masonry Grid */
+#tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  grid-auto-rows: 8px;
+  grid-auto-flow: dense;
+  gap: 12px;
+}
+@media (min-width: 640px) { #tiles-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { #tiles-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { #tiles-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+.tile-card { border:1px solid #27272a; background:#09090b; transition:border-color .15s, transform .15s; position:relative; display:flex; flex-direction:column; overflow:hidden; height:fit-content; }
+.tile-card:hover { border-color:#3f3f46; transform:translateY(-1px); }
+.tile-card.pinned { border-color:#2dd4bf; }
+
+.drag-over-active { border:2px dashed #2dd4bf !important; background:rgba(45,212,191,.05) !important; }
+
+/* Plus Dropdown Menu */
+.plus-dropdown { display:none; position:absolute; top:36px; left:0; width:170px; background:#09090b; border:1px solid #27272a; box-shadow:0 10px 25px rgba(0,0,0,0.9); z-index:100; }
+.plus-dropdown.show { display:block; }
+.plus-option { display:flex; align-items:center; gap:8px; width:100%; padding:8px 12px; font-size:11px; text-align:left; color:#a1a1aa; font-weight:700; transition:all .1s; text-transform:uppercase; }
+.plus-option:hover { background:#18181b; color:#2dd4bf; }
+
+/* Compact Sheet Table */
+.sheet-table { border-collapse:collapse; width:100%; font-family:'JetBrains Mono',monospace; table-layout:fixed; }
+.sheet-table th, .sheet-table td { border:1px solid #27272a; padding:0; position:relative; min-width:90px; width:120px; }
+.sheet-header { background:#0d0d0f; font-size:10px; text-transform:uppercase; font-weight:800; color:#a1a1aa; padding:4px 6px !important; }
+.cell-edit { width:100%; height:100%; min-height:28px; background:transparent; border:none; padding:4px 6px; font-size:11px; color:#fff; font-family:inherit; }
+.cell-edit:focus { outline:none; background:#18181b; }
+.cell-toolbar { display:flex; gap:4px; margin-bottom:8px; align-items:center; }
+.tb-btn { padding:2px 7px; font-size:10px; font-weight:bold; border:1px solid #27272a; background:#09090b; color:#a1a1aa; cursor:pointer; }
+.tb-btn:hover { color:#fff; border-color:#3f3f46; }
+.tb-btn.active { color:#2dd4bf; border-color:#2dd4bf; background:rgba(45,212,191,.1); }
+
+.row-del-btn, .col-del-btn { opacity:0; transition:opacity .1s; color:#71717a; cursor:pointer; }
+.sheet-table tr:hover .row-del-btn, .sheet-table th:hover .col-del-btn { opacity:1; }
+.row-del-btn:hover, .col-del-btn:hover { color:#f87171; }
+
+.mini-sheet-container { overflow:auto; border:1px solid #27272a; background:#050505; max-height:220px; }
+.mini-sheet-table { border-collapse:collapse; width:100%; font-size:11px; font-family:'JetBrains Mono',monospace; }
+.mini-sheet-table td, .mini-sheet-table th { border:1px solid #27272a; padding:5px 8px; white-space:nowrap; text-align:left; }
+
+/* Whiteboard Canvas Viewport */
+.wb-viewport { position:relative; width:100%; height:620px; background:#050505; border:1px solid #27272a; overflow:hidden; user-select:none; }
+.wb-world { position:absolute; top:0; left:0; width:3000px; height:3000px; background-image:radial-gradient(#1f1f23 1px, transparent 1px); background-size:20px 20px; transform-origin:0 0; }
+.wb-canvas-layer { position:absolute; top:0; left:0; width:3000px; height:3000px; z-index:1; }
+.wb-node { position:absolute; width:190px; background:#09090b; border:1px solid #27272a; padding:8px; cursor:move; box-shadow:0 8px 20px rgba(0,0,0,0.7); z-index:2; }
+.wb-node:hover { border-color:#2dd4bf; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex min-h-screen font-mono bg-black text-zinc-300">
+
+  <!-- ── LEFT SIDEBAR (COLLAPSIBLE) ─────────────────────────── -->
+  <aside id="sidebar" class="vault-sidebar bg-zinc-950 border-r border-zinc-800 flex flex-col py-3 relative">
+    
+    <div class="px-3 pb-3 border-b border-zinc-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 bg-teal-400 inline-block"></span>
+        <span class="text-xs font-black text-white uppercase tracking-wider">Vault</span>
+      </div>
+      <button onclick="toggleSidebar()" class="text-zinc-500 hover:text-white text-xs px-1 py-0.5 border border-zinc-800" title="Свернуть панель">◧</button>
+    </div>
+
+    <div class="px-3 py-2 flex items-center justify-between border-b border-zinc-800">
+      <span class="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Воркспейсы</span>
+      <button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
+      <div onclick="selectWorkspace(null, 'Все карточки')" id="ws-item-all" class="ws-item active">
+        <div class="flex items-center gap-2">
+          <span class="w-1.5 h-1.5 bg-zinc-400 inline-block"></span>
+          <span>Все карточки</span>
+        </div>
+        <span class="text-[9px] text-zinc-600 font-bold" id="ws-count-all">{{ stats.total_items }}</span>
+      </div>
+
+      {% for c in collections %}
+      <div onclick="selectWorkspace({{ c.id }}, '{{ c.name }}')" id="ws-item-{{ c.id }}" class="ws-item">
+        <div class="flex items-center gap-2 truncate">
+          <span class="w-1.5 h-1.5 bg-teal-400 inline-block"></span>
+          <span class="truncate">{{ c.name }}</span>
+        </div>
+        <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="px-3 pt-2 border-t border-zinc-800 text-[10px] text-zinc-600 flex justify-between">
+      <span>Записей: <b class="text-white" id="stat-total">{{ stats.total_items }}</b></span>
+      <span>Ср. балл: <b class="text-teal-400" id="stat-score">{{ stats.avg_score }}</b></span>
+    </div>
+  </aside>
+
+  <!-- ── MAIN WORKSPACE AREA ─────────────────────────────────── -->
+  <div class="flex-1 flex flex-col min-w-0" id="main-workspace-root">
+
+    <div class="bg-zinc-950 border-b border-zinc-800 px-4 py-2 flex items-center justify-between gap-3">
+      
+      <div class="flex items-center gap-3">
+        <button onclick="toggleSidebar()" class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
+        
+        <div class="flex items-center gap-2 text-xs">
+          <span class="text-zinc-500 font-bold uppercase">Vault</span>
+          <span class="text-zinc-700">/</span>
+          <span class="text-white font-bold uppercase tracking-wider" id="active-ws-title">Все карточки</span>
+        </div>
+
+        <div class="relative ml-2">
+          <button onclick="togglePlusDropdown(event)" class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
+            <span>+</span> <span class="text-[10px] uppercase hidden sm:inline">Создать</span> ▾
+          </button>
+
+          <div id="plus-dropdown" class="plus-dropdown">
+            <button onclick="instantCreate('note')" class="plus-option"><span class="text-purple-400">■</span> + Заметка</button>
+            <button onclick="openLinkModal()" class="plus-option"><span class="text-blue-400">◆</span> + Ссылка</button>
+            <button onclick="instantCreate('table')" class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
+            <button onclick="instantCreate('whiteboard')" class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input type="text" id="vault-search" oninput="debounceSearch()" placeholder="Поиск..."
+               class="bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none w-44">
+        
+        <div class="relative">
+          <button onclick="toggleExportMenu(event)" class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
+          <div id="export-dropdown" class="hidden absolute right-0 top-7 w-28 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
+            <button onclick="exportItems()" class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
+            <a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── WORKSPACE VIEWPORTS ──────────────────────────────────── -->
+    <div class="flex-1 relative overflow-y-auto p-4" id="board-viewport">
+
+      <!-- 1. MASONRY TILES GRID -->
+      <div id="view-tiles-container">
+        <div id="tiles-grid"></div>
+      </div>
+
+      <!-- 2. OBSIDIAN DIRECT NOTE EDITOR -->
+      <div id="view-editor-container" class="hidden max-w-3xl mx-auto space-y-4 py-2">
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+          <button onclick="closeEditorView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <span class="text-[10px] text-teal-400 uppercase font-bold" id="auto-save-status">Сохранено</span>
+        </div>
+        <input type="hidden" id="editor-id">
+
+        <!-- Full-size Image Preview in Editor View -->
+        <div id="editor-image-container" class="hidden"></div>
+
+        <input type="text" id="editor-title" oninput="triggerAutoSave()" placeholder="Заголовок (необязательно)..." 
+               class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
+        
+        <textarea id="editor-content" oninput="triggerAutoSave()" rows="14" placeholder="Пишите мысли здесь..." 
+                  class="w-full bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-200 focus:outline-none focus:border-teal-400 resize-y leading-relaxed font-mono"></textarea>
+      </div>
+
+      <!-- 3. SPREADSHEET TABLE DOCUMENT -->
+      <div id="view-sheet-container" class="hidden max-w-5xl mx-auto space-y-3 py-2">
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+          <button onclick="closeSheetView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <span class="text-[10px] text-teal-400 uppercase font-bold" id="sheet-save-status">Сохранено</span>
+        </div>
+        <input type="hidden" id="sheet-id">
+        
+        <input type="text" id="sheet-title" oninput="triggerSheetAutoSave()" placeholder="Название таблицы (необязательно)..." 
+               class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
+
+        <div class="cell-toolbar">
+          <button onclick="formatCell('bold')" class="tb-btn font-black">B</button>
+          <button onclick="formatCell('italic')" class="tb-btn italic">I</button>
+          <button onclick="formatCell('strike')" class="tb-btn line-through">S</button>
+          <span class="text-zinc-700 mx-1">|</span>
+          <label class="text-[10px] text-zinc-500 font-bold uppercase">Шрифт:</label>
+          <select id="cell-font-size" onchange="changeCellFontSize(this.value)" class="bg-zinc-900 text-white text-[10px] border border-zinc-800 px-1 py-0.5">
+            <option value="10px">10px</option>
+            <option value="11px" selected>11px</option>
+            <option value="13px">13px</option>
+            <option value="15px">15px</option>
+          </select>
+        </div>
+
+        <div class="border border-zinc-800 overflow-x-auto bg-zinc-950">
+          <table class="sheet-table" id="sheet-canvas"></table>
+        </div>
+      </div>
+
+      <!-- 4. WHITEBOARD CANVAS -->
+      <div id="view-whiteboard-container" class="hidden space-y-3 py-1">
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+          <button onclick="closeWhiteboardView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+
+          <div class="flex items-center gap-2">
+            <div class="flex border border-zinc-800 p-0.5 bg-black">
+              <button onclick="setWbMode('select')" id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
+              <button onclick="setWbMode('draw')" id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
+              <button onclick="setWbMode('line')" id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
+              <button onclick="setWbMode('erase')" id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>
+            </div>
+
+            <div class="flex items-center border border-zinc-800 bg-zinc-950 px-1">
+              <button onclick="changeBrushSize(-2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">-</button>
+              <input type="number" id="wb-brush-val" value="4" min="1" max="50" onchange="validateBrushSize()" 
+                     class="w-8 text-center bg-black text-[10px] font-bold text-teal-400 focus:outline-none">
+              <button onclick="changeBrushSize(2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
+            </div>
+
+            <button onclick="clearWbCanvas()" class="tb-btn text-red-400 uppercase">Очистить все</button>
+            <button onclick="addWhiteboardNode()" class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>
+
+            <div class="flex items-center gap-1 border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
+              <button onclick="zoomWb(-0.1)" class="font-bold hover:text-white">-</button>
+              <span id="wb-zoom-label" class="font-mono">100%</span>
+              <button onclick="zoomWb(0.1)" class="font-bold hover:text-white">+</button>
+              <button onclick="resetWbZoom()" class="text-zinc-600 hover:text-white ml-1">↻</button>
+            </div>
+          </div>
+        </div>
+
+        <input type="hidden" id="wb-id">
+        <input type="text" id="wb-title" oninput="triggerWbAutoSave()" placeholder="Название доски (необязательно)..." 
+               class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
+
+        <div class="wb-viewport" id="wb-viewport-el">
+          <div class="wb-world" id="wb-world-el">
+            <canvas id="wb-canvas-layer" class="wb-canvas-layer" width="3000" height="3000"></canvas>
+            <div id="wb-nodes-layer"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EMPTY STATE -->
+      <div id="vault-empty" class="hidden py-24 text-center space-y-3">
+        <div class="w-10 h-10 border border-zinc-800 mx-auto flex items-center justify-center"><span class="text-zinc-700 text-xl font-mono">∅</span></div>
+        <div class="text-xs font-bold text-zinc-600 uppercase tracking-widest">Пространство пусто</div>
+        <div class="text-[11px] text-zinc-700">Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal: New Workspace Name -->
+<div id="modal-workspace" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
+  <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
+    <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
+      <span class="text-xs font-bold text-white uppercase">Новый воркспейс</span>
+      <button onclick="closeWorkspaceModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <label class="text-[10px] text-zinc-500 uppercase font-bold">Название воркспейса</label>
+      <input type="text" id="ws-name-input" placeholder="Например: Идеи по работе" onkeydown="if(event.key==='Enter') submitWorkspace()"
+             class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+    </div>
+    <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
+      <button onclick="closeWorkspaceModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button onclick="submitWorkspace()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Add Link -->
+<div id="modal-link" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
+  <div class="bg-zinc-950 border border-zinc-800 w-full max-w-md">
+    <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
+      <span class="text-xs font-bold text-white uppercase">Добавить ссылку</span>
+      <button onclick="closeLinkModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <div class="space-y-1">
+        <label class="text-[10px] text-zinc-500 uppercase font-bold">URL Ссылка</label>
+        <input type="url" id="link-url-input" placeholder="https://..." onkeydown="if(event.key==='Enter') submitLink()"
+               class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+      </div>
+      <div class="space-y-1">
+        <label class="text-[10px] text-zinc-500 uppercase font-bold">Название (необязательно)</label>
+        <input type="text" id="link-title-input" placeholder="Оставьте пустым если не нужно" 
+               class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
+      <button onclick="closeLinkModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button onclick="submitLink()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentCollectionId = null;
+let currentItems = [];
+let autoSaveTimer = null;
+let sheetSaveTimer = null;
+let wbSaveTimer = null;
+let searchTimer = null;
+let activeCell = null;
+window._vaultCache = {};
+
+let wbMode = 'select';
+let wbZoom = 1.0;
+let wbPanX = 0;
+let wbPanY = 0;
+let isPanning = false;
+let panStartX = 0;
+let panStartY = 0;
+let isDrawing = false;
+let isDrawingArrow = false;
+let activeWbNodes = [];
+let activeWbStrokes = [];
+let currentStroke = null;
+let wbCtx = null;
+
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function togglePlusDropdown(e) { e.stopPropagation(); document.getElementById('plus-dropdown').classList.toggle('show'); }
+function toggleExportMenu(e) { e.stopPropagation(); document.getElementById('export-dropdown').classList.toggle('hidden'); }
+
+document.addEventListener('click', () => {
+  document.getElementById('plus-dropdown').classList.remove('show');
+  document.getElementById('export-dropdown').classList.add('hidden');
+});
+
+// Tool Hotkeys
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  const key = e.key.toLowerCase();
+  if (key === 'v' || key === '1') setWbMode('select');
+  if (key === 'b' || key === '2') setWbMode('draw');
+  if (key === 'l' || key === '3') setWbMode('line');
+  if (key === 'e' || key === '4') setWbMode('erase');
+});
+
+// ── FAST CLIPBOARD PASTE (CTRL+V) & DRAG & DROP ────────────────────────────
+document.addEventListener('paste', async (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  
+  const clipboardData = e.clipboardData || window.clipboardData;
+  if (!clipboardData) return;
+
+  const items = clipboardData.items;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image') !== -1) {
+      const blob = items[i].getAsFile();
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        const base64Img = evt.target.result;
+        await createNoteWithImage(base64Img);
+      };
+      reader.readAsDataURL(blob);
+      return;
+    }
+  }
+
+  const pastedText = clipboardData.getData('text');
+  if (pastedText && pastedText.trim()) {
+    await processPastedText(pastedText.trim());
+  }
+});
+
+async function processPastedText(text) {
+  if (text.startsWith('http://') || text.startsWith('https://')) {
+    let title = '';
+    try {
+      const ogResp = await fetch('/api/vault/fetch-meta', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url: text })
+      });
+      if (ogResp.ok) {
+        const ogData = await ogResp.json();
+        title = ogData.og_title || '';
+      }
+    } catch(err) {}
+
+    await fetch('/api/vault/items', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        title: title,
+        url: text,
+        entry_type: 'bookmark',
+        node_type: 'bookmark',
+        collection_id: currentCollectionId,
+        auto_fetch_og: true
+      })
+    });
+    loadWorkspace();
+    return;
+  }
+
+  if (text.includes('\n') && (text.includes(',') || text.includes('\t'))) {
+    const lines = text.split('\n').filter(l => l.trim() !== '');
+    if (lines.length > 1) {
+      const delim = text.includes('\t') ? '\t' : ',';
+      const headers = lines[0].split(delim).map(h => h.trim());
+      const rows = lines.slice(1).map(line => line.split(delim).map(c => c.trim()));
+
+      await fetch('/api/vault/items', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          title: '',
+          entry_type: 'thought',
+          node_type: 'table',
+          canvas_data: { headers: headers, rows: rows },
+          collection_id: currentCollectionId
+        })
+      });
+      loadWorkspace();
+      return;
+    }
+  }
+
+  let title = '';
+  let content = text;
+  const firstLineEnd = text.indexOf('\n');
+  if (firstLineEnd > 0 && firstLineEnd < 50) {
+    title = text.substring(0, firstLineEnd).trim();
+    content = text.substring(firstLineEnd + 1).trim();
+  }
+
+  await fetch('/api/vault/items', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      title: title,
+      content: content,
+      entry_type: 'thought',
+      node_type: 'note',
+      collection_id: currentCollectionId
+    })
+  });
+  loadWorkspace();
+}
+
+async function createNoteWithImage(base64Img) {
+  await fetch('/api/vault/items', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      title: '',
+      og_image: base64Img,
+      entry_type: 'thought',
+      node_type: 'note',
+      collection_id: currentCollectionId
+    })
+  });
+  loadWorkspace();
+}
+
+// Attach Drag & Drop to Main Workspace Area
+document.addEventListener('DOMContentLoaded', () => {
+  const root = document.getElementById('main-workspace-root');
+  if (!root) return;
+
+  root.addEventListener('dragover', (e) => { e.preventDefault(); root.classList.add('drag-over-active'); });
+  root.addEventListener('dragleave', () => { root.classList.remove('drag-over-active'); });
+  root.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    root.classList.remove('drag-over-active');
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      for (let file of files) {
+        if (file.type.startsWith('image/')) {
+          const reader = new FileReader();
+          reader.onload = async (evt) => { await createNoteWithImage(evt.target.result); };
+          reader.readAsDataURL(file);
+        } else if (file.name.endsWith('.csv') || file.type === 'text/csv') {
+          const reader = new FileReader();
+          reader.onload = async (evt) => { await processPastedText(evt.target.result); };
+          reader.readAsText(file);
+        } else {
+          const reader = new FileReader();
+          reader.onload = async (evt) => { await processPastedText(evt.target.result); };
+          reader.readAsText(file);
+        }
+      }
+      return;
+    }
+
+    const droppedText = e.dataTransfer.getData('text');
+    if (droppedText) { await processPastedText(droppedText.trim()); }
+  });
+});
+
+function openWorkspaceModal() { document.getElementById('ws-name-input').value = ''; document.getElementById('modal-workspace').classList.remove('hidden'); }
+function closeWorkspaceModal() { document.getElementById('modal-workspace').classList.add('hidden'); }
+
+async function submitWorkspace() {
+  const name = document.getElementById('ws-name-input').value.trim();
+  if (!name) return;
+  const resp = await fetch('/api/vault/collections', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name })
+  });
+  if (resp.ok) { closeWorkspaceModal(); window.location.reload(); }
+}
+
+function openLinkModal() {
+  document.getElementById('plus-dropdown').classList.remove('show');
+  document.getElementById('link-url-input').value = '';
+  document.getElementById('link-title-input').value = '';
+  document.getElementById('modal-link').classList.remove('hidden');
+}
+function closeLinkModal() { document.getElementById('modal-link').classList.add('hidden'); }
+
+async function submitLink() {
+  const url = document.getElementById('link-url-input').value.trim();
+  if (!url) return alert('Введите URL');
+
+  let title = document.getElementById('link-title-input').value.trim();
+  if (!title) {
+    try {
+      const ogResp = await fetch('/api/vault/fetch-meta', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ url: url })
+      });
+      if (ogResp.ok) {
+        const ogData = await ogResp.json();
+        title = ogData.og_title || '';
+      }
+    } catch(e) {}
+  }
+
+  const payload = {
+    title: title,
+    url: url,
+    entry_type: 'bookmark',
+    node_type: 'bookmark',
+    collection_id: currentCollectionId,
+    auto_fetch_og: true
+  };
+
+  const resp = await fetch('/api/vault/items', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (resp.ok) {
+    closeLinkModal();
+    loadWorkspace();
+  }
+}
+
+async function instantCreate(type) {
+  document.getElementById('plus-dropdown').classList.remove('show');
+
+  if (type === 'table') {
+    const payload = {
+      title: '',
+      entry_type: 'thought',
+      node_type: 'table',
+      canvas_data: { headers: ['Колонка 1', 'Колонка 2', 'Колонка 3', 'Колонка 4'], rows: [['','','',''],['','','',''],['','','',''],['','','','']] },
+      collection_id: currentCollectionId
+    };
+    const resp = await fetch('/api/vault/items', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (resp.ok) {
+      const created = await resp.json();
+      loadWorkspace();
+      openSheetView(created);
+    }
+    return;
+  }
+
+  if (type === 'whiteboard') {
+    const payload = {
+      title: '',
+      entry_type: 'thought',
+      node_type: 'whiteboard',
+      canvas_data: { nodes: [{ x: 80, y: 80, text: 'Новая карточка' }], strokes: [] },
+      collection_id: currentCollectionId
+    };
+    const resp = await fetch('/api/vault/items', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (resp.ok) {
+      const created = await resp.json();
+      loadWorkspace();
+      openWhiteboardView(created);
+    }
+    return;
+  }
+
+  const payload = {
+    title: '',
+    entry_type: 'thought',
+    node_type: 'note',
+    collection_id: currentCollectionId
+  };
+
+  const resp = await fetch('/api/vault/items', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (resp.ok) {
+    const created = await resp.json();
+    loadWorkspace();
+    openEditorView(created);
+  }
+}
+
+function openEditorView(item) {
+  document.getElementById('editor-id').value = item.id;
+  document.getElementById('editor-title').value = item.title || '';
+  document.getElementById('editor-content').value = item.content || '';
+
+  const imgContainer = document.getElementById('editor-image-container');
+  if (item.og_image) {
+    imgContainer.innerHTML = `<div class="mb-4 border border-zinc-800 bg-zinc-950 p-2 flex items-center justify-center rounded-sm">
+      <img src="${item.og_image}" class="max-h-[65vh] w-auto object-contain rounded">
+    </div>`;
+    imgContainer.classList.remove('hidden');
+  } else {
+    imgContainer.innerHTML = '';
+    imgContainer.classList.add('hidden');
+  }
+
+  document.getElementById('view-tiles-container').classList.add('hidden');
+  document.getElementById('view-sheet-container').classList.add('hidden');
+  document.getElementById('view-whiteboard-container').classList.add('hidden');
+  document.getElementById('view-editor-container').classList.remove('hidden');
+}
+
+function closeEditorView() {
+  saveCurrentEditorData();
+  document.getElementById('view-editor-container').classList.add('hidden');
+  document.getElementById('view-tiles-container').classList.remove('hidden');
+}
+
+function triggerAutoSave() {
+  document.getElementById('auto-save-status').innerText = 'Сохранение...';
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(async () => {
+    await saveCurrentEditorData();
+    document.getElementById('auto-save-status').innerText = 'Сохранено';
+  }, 350);
+}
+
+async function saveCurrentEditorData() {
+  const id = document.getElementById('editor-id').value;
+  const title = document.getElementById('editor-title').value.trim();
+  const content = document.getElementById('editor-content').value.trim();
+  if (!id) return;
+
+  await fetch(`/api/vault/items/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title, content })
+  });
+  loadWorkspace();
+}
+
+function openSheetView(item) {
+  document.getElementById('sheet-id').value = item.id;
+  document.getElementById('sheet-title').value = item.title || '';
+
+  activeSheetData = (item.canvas_data && item.canvas_data.headers) ? item.canvas_data : {
+    headers: ['Колонка 1', 'Колонка 2', 'Колонка 3', 'Колонка 4'],
+    rows: [['','','',''],['','','',''],['','','',''],['','','','']]
+  };
+
+  renderSheetCanvas();
+
+  document.getElementById('view-tiles-container').classList.add('hidden');
+  document.getElementById('view-editor-container').classList.add('hidden');
+  document.getElementById('view-whiteboard-container').classList.add('hidden');
+  document.getElementById('view-sheet-container').classList.remove('hidden');
+}
+
+function closeSheetView() {
+  saveCurrentSheetData();
+  document.getElementById('view-sheet-container').classList.add('hidden');
+  document.getElementById('view-tiles-container').classList.remove('hidden');
+}
+
+function renderSheetCanvas() {
+  const table = document.getElementById('sheet-canvas');
+  let html = '<thead><tr><th class="w-8 sheet-header text-center">#</th>';
+
+  activeSheetData.headers.forEach((h, colIdx) => {
+    html += `<th class="sheet-header">
+      <div class="flex items-center justify-between px-1">
+        <input type="text" value="${h}" onchange="updateHeader(${colIdx}, this.value)" class="cell-edit font-bold text-teal-400">
+        <button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>
+      </div>
+    </th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  activeSheetData.rows.forEach((row, rowIdx) => {
+    html += `<tr>
+      <td class="text-center text-zinc-600 font-bold text-[9px] bg-zinc-950">
+        <div class="flex items-center justify-between px-1">
+          <span>${rowIdx + 1}</span>
+          <button onclick="deleteRow(${rowIdx})" class="row-del-btn text-[9px]" title="Удалить строку">✕</button>
+        </div>
+      </td>`;
+    row.forEach((cell, colIdx) => {
+      html += `<td><input type="text" value="${cell||''}" onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)" class="cell-edit"></td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+function deleteColumn(colIdx) {
+  if (activeSheetData.headers.length <= 1) return alert('Таблица должна содержать хотя бы одну колонку');
+  activeSheetData.headers.splice(colIdx, 1);
+  activeSheetData.rows.forEach(r => r.splice(colIdx, 1));
+  renderSheetCanvas();
+  triggerSheetAutoSave();
+}
+
+function deleteRow(rowIdx) {
+  if (activeSheetData.rows.length <= 1) return alert('Таблица должна содержать хотя бы одну строку');
+  activeSheetData.rows.splice(rowIdx, 1);
+  renderSheetCanvas();
+  triggerSheetAutoSave();
+}
+
+function handleCellInput(rowIdx, colIdx, val) {
+  activeSheetData.rows[rowIdx][colIdx] = val;
+
+  let expanded = false;
+  if (rowIdx === activeSheetData.rows.length - 1 && val.trim() !== '') {
+    activeSheetData.rows.push(new Array(activeSheetData.headers.length).fill(''));
+    expanded = true;
+  }
+  if (colIdx === activeSheetData.headers.length - 1 && val.trim() !== '') {
+    activeSheetData.headers.push(`Колонка ${activeSheetData.headers.length + 1}`);
+    activeSheetData.rows.forEach(r => r.push(''));
+    expanded = true;
+  }
+
+  if (expanded) renderSheetCanvas();
+  triggerSheetAutoSave();
+}
+
+function updateHeader(colIdx, val) {
+  activeSheetData.headers[colIdx] = val;
+  triggerSheetAutoSave();
+}
+
+function changeCellFontSize(size) {
+  if (activeCell) activeCell.style.fontSize = size;
+}
+
+function formatCell(cmd) {
+  if (!activeCell) return;
+  const start = activeCell.selectionStart;
+  const end = activeCell.selectionEnd;
+  const val = activeCell.value;
+
+  if (start !== undefined && end !== undefined && start !== end) {
+    const selected = val.substring(start, end);
+    let wrapper = '**';
+    if (cmd === 'italic') wrapper = '*';
+    if (cmd === 'strike') wrapper = '~~';
+
+    activeCell.value = val.substring(0, start) + wrapper + selected + wrapper + val.substring(end);
+    activeCell.dispatchEvent(new Event('input'));
+  }
+}
+
+function triggerSheetAutoSave() {
+  document.getElementById('sheet-save-status').innerText = 'Сохранение...';
+  clearTimeout(sheetSaveTimer);
+  sheetSaveTimer = setTimeout(async () => {
+    await saveCurrentSheetData();
+    document.getElementById('sheet-save-status').innerText = 'Сохранено';
+  }, 350);
+}
+
+async function saveCurrentSheetData() {
+  const id = document.getElementById('sheet-id').value;
+  const title = document.getElementById('sheet-title').value.trim();
+  if (!id) return;
+
+  await fetch(`/api/vault/items/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title, canvas_data: activeSheetData })
+  });
+  loadWorkspace();
+}
+
+// ── WHITEBOARD VIEW ────────────────────────────────────────────────────────
+function openWhiteboardView(item) {
+  document.getElementById('wb-id').value = item.id;
+  document.getElementById('wb-title').value = item.title || '';
+
+  activeWbNodes = (item.canvas_data && item.canvas_data.nodes) ? item.canvas_data.nodes : [{ x: 80, y: 80, text: 'Новая карточка' }];
+  activeWbStrokes = (item.canvas_data && item.canvas_data.strokes) ? item.canvas_data.strokes : [];
+
+  document.getElementById('view-tiles-container').classList.add('hidden');
+  document.getElementById('view-editor-container').classList.add('hidden');
+  document.getElementById('view-sheet-container').classList.add('hidden');
+  document.getElementById('view-whiteboard-container').classList.remove('hidden');
+
+  initWbCanvas();
+}
+
+function closeWhiteboardView() {
+  saveCurrentWbData();
+  document.getElementById('view-whiteboard-container').classList.add('hidden');
+  document.getElementById('view-tiles-container').classList.remove('hidden');
+}
+
+function setWbMode(mode) {
+  wbMode = mode;
+  ['select', 'draw', 'line', 'erase'].forEach(m => {
+    const btn = document.getElementById('wb-tool-' + m);
+    if (btn) btn.className = m === mode ? 'tb-btn active' : 'tb-btn';
+  });
+}
+
+function changeBrushSize(delta) {
+  const inp = document.getElementById('wb-brush-val');
+  let val = parseInt(inp.value || '4') + delta;
+  if (val < 1) val = 1; if (val > 50) val = 50;
+  inp.value = val;
+}
+function validateBrushSize() {
+  const inp = document.getElementById('wb-brush-val');
+  let val = parseInt(inp.value || '4');
+  if (isNaN(val) || val < 1) val = 1; if (val > 50) val = 50;
+  inp.value = val;
+}
+
+function initWbCanvas() {
+  const canvas = document.getElementById('wb-canvas-layer');
+  wbCtx = canvas.getContext('2d');
+
+  renderWhiteboardNodes();
+  redrawAllStrokes();
+  resetWbZoom();
+  attachWbEventListeners();
+}
+
+function renderWhiteboardNodes() {
+  const container = document.getElementById('wb-nodes-layer');
+  container.innerHTML = activeWbNodes.map((node, idx) => `
+    <div class="wb-node" id="wb-node-${idx}" style="left:${node.x}px; top:${node.y}px;" onmousedown="handleWbNodeMouseDown(event, ${idx})">
+      <div class="flex justify-between items-center pb-1 mb-1 border-b border-zinc-800">
+        <span class="text-[9px] text-zinc-500 font-bold">CARD #${idx + 1}</span>
+        <button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>
+      </div>
+      <textarea oninput="updateWbNodeText(${idx}, this.value)" class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${node.text||''}</textarea>
+    </div>
+  `).join('');
+}
+
+function handleWbNodeMouseDown(e, idx) {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+  
+  if (wbMode === 'line') {
+    e.stopPropagation();
+    const canvas = document.getElementById('wb-canvas-layer');
+    const rect = canvas.getBoundingClientRect();
+    const startX = (e.clientX - rect.left) / wbZoom;
+    const startY = (e.clientY - rect.top) / wbZoom;
+
+    isDrawingArrow = true;
+    currentStroke = { type: 'arrow', size: parseInt(document.getElementById('wb-brush-val').value || '4'), fromX: startX, fromY: startY, toX: startX, toY: startY };
+
+    function onArrowMove(ev) {
+      if (!isDrawingArrow) return;
+      currentStroke.toX = (ev.clientX - rect.left) / wbZoom;
+      currentStroke.toY = (ev.clientY - rect.top) / wbZoom;
+      redrawAllStrokes();
+      renderSingleStroke(currentStroke);
+    }
+
+    function onArrowUp() {
+      if (isDrawingArrow) {
+        isDrawingArrow = false;
+        activeWbStrokes.push(currentStroke);
+        currentStroke = null;
+        redrawAllStrokes();
+        triggerWbAutoSave();
+      }
+      document.removeEventListener('mousemove', onArrowMove);
+      document.removeEventListener('mouseup', onArrowUp);
+    }
+
+    document.addEventListener('mousemove', onArrowMove);
+    document.addEventListener('mouseup', onArrowUp);
+    return;
+  }
+
+  dragWbNode(e, idx);
+}
+
+function dragWbNode(e, idx) {
+  if (wbMode !== 'select') return;
+  const el = document.getElementById('wb-node-' + idx);
+  let startX = e.clientX / wbZoom - el.offsetLeft;
+  let startY = e.clientY / wbZoom - el.offsetTop;
+
+  function onMouseMove(ev) {
+    if (activeWbNodes[idx]) {
+      activeWbNodes[idx].x = Math.max(0, ev.clientX / wbZoom - startX);
+      activeWbNodes[idx].y = Math.max(0, ev.clientY / wbZoom - startY);
+      el.style.left = activeWbNodes[idx].x + 'px';
+      el.style.top = activeWbNodes[idx].y + 'px';
+    }
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    triggerWbAutoSave();
+  }
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+}
+
+function addWhiteboardNode() {
+  const newNode = { x: 100 + Math.random() * 200, y: 100 + Math.random() * 150, text: 'Новая карточка' };
+  activeWbNodes.push(newNode);
+  renderWhiteboardNodes();
+  triggerWbAutoSave();
+}
+
+function updateWbNodeText(idx, text) {
+  if (activeWbNodes[idx]) { activeWbNodes[idx].text = text; triggerWbAutoSave(); }
+}
+
+function deleteWbNode(idx) {
+  activeWbNodes.splice(idx, 1);
+  renderWhiteboardNodes();
+  triggerWbAutoSave();
+}
+
+function redrawAllStrokes() {
+  if (!wbCtx) return;
+  wbCtx.clearRect(0, 0, 3000, 3000);
+  activeWbStrokes.forEach(stroke => renderSingleStroke(stroke));
+}
+
+function renderSingleStroke(s) {
+  if (!s || !wbCtx) return;
+  wbCtx.strokeStyle = '#2dd4bf';
+  wbCtx.fillStyle = '#2dd4bf';
+  wbCtx.lineWidth = s.size || 4;
+  wbCtx.lineCap = 'round';
+  wbCtx.lineJoin = 'round';
+
+  if (s.type === 'draw' && s.points && s.points.length > 0) {
+    wbCtx.beginPath();
+    wbCtx.moveTo(s.points[0].x, s.points[0].y);
+    for (let i = 1; i < s.points.length; i++) {
+      wbCtx.lineTo(s.points[i].x, s.points[i].y);
+    }
+    wbCtx.stroke();
+  } else if (s.type === 'arrow') {
+    const headlen = 12;
+    const angle = Math.atan2(s.toY - s.fromY, s.toX - s.fromX);
+
+    wbCtx.beginPath();
+    wbCtx.moveTo(s.fromX, s.fromY);
+    wbCtx.lineTo(s.toX, s.toY);
+    wbCtx.stroke();
+
+    wbCtx.beginPath();
+    wbCtx.moveTo(s.toX, s.toY);
+    wbCtx.lineTo(s.toX - headlen * Math.cos(angle - Math.PI / 6), s.toY - headlen * Math.sin(angle - Math.PI / 6));
+    wbCtx.lineTo(s.toX - headlen * Math.cos(angle + Math.PI / 6), s.toY - headlen * Math.sin(angle + Math.PI / 6));
+    wbCtx.lineTo(s.toX, s.toY);
+    wbCtx.fill();
+  }
+}
+
+function eraseStrokeAt(x, y) {
+  const threshold = 15;
+  const initialCount = activeWbStrokes.length;
+
+  activeWbStrokes = activeWbStrokes.filter(s => {
+    if (s.type === 'arrow') {
+      const d = distToSegment({x, y}, {x: s.fromX, y: s.fromY}, {x: s.toX, y: s.toY});
+      return d > threshold;
+    }
+    if (s.type === 'draw' && s.points) {
+      for (let i = 0; i < s.points.length - 1; i++) {
+        if (distToSegment({x, y}, s.points[i], s.points[i+1]) <= threshold) return false;
+      }
+    }
+    return true;
+  });
+
+  if (activeWbStrokes.length !== initialCount) {
+    redrawAllStrokes();
+    triggerWbAutoSave();
+  }
+}
+
+function distToSegment(p, v, w) {
+  const l2 = (w.x - v.x)*(w.x - v.x) + (w.y - v.y)*(w.y - v.y);
+  if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+  let t = ((p.x - v.x)*(w.x - v.x) + (p.y - v.y)*(w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (v.x + t*(w.x - v.x)), p.y - (v.y + t*(w.y - v.y)));
+}
+
+function zoomWb(delta) {
+  wbZoom = Math.min(2.0, Math.max(0.4, wbZoom + delta));
+  applyWbTransform();
+}
+function resetWbZoom() {
+  wbZoom = 1.0; wbPanX = 0; wbPanY = 0;
+  applyWbTransform();
+}
+function applyWbTransform() {
+  const world = document.getElementById('wb-world-el');
+  if (world) {
+    world.style.transform = `translate(${wbPanX}px, ${wbPanY}px) scale(${wbZoom})`;
+    document.getElementById('wb-zoom-label').innerText = Math.round(wbZoom * 100) + '%';
+  }
+}
+
+function attachWbEventListeners() {
+  const viewport = document.getElementById('wb-viewport-el');
+  const canvas = document.getElementById('wb-canvas-layer');
+
+  viewport.onmousedown = (e) => {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.closest('.wb-node')) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / wbZoom;
+    const y = (e.clientY - rect.top) / wbZoom;
+
+    if (wbMode === 'select') {
+      isPanning = true;
+      panStartX = e.clientX - wbPanX;
+      panStartY = e.clientY - wbPanY;
+    } else if (wbMode === 'erase') {
+      eraseStrokeAt(x, y);
+    } else if (wbMode === 'draw') {
+      isDrawing = true;
+      const size = parseInt(document.getElementById('wb-brush-val').value || '4');
+      currentStroke = { type: 'draw', size: size, points: [{x, y}] };
+    } else if (wbMode === 'line') {
+      isDrawingArrow = true;
+      const size = parseInt(document.getElementById('wb-brush-val').value || '4');
+      currentStroke = { type: 'arrow', size: size, fromX: x, fromY: y, toX: x, toY: y };
+    }
+  };
+
+  viewport.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / wbZoom;
+    const y = (e.clientY - rect.top) / wbZoom;
+
+    if (isPanning) {
+      wbPanX = e.clientX - panStartX;
+      wbPanY = e.clientY - panStartY;
+      applyWbTransform();
+      return;
+    }
+
+    if (wbMode === 'erase' && e.buttons === 1) {
+      eraseStrokeAt(x, y);
+      return;
+    }
+
+    if (isDrawing && wbMode === 'draw' && currentStroke) {
+      currentStroke.points.push({x, y});
+      redrawAllStrokes();
+      renderSingleStroke(currentStroke);
+    }
+
+    if (isDrawingArrow && wbMode === 'line' && currentStroke) {
+      currentStroke.toX = x;
+      currentStroke.toY = y;
+      redrawAllStrokes();
+      renderSingleStroke(currentStroke);
+    }
+  };
+
+  viewport.onmouseup = () => {
+    if (isDrawing || isDrawingArrow) {
+      if (currentStroke) {
+        activeWbStrokes.push(currentStroke);
+        currentStroke = null;
+      }
+      isDrawing = false;
+      isDrawingArrow = false;
+      redrawAllStrokes();
+      triggerWbAutoSave();
+    }
+    isPanning = false;
+  };
+
+  viewport.onwheel = (e) => {
+    e.preventDefault();
+    zoomWb(e.deltaY < 0 ? 0.08 : -0.08);
+  };
+}
+
+function clearWbCanvas() {
+  if (confirm('Очистить весь рисунок и линии?')) {
+    activeWbStrokes = [];
+    redrawAllStrokes();
+    triggerWbAutoSave();
+  }
+}
+
+function triggerWbAutoSave() {
+  clearTimeout(wbSaveTimer);
+  wbSaveTimer = setTimeout(saveCurrentWbData, 400);
+}
+
+function generateWbCroppedPreview() {
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = 600; tempCanvas.height = 360;
+  const ctx = tempCanvas.getContext('2d');
+
+  ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, 600, 360);
+
+  ctx.fillStyle = '#1f1f23';
+  for (let x = 10; x < 600; x += 20) {
+    for (let y = 10; y < 360; y += 20) {
+      ctx.fillRect(x, y, 1.5, 1.5);
+    }
+  }
+
+  let minX = 3000, minY = 3000, maxX = 0, maxY = 0;
+  activeWbNodes.forEach(n => {
+    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + 190); maxY = Math.max(maxY, n.y + 110);
+  });
+  activeWbStrokes.forEach(s => {
+    if (s.type === 'arrow') {
+      minX = Math.min(minX, s.fromX, s.toX); minY = Math.min(minY, s.fromY, s.toY);
+      maxX = Math.max(maxX, s.fromX, s.toX); maxY = Math.max(maxY, s.fromY, s.toY);
+    } else if (s.type === 'draw' && s.points) {
+      s.points.forEach(p => {
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+      });
+    }
+  });
+
+  if (minX >= maxX || minY >= maxY) { minX = 0; minY = 0; maxX = 600; maxY = 360; }
+  const pad = 30;
+  minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+  const scaleX = 600 / Math.max(400, maxX - minX + pad);
+  const scaleY = 360 / Math.max(260, maxY - minY + pad);
+  const scale = Math.min(scaleX, scaleY);
+
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.translate(-minX, -minY);
+
+  activeWbStrokes.forEach(s => {
+    ctx.strokeStyle = '#2dd4bf'; ctx.fillStyle = '#2dd4bf'; ctx.lineWidth = s.size || 4; ctx.lineCap = 'round';
+    if (s.type === 'draw' && s.points && s.points.length > 0) {
+      ctx.beginPath(); ctx.moveTo(s.points[0].x, s.points[0].y);
+      for (let i = 1; i < s.points.length; i++) ctx.lineTo(s.points[i].x, s.points[i].y);
+      ctx.stroke();
+    } else if (s.type === 'arrow') {
+      ctx.beginPath(); ctx.moveTo(s.fromX, s.fromY); ctx.lineTo(s.toX, s.toY); ctx.stroke();
+    }
+  });
+
+  activeWbNodes.forEach((node, idx) => {
+    ctx.fillStyle = '#09090b'; ctx.strokeStyle = '#27272a'; ctx.lineWidth = 1;
+    ctx.fillRect(node.x, node.y, 190, 100);
+    ctx.strokeRect(node.x, node.y, 190, 100);
+
+    ctx.fillStyle = '#71717a'; ctx.font = 'bold 10px monospace';
+    ctx.fillText(`CARD #${idx + 1}`, node.x + 8, node.y + 16);
+
+    ctx.fillStyle = '#ffffff'; ctx.font = '11px monospace';
+    const txt = node.text || '';
+    ctx.fillText(txt.substring(0, 22), node.x + 8, node.y + 36);
+    if (txt.length > 22) ctx.fillText(txt.substring(22, 44), node.x + 8, node.y + 52);
+  });
+
+  ctx.restore();
+  return tempCanvas.toDataURL();
+}
+
+async function saveCurrentWbData() {
+  const id = document.getElementById('wb-id').value;
+  const title = document.getElementById('wb-title').value.trim();
+  if (!id) return;
+
+  const previewData = generateWbCroppedPreview();
+  await fetch(`/api/vault/items/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title, canvas_data: { nodes: activeWbNodes, strokes: activeWbStrokes, drawing: previewData } })
+  });
+  loadWorkspace();
+}
+
+function selectWorkspace(id, name) {
+  currentCollectionId = id;
+  document.querySelectorAll('.ws-item').forEach(el => el.classList.remove('active'));
+  const target = id ? document.getElementById('ws-item-' + id) : document.getElementById('ws-item-all');
+  if (target) target.classList.add('active');
+
+  document.getElementById('active-ws-title').innerText = name;
+  closeEditorView();
+  closeSheetView();
+  closeWhiteboardView();
+  loadWorkspace();
+}
+
+async function loadWorkspace() {
+  const search = document.getElementById('vault-search').value.trim();
+  let url = `/api/vault/items?limit=200&is_archived=false`;
+  if (currentCollectionId) url += `&collection_id=${currentCollectionId}`;
+  if (search) url += `&q=${encodeURIComponent(search)}`;
+
+  try {
+    const resp = await fetch(url);
+    currentItems = await resp.json();
+    currentItems.forEach(i => window._vaultCache[i.id] = i);
+
+    document.getElementById('vault-empty').classList.toggle('hidden', currentItems.length > 0);
+    renderTiles(currentItems);
+  } catch(e) { console.error(e); }
+}
+
+// ── TETRIS MASONRY RESIZING ──────────────────────────────────────────────────
+function resizeGridItem(item) {
+  const rowHeight = 8;
+  const rowGap = 12;
+  item.style.gridRowEnd = 'none';
+  const contentHeight = item.getBoundingClientRect().height;
+  const rowSpan = Math.ceil((contentHeight + rowGap) / (rowHeight + rowGap));
+  item.style.gridRowEnd = `span ${rowSpan}`;
+}
+
+function resizeAllGridItems() {
+  const allItems = document.querySelectorAll('.tile-card');
+  allItems.forEach(item => resizeGridItem(item));
+}
+
+window.addEventListener('resize', resizeAllGridItems);
+
+// ── MASONRY TILE RENDERING (UNCROPPED IMAGES & FULL PREVIEWS) ────────────────
+function renderTiles(items) {
+  const grid = document.getElementById('tiles-grid');
+
+  const sortedItems = [...items].sort((a, b) => {
+    if (a.is_pinned !== b.is_pinned) return b.is_pinned ? 1 : -1;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+
+  grid.innerHTML = sortedItems.map(item => {
+    const isTable = item.node_type === 'table';
+    const isWb = item.node_type === 'whiteboard';
+    
+    const wbDrawingPreview = isWb && item.canvas_data?.drawing && item.canvas_data.drawing.length > 100 ? item.canvas_data.drawing : null;
+    const displayImg = item.og_image || wbDrawingPreview;
+
+    let itemColSpan = displayImg || isWb ? 'sm:col-span-2 lg:col-span-2' : '';
+
+    let clickHandler = `openEditorView(window._vaultCache[${item.id}])`;
+    if (isTable) clickHandler = `openSheetView(window._vaultCache[${item.id}])`;
+    if (isWb) clickHandler = `openWhiteboardView(window._vaultCache[${item.id}])`;
+
+    let miniTableHtml = '';
+    if (isTable && item.canvas_data?.headers) {
+      const origHeaders = item.canvas_data.headers;
+      const origRows = item.canvas_data.rows || [];
+
+      const nonArrRows = origRows.filter(r => r.some(c => c && c.trim() !== ''));
+
+      const validColIndices = [];
+      origHeaders.forEach((h, colIdx) => {
+        const hasHeader = h && !h.startsWith('Колонка ');
+        const hasCellData = origRows.some(r => r[colIdx] && r[colIdx].trim() !== '');
+        if (hasHeader || hasCellData || colIdx === 0) validColIndices.push(colIdx);
+      });
+
+      const displayHeaders = validColIndices.map(i => origHeaders[i]);
+      const displayRows = (nonArrRows.length > 0 ? nonArrRows : origRows.slice(0, 1)).map(r => validColIndices.map(i => r[i] || ''));
+
+      if (displayHeaders.length > 2) itemColSpan = 'sm:col-span-2 lg:col-span-2';
+
+      miniTableHtml = `<div class="mini-sheet-container">
+        <table class="mini-sheet-table">
+          <thead><tr>${displayHeaders.map(h => `<th class="bg-zinc-900 text-teal-400 font-bold">${h||''}</th>`).join('')}</tr></thead>
+          <tbody>${displayRows.map(r => `<tr>${r.map(c => `<td class="text-zinc-300">${c||''}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+    }
+
+    const hasTitle = item.title && item.title.trim() !== '';
+
+    let displayText = item.content || '';
+    if (displayText.length > 350) {
+      displayText = displayText.substring(0, 280).trim() + '...';
+    }
+
+    return `
+    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}">
+      ${displayImg ? `
+        <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" onclick="${clickHandler}">
+          <img src="${displayImg}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
+        </div>
+      ` : ''}
+      
+      <div class="p-3 flex flex-col gap-2">
+        ${hasTitle ? `
+          <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400" onclick="${clickHandler}">
+            ${item.url ? `<a href="${item.url}" target="_blank" onclick="event.stopPropagation()">${item.title} <span class="text-teal-400">↗</span></a>` : item.title}
+          </div>
+        ` : (item.url ? `<div class="text-xs font-bold text-teal-400 truncate"><a href="${item.url}" target="_blank">${item.url} ↗</a></div>` : '')}
+
+        ${item.content ? `
+          <div class="text-xs text-zinc-300 leading-relaxed bg-zinc-950/80 p-2 border border-zinc-800/80 rounded-sm cursor-pointer font-mono break-words whitespace-pre-wrap" onclick="${clickHandler}">${displayText}</div>
+        ` : ''}
+        
+        ${miniTableHtml}
+
+        <div class="flex items-center justify-between text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 mt-1">
+          <div class="flex items-center gap-2">
+            <button onclick="togglePin(${item.id})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
+              ${item.is_pinned ? '★' : '☆'}
+            </button>
+            <span>${new Date(item.created_at).toLocaleDateString('ru-RU')}</span>
+          </div>
+
+          <div class="flex gap-2 font-bold">
+            <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
+            <button onclick="deleteItem(${item.id})" class="hover:text-red-400 uppercase">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  setTimeout(resizeAllGridItems, 40);
+
+  const images = grid.querySelectorAll('img');
+  images.forEach(img => {
+    if (img.complete) {
+      resizeGridItem(img.closest('.tile-card'));
+    } else {
+      img.addEventListener('load', () => {
+        resizeGridItem(img.closest('.tile-card'));
+      });
+    }
+  });
+}
+
+async function togglePin(id) { await fetch(`/api/vault/items/${id}/pin`, {method:'POST'}); loadWorkspace(); }
+async function deleteItem(id) { if (!confirm('Удалить?')) return; await fetch(`/api/vault/items/${id}`, {method:'DELETE'}); loadWorkspace(); }
+
+async function exportItems() {
+  const resp = await fetch('/api/vault/items?limit=500&is_archived=false');
+  const items = await resp.json();
+  const blob = new Blob([JSON.stringify(items, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `vault-export.json`; a.click();
+}
+
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadWorkspace, 200);
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadWorkspace(); });
+</script>
+{% endblock %}

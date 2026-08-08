@@ -55,6 +55,12 @@ async def get_resources_for_package(pkg_id: str) -> list:
             manifest = await get_video_sync_manifest(video_id, db=db, hybrid=False)
             return manifest.get("resources", [])
 
+        elif pkg_id.startswith("vault_"):
+            from app.modules.vault.router import get_vault_sync_manifest
+
+            manifest = await get_vault_sync_manifest(db=db, hybrid=False)
+            return manifest.get("resources", [])
+
         else:
             raise HTTPException(status_code=400, detail=f"Unknown package prefix: {pkg_id}")
 

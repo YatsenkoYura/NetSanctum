@@ -4,7 +4,7 @@ Music module database models.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -30,7 +30,10 @@ class Playlist(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    cover_song_id: Mapped[int | None] = mapped_column(
+        ForeignKey("songs.id", ondelete="SET NULL"), nullable=True
+    )
+    cover_song: Mapped["Song | None"] = relationship("Song", foreign_keys=[cover_song_id])
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -60,6 +63,8 @@ class Song(Base):
     cover_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     audio_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
     youtube_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cover_offset_x: Mapped[float] = mapped_column(Float, nullable=False, default=50.0, server_default="50")
+    cover_offset_y: Mapped[float] = mapped_column(Float, nullable=False, default=50.0, server_default="50")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

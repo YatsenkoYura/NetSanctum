@@ -239,6 +239,15 @@ async def lifespan(application: FastAPI):
     except ImportError:
         logger.info("Settings module not installed; skipping default settings seed.")
 
+    # 4. Start Background Services
+    try:
+        from app.modules.torrent.engine.manager import get_engine_manager
+
+        engine = get_engine_manager()
+        await engine.start()
+    except Exception as e:
+        logger.warning(f"Could not start TorrentEngineManager: {e}")
+
     yield
 
     await async_engine.dispose()
@@ -283,7 +292,7 @@ async def _get_user_from_cookie(request: Request):
         return None
     from app.core.security import redis_client
 
-    if redis_client.get(f"session:{session_id}") == "1":
+    if await redis_client.get(f"session:{session_id}") == "1":
         return OwnerUser()
     return None
 
