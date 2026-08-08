@@ -87,8 +87,8 @@ def process_video_url_task(
         {
             "quiet": True,
             "extract_flat": "in_playlist",
-            "js_runtimes": {"node": {}},
-            "remote_components": {"ejs:github": {}},
+            "js_runtimes": {"deno": {}},
+            "remote_components": {"ejs:github"},
         }
     )
 
@@ -230,8 +230,8 @@ def download_video_task(
             "progress_hooks": [ydl_progress_hook],
             "getcomments": comments_enabled,
             "extractor_retries": 1,
-            "js_runtimes": {"node": {}},
-            "remote_components": {"ejs:github": {}},
+            "js_runtimes": {"deno": {}},
+            "remote_components": {"ejs:github"},
             "ignoreerrors": True,
         }
     )
@@ -569,8 +569,8 @@ def _sync_video_metadata(video_id: str, task_id: str | None = None) -> str:
             "getcomments": False,  # Skip comments during background sync to avoid YouTube rate-limiting / slow retries
             "extractor_retries": 0,
             "ignoreerrors": True,
-            "js_runtimes": {"node": {}},
-            "remote_components": {"ejs:github": {}},
+            "js_runtimes": {"deno": {}},
+            "remote_components": {"ejs:github"},
         }
     )
 
