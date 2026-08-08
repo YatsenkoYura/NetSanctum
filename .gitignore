@@ -138,7 +138,6 @@ access_token.hash
 # Modules in development / ignored
 app/modules/torrent/
 app/modules/pianoboost/
-alembic/versions/*torrent*
 
 # Linter caches
 .ruff_cache/
