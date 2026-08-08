@@ -93,14 +93,25 @@
     width: 100% !important;
     height: 100% !important;
   }
-  /* Show controls when container has show-controls class */
-  .custom-video-player.show-controls .custom-controls {
+  /* Custom controls styling */
+  .custom-video-player .custom-controls,
+  .custom-video-player .center-play-btn {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+  }
+  /* Show controls when container has show-controls or controls-visible class */
+  .custom-video-player.show-controls .custom-controls,
+  .custom-video-player.show-controls .center-play-btn,
+  .custom-video-player.controls-visible .custom-controls,
+  .custom-video-player.controls-visible .center-play-btn {
     opacity: 1 !important;
     pointer-events: auto !important;
   }
-  .custom-video-player.show-controls .center-play-btn {
-    opacity: 1 !important;
-    pointer-events: auto !important;
+  /* Hide cursor when controls are hidden during playback */
+  .custom-video-player.controls-hidden,
+  .custom-video-player.controls-hidden * {
+    cursor: none !important;
   }
 
   /* Constrain player container in portrait (vertical) orientation so controls attach to the video bottom */
@@ -318,13 +329,23 @@
       const container = video.closest('.custom-video-player');
       if (!container) return;
       container.classList.add('show-controls');
+      container.classList.remove('controls-hidden');
       
       if (controlsTimeout) clearTimeout(controlsTimeout);
       
       if (!video.paused) {
           controlsTimeout = setTimeout(() => {
-              container.classList.remove('show-controls');
-          }, 3500);
+              const activeV = document.getElementById('anime-video-player');
+              if (activeV && !activeV.paused) {
+                  container.classList.remove('show-controls');
+                  container.classList.add('controls-hidden');
+                  const dropdown = container.querySelector('.settings-dropdown');
+                  if (dropdown) {
+                      dropdown.classList.add('hidden');
+                      dropdown.classList.remove('flex');
+                  }
+              }
+          }, 2500);
       }
   }
 
@@ -360,8 +381,18 @@
       });
 
       // Controls visibility
+      container.addEventListener('mousemove', showControlsTemporarily);
       container.addEventListener('pointermove', showControlsTemporarily);
-      container.addEventListener('click', showControlsTemporarily);
+      container.addEventListener('pointerdown', showControlsTemporarily);
+
+      // Hide controls immediately when mouse leaves video area if playing
+      container.addEventListener('mouseleave', () => {
+          if (video && !video.paused) {
+              container.classList.remove('show-controls');
+              container.classList.add('controls-hidden');
+              if (controlsTimeout) clearTimeout(controlsTimeout);
+          }
+      });
 
       // ── Touch gestures ──────────────────────────────────────────
       let _touchStartX = 0, _touchStartY = 0, _touchStartTime = 0, _lastTap = 0;

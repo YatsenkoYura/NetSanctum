@@ -126,12 +126,12 @@
                             </video>
                             
                             <!-- Big center play button -->
-                            <button onclick="toggleCustomPlay('shared-video-player')" class="center-play-btn absolute bg-black/60 hover:bg-black/80 text-teal-400 border border-zinc-800 hover:border-teal-400 p-4 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 focus:outline-none z-10">
+                            <button onclick="toggleCustomPlay('shared-video-player')" class="center-play-btn absolute bg-black/60 hover:bg-black/80 text-teal-400 border border-zinc-800 hover:border-teal-400 p-4 rounded-full opacity-0 transition-opacity duration-200 focus:outline-none z-10">
                                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5v13l11-6.5-11-6.5z"/></svg>
                             </button>
                             
                             <!-- Custom Control Bar -->
-                            <div class="custom-controls absolute bottom-0 left-0 right-0 p-3 bg-zinc-950/95 border-t border-zinc-800 flex flex-col gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200 z-20">
+                            <div class="custom-controls absolute bottom-0 left-0 right-0 p-3 bg-zinc-950/95 border-t border-zinc-800 flex flex-col gap-2 opacity-0 transition-opacity duration-200 z-20">
                                 <!-- Progress Bar -->
                                 <div onclick="seekCustomPlayer(event, 'shared-video-player')" class="progress-container w-full h-1 bg-zinc-850 hover:h-2 transition-all cursor-pointer relative border border-zinc-800">
                                     <div class="progress-bar h-full bg-teal-400 w-0"></div>
@@ -581,12 +581,12 @@
                             </video>
                             
                             <!-- Big center play button -->
-                            <button onclick="toggleCustomPlay('playlist-video-player')" class="center-play-btn absolute bg-black/60 hover:bg-black/80 text-teal-400 border border-zinc-800 hover:border-teal-400 p-4 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 focus:outline-none z-10">
+                            <button onclick="toggleCustomPlay('playlist-video-player')" class="center-play-btn absolute bg-black/60 hover:bg-black/80 text-teal-400 border border-zinc-800 hover:border-teal-400 p-4 rounded-full opacity-0 transition-opacity duration-200 focus:outline-none z-10">
                                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5v13l11-6.5-11-6.5z"/></svg>
                             </button>
                             
                             <!-- Custom Control Bar -->
-                            <div class="custom-controls absolute bottom-0 left-0 right-0 p-3 bg-zinc-950/95 border-t border-zinc-800 flex flex-col gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200 z-20">
+                            <div class="custom-controls absolute bottom-0 left-0 right-0 p-3 bg-zinc-950/95 border-t border-zinc-800 flex flex-col gap-2 opacity-0 transition-opacity duration-200 z-20">
                                 <!-- Progress Bar -->
                                 <div onclick="seekCustomPlayer(event, 'playlist-video-player')" class="progress-container w-full h-1 bg-zinc-850 hover:h-2 transition-all cursor-pointer relative border border-zinc-800">
                                     <div class="progress-bar h-full bg-teal-400 w-0"></div>
@@ -812,11 +812,11 @@
     /* Subtitle style is applied dynamically via JS — see applySubtitleStyle() */
 
     /* ── Custom controls auto-hide via JS class ── */
-    .custom-video-player .custom-controls {
-        transition: opacity 0.25s ease;
-    }
+    .custom-video-player .custom-controls,
     .custom-video-player .center-play-btn {
-        transition: opacity 0.25s ease;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transition: opacity 0.3s ease, visibility 0.3s ease;
     }
     /* controls-visible class added/removed by showControlsFor() */
     .custom-video-player.controls-visible .custom-controls,
@@ -824,15 +824,12 @@
         opacity: 1 !important;
         pointer-events: auto !important;
     }
-    /* Desktop hover still works */
-    @media (hover: hover) {
-        .custom-video-player:hover .custom-controls,
-        .custom-video-player:hover .center-play-btn,
-        .custom-video-player:focus-within .custom-controls,
-        .custom-video-player:focus-within .center-play-btn {
-            opacity: 1 !important;
-            pointer-events: auto !important;
-        }
+    /* Hide cursor when controls are hidden during video playback */
+    .custom-video-player.controls-hidden {
+        cursor: none !important;
+    }
+    .custom-video-player.controls-hidden * {
+        cursor: none !important;
     }
 
     /* ── Fullscreen: hide page chrome, player takes full viewport ── */
@@ -2658,12 +2655,23 @@
     function showControlsFor(container, videoId) {
         if (!container) return;
         container.classList.add('controls-visible');
+        container.classList.remove('controls-hidden');
         clearTimeout(_controlsTimers[videoId]);
+
         const v = document.getElementById(videoId);
         if (v && !v.paused) {
             _controlsTimers[videoId] = setTimeout(() => {
-                container.classList.remove('controls-visible');
-            }, 3500);
+                const activeV = document.getElementById(videoId);
+                if (activeV && !activeV.paused) {
+                    container.classList.remove('controls-visible');
+                    container.classList.add('controls-hidden');
+                    const dropdown = container.querySelector('.settings-dropdown');
+                    if (dropdown) {
+                        dropdown.classList.add('hidden');
+                        dropdown.classList.remove('flex');
+                    }
+                }
+            }, 2500);
         }
     }
 
@@ -2696,9 +2704,20 @@
             if (durTimeSpan) durTimeSpan.innerText = formatDuration(video.duration);
         });
 
-        // Controls auto-show on pointer move / touch
+        // Controls auto-show on mousemove / touch
+        container.addEventListener('mousemove', () => showControlsFor(container, videoId));
         container.addEventListener('pointermove', () => showControlsFor(container, videoId));
         container.addEventListener('pointerdown', () => showControlsFor(container, videoId));
+
+        // Hide controls immediately on mouseleave if playing
+        container.addEventListener('mouseleave', () => {
+            const v = document.getElementById(videoId);
+            if (v && !v.paused) {
+                container.classList.remove('controls-visible');
+                container.classList.add('controls-hidden');
+                clearTimeout(_controlsTimers[videoId]);
+            }
+        });
 
         // ── Touch gestures ──────────────────────────────────────
         let _touchStartX = 0, _touchStartTime = 0, _lastTap = 0;
