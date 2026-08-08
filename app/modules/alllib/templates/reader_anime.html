@@ -254,15 +254,31 @@
 
   window.toggleFullscreenCustom = function(containerId) {
       const container = document.getElementById(containerId);
-      if (!container) return;
       if (!document.fullscreenElement) {
-          container.requestFullscreen().catch(err => {
-              console.error(`Error enabling fullscreen: ${err.message}`);
-          });
+          const req = container.requestFullscreen || container.webkitRequestFullscreen || container.mozRequestFullScreen;
+          if (req) req.call(container).then(() => {
+              if (screen.orientation && screen.orientation.lock) {
+                  screen.orientation.lock('landscape').catch(() => {});
+              }
+          }).catch(err => console.error(err));
       } else {
-          document.exitFullscreen();
+          const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+          if (exit) exit.call(document);
+          if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
       }
   };
+
+  // Fullscreen: hide top bar, update icon
+  document.addEventListener('fullscreenchange', () => {
+      const isFs = !!document.fullscreenElement;
+      const topBar = document.querySelector('.flex-shrink-0.flex.items-center');
+      if (topBar) topBar.style.display = isFs ? 'none' : '';
+      document.querySelectorAll('.fullscreen-btn').forEach(btn => {
+          btn.innerHTML = isFs
+              ? `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9L4 4m0 0l5 0M4 4l0 5M15 9l5-5m0 0l-5 0m5 0l0 5M9 15l-5 5m0 0l5 0m-5 0l0-5M15 15l5 5m0 0l-5 0m5 0l0-5"/></svg>`
+              : `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M4 16v4h4m8-12h4V4m-4 16h4v-4"/></svg>`;
+      });
+  });
 
   window.toggleSettingsMenu = function(videoId) {
       const video = document.getElementById(videoId);
@@ -343,12 +359,60 @@
           if (durTimeSpan) durTimeSpan.innerText = formatDuration(video.duration);
       });
 
-      // Controls visibility togglery
+      // Controls visibility
       container.addEventListener('pointermove', showControlsTemporarily);
       container.addEventListener('click', showControlsTemporarily);
 
+      // ── Touch gestures ──────────────────────────────────────────
+      let _touchStartX = 0, _touchStartY = 0, _touchStartTime = 0, _lastTap = 0;
+      video.addEventListener('touchstart', (e) => {
+          _touchStartX = e.changedTouches[0].clientX;
+          _touchStartY = e.changedTouches[0].clientY;
+          _touchStartTime = Date.now();
+          showControlsTemporarily();
+      }, { passive: true });
+
+      video.addEventListener('touchend', (e) => {
+          const dx = e.changedTouches[0].clientX - _touchStartX;
+          const dy = e.changedTouches[0].clientY - _touchStartY;
+          const dt = Date.now() - _touchStartTime;
+          // Horizontal swipe: seek
+          if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) && dt < 400) {
+              const delta = dx > 0 ? 10 : -10;
+              video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta));
+              return;
+          }
+          // Vertical swipe: navigate episodes (down = next, up = prev)
+          if (Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(dx) && dt < 500) {
+              navigateEp(dy > 0 ? 1 : -1);
+              return;
+          }
+          // Double tap seek zones
+          const now = Date.now();
+          if (now - _lastTap < 300) {
+              const rect = video.getBoundingClientRect();
+              const tapX = e.changedTouches[0].clientX - rect.left;
+              if (tapX < rect.width / 2) {
+                  video.currentTime = Math.max(0, video.currentTime - 10);
+              } else {
+                  video.currentTime = Math.min(video.duration || 0, video.currentTime + 10);
+              }
+              _lastTap = 0;
+              return;
+          }
+          _lastTap = now;
+          // Single tap: toggle controls / play
+          if (container.classList.contains('show-controls') && !video.paused) {
+              container.classList.remove('show-controls');
+              if (controlsTimeout) clearTimeout(controlsTimeout);
+          } else {
+              toggleCustomPlay(videoId);
+          }
+      }, { passive: true });
+
       video.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (e.pointerType === 'touch') return;
           toggleCustomPlay(videoId);
           showControlsTemporarily();
       });
