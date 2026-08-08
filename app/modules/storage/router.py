@@ -111,7 +111,12 @@ def _get_storage_stats() -> dict:
                     file_counts[module_name] += 1
 
                     large_files.append(
-                        {"path": str(rel_path), "name": file, "size": size, "module": module_name}
+                        {
+                            "path": str(rel_path),
+                            "name": file,
+                            "size": size,
+                            "module": module_name,
+                        }
                     )
 
     large_files.sort(key=lambda x: x["size"], reverse=True)
@@ -121,7 +126,12 @@ def _get_storage_stats() -> dict:
     modules_list = []
     for name, size in module_sizes.items():
         modules_list.append(
-            {"name": name, "size": size, "file_count": file_counts[name], "size_human": format_size(size)}
+            {
+                "name": name,
+                "size": size,
+                "file_count": file_counts[name],
+                "size_human": format_size(size),
+            }
         )
     modules_list.sort(key=lambda x: x["name"])
 

@@ -104,6 +104,7 @@ def long_running_task(param):
    from app.core.database import Base
    from sqlalchemy import Column, Integer, String
 
+
    class MyModel(Base):
        __tablename__ = "my_table"
        id = Column(Integer, primary_key=True)
@@ -112,6 +113,7 @@ def long_running_task(param):
 4. Create `app/modules/my_module/router.py` containing:
    ```python
    from fastapi import APIRouter
+
    router = APIRouter()
    ```
 5. If the module requires extra pip packages, create a `requirements.in` file in the module root.

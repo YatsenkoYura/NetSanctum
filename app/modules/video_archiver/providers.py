@@ -121,7 +121,11 @@ class YouTubeProvider(BasePlatformProvider):
         opts = {
             "cachedir": "/app/storage/.cache/yt-dlp",
             "mark_watched": False,
-            "extractor_args": {"youtube": {"player_client": ["ios", "android", "mweb"]}},
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web", "mweb", "android", "ios"],
+                }
+            },
         }
         if custom_opts:
             # Merge extractor_args if provided
