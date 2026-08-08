@@ -186,18 +186,23 @@
         <input type="text" id="sheet-title" oninput="triggerSheetAutoSave()" placeholder="Название таблицы (необязательно)..." 
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
-        <div class="cell-toolbar">
-          <button onclick="formatCell('bold')" class="tb-btn font-black">B</button>
-          <button onclick="formatCell('italic')" class="tb-btn italic">I</button>
-          <button onclick="formatCell('strike')" class="tb-btn line-through">S</button>
+        <div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
+          <button onclick="formatCell('bold')" class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
+          <button onclick="formatCell('italic')" class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
+          <button onclick="formatCell('strike')" class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
           <span class="text-zinc-700 mx-1">|</span>
           <label class="text-[10px] text-zinc-500 font-bold uppercase">Шрифт:</label>
-          <select id="cell-font-size" onchange="changeCellFontSize(this.value)" class="bg-zinc-900 text-white text-[10px] border border-zinc-800 px-1 py-0.5">
+          <select id="cell-font-size" onchange="changeCellFontSize(this.value)" class="bg-zinc-950 text-white text-[10px] border border-zinc-800 px-1 py-0.5 rounded">
             <option value="10px">10px</option>
             <option value="11px" selected>11px</option>
             <option value="13px">13px</option>
             <option value="15px">15px</option>
           </select>
+          <span class="text-zinc-700 mx-1">|</span>
+          <button onclick="addSheetRow()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить пустую строку">+ Строка</button>
+          <button onclick="addSheetColumn()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить новую колонку">+ Колонка</button>
+          <button onclick="cleanEmptySheetRows()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-amber-950 hover:text-amber-400 border border-zinc-700 hover:border-amber-500/50 rounded transition-colors" title="Удалить все полностью пустые строки">Очистить пустые строки</button>
+          <button onclick="clearSheetTable()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-red-950 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 rounded transition-colors" title="Очистить все данные из таблицы">Очистить таблицу</button>
         </div>
 
         <div class="border border-zinc-800 overflow-x-auto bg-zinc-950">
@@ -724,7 +729,7 @@ function renderSheetCanvas() {
         </div>
       </td>`;
     row.forEach((cell, colIdx) => {
-      html += `<td><input type="text" value="${cell||''}" onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)" class="cell-edit"></td>`;
+      html += `<td><input type="text" value="${cell||''}" data-row="${rowIdx}" data-col="${colIdx}" onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)" class="cell-edit"></td>`;
     });
     html += '</tr>';
   });
@@ -768,6 +773,35 @@ function handleCellInput(rowIdx, colIdx, val) {
 
 function updateHeader(colIdx, val) {
   activeSheetData.headers[colIdx] = val;
+  triggerSheetAutoSave();
+}
+
+function addSheetRow() {
+  activeSheetData.rows.push(new Array(activeSheetData.headers.length).fill(''));
+  renderSheetCanvas();
+  triggerSheetAutoSave();
+}
+
+function addSheetColumn() {
+  activeSheetData.headers.push(`Колонка ${activeSheetData.headers.length + 1}`);
+  activeSheetData.rows.forEach(r => r.push(''));
+  renderSheetCanvas();
+  triggerSheetAutoSave();
+}
+
+function cleanEmptySheetRows() {
+  activeSheetData.rows = activeSheetData.rows.filter(row => row.some(cell => cell && String(cell).trim() !== ''));
+  if (activeSheetData.rows.length === 0) {
+    activeSheetData.rows.push(new Array(activeSheetData.headers.length).fill(''));
+  }
+  renderSheetCanvas();
+  triggerSheetAutoSave();
+}
+
+function clearSheetTable() {
+  if (!confirm('Вы уверены, что хотите очистить содержимое таблицы?')) return;
+  activeSheetData.rows = [new Array(activeSheetData.headers.length).fill('')];
+  renderSheetCanvas();
   triggerSheetAutoSave();
 }
 
@@ -1396,6 +1430,73 @@ function debounceSearch() {
   searchTimer = setTimeout(loadWorkspace, 200);
 }
 
-document.addEventListener('DOMContentLoaded', () => { loadWorkspace(); });
+function handleSheetPaste(e) {
+  const target = e.target;
+  if (!target || !target.classList.contains('cell-edit')) return;
+
+  const startRowStr = target.getAttribute('data-row');
+  const startColStr = target.getAttribute('data-col');
+  if (startRowStr === null || startColStr === null) return;
+
+  const startRow = parseInt(startRowStr, 10);
+  const startCol = parseInt(startColStr, 10);
+  if (isNaN(startRow) || isNaN(startCol)) return;
+
+  const clipboardData = e.clipboardData || window.clipboardData;
+  if (!clipboardData) return;
+
+  const pasteText = clipboardData.getData('text/plain');
+  if (!pasteText) return;
+
+  // Detect TSV (\t) or multi-line paste (\n)
+  if (pasteText.includes('\t') || pasteText.includes('\n')) {
+    e.preventDefault();
+
+    const rawLines = pasteText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    if (rawLines.length > 1 && rawLines[rawLines.length - 1] === '') {
+      rawLines.pop();
+    }
+
+    const matrix = rawLines.map(line => line.split('\t'));
+    if (matrix.length === 0) return;
+
+    let maxColsInPaste = 1;
+    matrix.forEach(r => {
+      if (r.length > maxColsInPaste) maxColsInPaste = r.length;
+    });
+
+    const neededRows = startRow + matrix.length;
+    while (activeSheetData.rows.length < neededRows) {
+      activeSheetData.rows.push(new Array(activeSheetData.headers.length).fill(''));
+    }
+
+    const neededCols = startCol + maxColsInPaste;
+    while (activeSheetData.headers.length < neededCols) {
+      activeSheetData.headers.push(`Колонка ${activeSheetData.headers.length + 1}`);
+      activeSheetData.rows.forEach(r => r.push(''));
+    }
+
+    matrix.forEach((rowCells, rIdx) => {
+      rowCells.forEach((val, cIdx) => {
+        const targetR = startRow + rIdx;
+        const targetC = startCol + cIdx;
+        if (targetR < activeSheetData.rows.length && targetC < activeSheetData.headers.length) {
+          activeSheetData.rows[targetR][targetC] = val.trim();
+        }
+      });
+    });
+
+    renderSheetCanvas();
+    triggerSheetAutoSave();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => { 
+  loadWorkspace(); 
+  const sheetCanvas = document.getElementById('sheet-canvas');
+  if (sheetCanvas) {
+    sheetCanvas.addEventListener('paste', handleSheetPaste);
+  }
+});
 </script>
 {% endblock %}
