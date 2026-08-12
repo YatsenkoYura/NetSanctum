@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
+from app.core.task_dispatch import dispatch_tracked_sync
 from app.modules.settings.models import Setting
 from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
 from app.modules.video_archiver.providers import PlatformRegistry
@@ -138,48 +139,56 @@ def process_video_url_task(
             video_url = f"https://www.youtube.com/watch?v={video_id}"
 
             # Spawn task for each video in the playlist
-            task = download_video_task.delay(
-                url=video_url,
-                quality=quality,
-                comments_enabled=comments_enabled,
-                comments_type=comments_type,
-                comments_limit=comments_limit,
-                comments_replies=comments_replies,
-                replies_limit=replies_limit,
-                auto_update=auto_update,
-                cookies_text=cookies_text,
-                playlist_id=playlist_id,
-                compress_video=compress_video,
-                download_subtitles=download_subtitles,
+            dispatch_tracked_sync(
+                download_video_task,
+                redis_client,
+                "video_dl",
+                {
+                    "url": video_url,
+                    "title": entry.get("title", f"Video {video_id}"),
+                    "status": "Queued",
+                    "progress": "0%",
+                },
+                kwargs={
+                    "url": video_url,
+                    "quality": quality,
+                    "comments_enabled": comments_enabled,
+                    "comments_type": comments_type,
+                    "comments_limit": comments_limit,
+                    "comments_replies": comments_replies,
+                    "replies_limit": replies_limit,
+                    "auto_update": auto_update,
+                    "cookies_text": cookies_text,
+                    "playlist_id": playlist_id,
+                    "compress_video": compress_video,
+                    "download_subtitles": download_subtitles,
+                },
             )
-
-            data = {
-                "task_id": task.id,
-                "url": video_url,
-                "title": entry.get("title", f"Video {video_id}"),
-                "status": "Queued",
-                "progress": "0%",
-            }
-            redis_client.setex(f"video_dl:{task.id}", 86400, json.dumps(data))
 
         redis_client.delete(f"video_dl:{task_id}")
         return f"Dispatched {len(entries)} videos for playlist '{playlist_title}'"
     else:
         # Single video
         video_id = info_dict.get("id")
-        task = download_video_task.delay(
-            url=url,
-            quality=quality,
-            comments_enabled=comments_enabled,
-            comments_type=comments_type,
-            comments_limit=comments_limit,
-            comments_replies=comments_replies,
-            replies_limit=replies_limit,
-            auto_update=auto_update,
-            cookies_text=cookies_text,
-            playlist_id=playlist_id,
-            compress_video=compress_video,
-            download_subtitles=download_subtitles,
+        task = dispatch_tracked_sync(
+            download_video_task,
+            redis_client,
+            "video_dl",
+            {"url": url, "title": str(video_id or url), "status": "Queued", "progress": "0%"},
+            kwargs={
+                "url": url,
+                "quality": quality,
+                "comments_enabled": comments_enabled,
+                "comments_type": comments_type,
+                "comments_limit": comments_limit,
+                "comments_replies": comments_replies,
+                "replies_limit": replies_limit,
+                "auto_update": auto_update,
+                "cookies_text": cookies_text,
+                "playlist_id": playlist_id,
+                "compress_video": compress_video,
+                "download_subtitles": download_subtitles,
+            },
         )
         # Delete the resolver task tracker immediately since the child downloader task has registered its own tracker
         redis_client.delete(f"video_dl:{task_id}")

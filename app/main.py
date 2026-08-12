@@ -6,14 +6,12 @@ Ensures physical filesystem access token exists at startup.
 Seeds default settings.
 """
 
-import importlib
 import logging
-import pkgutil
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,72 +19,16 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, async_engine
-from app.core.security import OwnerUser
+from app.core.modules import module_registry
+from app.core.observability import configure_observability, process_role
+from app.core.security import OwnerUser, get_current_user
 from app.core.templates import templates
 
 settings = get_settings()
+configure_observability(process_role("web"))
 logger = logging.getLogger(__name__)
 
 TOKEN_FILE = Path("/app/access_token.hash")
-
-
-ACTIVE_MODULES = []
-
-
-def _discover_modules_and_routers() -> list:
-    """
-    Scan app/modules/*, import packages, extract their metadata,
-    and collect their APIRouter instances. Bypasses modules with missing
-    dependencies or errors.
-    """
-    global ACTIVE_MODULES
-    routers = []
-    ACTIVE_MODULES = []
-
-    import app.modules as modules_pkg
-
-    for _importer, module_name, is_pkg in pkgutil.iter_modules(modules_pkg.__path__, prefix="app.modules."):
-        if not is_pkg:
-            continue
-
-        # 1. Try to load the module package to inspect metadata
-        try:
-            pkg = importlib.import_module(module_name)
-
-            # Read metadata variables from __init__.py
-            title_en = getattr(pkg, "TITLE_EN", None)
-            title_ru = getattr(pkg, "TITLE_RU", None)
-            dashboard_url = getattr(pkg, "DASHBOARD_URL", None)
-
-            if dashboard_url:
-                ACTIVE_MODULES.append(
-                    {
-                        "name": module_name.split(".")[-1],
-                        "title_en": title_en or module_name.split(".")[-1].capitalize(),
-                        "title_ru": title_ru or module_name.split(".")[-1].capitalize(),
-                        "dashboard_url": dashboard_url,
-                        "order": getattr(pkg, "ORDER", 100),
-                    }
-                )
-        except Exception as e:
-            logger.error(
-                "Failed to load module package %s (missing dependencies or syntax error): %s", module_name, e
-            )
-            continue
-
-        # 2. Try to load the router for registered modules
-        router_module_path = f"{module_name}.router"
-        try:
-            mod = importlib.import_module(router_module_path)
-            if hasattr(mod, "router"):
-                routers.append(mod.router)
-                logger.info("Mounted module router: %s", module_name)
-        except Exception as e:
-            logger.warning("Module %s has no router.py or failed to import router: %s", module_name, e)
-
-    # Sort active modules by their order attribute
-    ACTIVE_MODULES.sort(key=lambda x: x["order"])
-    return routers
 
 
 @asynccontextmanager
@@ -126,41 +68,9 @@ async def lifespan(application: FastAPI):
         print("  [!] ACCESS TOKEN LOADED FROM HASH FILE.")
         print("=" * 60 + "\n")
 
-    # 2. Schema creation
-    # 2. Dynamic Schema Discovery & Creation
-    import importlib
-    import pkgutil
-
-    import app.modules as modules_pkg
-
-    for _importer, module_name, is_pkg in pkgutil.iter_modules(modules_pkg.__path__, prefix="app.modules."):
-        if is_pkg:
-            try:
-                importlib.import_module(f"{module_name}.models")
-                logger.info(f"Loaded models for {module_name}")
-            except Exception as e:
-                logger.debug(f"Bypassed model discovery for {module_name}: {e}")
-
-    # 2. Schema creation (Migrated to Alembic)
+    # 2. Register active module models. Schema changes remain managed by Alembic.
+    module_registry.import_models()
     logger.info("Database schemas verified (managed by Alembic)")
-
-    # Clear stale UI progress trackers without discarding queued Celery work.
-    try:
-        import redis
-
-        from app.core.config import get_settings
-
-        settings = get_settings()
-        r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-
-        # Scan and delete active task trackers
-        for key in r.scan_iter("video_dl:*"):
-            r.delete(key)
-        for key in r.scan_iter("music_dl:*"):
-            r.delete(key)
-        logger.info("Cleared active download trackers from Redis.")
-    except Exception as e:
-        logger.warning(f"Could not clear Redis trackers on startup: {e}")
 
     # 3. Seed default Settings if empty
     try:
@@ -233,19 +143,13 @@ async def lifespan(application: FastAPI):
     except ImportError:
         logger.info("Settings module not installed; skipping default settings seed.")
 
-    # 4. Start Background Services
     try:
-        from app.modules.torrent.engine.manager import get_engine_manager
-
-        engine = get_engine_manager()
-        await engine.start()
-    except Exception as e:
-        logger.warning(f"Could not start TorrentEngineManager: {e}")
-
-    yield
-
-    await async_engine.dispose()
-    logger.info("Database engine disposed")
+        await module_registry.run_startup_hooks()
+        yield
+    finally:
+        await module_registry.run_shutdown_hooks()
+        await async_engine.dispose()
+        logger.info("Database engine disposed")
 
 
 app = FastAPI(
@@ -271,15 +175,27 @@ app.add_middleware(
 # ── Static Files ─────────────────────────────────────────
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
+
 # ── Auto-mount module routers and register templates variables ────────────
-for module_router in _discover_modules_and_routers():
-    app.include_router(module_router)
+def _module_guard(module_id: str):
+    async def require_active_module():
+        if not module_registry.is_active(module_id):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Module {module_id!r} is not available",
+            )
+
+    return require_active_module
+
+
+for module_id, module_router in module_registry.load_routers():
+    app.include_router(module_router, dependencies=[Depends(_module_guard(module_id))])
 
 from app.core.packages_router import router as packages_router
 
 app.include_router(packages_router)
 
-templates.env.globals["active_modules"] = ACTIVE_MODULES
+templates.env.globals["active_modules"] = module_registry.navigation
 
 
 # ── Helper: resolve user from cookie ─────────────────────
@@ -355,3 +271,9 @@ async def set_language(request: Request, lang: str = "en"):
 async def health():
     """System health check endpoint."""
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
+
+
+@app.get("/api/modules", tags=["System"])
+async def module_diagnostics(user=Depends(get_current_user)):
+    """Return installed module versions, activation states, and load failures."""
+    return module_registry.diagnostics()

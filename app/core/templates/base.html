@@ -103,6 +103,7 @@
 </head>
 
 <body class="bg-black text-zinc-300 min-h-screen font-sans antialiased pb-24 sm:pb-6">
+    {% set navigation_modules = active_modules() %}
 
     <!-- ── Top Navigation Bar (Mobile & Desktop Cleaned) ──────────────────────────── -->
     <nav class="bg-black border-b-2 border-zinc-800 px-3 sm:px-6 py-3">
@@ -119,8 +120,8 @@
                 <!-- Desktop Module Switcher (Horizontal stark tabs) -->
                 <div class="hidden md:flex items-center gap-2 border-l-2 border-zinc-800 pl-4" hx-boost="true"
                     hx-target="#main-content" hx-select="#main-content">
-                    {% if active_modules %}
-                    {% for mod in active_modules %}
+                    {% if navigation_modules %}
+                    {% for mod in navigation_modules %}
                     <a href="{{ mod.dashboard_url }}"
                         class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase whitespace-nowrap">
                         {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
@@ -142,8 +143,8 @@
                 <div class="block md:hidden">
                     <select onchange="if(this.value) window.location.href=this.value;"
                         class="bg-zinc-950 border border-teal-500/50 text-teal-400 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 font-bold uppercase cursor-pointer max-w-[130px] truncate">
-                        {% if active_modules %}
-                        {% for mod in active_modules %}
+                        {% if navigation_modules %}
+                        {% for mod in navigation_modules %}
                         <option value="{{ mod.dashboard_url }}" {% if request.url.path.startswith(mod.dashboard_url) %}selected{% endif %}>
                             {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
                         </option>

@@ -333,20 +333,3 @@ async def get_vault_sync_manifest(
 
         return make_hybrid_manifest(pkg_id, manifest)
     return manifest
-
-
-# ── Storage Cleanup Hook ──────────────────────────────────
-try:
-    from app.modules.storage.router import register_module_cleanup_hook
-
-    async def vault_module_cleanup_hook(db: AsyncSession):
-        from sqlalchemy import delete
-
-        from app.modules.vault.models import VaultCollection, VaultItem
-
-        await db.execute(delete(VaultItem))
-        await db.execute(delete(VaultCollection))
-
-    register_module_cleanup_hook("vault", vault_module_cleanup_hook)
-except ImportError:
-    pass

@@ -38,7 +38,7 @@ TOKEN_FILE_PATH = Path("/app/access_token.hash")
 # Async Redis for non-blocking session lookups in async request handlers
 import redis.asyncio as aioredis
 
-redis_client = aioredis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 def verify_access_token(token: str) -> bool:

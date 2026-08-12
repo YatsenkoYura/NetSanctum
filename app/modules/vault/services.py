@@ -11,6 +11,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.modules import module_registry
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.schemas import (
     VaultCollectionCreate,
@@ -388,36 +389,4 @@ async def resolve_soft_entity_info(
     if not entity_type or not entity_id:
         return None
 
-    try:
-        if entity_type == "video":
-            from app.modules.video_archiver.models import ArchivedVideo
-
-            stmt = select(ArchivedVideo).where(ArchivedVideo.id == entity_id)
-            res = await session.execute(stmt)
-            video = res.scalar_one_or_none()
-            if video:
-                return {
-                    "type": "video",
-                    "title": video.title,
-                    "url": f"/video-archiver/dashboard?video_id={video.id}",
-                    "thumbnail": f"/api/video-archiver/videos/{video.id}/thumbnail"
-                    if video.thumbnail_path
-                    else None,
-                }
-        elif entity_type in ("manga", "ranobe", "anime"):
-            from app.modules.alllib.models import LibMedia
-
-            stmt = select(LibMedia).where(LibMedia.id == int(entity_id))
-            res = await session.execute(stmt)
-            media = res.scalar_one_or_none()
-            if media:
-                return {
-                    "type": entity_type,
-                    "title": media.title,
-                    "url": f"/alllib/reader/{media.id}",
-                    "thumbnail": f"/alllib/api/cover/{media.id}" if media.cover_path else None,
-                }
-    except Exception as e:
-        logger.debug("Soft entity resolution skipped for %s/%s: %s", entity_type, entity_id, e)
-
-    return None
+    return await module_registry.resolve_entity(entity_type, entity_id, session)

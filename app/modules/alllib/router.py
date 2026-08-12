@@ -26,6 +26,7 @@ from app.core.database import get_db
 from app.core.scheduler import celery_app
 from app.core.security import TOKEN_FILE_PATH, get_current_user
 from app.core.storage import get_storage
+from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 from app.modules.alllib.epub_builder import EPUBBuilder
 from app.modules.alllib.i18n import TRANSLATIONS
@@ -813,7 +814,7 @@ async def get_active_downloads_ui(
     lang: str = Depends(_get_lang),
 ):
     """HTMX partial: list active download tasks."""
-    keys = await redis_client.keys("alllib_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="alllib_dl:*", count=100)]
     tasks = []
     for k in keys:
         try:
@@ -933,22 +934,19 @@ async def trigger_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Trigger background download task."""
-    task = download_lib_task.delay(
-        url=req.url,
-        auth_token=req.token,
-        seasons=req.seasons,
-        episodes_range=req.episodes_range,
-        translation_team=req.translation_team,
+    task = await dispatch_tracked_async(
+        download_lib_task,
+        redis_client,
+        "alllib_dl",
+        {"url": req.url, "title": "Resolving...", "status": "Queued", "progress": "0%"},
+        kwargs={
+            "url": req.url,
+            "auth_token": req.token,
+            "seasons": req.seasons,
+            "episodes_range": req.episodes_range,
+            "translation_team": req.translation_team,
+        },
     )
-
-    data = {
-        "task_id": task.id,
-        "url": req.url,
-        "title": "Resolving...",
-        "status": "Queued",
-        "progress": "0%",
-    }
-    await redis_client.setex(f"alllib_dl:{task.id}", 86400, json.dumps(data))
 
     return {"task_id": task.id, "status": "Queued"}
 
@@ -1004,7 +1002,13 @@ async def sync_media(media_id: int, db: AsyncSession = Depends(get_db), user=Dep
     if not media or not media.source_url:
         raise HTTPException(status_code=400, detail="Cannot synchronize media")
 
-    task = download_lib_task.delay(url=media.source_url, sync_only=True)
+    task = await dispatch_tracked_async(
+        download_lib_task,
+        redis_client,
+        "alllib_dl",
+        {"url": media.source_url, "title": media.title, "status": "Queued sync", "progress": "0%"},
+        kwargs={"url": media.source_url, "sync_only": True},
+    )
     return {"task_id": task.id, "status": "Queued"}
 
 
@@ -1142,7 +1146,7 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
 @router.delete("/api/tasks/all")
 async def cancel_all_tasks(user=Depends(get_current_user)):
     """Cancel all active downloads."""
-    keys = await redis_client.keys("alllib_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="alllib_dl:*", count=100)]
     for k in keys:
         try:
             val = await redis_client.get(k)
@@ -1168,7 +1172,7 @@ async def cancel_task(
         celery_app.control.revoke(task_id, terminate=True)
     except Exception:
         pass
-    keys = await redis_client.keys("alllib_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="alllib_dl:*", count=100)]
     for k in keys:
         try:
             val = await redis_client.get(k)
@@ -1464,23 +1468,3 @@ async def save_token_external(payload: ExternalTokenRequest, db: AsyncSession = 
         await db.commit()
         return Response(content="SAVED")
     raise HTTPException(status_code=400, detail="Invalid token")
-
-
-try:
-    from sqlalchemy import update
-
-    from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
-
-    async def alllib_file_deletion_hook(db: AsyncSession, path: str):
-        if path.startswith("alllib/") or "cover" in path:
-            stmt = update(LibMedia).where(LibMedia.cover_path == path).values(cover_path=None)
-            await db.execute(stmt)
-
-    async def alllib_module_cleanup_hook(db: AsyncSession):
-        stmt = update(LibMedia).values(cover_path=None)
-        await db.execute(stmt)
-
-    register_file_deletion_hook(alllib_file_deletion_hook)
-    register_module_cleanup_hook("alllib", alllib_module_cleanup_hook)
-except ImportError:
-    pass

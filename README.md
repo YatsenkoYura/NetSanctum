@@ -36,23 +36,32 @@ A module lives in `app/modules/<module_name>/`:
 
 ```text
 app/modules/example/
-├── __init__.py       # title, dashboard URL, display order
+├── __init__.py       # exports the module manifest
+├── module.py         # declarative ModuleSpec manifest
 ├── router.py         # FastAPI router
 ├── models.py         # optional SQLAlchemy models
 ├── schemas.py        # optional request/response schemas
 ├── tasks.py          # optional Celery jobs
-├── requirements.in   # optional module dependencies
 ├── i18n.py           # optional translations
 └── templates/        # optional UI
 ```
 
-Minimal module metadata:
+Minimal module manifest:
 
 ```python
-TITLE_EN = "Example"
-TITLE_RU = "Пример"
-DASHBOARD_URL = "/example/dashboard"
-ORDER = 50
+from app.core.module_types import ModuleSpec
+
+MODULE = ModuleSpec(
+    id="example",
+    version="0.1.0",
+    title_en="Example",
+    title_ru="Пример",
+    dashboard_url="/example/dashboard",
+    order=50,
+    router="app.modules.example.router:router",
+    dependency_extra="example",
+    system_packages=("ffmpeg",),
+)
 ```
 
 Minimal router:
@@ -68,7 +77,35 @@ async def health():
     return {"status": "ok"}
 ```
 
-The core automatically mounts the exported `router`. Module-specific `requirements.in` files are also discovered and merged into the locked dependency set during the Docker build.
+The core automatically mounts the exported `router`. Python dependencies live in a matching `pyproject.toml` optional extra and are resolved once in the committed `uv.lock`. System dependencies are declared by `system_packages`.
+
+`NETSANCTUM_MODULES` selects which module dependencies are installed into an image. `ENABLED_MODULES` is an optional runtime allowlist and must be a subset of that installed set. `auth` and `settings` are required and remain enabled. Disabled modules are not mounted or started, but their database schema is retained.
+
+Authenticated module diagnostics are available from `GET /api/modules`.
+
+## Control Center
+
+The owner-only `/dashboard` is the runtime control plane:
+
+- PostgreSQL, Redis, Celery worker, module, and process readiness
+- installed, active, disabled, unavailable, and failed module states
+- persisted desired module state, applied after web and worker restart
+- Redis task trackers with per-task cancellation
+- bounded, redacted web and worker logs retained in Redis
+- global, module, and user-scoped settings with typed and secret values
+
+The application does not mount the Docker socket. Container restart and host-level operations remain explicit deployment actions.
+
+External Python packages can register a trusted server-side module through an entry point:
+
+```toml
+[project.entry-points."netsanctum.modules"]
+example = "example_netsanctum.module:MODULE"
+```
+
+Add a pure-Python package to a `pyproject.toml` optional extra whose name matches the module ID, update `uv.lock`, and build with `NETSANCTUM_EXTERNAL_MODULES=example`. The build installs that extra and records the ID in the image marker. Entry points absent from the marker are not imported, including when the marker itself is missing.
+
+External modules that require operating-system packages must provide a derived Dockerfile that installs them explicitly. NetSanctum intentionally does not install arbitrary system packages from third-party metadata and never runs `pip`, `uv`, or `apt` dynamically at application startup.
 
 ## Shared Infrastructure
 
@@ -96,7 +133,7 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
 - **Auth and Settings** provide internal platform services used by the other modules.
 
-Some integrations are still coupled to existing modules. Extracting those integrations into stable core contracts is part of the framework roadmap.
+Cross-module behavior uses explicit capabilities registered through the module manifest.
 
 ## Quick Start
 
@@ -129,8 +166,9 @@ Use `./start.sh 4000` or `./start.sh -p 4000` to select another host port.
 Run static checks:
 
 ```bash
-ruff format --check .
-ruff check .
+uv sync --locked --all-extras
+uv run ruff format --check .
+uv run ruff check .
 ```
 
 Build and run regression tests in the runtime environment:
@@ -138,6 +176,21 @@ Build and run regression tests in the runtime environment:
 ```bash
 docker build -t netsanctum:test .
 docker run --rm netsanctum:test python -m unittest discover -s tests -v
+```
+
+Build a smaller image with only selected modules:
+
+```bash
+docker build --build-arg NETSANCTUM_MODULES=core -t netsanctum:core .
+docker build --build-arg NETSANCTUM_MODULES=storage,vault -t netsanctum:vault .
+```
+
+After changing module dependency metadata:
+
+```bash
+uv lock
+python scripts/module_build.py catalog
+python scripts/module_build.py check
 ```
 
 Apply database migrations:
@@ -150,10 +203,7 @@ alembic upgrade head
 
 The next framework-level milestones are:
 
-- define explicit module lifecycle and service contracts
-- remove remaining cross-module imports from product modules
-- make modules independently enableable and removable
-- provide module-owned migration registration
+- move module migrations into module-owned branches
 - add isolated module tests and health checks
 - document a stable module authoring API
 - support external modules without modifying the core repository

@@ -1,0 +1,23 @@
+from app.core.module_types import ModuleSpec
+
+MODULE = ModuleSpec(
+    id="video_archiver",
+    version="0.1.0",
+    title_en="Video Archive",
+    title_ru="Видеоархив",
+    dashboard_url="/video-archiver/dashboard",
+    order=20,
+    router="app.modules.video_archiver.router:router",
+    models="app.modules.video_archiver.models",
+    tasks="app.modules.video_archiver.tasks",
+    templates="templates",
+    i18n="app.modules.video_archiver.i18n",
+    file_cleanup="app.modules.video_archiver.cleanup:cleanup_file",
+    module_cleanup="app.modules.video_archiver.cleanup:cleanup_module",
+    storage_namespaces=("video_archiver",),
+    entity_types=("video",),
+    entity_resolver="app.modules.video_archiver.capabilities:resolve_entity",
+    progress_key_patterns=("video_dl:*", "video_oauth:*"),
+    dependency_extra="video_archiver",
+    system_packages=("deno", "ffmpeg"),
+)

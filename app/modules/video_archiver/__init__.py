@@ -1,8 +1,3 @@
-"""
-Video Archiver Module.
-"""
+from app.modules.video_archiver.module import MODULE
 
-TITLE_EN = "Video Archive"
-TITLE_RU = "Видеоархив"
-DASHBOARD_URL = "/video-archiver/dashboard"
-ORDER = 2
+__all__ = ["MODULE"]

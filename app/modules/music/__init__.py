@@ -1,8 +1,3 @@
-"""
-Music Module.
-"""
+from app.modules.music.module import MODULE
 
-TITLE_EN = "Music"
-TITLE_RU = "Музыка"
-DASHBOARD_URL = "/music/dashboard"
-ORDER = 1
+__all__ = ["MODULE"]

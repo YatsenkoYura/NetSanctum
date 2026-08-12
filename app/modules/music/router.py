@@ -10,11 +10,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 
-redis_client = aioredis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 from app.modules.music.models import Playlist, Song
 from app.modules.music.schemas import DownloadRequest
 from app.modules.music.tasks import process_youtube_url_task
@@ -241,17 +243,13 @@ async def api_download(
                 value_type="string",
                 is_secret=True,
             )
-    task = process_youtube_url_task.delay(
-        req.url, req.use_ai, req.openai_api_key, req.openai_base_url, req.playlist_id
+    await dispatch_tracked_async(
+        process_youtube_url_task,
+        redis_client,
+        "music_dl",
+        {"url": req.url, "title": "Resolving URL...", "status": "Queued", "progress": "0%"},
+        args=(req.url, req.use_ai, req.openai_api_key, req.openai_base_url, req.playlist_id),
     )
-    data = {
-        "task_id": task.id,
-        "url": req.url,
-        "title": "Resolving URL...",
-        "status": "Queued",
-        "progress": "0%",
-    }
-    await redis_client.setex(f"music_dl:{task.id}", 86400, json.dumps(data))
     return {"status": "dispatched", "url": req.url, "use_ai": req.use_ai}
 
 
@@ -549,7 +547,7 @@ async def start_download(
 @router.get("/ui/downloads_active", response_class=HTMLResponse, include_in_schema=False)
 async def active_downloads_ui(request: Request, user=Depends(get_current_user)):
     """HTMX endpoint to poll active downloads."""
-    keys = await redis_client.keys("music_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="music_dl:*", count=100)]
     downloads = []
     for k in keys:
         data = await redis_client.get(k)
@@ -582,11 +580,7 @@ async def cancel_all_downloads_ui(request: Request, user=Depends(get_current_use
     """HTMX endpoint to cancel all active downloads."""
     from app.core.scheduler import celery_app
 
-    # 1. Purge the queue (drops all non-prefetched tasks)
-    celery_app.control.purge()
-
-    # 2. Revoke and terminate all tasks tracked in Redis
-    keys = await redis_client.keys("music_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="music_dl:*", count=100)]
     for k in keys:
         data = await redis_client.get(k)
         if data:
@@ -729,33 +723,3 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
     from app.core.responses import serve_storage_file_chunked
 
     return serve_storage_file_chunked(song.cover_file_id)
-
-
-# ── Storage Cleanup Hooks Registration ───────────────────
-try:
-    from sqlalchemy import delete, update
-
-    from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
-
-    async def music_file_deletion_hook(db: AsyncSession, path: str):
-        if path.startswith("music/audio/"):
-            from app.modules.music.models import Song
-
-            stmt = delete(Song).where(Song.audio_file_id == path)
-            await db.execute(stmt)
-        elif path.startswith("music/covers/"):
-            from app.modules.music.models import Song
-
-            stmt = update(Song).where(Song.cover_file_id == path).values(cover_file_id=None)
-            await db.execute(stmt)
-
-    async def music_module_cleanup_hook(db: AsyncSession):
-        from app.modules.music.models import Song
-
-        stmt = delete(Song)
-        await db.execute(stmt)
-
-    register_file_deletion_hook(music_file_deletion_hook)
-    register_module_cleanup_hook("music", music_module_cleanup_hook)
-except ImportError:
-    pass

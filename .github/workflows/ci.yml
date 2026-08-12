@@ -20,18 +20,33 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install Ruff
-      run: pip install ruff
+    - name: Set up uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      with:
+        version: '0.11.18'
+
+    - name: Verify Dependency Lock
+      run: uv lock --check
+
+    - name: Verify Module Build Catalog
+      run: python scripts/module_build.py check
 
     - name: Run Ruff Format Check
-      run: ruff format --check .
+      run: uvx --from ruff==0.15.17 ruff format --check .
 
     - name: Run Ruff Linter
-      run: ruff check .
+      run: uvx --from ruff==0.15.17 ruff check .
 
   docker-build:
     name: Docker Image Build Test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+        - profile: full
+          modules: default
+        - profile: core
+          modules: core
 
     steps:
     - name: Checkout Repository
@@ -45,11 +60,26 @@ jobs:
       with:
         context: .
         file: ./Dockerfile
+        build-args: NETSANCTUM_MODULES=${{ matrix.modules }}
         push: false
         load: true
-        tags: netsanctum:latest
+        tags: netsanctum:${{ matrix.profile }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
     - name: Run Regression Tests
-      run: docker run --rm netsanctum:latest python -m unittest discover -s tests -v
+      if: matrix.profile == 'full'
+      run: docker run --rm netsanctum:full python -m unittest discover -s tests -v
+
+    - name: Verify Core-Only Image
+      if: matrix.profile == 'core'
+      run: >-
+        docker run --rm netsanctum:core python -c
+        "import importlib.util;
+        from app.core.modules import module_registry;
+        assert module_registry.is_active('auth');
+        assert module_registry.is_active('settings');
+        assert not module_registry.is_installed('music');
+        assert importlib.util.find_spec('yt_dlp') is None;
+        assert importlib.util.find_spec('openai') is None;
+        assert importlib.util.find_spec('requests') is None"

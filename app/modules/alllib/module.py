@@ -1,0 +1,25 @@
+from app.core.module_types import ModuleSpec
+
+MODULE = ModuleSpec(
+    id="alllib",
+    version="0.1.0",
+    title_en="Lib Network",
+    title_ru="Lib Сеть",
+    dashboard_url="/alllib/dashboard",
+    order=40,
+    router="app.modules.alllib.router:router",
+    models="app.modules.alllib.models",
+    tasks="app.modules.alllib.tasks",
+    templates="templates",
+    i18n="app.modules.alllib.i18n",
+    file_cleanup="app.modules.alllib.cleanup:cleanup_file",
+    module_cleanup="app.modules.alllib.cleanup:cleanup_module",
+    storage_namespaces=("alllib", "ranobelib"),
+    package_prefixes=("manga_", "novel_", "anime_"),
+    package_resolver="app.modules.alllib.capabilities:resolve_package_resources",
+    entity_types=("manga", "ranobe", "anime"),
+    entity_resolver="app.modules.alllib.capabilities:resolve_entity",
+    progress_key_patterns=("alllib_dl:*",),
+    dependency_extra="alllib",
+    system_packages=("ffmpeg",),
+)

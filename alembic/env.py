@@ -1,21 +1,14 @@
-import importlib
-import pkgutil
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine
 
-import app.modules as modules_pkg
 from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
+from app.core.modules import module_registry
 
-# Discover and load all models so they register on Base.metadata
-for _importer, module_name, is_pkg in pkgutil.iter_modules(modules_pkg.__path__, prefix="app.modules."):
-    if is_pkg:
-        try:
-            importlib.import_module(f"{module_name}.models")
-        except Exception:
-            pass
+# Disabled modules retain their schema; disabling is not an uninstall operation.
+module_registry.import_models(include_disabled=True, strict=True)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

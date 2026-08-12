@@ -1,8 +1,3 @@
-"""
-Vault Module — Personal Scrapbook, Media Tracker, Bookmarks & Thoughts.
-"""
+from app.modules.vault.module import MODULE
 
-TITLE_EN = "Vault"
-TITLE_RU = "Хранилище / Заметки"
-DASHBOARD_URL = "/vault/dashboard"
-ORDER = 8
+__all__ = ["MODULE"]

@@ -1,0 +1,46 @@
+<div class="space-y-5">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="font-mono text-sm font-black uppercase tracking-wider text-white">{{ _('settings', 'runtime_overview') }}</h2>
+            <p class="mt-1 font-mono text-[10px] text-zinc-600">{{ _('settings', 'runtime_overview_hint') }}</p>
+        </div>
+        <span class="font-mono text-[9px] uppercase text-zinc-600">auto / 15s</span>
+    </div>
+
+    <div class="grid grid-cols-1 gap-px bg-zinc-800 sm:grid-cols-2 xl:grid-cols-4">
+        {% for name, data, label in [
+            ('database', overview.database, 'PostgreSQL'),
+            ('redis', overview.redis, 'Redis'),
+            ('celery', overview.celery, 'Celery'),
+            ('modules', {'status': 'online' if overview.modules.failed == 0 else 'degraded'}, 'Modules')
+        ] %}
+        <article class="min-h-32 bg-black p-4">
+            <div class="flex items-center justify-between">
+                <span class="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-500">{{ label }}</span>
+                <span class="h-2 w-2 {% if data.status == 'online' %}bg-emerald-400{% elif data.status == 'degraded' %}bg-amber-400{% else %}bg-red-500{% endif %}"></span>
+            </div>
+            <p class="mt-5 font-mono text-lg font-black uppercase {% if data.status == 'online' %}text-emerald-400{% elif data.status == 'degraded' %}text-amber-400{% else %}text-red-400{% endif %}">{{ data.status }}</p>
+            {% if name == 'database' and data.latency_ms is defined %}<p class="mt-2 font-mono text-[10px] text-zinc-600">{{ data.latency_ms }} ms</p>{% endif %}
+            {% if name == 'redis' %}<p class="mt-2 font-mono text-[10px] text-zinc-600">{{ data.memory or '-' }} / {{ data.keys or 0 }} keys</p>{% endif %}
+            {% if name == 'celery' %}<p class="mt-2 font-mono text-[10px] text-zinc-600">{{ data.workers|length }} workers / {{ data.active_count or 0 }} active</p>{% endif %}
+            {% if name == 'modules' %}<p class="mt-2 font-mono text-[10px] text-zinc-600">{{ overview.modules.active }} active / {{ overview.modules.installed }} installed</p>{% endif %}
+        </article>
+        {% endfor %}
+    </div>
+
+    <div class="grid gap-3 lg:grid-cols-[1fr_2fr]">
+        <div class="border border-zinc-800 bg-black p-4 font-mono text-[10px]">
+            <p class="mb-3 font-bold uppercase tracking-widest text-zinc-400">Runtime</p>
+            <dl class="space-y-2 text-zinc-600">
+                <div class="flex justify-between gap-3"><dt>Version</dt><dd class="text-zinc-300">{{ overview.runtime.app_version }}</dd></div>
+                <div class="flex justify-between gap-3"><dt>Python</dt><dd class="text-zinc-300">{{ overview.runtime.python }}</dd></div>
+                <div class="flex justify-between gap-3"><dt>Platform</dt><dd class="text-zinc-300">{{ overview.runtime.platform }}</dd></div>
+                <div class="flex justify-between gap-3"><dt>Uptime</dt><dd class="text-zinc-300">{{ overview.runtime.uptime_seconds }}s</dd></div>
+            </dl>
+        </div>
+        <div class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-[10px] text-zinc-500">
+            <p class="font-bold uppercase tracking-widest text-zinc-400">{{ _('settings', 'operations_note') }}</p>
+            <p class="mt-3 leading-5">{{ _('settings', 'operations_note_body') }}</p>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,55 @@
+{
+  "format_version": 1,
+  "default_modules": [
+    "music",
+    "video_archiver",
+    "vault",
+    "alllib",
+    "storage"
+  ],
+  "modules": {
+    "alllib": {
+      "required": false,
+      "extra": "alllib",
+      "system_packages": [
+        "ffmpeg"
+      ]
+    },
+    "auth": {
+      "required": true,
+      "extra": null,
+      "system_packages": []
+    },
+    "music": {
+      "required": false,
+      "extra": "music",
+      "system_packages": [
+        "ffmpeg",
+        "nodejs"
+      ]
+    },
+    "settings": {
+      "required": true,
+      "extra": null,
+      "system_packages": []
+    },
+    "storage": {
+      "required": false,
+      "extra": null,
+      "system_packages": []
+    },
+    "vault": {
+      "required": false,
+      "extra": null,
+      "system_packages": []
+    },
+    "video_archiver": {
+      "required": false,
+      "extra": "video_archiver",
+      "system_packages": [
+        "deno",
+        "ffmpeg"
+      ]
+    }
+  }
+}

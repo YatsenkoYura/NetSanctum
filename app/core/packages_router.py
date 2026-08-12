@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.database import AsyncSessionLocal
+from app.core.modules import module_registry
 from app.core.security import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -17,52 +18,12 @@ router = APIRouter(prefix="/api/packages", tags=["packages"])
 
 async def get_resources_for_package(pkg_id: str) -> list:
     """Resolve package_id to its full list of resource dictionaries by querying database."""
+    resolver = module_registry.package_resolver(pkg_id)
+    if resolver is None:
+        raise HTTPException(status_code=400, detail=f"No active package provider for: {pkg_id}")
+
     async with AsyncSessionLocal() as db:
-        if pkg_id.startswith("manga_") or pkg_id.startswith("novel_") or pkg_id.startswith("anime_"):
-            from app.modules.alllib.router import get_media_sync_manifest
-
-            media_id = int(pkg_id.split("_")[1])
-            manifest = await get_media_sync_manifest(media_id, db=db, hybrid=False)
-            return manifest.get("resources", [])
-
-        elif pkg_id.startswith("song_"):
-            from app.modules.music.router import get_song_sync_manifest
-
-            song_id = int(pkg_id.split("_")[1])
-            manifest = await get_song_sync_manifest(song_id, db=db, hybrid=False)
-            return manifest.get("resources", [])
-
-        elif pkg_id.startswith("playlist_"):
-            from app.modules.music.router import get_playlist_sync_manifest
-
-            playlist_id = int(pkg_id.split("_")[1])
-            manifest = await get_playlist_sync_manifest(playlist_id, db=db, hybrid=False)
-            return manifest.get("resources", [])
-
-        elif pkg_id.startswith("video_playlist_"):
-            from app.modules.video_archiver.router import (
-                get_playlist_sync_manifest as get_video_playlist_sync_manifest,
-            )
-
-            playlist_id = int(pkg_id.split("_")[2])
-            manifest = await get_video_playlist_sync_manifest(playlist_id, db=db, hybrid=False)
-            return manifest.get("resources", [])
-
-        elif pkg_id.startswith("video_"):
-            from app.modules.video_archiver.router import get_video_sync_manifest
-
-            video_id = pkg_id.split("_")[1]
-            manifest = await get_video_sync_manifest(video_id, db=db, hybrid=False)
-            return manifest.get("resources", [])
-
-        elif pkg_id.startswith("vault_"):
-            from app.modules.vault.router import get_vault_sync_manifest
-
-            manifest = await get_vault_sync_manifest(db=db, hybrid=False)
-            return manifest.get("resources", [])
-
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown package prefix: {pkg_id}")
+        return await resolver(pkg_id, db)
 
 
 import asyncio

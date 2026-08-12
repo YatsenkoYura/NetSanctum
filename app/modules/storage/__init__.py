@@ -1,8 +1,3 @@
-"""
-Storage Module — Manage physical disk storage, clean files, and track statistics.
-"""
+from app.modules.storage.module import MODULE
 
-TITLE_EN = "Storage Manager"
-TITLE_RU = "Хранилище"
-DASHBOARD_URL = "/storage/dashboard"
-ORDER = 6
+__all__ = ["MODULE"]

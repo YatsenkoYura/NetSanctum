@@ -1,0 +1,42 @@
+<div class="min-w-0">
+    <nav class="no-scrollbar flex overflow-x-auto border-b border-zinc-800 bg-black p-2" aria-label="Control Center">
+        {% for tab, label in [('overview', 'tab_overview'), ('modules', 'tab_modules'), ('tasks', 'tab_tasks'), ('logs', 'tab_logs'), ('settings', 'tab_settings')] %}
+        <button type="button"
+                data-control-tab="{{ tab }}"
+                onclick="activateControlTab('{{ tab }}')"
+                class="control-tab whitespace-nowrap border px-4 py-2 font-mono text-[10px] font-black uppercase tracking-[0.16em] transition-colors">
+            {{ _('settings', label) }}
+        </button>
+        {% endfor %}
+    </nav>
+
+    <div class="p-3 sm:p-5">
+        <section data-control-panel="overview" hx-get="/settings/ui/overview" hx-trigger="control-load, every 15s [!this.classList.contains('hidden')]" hx-swap="innerHTML"></section>
+        <section data-control-panel="modules" class="hidden" hx-get="/settings/ui/modules" hx-trigger="control-load" hx-swap="innerHTML"></section>
+        <section data-control-panel="tasks" class="hidden" hx-get="/settings/ui/tasks" hx-trigger="control-load, every 5s [!this.classList.contains('hidden')]" hx-swap="innerHTML"></section>
+        <section data-control-panel="logs" class="hidden" hx-get="/settings/ui/logs" hx-trigger="control-load" hx-swap="innerHTML"></section>
+        <section data-control-panel="settings" class="hidden" hx-get="/settings/ui/panel" hx-trigger="control-load" hx-swap="innerHTML"></section>
+    </div>
+</div>
+
+<script>
+window.activateControlTab = function(name) {
+    document.querySelectorAll('[data-control-panel]').forEach(panel => {
+        panel.classList.toggle('hidden', panel.dataset.controlPanel !== name);
+    });
+    document.querySelectorAll('[data-control-tab]').forEach(tab => {
+        const active = tab.dataset.controlTab === name;
+        tab.classList.toggle('border-teal-400', active);
+        tab.classList.toggle('bg-teal-400', active);
+        tab.classList.toggle('text-black', active);
+        tab.classList.toggle('border-transparent', !active);
+        tab.classList.toggle('text-zinc-500', !active);
+    });
+    const panel = document.querySelector(`[data-control-panel="${name}"]`);
+    if (panel) {
+        htmx.trigger(panel, 'control-load');
+    }
+    sessionStorage.setItem('netsanctum-control-tab', name);
+};
+activateControlTab(sessionStorage.getItem('netsanctum-control-tab') || 'overview');
+</script>

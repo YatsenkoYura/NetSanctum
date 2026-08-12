@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.modules import module_registry
 from app.core.security import OwnerUser, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
@@ -159,29 +160,10 @@ async def _get_user_from_cookie(request: Request) -> OwnerUser | None:
     return None
 
 
-# ── Dynamic DB Cleanups Callback Registration ───────────
-FILE_DELETION_HOOKS = []
-MODULE_CLEANUP_HOOKS = {}
-
-
-def register_file_deletion_hook(hook):
-    """
-    Register a callback to clean up database references when a storage file is deleted.
-    Signature: async def hook(db: AsyncSession, path: str) -> None
-    """
-    FILE_DELETION_HOOKS.append(hook)
-
-
-def register_module_cleanup_hook(module_name: str, hook):
-    """
-    Register a callback to clean up database records when a whole module folder is wiped.
-    Signature: async def hook(db: AsyncSession) -> None
-    """
-    MODULE_CLEANUP_HOOKS[module_name] = hook
-
-
 async def cleanup_database_for_file(db: AsyncSession, path: str):
-    for hook in FILE_DELETION_HOOKS:
+    module_id = path.split("/", 1)[0]
+    hook = module_registry.file_cleanup_hook(module_id)
+    if hook:
         try:
             await hook(db, path)
         except Exception as e:
@@ -189,7 +171,7 @@ async def cleanup_database_for_file(db: AsyncSession, path: str):
 
 
 async def cleanup_database_for_module(db: AsyncSession, module: str):
-    hook = MODULE_CLEANUP_HOOKS.get(module)
+    hook = module_registry.module_cleanup_hook(module)
     if hook:
         try:
             await hook(db)
@@ -236,7 +218,7 @@ async def delete_file(
 async def clean_module(
     request: Request, module: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
-    if module not in ("alllib", "ranobelib", "music", "vault", "video_archiver", "other"):
+    if module != "other" and module_registry.storage_owner(module) is None:
         raise HTTPException(status_code=400, detail="Invalid module")
 
     def do_clean():

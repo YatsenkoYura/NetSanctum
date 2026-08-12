@@ -1,15 +1,16 @@
 """
 NetSanctum — Modular Localization (i18n) Subsystem.
 
-Dynamically scans app/modules/*/i18n.py to collect translations.
+Loads translations declared by active module manifests.
 Provides the Jinja2 context translator helper.
 """
 
 import importlib
 import logging
-from pathlib import Path
 
 from jinja2 import pass_context
+
+from app.core.modules import module_registry
 
 logger = logging.getLogger(__name__)
 
@@ -20,31 +21,21 @@ _TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {}
 
 def discover_and_load_translations():
     """
-    Scan app/modules/ and import 'i18n.py' files.
+    Import translation modules declared by active manifests.
     Caches translations in-memory.
     """
     _TRANSLATIONS.clear()
 
-    app_dir = Path(__file__).resolve().parent.parent
-    modules_dir = app_dir / "modules"
-
-    if not modules_dir.is_dir():
-        return
-
-    for child in sorted(modules_dir.iterdir()):
-        if child.is_dir():
-            module_name = child.name
-            i18n_module_path = f"app.modules.{module_name}.i18n"
-            try:
-                mod = importlib.import_module(i18n_module_path)
-                if hasattr(mod, "TRANSLATIONS"):
-                    _TRANSLATIONS[module_name] = mod.TRANSLATIONS
-                    logger.info("Loaded translations for module: %s", module_name)
-                else:
-                    logger.debug("Module %s has no 'TRANSLATIONS' attribute", module_name)
-            except Exception as e:
-                # Many modules may not need translations — this is expected and silent
-                logger.debug("Bypassed translations for module %s: %s", module_name, e)
+    for module_name, i18n_module_path in module_registry.translation_modules():
+        try:
+            mod = importlib.import_module(i18n_module_path)
+            if hasattr(mod, "TRANSLATIONS"):
+                _TRANSLATIONS[module_name] = mod.TRANSLATIONS
+                logger.info("Loaded translations for module: %s", module_name)
+            else:
+                logger.warning("Module %s has no 'TRANSLATIONS' attribute", module_name)
+        except Exception as e:
+            logger.error("Failed to load translations for module %s: %s", module_name, e)
 
 
 # Initialize translations cache on startup

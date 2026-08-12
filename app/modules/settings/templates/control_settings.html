@@ -1,0 +1,32 @@
+<div id="settings-registry" class="space-y-5">
+    <div>
+        <h2 class="font-mono text-sm font-black uppercase tracking-wider text-white">{{ _('settings', 'settings_registry') }}</h2>
+        <p class="mt-1 font-mono text-[10px] text-zinc-600">{{ settings|length }} entries / secrets masked</p>
+    </div>
+    <form hx-post="/settings/ui/add" hx-target="#settings-registry" hx-swap="outerHTML" class="space-y-3 border border-zinc-800 bg-black p-4">
+        <div class="grid gap-3 md:grid-cols-2">
+            <input name="key" required placeholder="setting.key" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-200">
+            <textarea name="value" required rows="2" placeholder="value" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-200"></textarea>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <select name="scope" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] text-zinc-400"><option value="user">USER</option><option value="global">GLOBAL</option><option value="module">MODULE</option></select>
+            <select name="module_name" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] text-zinc-400"><option value="">NO MODULE</option>{% for mod in module_options if mod.spec %}<option value="{{ mod.id }}">{{ mod.id }}</option>{% endfor %}</select>
+            <select name="value_type" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] text-zinc-400">{% for item in ['string','integer','float','boolean','json'] %}<option value="{{ item }}">{{ item|upper }}</option>{% endfor %}</select>
+            <label class="flex items-center gap-2 border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] text-zinc-400"><input type="checkbox" name="is_secret" value="true" class="accent-teal-400"> SECRET</label>
+        </div>
+        <div class="flex flex-col gap-3 sm:flex-row">
+            <input name="description" placeholder="description (optional)" class="min-w-0 flex-1 border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] text-zinc-300">
+            <button class="border border-teal-400 bg-teal-400 px-5 py-2 font-mono text-[10px] font-black uppercase text-black">{{ _('settings', 'add_btn') }}</button>
+        </div>
+    </form>
+    <div class="max-h-[440px] overflow-auto border border-zinc-800 bg-black">
+        {% if settings %}{% for setting in settings %}
+        <div class="grid gap-2 border-b border-zinc-900 px-4 py-3 md:grid-cols-[1fr_120px_110px_auto] md:items-center">
+            <div class="min-w-0"><p class="truncate font-mono text-xs font-bold text-zinc-200">{{ setting.key }}</p><p class="mt-1 truncate font-mono text-[10px] text-zinc-600">{% if setting.is_secret %}••••••••{% else %}{{ setting.value }}{% endif %}</p></div>
+            <span class="font-mono text-[9px] uppercase text-zinc-500">{{ setting.module_name or '-' }}</span>
+            <span class="font-mono text-[9px] uppercase text-teal-700">{{ setting.scope }} / {{ setting.value_type }}</span>
+            <button hx-delete="/settings/ui/settings/{{ setting.id }}" hx-target="#settings-registry" hx-swap="outerHTML" hx-confirm="Delete this setting?" class="font-mono text-[9px] uppercase text-red-500">Delete</button>
+        </div>
+        {% endfor %}{% else %}<div class="py-16 text-center font-mono text-xs text-zinc-700">{{ _('settings', 'no_settings') }}</div>{% endif %}
+    </div>
+</div>

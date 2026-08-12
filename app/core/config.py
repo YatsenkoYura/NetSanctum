@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     APP_NAME: str = "NetSanctum"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
+    ENABLED_MODULES: str = ""
+    ENABLED_MODULES_FILE: str = "/app/storage/config/enabled-modules.json"
+    INSTALLED_MODULES: str = ""
+    INSTALLED_MODULES_FILE: str = "/opt/netsanctum/installed-modules"
+    REQUIRE_INSTALLED_MODULES_MARKER: bool = False
+
+    # ── Observability ─────────────────────────────────────
+    OBSERVABILITY_LOG_KEY: str = "netsanctum:logs"
+    OBSERVABILITY_LOG_LIMIT: int = 1000
+    OBSERVABILITY_LOG_TTL_SECONDS: int = 604800
 
     # ── Database ─────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://netsanctum:change_me@localhost:5432/netsanctum"

@@ -1,54 +1,37 @@
 {% extends "base.html" %}
 
-{% block title %}NetSanctum — Dashboard{% endblock %}
+{% block title %}NetSanctum — Control Center{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-
-    <!-- ── Dashboard Clean Page Header ─────────────────── -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-900 pb-4">
+<section class="space-y-4 py-2">
+    <header class="flex flex-col gap-3 border-b-2 border-zinc-800 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-            <h2 class="text-lg font-mono font-black text-white uppercase tracking-wider">
-                {{ _('settings', 'system_control_node') }}
-            </h2>
-            <p class="text-xs text-zinc-500 font-mono mt-0.5 uppercase tracking-wide">
-                {{ _('settings', 'dashboard_subtitle') }}
+            <div class="mb-2 flex items-center gap-2">
+                <span class="h-2.5 w-2.5 bg-teal-400"></span>
+                <span class="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-teal-400">SYS.OWNER / CONTROL PLANE</span>
+            </div>
+            <h1 class="font-mono text-2xl font-black uppercase tracking-tight text-white sm:text-3xl">
+                {{ _('settings', 'control_center') }}
+            </h1>
+            <p class="mt-1 max-w-2xl font-mono text-xs text-zinc-500">
+                {{ _('settings', 'control_center_subtitle') }}
             </p>
         </div>
-    </div>
-
-    <!-- ── Configuration Manager Section ────────────────── -->
-    <div class="border border-zinc-800 rounded-none bg-zinc-950/40">
-        
-        <!-- Subtle minimalist header -->
-        <div class="border-b border-zinc-800 px-6 py-4 flex items-center justify-between bg-zinc-900/20">
-            <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 bg-teal-400 rounded-none inline-block"></span>
-                <span class="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
-                    {{ _('settings', 'manager_title') }}
-                </span>
-            </div>
-            
-            <button hx-get="/settings/ui/panel"
-                    hx-target="#settings-panel"
-                    hx-swap="innerHTML"
-                    class="text-[10px] font-mono text-zinc-400 border border-zinc-800 rounded-none px-2.5 py-1 hover:border-teal-400 hover:text-teal-400 transition-colors uppercase tracking-wider bg-black">
-                {{ _('settings', 'reload_btn') }}
-            </button>
+        <div class="flex items-center gap-2 font-mono text-[10px] uppercase">
+            <span class="border border-zinc-800 bg-zinc-950 px-2 py-1 text-zinc-500">NetSanctum</span>
+            <span class="border border-teal-900 bg-teal-950/30 px-2 py-1 text-teal-400">Owner authenticated</span>
         </div>
-        
-        <!-- Settings Content Panel -->
-        <div id="settings-panel"
-             hx-get="/settings/ui/panel"
-             hx-trigger="load"
-             hx-swap="innerHTML"
-             class="p-6 min-h-[300px]">
-            <div class="htmx-indicator flex items-center gap-3 text-zinc-500 text-xs font-mono">
-                <span class="inline-block w-4 h-4 border-2 border-teal-400 border-t-transparent rounded-none animate-spin"></span>
-                {{ _('settings', 'initializing') }}
-            </div>
-        </div>
+    </header>
 
+    <div id="control-center"
+         hx-get="/settings/ui/control-center"
+         hx-trigger="load"
+         hx-swap="innerHTML"
+         class="min-h-[520px] border border-zinc-800 bg-zinc-950/30">
+        <div class="flex min-h-[320px] items-center justify-center gap-3 font-mono text-xs text-zinc-600">
+            <span class="h-4 w-4 animate-spin border-2 border-teal-400 border-t-transparent"></span>
+            {{ _('settings', 'initializing') }}
+        </div>
     </div>
-</div>
+</section>
 {% endblock %}

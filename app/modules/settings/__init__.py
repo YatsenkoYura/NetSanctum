@@ -1,1 +1,3 @@
-# Settings module — universal key-value configuration for the entire application
+from app.modules.settings.module import MODULE
+
+__all__ = ["MODULE"]

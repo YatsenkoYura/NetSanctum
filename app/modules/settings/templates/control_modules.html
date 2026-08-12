@@ -1,0 +1,47 @@
+<div id="module-control" class="space-y-5">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <h2 class="font-mono text-sm font-black uppercase tracking-wider text-white">{{ _('settings', 'module_control') }}</h2>
+            <p class="mt-1 font-mono text-[10px] text-zinc-600">source: {{ module_state.source }}</p>
+        </div>
+        {% if module_state.restart_required or saved %}
+        <span class="border border-amber-800 bg-amber-950/30 px-3 py-1 font-mono text-[10px] font-bold uppercase text-amber-400">{{ _('settings', 'restart_required') }}</span>
+        {% endif %}
+    </div>
+
+    {% if module_state.environment_locked %}
+    <div class="border border-amber-900 bg-amber-950/20 p-3 font-mono text-[10px] text-amber-400">{{ _('settings', 'modules_env_locked') }}</div>
+    {% endif %}
+    {% if save_error %}
+    <div class="border border-red-900 bg-red-950/20 p-3 font-mono text-[10px] text-red-400">{{ save_error }}</div>
+    {% endif %}
+
+    <form hx-post="/settings/ui/modules" hx-target="#module-control" hx-swap="outerHTML" class="space-y-3">
+        <div class="grid gap-2 lg:grid-cols-2">
+            {% for mod in module_state.modules %}
+            <label class="group flex items-start justify-between gap-4 border border-zinc-800 bg-black p-4 {% if not mod.installed %}opacity-45{% endif %}">
+                <div class="min-w-0">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="font-mono text-xs font-black uppercase text-zinc-200">{% if request.cookies.get('lang') == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}</span>
+                        <span class="font-mono text-[9px] uppercase {% if mod.status == 'active' %}text-emerald-400{% elif mod.status == 'failed' %}text-red-400{% elif mod.status == 'disabled' %}text-amber-400{% else %}text-zinc-600{% endif %}">{{ mod.status }}</span>
+                    </div>
+                    <p class="mt-2 font-mono text-[9px] text-zinc-600">{{ mod.id }} / v{{ mod.version }}{% if mod.required %} / required{% endif %}</p>
+                    {% if mod.error %}<p class="mt-2 break-words font-mono text-[9px] text-red-400">{{ mod.error }}</p>{% endif %}
+                </div>
+                <input type="checkbox" name="enabled_modules" value="{{ mod.id }}"
+                       {% if mod.desired %}checked{% endif %}
+                       {% if mod.required or not mod.installed or module_state.environment_locked %}disabled{% endif %}
+                       class="mt-0.5 h-4 w-4 accent-teal-400">
+            </label>
+            {% endfor %}
+        </div>
+        <div class="flex flex-wrap gap-2 border-t border-zinc-800 pt-4">
+            <button type="submit" {% if module_state.environment_locked %}disabled{% endif %}
+                    class="border border-teal-400 bg-teal-400 px-4 py-2 font-mono text-[10px] font-black uppercase text-black disabled:opacity-30">{{ _('settings', 'save_desired_state') }}</button>
+            {% if module_state.source == 'file' %}
+            <button type="button" hx-delete="/settings/ui/modules" hx-target="#module-control" hx-swap="outerHTML"
+                    class="border border-zinc-700 bg-black px-4 py-2 font-mono text-[10px] font-bold uppercase text-zinc-400">{{ _('settings', 'reset_modules') }}</button>
+            {% endif %}
+        </div>
+    </form>
+</div>

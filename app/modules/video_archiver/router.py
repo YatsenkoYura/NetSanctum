@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.storage import LocalStorage, get_storage
+from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 from app.modules.settings.models import Setting
 from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
@@ -76,29 +77,31 @@ async def trigger_download(
         await db.commit()
 
     detected_platform = PlatformDetector.detect_platform(req.url)
-    task = process_video_url_task.delay(
-        url=req.url,
-        quality=req.quality,
-        comments_enabled=req.comments_enabled,
-        comments_type=req.comments_type,
-        comments_limit=req.comments_limit,
-        comments_replies=req.comments_replies,
-        replies_limit=req.replies_limit,
-        auto_update=req.auto_update,
-        cookies_text=req.cookies_text,
-        compress_video=req.compress_video,
-        download_subtitles=req.download_subtitles,
+    task = await dispatch_tracked_async(
+        process_video_url_task,
+        redis_client,
+        "video_dl",
+        {
+            "url": req.url,
+            "platform": detected_platform,
+            "title": "Resolving URL...",
+            "status": "Processing",
+            "progress": "0%",
+        },
+        kwargs={
+            "url": req.url,
+            "quality": req.quality,
+            "comments_enabled": req.comments_enabled,
+            "comments_type": req.comments_type,
+            "comments_limit": req.comments_limit,
+            "comments_replies": req.comments_replies,
+            "replies_limit": req.replies_limit,
+            "auto_update": req.auto_update,
+            "cookies_text": req.cookies_text,
+            "compress_video": req.compress_video,
+            "download_subtitles": req.download_subtitles,
+        },
     )
-
-    data = {
-        "task_id": task.id,
-        "url": req.url,
-        "platform": detected_platform,
-        "title": "Resolving URL...",
-        "status": "Processing",
-        "progress": "0%",
-    }
-    await redis_client.setex(f"video_dl:{task.id}", 86400, json.dumps(data))
 
     return {"task_id": task.id, "platform": detected_platform, "message": "Download task dispatched."}
 
@@ -141,7 +144,13 @@ async def delete_video(video_id: str, db: AsyncSession = Depends(get_db), user=D
 @router.post("/api/video-archiver/videos/{video_id}/sync")
 async def sync_video(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API: Schedules a background metadata sync task."""
-    task = sync_video_metadata_task.delay(video_id)
+    task = await dispatch_tracked_async(
+        sync_video_metadata_task,
+        redis_client,
+        "video_dl",
+        {"url": video_id, "title": video_id, "status": "Queued metadata sync", "progress": "0%"},
+        args=(video_id,),
+    )
     return {"task_id": task.id, "message": "Sync task dispatched."}
 
 
@@ -204,7 +213,13 @@ async def get_sync_dates(db: AsyncSession = Depends(get_db), user=Depends(get_cu
 @router.post("/api/video-archiver/sync-all")
 async def sync_all(req: SyncAllRequest, user=Depends(get_current_user)):
     """API: Dispatches sync for all archived videos."""
-    task = sync_all_videos_task.delay(dates=req.dates)
+    task = await dispatch_tracked_async(
+        sync_all_videos_task,
+        redis_client,
+        "video_dl",
+        {"title": "Global metadata sync", "status": "Queued", "progress": "0%", "type": "global_sync"},
+        kwargs={"dates": req.dates},
+    )
     return {"task_id": task.id, "message": "Global sync dispatched."}
 
 
@@ -221,7 +236,13 @@ async def cancel_sync_all(task_id: str, user=Depends(get_current_user)):
 @router.post("/api/video-archiver/youtube-oauth")
 async def start_youtube_oauth(user=Depends(get_current_user)):
     """API: Starts YouTube OAuth2 flow."""
-    task = youtube_oauth2_task.delay()
+    task = await dispatch_tracked_async(
+        youtube_oauth2_task,
+        redis_client,
+        "video_oauth",
+        {"title": "YouTube OAuth", "status": "Queued", "progress": "0%"},
+        ttl=3600,
+    )
     return {"task_id": task.id, "message": "OAuth2 task started."}
 
 
@@ -462,7 +483,7 @@ async def get_subtitle(
 @router.get("/api/video-archiver/tasks/active")
 async def active_downloads(user=Depends(get_current_user)):
     """Fetch active download statuses from Redis."""
-    keys = await redis_client.keys("video_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="video_dl:*", count=100)]
     tasks = []
     for k in keys:
         try:
@@ -476,15 +497,10 @@ async def active_downloads(user=Depends(get_current_user)):
 
 @router.delete("/api/video-archiver/tasks/all")
 async def cancel_all_downloads(user=Depends(get_current_user)):
-    """Cancel all active downloads and purge the Celery queue."""
+    """Cancel all tracked video downloads without touching other module queues."""
     from app.core.scheduler import celery_app
 
-    try:
-        celery_app.control.purge()
-    except Exception:
-        pass
-
-    keys = await redis_client.keys("video_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="video_dl:*", count=100)]
     for k in keys:
         try:
             val = await redis_client.get(k)
@@ -496,7 +512,7 @@ async def cancel_all_downloads(user=Depends(get_current_user)):
             await redis_client.delete(k)
         except Exception:
             pass
-    return {"message": "All downloads cancelled and queue purged."}
+    return {"message": "All tracked video downloads cancelled."}
 
 
 @router.delete("/api/video-archiver/tasks/{task_id}")
@@ -508,7 +524,7 @@ async def cancel_single_download(task_id: str, user=Depends(get_current_user)):
         celery_app.control.revoke(task_id, terminate=True)
     except Exception:
         pass
-    keys = await redis_client.keys("video_dl:*")
+    keys = [key async for key in redis_client.scan_iter(match="video_dl:*", count=100)]
     for k in keys:
         try:
             val = await redis_client.get(k)
@@ -580,45 +596,3 @@ async def remove_video_from_playlist(
 ):
     """Unlink an archived video from a custom playlist."""
     return await PlaylistService.remove_video(db, playlist_id, video_id)
-
-
-# ── Storage Cleanup Hooks Registration ───────────────────
-try:
-    from sqlalchemy import delete, select, update
-
-    from app.modules.storage.router import register_file_deletion_hook, register_module_cleanup_hook
-
-    async def video_file_deletion_hook(db: AsyncSession, path: str):
-        if path.startswith("video_archiver/videos/"):
-            from app.modules.video_archiver.models import ArchivedVideo
-
-            stmt = delete(ArchivedVideo).where(ArchivedVideo.file_path == path)
-            await db.execute(stmt)
-        elif path.startswith("video_archiver/thumbnails/"):
-            from app.modules.video_archiver.models import ArchivedVideo
-
-            stmt = (
-                update(ArchivedVideo).where(ArchivedVideo.thumbnail_path == path).values(thumbnail_path=None)
-            )
-            await db.execute(stmt)
-        elif path.startswith("video_archiver/subtitles/"):
-            from app.modules.video_archiver.models import ArchivedVideo
-
-            result = await db.execute(select(ArchivedVideo))
-            videos = result.scalars().all()
-            for v in videos:
-                if v.subtitles:
-                    updated_subtitles = {k: val for k, val in v.subtitles.items() if val != path}
-                    v.subtitles = updated_subtitles
-                    db.add(v)
-
-    async def video_module_cleanup_hook(db: AsyncSession):
-        from app.modules.video_archiver.models import ArchivedVideo
-
-        stmt = delete(ArchivedVideo)
-        await db.execute(stmt)
-
-    register_file_deletion_hook(video_file_deletion_hook)
-    register_module_cleanup_hook("video_archiver", video_module_cleanup_hook)
-except ImportError:
-    pass

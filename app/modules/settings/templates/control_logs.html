@@ -1,0 +1,32 @@
+<div id="runtime-logs" class="space-y-4">
+    <form hx-get="/settings/ui/logs" hx-target="#runtime-logs" hx-swap="outerHTML" class="grid gap-2 border-b border-zinc-800 pb-4 sm:grid-cols-[140px_140px_1fr_auto]">
+        <select name="level" class="border border-zinc-800 bg-black px-3 py-2 font-mono text-[10px] text-zinc-400">
+            <option value="">ALL LEVELS</option>
+            {% for item in ['INFO', 'WARNING', 'ERROR', 'CRITICAL'] %}<option value="{{ item }}" {% if selected_level == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+        </select>
+        <select name="role" class="border border-zinc-800 bg-black px-3 py-2 font-mono text-[10px] text-zinc-400">
+            <option value="">ALL ROLES</option><option value="web" {% if selected_role == 'web' %}selected{% endif %}>WEB</option><option value="worker" {% if selected_role == 'worker' %}selected{% endif %}>WORKER</option>
+        </select>
+        <input name="query" value="{{ query }}" placeholder="filter logger or message" class="border border-zinc-800 bg-black px-3 py-2 font-mono text-[10px] text-zinc-300">
+        <button class="border border-teal-900 px-4 py-2 font-mono text-[10px] font-bold uppercase text-teal-400">Filter</button>
+    </form>
+    <div class="flex items-center justify-between">
+        <h2 class="font-mono text-sm font-black uppercase tracking-wider text-white">{{ _('settings', 'runtime_logs') }}</h2>
+        <div class="flex gap-2">
+            <button hx-get="/settings/ui/logs" hx-target="#runtime-logs" hx-swap="outerHTML" class="font-mono text-[9px] uppercase text-zinc-500">Refresh</button>
+            <button hx-delete="/settings/ui/logs" hx-target="#runtime-logs" hx-swap="outerHTML" hx-confirm="Clear retained logs?" class="font-mono text-[9px] uppercase text-red-500">Clear</button>
+        </div>
+    </div>
+    <div class="max-h-[520px] overflow-auto border border-zinc-800 bg-black">
+        {% if logs %}
+        {% for log in logs %}
+        <div class="grid gap-2 border-b border-zinc-900 px-3 py-2 font-mono text-[10px] md:grid-cols-[70px_70px_190px_1fr]">
+            <span class="text-zinc-700">{{ format_timestamp(log.timestamp) }}</span>
+            <span class="{% if log.level in ['ERROR', 'CRITICAL'] %}text-red-400{% elif log.level == 'WARNING' %}text-amber-400{% else %}text-emerald-500{% endif %}">{{ log.level }}</span>
+            <span class="truncate text-teal-700" title="{{ log.logger }}">{{ log.role }} / {{ log.logger }}</span>
+            <span class="break-words text-zinc-400">{{ log.message }}</span>
+        </div>
+        {% endfor %}
+        {% else %}<div class="py-16 text-center font-mono text-xs text-zinc-700">{{ _('settings', 'no_logs') }}</div>{% endif %}
+    </div>
+</div>

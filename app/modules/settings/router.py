@@ -18,11 +18,22 @@ All endpoints are JWT-protected. Superuser required for global/module writes.
 """
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.control_center import (
+    cancel_tracked_task,
+    clear_logs,
+    format_timestamp,
+    module_control_state,
+    read_logs,
+    runtime_overview,
+    tasks_blocking_module_change,
+    tracked_tasks,
+)
 from app.core.database import get_db
-from app.core.security import OwnerUser, get_current_user, redis_client
+from app.core.module_config import reset_enabled_module_ids, save_enabled_module_ids
+from app.core.modules import module_registry
+from app.core.security import get_current_user
 from app.core.templates import templates
 from app.modules.settings import schemas, service
 from app.modules.settings.schemas import (
@@ -216,33 +227,154 @@ async def delete_module_settings(
     return {"deleted": count, "module": module_name}
 
 
-# ── Cookie-based auth helper for UI ──────────────────────
-async def _get_user_from_cookie(request: Request, db: AsyncSession):
-    """Extract owner from the access_token cookie (used by HTMX UI endpoints)."""
-    session_id = request.cookies.get("access_token")
-    if not session_id:
-        return None
-    if await redis_client.get(f"session:{session_id}") == "1":
-        return OwnerUser()
-    return None
-
-
 # ── HTMX UI Endpoints ────────────────────────────────────
-async def _render_panel(request: Request, db: AsyncSession, user):
-    """Helper to render the settings panel with current data."""
-    if user:
-        uid = None if user.is_superuser else user.id
-        items, _ = await service.list_settings(db, user_id=uid, page=1, page_size=100)
-    else:
-        items = []
-    return templates.TemplateResponse(request, "panel.html", {"settings": items})
+async def _settings_context(db: AsyncSession, user) -> dict:
+    uid = None if user.is_superuser else user.id
+    items, _ = await service.list_settings(db, user_id=uid, page=1, page_size=200)
+    return {"settings": items, "module_options": module_registry.records}
+
+
+@router.get("/ui/control-center", include_in_schema=False)
+async def control_center(request: Request, user=Depends(get_current_user)):
+    return templates.TemplateResponse(
+        request,
+        "control_center.html",
+        {"user": user, "module_state": module_control_state()},
+    )
+
+
+@router.get("/ui/overview", include_in_schema=False)
+async def ui_overview(request: Request, user=Depends(get_current_user)):
+    return templates.TemplateResponse(
+        request,
+        "control_overview.html",
+        {"overview": await runtime_overview()},
+    )
+
+
+@router.get("/ui/tasks", include_in_schema=False)
+async def ui_tasks(request: Request, user=Depends(get_current_user)):
+    return templates.TemplateResponse(request, "control_tasks.html", {"tasks": await tracked_tasks()})
+
+
+@router.delete("/ui/tasks/{task_id}", include_in_schema=False)
+async def ui_cancel_task(task_id: str, request: Request, user=Depends(get_current_user)):
+    try:
+        await cancel_tracked_task(task_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return templates.TemplateResponse(request, "control_tasks.html", {"tasks": await tracked_tasks()})
+
+
+@router.get("/ui/logs", include_in_schema=False)
+async def ui_logs(
+    request: Request,
+    level: str | None = Query(None),
+    role: str | None = Query(None),
+    query: str | None = Query(None, max_length=100),
+    user=Depends(get_current_user),
+):
+    logs = await read_logs(limit=250, level=level, role=role, query=query)
+    return templates.TemplateResponse(
+        request,
+        "control_logs.html",
+        {
+            "logs": logs,
+            "selected_level": level or "",
+            "selected_role": role or "",
+            "query": query or "",
+            "format_timestamp": format_timestamp,
+        },
+    )
+
+
+@router.delete("/ui/logs", include_in_schema=False)
+async def ui_clear_logs(request: Request, user=Depends(get_current_user)):
+    await clear_logs()
+    return templates.TemplateResponse(
+        request,
+        "control_logs.html",
+        {
+            "logs": [],
+            "selected_level": "",
+            "selected_role": "",
+            "query": "",
+            "format_timestamp": format_timestamp,
+        },
+    )
+
+
+@router.get("/ui/modules", include_in_schema=False)
+async def ui_modules(request: Request, user=Depends(get_current_user)):
+    return templates.TemplateResponse(
+        request, "control_modules.html", {"module_state": module_control_state()}
+    )
+
+
+@router.post("/ui/modules", include_in_schema=False)
+async def ui_save_modules(
+    request: Request,
+    enabled_modules: list[str] = Form(default=[]),
+    user=Depends(get_current_user),
+):
+    selectable = {
+        record.id
+        for record in module_registry.records
+        if record.spec and not record.spec.required and module_registry.is_installed(record.id)
+    }
+    selected = set(enabled_modules)
+    if not selected <= selectable:
+        raise HTTPException(400, "Requested module is not installed or cannot be configured")
+    blocked_modules = tasks_blocking_module_change(selected, await tracked_tasks())
+    if blocked_modules:
+        return templates.TemplateResponse(
+            request,
+            "control_modules.html",
+            {
+                "module_state": module_control_state(),
+                "save_error": "Stop active tasks before disabling: " + ", ".join(sorted(blocked_modules)),
+            },
+        )
+    try:
+        save_enabled_module_ids(selected)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
+    return templates.TemplateResponse(
+        request,
+        "control_modules.html",
+        {"module_state": module_control_state(), "saved": True},
+    )
+
+
+@router.delete("/ui/modules", include_in_schema=False)
+async def ui_reset_modules(request: Request, user=Depends(get_current_user)):
+    try:
+        reset_enabled_module_ids()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
+    return templates.TemplateResponse(
+        request,
+        "control_modules.html",
+        {"module_state": module_control_state(), "saved": True},
+    )
+
+
+@router.get("/control/snapshot")
+async def control_snapshot(user=Depends(get_current_user)):
+    return {
+        "overview": await runtime_overview(),
+        "modules": module_control_state(),
+        "tasks": await tracked_tasks(),
+    }
 
 
 @router.get("/ui/panel", include_in_schema=False)
-async def ui_panel(request: Request, db: AsyncSession = Depends(get_db)):
-    """Return the settings panel fragment for HTMX."""
-    user = await _get_user_from_cookie(request, db)
-    return await _render_panel(request, db, user)
+async def ui_panel(
+    request: Request,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return templates.TemplateResponse(request, "control_settings.html", await _settings_context(db, user))
 
 
 @router.post("/ui/add", include_in_schema=False)
@@ -251,22 +383,21 @@ async def ui_add_setting(
     key: str = Form(...),
     value: str = Form(...),
     scope: str = Form("user"),
+    module_name: str | None = Form(None),
+    description: str | None = Form(None),
+    value_type: str = Form("string"),
+    is_secret: bool = Form(False),
+    user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a setting from the dashboard UI via HTMX."""
-    user = await _get_user_from_cookie(request, db)
-    if not user:
-        return HTMLResponse(
-            '<div class="p-3 text-xs font-mono text-red-500 border-2 border-red-500 rounded-none">AUTH REQUIRED</div>',
-            status_code=401,
-        )
-
-    # Permission check for global/module scope
+    if scope not in {item.value for item in schemas.SettingScope}:
+        raise HTTPException(400, "Invalid setting scope")
+    if value_type not in {item.value for item in schemas.ValueType}:
+        raise HTTPException(400, "Invalid value type")
     if scope in ("global", "module") and not user.is_superuser:
-        return HTMLResponse(
-            '<div class="p-3 text-xs font-mono text-red-500 border-2 border-red-500 rounded-none">SUPERUSER REQUIRED FOR GLOBAL/MODULE SCOPE</div>',
-            status_code=403,
-        )
+        raise HTTPException(403, "Superuser required")
+    if scope == "module" and (not module_name or not module_registry.is_installed(module_name)):
+        raise HTTPException(400, "Module scope requires an installed module")
 
     uid = user.id if scope == "user" else None
     await service.upsert_setting(
@@ -274,37 +405,28 @@ async def ui_add_setting(
         key=key,
         value=value,
         scope=scope,
+        module_name=module_name if scope == "module" else None,
         user_id=uid,
+        description=description,
+        value_type=value_type,
+        is_secret=is_secret,
     )
-    return await _render_panel(request, db, user)
+    return templates.TemplateResponse(request, "control_settings.html", await _settings_context(db, user))
 
 
-@router.delete("/ui/{setting_id}", include_in_schema=False)
+@router.delete("/ui/settings/{setting_id}", include_in_schema=False)
 async def ui_delete_setting(
     setting_id: int,
     request: Request,
+    user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a setting from the dashboard UI via HTMX."""
-    user = await _get_user_from_cookie(request, db)
-    if not user:
-        return HTMLResponse(
-            '<div class="p-3 text-xs font-mono text-red-500 border-2 border-red-500 rounded-none">AUTH REQUIRED</div>',
-            status_code=401,
-        )
-
     setting = await service.get_setting_by_id(db, setting_id)
     if setting:
         if setting.scope in ("global", "module") and not user.is_superuser:
-            return HTMLResponse(
-                '<div class="p-3 text-xs font-mono text-red-500 border-2 border-red-500 rounded-none">PERMISSION DENIED</div>',
-                status_code=403,
-            )
+            raise HTTPException(403, "Permission denied")
         if setting.scope == "user" and setting.user_id != user.id:
-            return HTMLResponse(
-                '<div class="p-3 text-xs font-mono text-red-500 border-2 border-red-500 rounded-none">PERMISSION DENIED</div>',
-                status_code=403,
-            )
+            raise HTTPException(403, "Permission denied")
         await service.delete_setting(db, setting_id)
 
-    return await _render_panel(request, db, user)
+    return templates.TemplateResponse(request, "control_settings.html", await _settings_context(db, user))

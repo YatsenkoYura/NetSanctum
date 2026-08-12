@@ -12,16 +12,18 @@ import yt_dlp
 from openai import OpenAI
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
+from app.core.task_dispatch import dispatch_tracked_sync
 from app.modules.music.models import Playlist, PlaylistSong, Song
 from app.modules.music.schemas import MusicModel, VideoModel
 from app.modules.settings.models import Setting
 
 logger = logging.getLogger(__name__)
 
-redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
 
 import tempfile
@@ -185,17 +187,18 @@ def process_youtube_url_task(
                     session.commit()
                     logger.info(f"Deduplication: Linked existing song {video_url} to playlist")
                 else:
-                    task = process_song_task.delay(
-                        video_url, playlist_id, i, use_ai, openai_api_key, openai_base_url
+                    dispatch_tracked_sync(
+                        process_song_task,
+                        redis_client,
+                        "music_dl",
+                        {
+                            "url": video_url,
+                            "title": f"Song {i + 1} (Queued)",
+                            "status": "Queued",
+                            "progress": "0%",
+                        },
+                        args=(video_url, playlist_id, i, use_ai, openai_api_key, openai_base_url),
                     )
-                    data = {
-                        "task_id": task.id,
-                        "url": video_url,
-                        "title": f"Song {i + 1} (Queued)",
-                        "status": "Queued",
-                        "progress": "0%",
-                    }
-                    redis_client.setex(f"music_dl:{task.id}", 86400, json.dumps(data))
 
         redis_client.delete(f"music_dl:{task_id}")
         return f"Dispatched {len(entries)} songs for playlist '{playlist_title}'"
@@ -220,15 +223,13 @@ def process_youtube_url_task(
                 redis_client.delete(f"music_dl:{task_id}")
                 return "Song already exists in Library."
 
-        task = process_song_task.delay(url, playlist_id, 0, use_ai, openai_api_key, openai_base_url)
-        data = {
-            "task_id": task.id,
-            "url": url,
-            "title": "Resolving video...",
-            "status": "Queued",
-            "progress": "0%",
-        }
-        redis_client.setex(f"music_dl:{task.id}", 86400, json.dumps(data))
+        dispatch_tracked_sync(
+            process_song_task,
+            redis_client,
+            "music_dl",
+            {"url": url, "title": "Resolving video...", "status": "Queued", "progress": "0%"},
+            args=(url, playlist_id, 0, use_ai, openai_api_key, openai_base_url),
+        )
         redis_client.delete(f"music_dl:{task_id}")
         return "Dispatched single video"
 

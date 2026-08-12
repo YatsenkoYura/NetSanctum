@@ -28,9 +28,15 @@ services:
 
   # ── FastAPI Web Server ─────────────────────────────────
   web:
-    build: .
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
+        NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
     restart: unless-stopped
     env_file: .env
+    environment:
+      NETSANCTUM_PROCESS_ROLE: web
     ports:
       - "${HOST_PORT:-8000}:8000"
     volumes:
@@ -43,13 +49,19 @@ services:
         condition: service_healthy
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   # ── Celery Worker ──────────────────────────────────────
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
+        NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
     restart: unless-stopped
     env_file: .env
+    environment:
+      NETSANCTUM_PROCESS_ROLE: worker
     volumes:
       - .:/app
       - ./storage:/app/storage
