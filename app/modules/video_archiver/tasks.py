@@ -27,9 +27,17 @@ redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 def _get_platform_cookies(platform_id: str) -> str | None:
-    """Fetch global cookies for a specific platform from settings DB."""
+    """Fetch module cookies for a specific platform from settings DB."""
     with SyncSessionLocal() as session:
-        setting = session.query(Setting).filter_by(key=f"{platform_id}_cookies", scope="global").first()
+        setting = (
+            session.query(Setting)
+            .filter_by(
+                key=f"{platform_id}_cookies",
+                scope="module",
+                module_name="video_archiver",
+            )
+            .first()
+        )
         if setting and setting.value and setting.value.strip():
             return setting.value
     return None

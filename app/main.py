@@ -109,6 +109,7 @@ async def lifespan(application: FastAPI):
                 f"YOUR MASTER TOKEN:\n\n{token}\n\n"
                 f"SAVE THIS AND DELETE THIS FILE (access_token.txt) IMMEDIATELY."
             )
+            plain_token_file.chmod(0o600)
 
             # Print prominent Neo-brutalist alert to stdout for easy user discovery in logs
             print("\n" + "=" * 60)
@@ -116,7 +117,6 @@ async def lifespan(application: FastAPI):
             print("  [!] ACCESS TOKEN HAS BEEN GENERATED.")
             print("  [!] IT HAS BEEN SAVED TO access_token.txt IN YOUR FOLDER.")
             print("  [!] SAVE IT AND DELETE access_token.txt IMMEDIATELY.")
-            print(f"      >>>  {token}  <<<")
             print("=" * 60 + "\n")
         except Exception as e:
             logger.error(f"Failed to generate physical token file: {e}")
@@ -144,14 +144,8 @@ async def lifespan(application: FastAPI):
     # 2. Schema creation (Migrated to Alembic)
     logger.info("Database schemas verified (managed by Alembic)")
 
-    # Purge pending Celery tasks (generic cleanup)
+    # Clear stale UI progress trackers without discarding queued Celery work.
     try:
-        from app.core.scheduler import celery_app
-
-        purged = celery_app.control.purge()
-        logger.info(f"Purged {purged} pending tasks from Celery.")
-
-        # Clear stale active download keys from Redis
         import redis
 
         from app.core.config import get_settings
@@ -166,7 +160,7 @@ async def lifespan(application: FastAPI):
             r.delete(key)
         logger.info("Cleared active download trackers from Redis.")
     except Exception as e:
-        logger.warning(f"Could not purge Celery or Redis trackers on startup: {e}")
+        logger.warning(f"Could not clear Redis trackers on startup: {e}")
 
     # 3. Seed default Settings if empty
     try:
@@ -264,8 +258,12 @@ app = FastAPI(
 # ── CORS ─────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[],
+    allow_origin_regex=(
+        r"https://([a-z0-9-]+\.)?"
+        r"(mangalib\.me|ranobelib\.me|hentailib\.org|slashlib\.me|comixlib\.me|anilib\.me)"
+    ),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

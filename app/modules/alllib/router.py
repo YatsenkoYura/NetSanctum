@@ -3,23 +3,28 @@ FastAPI router for Lib Network (alllib) module.
 """
 
 import asyncio
+import hashlib
+import hmac
 import io
 import json
 import logging
 import re
+import secrets
 import urllib.parse
 import zipfile
+from urllib.parse import urlparse
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.scheduler import celery_app
-from app.core.security import get_current_user
+from app.core.security import TOKEN_FILE_PATH, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
 from app.modules.alllib.epub_builder import EPUBBuilder
@@ -33,6 +38,50 @@ settings = get_settings()
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 logger = logging.getLogger(__name__)
 
+ALLOWED_LIB_HOSTS = {
+    "mangalib.me",
+    "ranobelib.me",
+    "hentailib.org",
+    "slashlib.me",
+    "comixlib.me",
+    "anilib.me",
+    "cdnlibs.org",
+}
+
+
+class ExternalTokenRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=8192)
+    pairing_code: str = Field(min_length=32, max_length=256)
+
+
+def _is_allowed_lib_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return parsed.scheme == "https" and any(
+        hostname == domain or hostname.endswith(f".{domain}") for domain in ALLOWED_LIB_HOSTS
+    )
+
+
+def _create_pairing_code() -> str:
+    nonce = secrets.token_urlsafe(32)
+    signature = hmac.new(_pairing_secret(), nonce.encode(), hashlib.sha256).hexdigest()
+    return f"{nonce}.{signature}"
+
+
+def _pairing_secret() -> bytes:
+    if TOKEN_FILE_PATH.is_file():
+        return TOKEN_FILE_PATH.read_bytes().strip()
+    return settings.FILE_ENCRYPTION_KEY.encode()
+
+
+def _verify_pairing_code(pairing_code: str) -> bool:
+    try:
+        nonce, signature = pairing_code.rsplit(".", 1)
+    except ValueError:
+        return False
+    expected = hmac.new(_pairing_secret(), nonce.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
 
 def _get_lang(request: Request) -> str:
     return request.cookies.get("lang") or "en"
@@ -43,9 +92,10 @@ def _t(key: str, lang: str = "en") -> str:
 
 
 @router.get("/helper.user.js", include_in_schema=False)
-def get_helper_userscript(request: Request):
+async def get_helper_userscript(request: Request, user=Depends(get_current_user)):
     """Return the Tampermonkey helper userscript for direct installation."""
     base_url = str(request.base_url).rstrip("/")
+    pairing_code = _create_pairing_code()
     userscript_content = f"""// ==UserScript==
 // @name         NetSanctum Autofill Helper
 // @namespace    http://tampermonkey.net/
@@ -64,6 +114,7 @@ def get_helper_userscript(request: Request):
 (function() {{
     'use strict';
     const serverUrl = "{base_url}";
+    const pairingCode = "{pairing_code}";
     console.log("[NetSanctum Helper] Userscript loaded inside frame:", window.location.href);
 
     // Common logic to extract authorization token
@@ -202,7 +253,11 @@ def get_helper_userscript(request: Request):
         let token = extractToken();
         if (token) {{
             console.log("[NetSanctum Helper] Found token in top window, sending to server:", serverUrl);
-            fetch(serverUrl + '/alllib/api/save_token_external?token=' + encodeURIComponent(token))
+            fetch(serverUrl + '/alllib/api/save_token_external', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{token: token, pairing_code: pairingCode}})
+            }})
                 .then(resp => resp.text())
                 .then(text => {{
                     console.log("[NetSanctum Helper] Server response for token sync:", text);
@@ -245,14 +300,11 @@ async def alllib_dashboard(
 ):
     """Render the primary Lib Network dashboard."""
     base_url = str(request.base_url).rstrip("/")
-    from app.modules.settings import service as settings_service
-
-    setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
-    global_token = setting.value if (setting and setting.value) else ""
+    pairing_code = _create_pairing_code()
     return templates.TemplateResponse(
         request,
         "alllib_dashboard.html",
-        {"user": user, "lang": lang, "base_url": base_url, "global_token": global_token},
+        {"user": user, "lang": lang, "base_url": base_url, "pairing_code": pairing_code},
     )
 
 
@@ -1060,6 +1112,8 @@ async def stream_anime_video(request: Request, path: str, user=Depends(get_curre
 @router.get("/api/proxy-image", include_in_schema=False)
 async def proxy_image(url: str, user=Depends(get_current_user)):
     """Proxy/cache novel chapter images to bypass WAF referer checks."""
+    if not _is_allowed_lib_url(url):
+        raise HTTPException(status_code=400, detail="Image host is not allowed")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://ranobelib.me/",
@@ -1067,9 +1121,17 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
     try:
         import requests as requests_lib
 
-        resp = await asyncio.to_thread(requests_lib.get, url, headers=headers, timeout=15)
+        resp = await asyncio.to_thread(
+            requests_lib.get,
+            url,
+            headers=headers,
+            timeout=15,
+            allow_redirects=False,
+        )
         if resp.status_code == 200:
             mime_type = resp.headers.get("content-type", "image/jpeg")
+            if not mime_type.lower().startswith("image/") or len(resp.content) > 20 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="External resource is not a valid image")
             return Response(content=resp.content, media_type=mime_type)
         else:
             raise HTTPException(status_code=400, detail="External image load returned non-200")
@@ -1379,22 +1441,13 @@ async def save_settings(
     return HTMLResponse(html)
 
 
-@router.options("/api/save_token_external", include_in_schema=False)
-async def save_token_external_options():
-    return Response(
-        status_code=204,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        },
-    )
-
-
-@router.get("/api/save_token_external", include_in_schema=False)
-async def save_token_external(token: str, db: AsyncSession = Depends(get_db)):
+@router.post("/api/save_token_external", include_in_schema=False)
+async def save_token_external(payload: ExternalTokenRequest, db: AsyncSession = Depends(get_db)):
     """Save authorization token received from external userscript."""
-    token = token.strip()
+    if not _verify_pairing_code(payload.pairing_code):
+        raise HTTPException(status_code=403, detail="Invalid pairing code")
+
+    token = payload.token.strip()
     if token and len(token) > 20 and (token.startswith("eyJhbG") or token.startswith("eyJ0eX")):
         from app.modules.settings import service as settings_service
 
@@ -1409,18 +1462,8 @@ async def save_token_external(token: str, db: AsyncSession = Depends(get_db)):
             is_secret=True,
         )
         await db.commit()
-        return Response(content="SAVED", headers={"Access-Control-Allow-Origin": "*"})
-    return Response(content="INVALID_TOKEN", headers={"Access-Control-Allow-Origin": "*"})
-
-
-@router.get("/api/get_global_token", response_class=Response, include_in_schema=False)
-async def get_global_token(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    """Fetch current global lib network auth token."""
-    from app.modules.settings import service as settings_service
-
-    setting = await settings_service.resolve_setting(db, key="lib_auth_token", module_name="alllib")
-    val = setting.value if (setting and setting.value) else ""
-    return Response(content=val, media_type="text/plain")
+        return Response(content="SAVED")
+    raise HTTPException(status_code=400, detail="Invalid token")
 
 
 try:

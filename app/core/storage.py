@@ -110,7 +110,7 @@ class LocalStorage(StorageInterface):
     def _full_path(self, path: str) -> Path:
         """Resolve and sanitize the path to prevent directory traversal."""
         resolved = (self._root / path).resolve()
-        if not str(resolved).startswith(str(self._root)):
+        if not resolved.is_relative_to(self._root):
             raise ValueError(f"Path traversal detected: {path}")
         return resolved
 

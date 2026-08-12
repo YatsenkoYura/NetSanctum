@@ -14,6 +14,8 @@ __pycache__/
 .env.development.local
 .env.test.local
 .env.production.local
+access_token.txt
+access_token.hash
 *.zip
 *.tar.gz
 *.tgz

@@ -330,7 +330,7 @@ def download_lib_task(
         existing_keys = set()
         if sync_only:
             with SyncSessionLocal() as session:
-                stmt = select(LibMedia).where(LibMedia.slug == slug)
+                stmt = select(LibMedia).where(LibMedia.slug == slug, LibMedia.site_id == site_id)
                 db_media = session.execute(stmt).scalar_one_or_none()
                 if db_media:
                     existing_keys = {(ch.volume, ch.number) for ch in db_media.chapters}
@@ -348,7 +348,7 @@ def download_lib_task(
                 if branch_id_str == branch_id:
                     ch_vol = str(ch.get("volume", "0"))
                     ch_num = str(ch.get("number", "0"))
-                    if not sync_only or (ch_vol, ch_num) in existing_keys:
+                    if not sync_only or (ch_vol, ch_num) not in existing_keys:
                         filtered_chapters.append((ch, branch_id_str))
                     break
 
@@ -376,7 +376,7 @@ def download_lib_task(
 
         # Sync Database
         with SyncSessionLocal() as session:
-            stmt = select(LibMedia).where(LibMedia.slug == slug)
+            stmt = select(LibMedia).where(LibMedia.slug == slug, LibMedia.site_id == site_id)
             db_media = session.execute(stmt).scalar_one_or_none()
 
             if not db_media:

@@ -236,7 +236,7 @@ async def delete_file(
 async def clean_module(
     request: Request, module: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
-    if module not in ("ranobelib", "music", "video_archiver", "other"):
+    if module not in ("alllib", "ranobelib", "music", "vault", "video_archiver", "other"):
         raise HTTPException(status_code=400, detail="Invalid module")
 
     def do_clean():

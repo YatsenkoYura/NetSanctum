@@ -135,6 +135,13 @@ active_env/
 access_token.txt
 access_token.hash
 
+# Local archives and OS metadata
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+.DS_Store
+
 # Modules in development / ignored
 app/modules/torrent/
 app/modules/pianoboost/
@@ -142,5 +149,3 @@ app/modules/pianoboost/
 # Linter caches
 .ruff_cache/
 *.torrent
-
-

@@ -1,8 +1,11 @@
+import asyncio
 import datetime
+import ipaddress
 import logging
 import re
+import socket
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import func, select
@@ -18,12 +21,56 @@ from app.modules.vault.schemas import (
 logger = logging.getLogger(__name__)
 
 
+async def _is_public_http_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
+        return False
+
+    try:
+        addresses = await asyncio.to_thread(
+            socket.getaddrinfo,
+            parsed.hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+    except (OSError, ValueError):
+        return False
+
+    return bool(addresses) and all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+
+
+async def _fetch_public_html(url: str, headers: dict[str, str]) -> str | None:
+    async with httpx.AsyncClient(timeout=4.0, follow_redirects=False) as client:
+        current_url = url
+        for _ in range(4):
+            if not await _is_public_http_url(current_url):
+                return None
+
+            async with client.stream("GET", current_url, headers=headers) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        return None
+                    current_url = urljoin(current_url, location)
+                    continue
+                if response.status_code != 200:
+                    return None
+
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk[: 150000 - len(content)])
+                    if len(content) >= 150000:
+                        break
+                return content.decode(response.encoding or "utf-8", errors="replace")
+    return None
+
+
 async def fetch_url_metadata(url: str) -> dict[str, str | None]:
     """
     Asynchronously scrape OpenGraph metadata (og:title, og:description, og:image)
     and standard HTML title from a web URL.
     """
-    result = {"og_title": None, "og_description": None, "og_image": None}
+    result: dict[str, str | None] = {"og_title": None, "og_description": None, "og_image": None}
     if not url or not (url.startswith("http://") or url.startswith("https://")):
         return result
 
@@ -33,49 +80,40 @@ async def fetch_url_metadata(url: str) -> dict[str, str | None]:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True, verify=False) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                return result
+        html = await _fetch_public_html(url, headers)
+        if html is None:
+            return result
 
-            html = resp.text[:150000]  # Read first 150KB for fast parsing
+        # 1. Parse og:title or fallback to <title>
+        og_title_match = re.search(
+            r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
+        )
+        if og_title_match:
+            result["og_title"] = og_title_match.group(1).strip()
+        else:
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+            if title_match:
+                result["og_title"] = title_match.group(1).strip()
 
-            # 1. Parse og:title or fallback to <title>
-            og_title_match = re.search(
-                r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
+        # 2. Parse og:description or fallback to meta name="description"
+        og_desc_match = re.search(
+            r'<meta\s+property=["\']og:description["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
+        )
+        if og_desc_match:
+            result["og_description"] = og_desc_match.group(1).strip()
+        else:
+            desc_match = re.search(
+                r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
             )
-            if og_title_match:
-                result["og_title"] = og_title_match.group(1).strip()
-            else:
-                title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-                if title_match:
-                    result["og_title"] = title_match.group(1).strip()
+            if desc_match:
+                result["og_description"] = desc_match.group(1).strip()
 
-            # 2. Parse og:description or fallback to meta name="description"
-            og_desc_match = re.search(
-                r'<meta\s+property=["\']og:description["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
-            )
-            if og_desc_match:
-                result["og_description"] = og_desc_match.group(1).strip()
-            else:
-                desc_match = re.search(
-                    r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
-                )
-                if desc_match:
-                    result["og_description"] = desc_match.group(1).strip()
-
-            # 3. Parse og:image
-            og_img_match = re.search(
-                r'<meta\s+property=["\']og:image["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
-            )
-            if og_img_match:
-                img_url = og_img_match.group(1).strip()
-                if img_url.startswith("//"):
-                    img_url = "https:" + img_url
-                elif img_url.startswith("/") and not img_url.startswith("//"):
-                    parsed = urlparse(url)
-                    img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
-                result["og_image"] = img_url
+        # 3. Parse og:image
+        og_img_match = re.search(
+            r'<meta\s+property=["\']og:image["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE
+        )
+        if og_img_match:
+            result["og_image"] = urljoin(url, og_img_match.group(1).strip())
 
     except Exception as e:
         logger.debug("Failed to fetch OG metadata for %s: %s", url, e)
@@ -367,9 +405,9 @@ async def resolve_soft_entity_info(
                     else None,
                 }
         elif entity_type in ("manga", "ranobe", "anime"):
-            from app.modules.alllib.models import LibraryMedia
+            from app.modules.alllib.models import LibMedia
 
-            stmt = select(LibraryMedia).where(LibraryMedia.id == entity_id)
+            stmt = select(LibMedia).where(LibMedia.id == int(entity_id))
             res = await session.execute(stmt)
             media = res.scalar_one_or_none()
             if media:
@@ -377,7 +415,7 @@ async def resolve_soft_entity_info(
                     "type": entity_type,
                     "title": media.title,
                     "url": f"/alllib/reader/{media.id}",
-                    "thumbnail": f"/api/alllib/media/{media.id}/cover" if media.cover_path else None,
+                    "thumbnail": f"/alllib/api/cover/{media.id}" if media.cover_path else None,
                 }
     except Exception as e:
         logger.debug("Soft entity resolution skipped for %s/%s: %s", entity_type, entity_id, e)

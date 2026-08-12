@@ -4,7 +4,7 @@ Database models for Lib network modules (RanobeLib, MangaLib, HentaiLib, etc.).
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from app.core.database import Base
@@ -14,6 +14,7 @@ class LibMedia(Base):
     """Represents a downloaded media item (novel, manga, anime)."""
 
     __tablename__ = "lib_media"
+    __table_args__ = (UniqueConstraint("site_id", "slug", name="uq_lib_media_site_slug"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     site_id: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
@@ -24,7 +25,7 @@ class LibMedia(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     rus_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     eng_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_path: Mapped[str | None] = mapped_column(String(510), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(510), nullable=True)

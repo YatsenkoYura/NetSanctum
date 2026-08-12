@@ -46,6 +46,10 @@ jobs:
         context: .
         file: ./Dockerfile
         push: false
+        load: true
         tags: netsanctum:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+    - name: Run Regression Tests
+      run: docker run --rm netsanctum:latest python -m unittest discover -s tests -v

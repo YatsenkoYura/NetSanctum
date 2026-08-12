@@ -315,8 +315,8 @@ async def get_vault_sync_manifest(
     # Include OG images for bookmarks that have them
     items = await list_vault_items(session=db, is_archived=False, limit=500)
     for item in items:
-        if item.get("og_image"):
-            resources.append({"url": item["og_image"], "type": "image"})
+        if item.og_image:
+            resources.append({"url": item.og_image, "type": "image"})
 
     manifest = {
         "package_id": pkg_id,

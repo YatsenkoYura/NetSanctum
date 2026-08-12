@@ -61,17 +61,18 @@ async def trigger_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Schedules a video/playlist download task with automatic platform detection."""
-    from app.modules.settings.models import Setting
+    from app.modules.settings import service as settings_service
 
     if req.cookies_text and req.cookie_platform:
         key = f"{req.cookie_platform}_cookies"
-        res = await db.execute(select(Setting).where(Setting.key == key))
-        setting = res.scalar_one_or_none()
-        if setting:
-            setting.value = req.cookies_text
-        else:
-            setting = Setting(key=key, value=req.cookies_text, scope="module", is_secret=True)
-            db.add(setting)
+        await settings_service.upsert_setting(
+            db,
+            key=key,
+            value=req.cookies_text,
+            scope="module",
+            module_name="video_archiver",
+            is_secret=True,
+        )
         await db.commit()
 
     detected_platform = PlatformDetector.detect_platform(req.url)
@@ -173,7 +174,13 @@ async def get_sync_dates(db: AsyncSession = Depends(get_db), user=Depends(get_cu
     platform_info = []
     for p, count in platform_map.items():
         key = f"{p}_cookies"
-        res_cookie = await db.execute(select(Setting).where(Setting.key == key))
+        res_cookie = await db.execute(
+            select(Setting).where(
+                Setting.key == key,
+                Setting.scope == "module",
+                Setting.module_name == "video_archiver",
+            )
+        )
         c_setting = res_cookie.scalar_one_or_none()
         cookies_text = c_setting.value if (c_setting and c_setting.value) else ""
 
@@ -226,7 +233,13 @@ async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=De
     from app.modules.settings.models import Setting
 
     key = f"{platform}_cookies"
-    res = await db.execute(select(Setting).where(Setting.key == key))
+    res = await db.execute(
+        select(Setting).where(
+            Setting.key == key,
+            Setting.scope == "module",
+            Setting.module_name == "video_archiver",
+        )
+    )
     setting = res.scalar_one_or_none()
 
     auth_active = False
@@ -248,7 +261,13 @@ async def clear_cookies(platform: str, db: AsyncSession = Depends(get_db), user=
     from app.modules.settings.models import Setting
 
     key = f"{platform}_cookies"
-    res = await db.execute(select(Setting).where(Setting.key == key))
+    res = await db.execute(
+        select(Setting).where(
+            Setting.key == key,
+            Setting.scope == "module",
+            Setting.module_name == "video_archiver",
+        )
+    )
     setting = res.scalar_one_or_none()
     if setting:
         await db.delete(setting)

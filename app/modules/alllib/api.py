@@ -416,15 +416,23 @@ class LibParser:
             src = attrs.get("src")
             if src:
                 proxy_url = f"/alllib/api/proxy-image?url={urllib.parse.quote(src)}"
-                attrs["src"] = proxy_url
-            attr_str = " ".join([f'{key}="{value}"' for key, value in attrs.items() if value])
+                attrs = {
+                    "src": proxy_url,
+                    "alt": attrs.get("alt"),
+                    "title": attrs.get("title"),
+                }
+            else:
+                attrs = {}
+            attr_str = " ".join(
+                f'{key}="{html_lib.escape(str(value), quote=True)}"' for key, value in attrs.items() if value
+            )
             html += f"<img {attr_str}>"
         return html
 
     def _handle_text(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
         text_val = element.get("text", "")
         processed_text = re.sub(" +", " ", text_val.replace("\n", " "))
-        html = self.decode_html_entities(processed_text)
+        html = html_lib.escape(self.decode_html_entities(processed_text))
 
         # Apply marks if present
         marks = element.get("marks", [])
@@ -442,7 +450,14 @@ class LibParser:
                 html = f"<code>{html}</code>"
             elif mark_type == "link":
                 href = mark.get("attrs", {}).get("href", "#")
-                html = f"<a href='{href}' target='_blank' class='text-teal-400 hover:text-teal-300 underline'>{html}</a>"
+                parsed = urlparse(href)
+                if parsed.scheme not in {"http", "https"}:
+                    href = "#"
+                safe_href = html_lib.escape(href, quote=True)
+                html = (
+                    f"<a href='{safe_href}' target='_blank' rel='noopener noreferrer' "
+                    f"class='text-teal-400 hover:text-teal-300 underline'>{html}</a>"
+                )
         return html
 
     def _handle_default(self, element: dict[str, Any], attachments: list[dict[str, Any]]) -> str:
