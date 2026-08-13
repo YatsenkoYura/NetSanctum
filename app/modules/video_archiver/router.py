@@ -181,11 +181,13 @@ async def get_video_sync_manifest(
     video = await VideoService.get_video(db, video_id)
     package_id = f"video_{video.id}"
     query = urllib.parse.urlencode({"package_id": package_id})
+    list_query = urllib.parse.urlencode([("sort_by", "archived_at"), ("package_id", package_id)])
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/video-archiver/dashboard", "type": "html"},
         {"url": f"/video-archiver/dashboard?{query}", "type": "html"},
-        {"url": f"/api/video-archiver/videos?{query}", "type": "json"},
+        {"url": f"/api/video-archiver/videos?{list_query}", "type": "json"},
         *_video_resources(video, package_id),
     ]
     from app.core.packages_router import make_hybrid_manifest, make_package_manifest
@@ -653,11 +655,13 @@ async def get_playlist_sync_manifest(
     videos = await PlaylistService.get_playlist_videos(db, playlist_id)
     package_id = f"video_playlist_{playlist.id}"
     query = urllib.parse.urlencode({"package_id": package_id})
+    list_query = urllib.parse.urlencode([("sort_by", "archived_at"), ("package_id", package_id)])
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": "/video-archiver/dashboard", "type": "html"},
         {"url": f"/video-archiver/dashboard?{query}", "type": "html"},
-        {"url": f"/api/video-archiver/videos?{query}", "type": "json"},
+        {"url": f"/api/video-archiver/videos?{list_query}", "type": "json"},
         {"url": f"/api/video-archiver/playlists/{playlist.id}?{query}", "type": "json"},
     ]
     for video in videos:
