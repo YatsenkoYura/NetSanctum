@@ -1,6 +1,16 @@
+const { execFileSync } = require("node:child_process");
+
+const content = execFileSync(
+  "git",
+  ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "app"],
+  { encoding: "utf8" }
+)
+  .split("\0")
+  .filter((path) => path.endsWith(".html") || path.endsWith(".py"));
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ["./app/**/*.html", "./app/**/*.py"],
+  content,
   safelist: [
     "hidden",
     "flex",
