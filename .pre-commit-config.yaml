@@ -1,0 +1,54 @@
+minimum_pre_commit_version: "4.6.2"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b # v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 3b3f7c3f57fe9925356faf5fe6230835138be230 # v0.15.17
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: uv-lock-check
+        name: verify uv lock
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+
+      - id: module-build-catalog
+        name: verify module build catalog
+        entry: python scripts/module_build.py check
+        language: python
+        pass_filenames: false
+        files: ^(app/modules/.*/module\.py|module-build\.json|pyproject\.toml|uv\.lock)$
+
+      - id: tailwind-css
+        name: rebuild committed Tailwind CSS
+        entry: tailwindcss -c tailwind.config.js -i static/tailwind.input.css -o static/tailwind.css --minify
+        language: node
+        additional_dependencies: [tailwindcss@3.4.17]
+        pass_filenames: false
+        files: ^(app/.*\.(html|py)|static/tailwind\.input\.css|tailwind\.config\.js)$
+
+      - id: static-contracts
+        name: verify static CSS and navigation contracts
+        entry: python -m unittest tests.test_static_css tests.test_navigation_contracts
+        language: python
+        pass_filenames: false
+        files: ^(app/.*\.(html|py)|static/tailwind\.(css|input\.css)|tailwind\.config\.js|tests/test_(static_css|navigation_contracts)\.py)$

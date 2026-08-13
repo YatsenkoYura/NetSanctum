@@ -172,6 +172,15 @@ npm run build:css
 
 NetSanctum serves precompiled CSS and does not run the Tailwind browser compiler. Bundled templates and Python-generated HTML are scanned by `tailwind.config.js`. External modules must ship their own compiled styles for classes outside the core stylesheet.
 
+Install the repository hooks once per clone:
+
+```bash
+uv sync --locked --all-extras
+uv run pre-commit install
+```
+
+The hooks apply Ruff fixes and formatting, validate locks and module metadata, run lightweight contract tests, and rebuild the committed Tailwind stylesheet when module templates change. Run the complete hook set manually with `uv run pre-commit run --all-files`.
+
 Run static checks:
 
 ```bash

@@ -41,7 +41,10 @@ video_archiver = [
 ]
 
 [dependency-groups]
-dev = ["ruff==0.15.17"]
+dev = [
+    "pre-commit==4.6.2",
+    "ruff==0.15.17",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -56,7 +59,7 @@ target-version = "py312"
 line-length = 110
 
 [tool.ruff.lint]
-# Rules: Pyflakes (F), Pycodestyle (E, W), Isort (I), Pep8-naming (N), 
+# Rules: Pyflakes (F), Pycodestyle (E, W), Isort (I), Pep8-naming (N),
 # Pyupgrade (UP), Bugbear (B), Comprehensions (C4), Ruff-specific (RUF)
 select = [
     "F",    # Pyflakes
