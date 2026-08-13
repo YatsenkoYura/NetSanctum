@@ -25,6 +25,18 @@ jobs:
       with:
         version: '0.11.18'
 
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: npm
+
+    - name: Verify Compiled CSS
+      run: |
+        npm ci
+        npm run build:css
+        git diff --exit-code -- static/tailwind.css
+
     - name: Verify Dependency Lock
       run: uv lock --check
 

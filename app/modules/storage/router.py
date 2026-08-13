@@ -266,7 +266,7 @@ async def get_storage_sync_manifest(user=Depends(get_current_user)):
         "name": "Storage Manager",
         "root_url": "/storage/dashboard",
         "resources": [
-            {"url": "/static/tailwind.min.js", "type": "js"},
+            {"url": "/static/tailwind.css", "type": "css"},
             {"url": "/static/htmx.min.js", "type": "js"},
             {"url": "/storage/dashboard", "type": "html"},
         ],

@@ -149,3 +149,6 @@ app/modules/pianoboost/
 # Linter caches
 .ruff_cache/
 *.torrent
+
+# Frontend build dependencies (compiled CSS is committed)
+node_modules/

@@ -1,0 +1,11 @@
+{
+  "name": "netsanctum-assets",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i static/tailwind.input.css -o static/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

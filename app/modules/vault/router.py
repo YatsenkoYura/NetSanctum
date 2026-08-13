@@ -308,7 +308,7 @@ async def get_vault_sync_manifest(
         {"url": "/api/vault/items?limit=500&is_archived=false", "type": "json"},
         {"url": "/api/vault/stats", "type": "json"},
         {"url": "/api/vault/collections", "type": "json"},
-        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
     ]
 

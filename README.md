@@ -163,6 +163,15 @@ Use `./start.sh 4000` or `./start.sh -p 4000` to select another host port.
 
 ## Development
 
+Rebuild the committed Tailwind stylesheet after changing template classes:
+
+```bash
+npm ci
+npm run build:css
+```
+
+NetSanctum serves precompiled CSS and does not run the Tailwind browser compiler. Bundled templates and Python-generated HTML are scanned by `tailwind.config.js`. External modules must ship their own compiled styles for classes outside the core stylesheet.
+
 Run static checks:
 
 ```bash

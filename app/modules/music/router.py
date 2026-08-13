@@ -615,7 +615,7 @@ async def get_song_sync_manifest(
 
     pkg_id = f"song_{song_id}"
     resources = [
-        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/music/dashboard", "type": "html"},
         {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},
@@ -664,7 +664,7 @@ async def get_playlist_sync_manifest(
 
     pkg_id = f"playlist_{playlist_id}"
     resources = [
-        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/music/dashboard", "type": "html"},
         {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},

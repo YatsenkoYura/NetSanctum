@@ -1255,7 +1255,7 @@ async def get_media_sync_manifest(
     pkg_prefix = media.media_type
     pkg_id = f"{pkg_prefix}_{media_id}"
     resources = [
-        {"url": "/static/tailwind.min.js", "type": "js"},
+        {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/alllib/dashboard", "type": "html"},
         {"url": f"/alllib/dashboard?package_id={pkg_id}", "type": "html"},

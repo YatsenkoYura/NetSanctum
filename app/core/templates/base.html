@@ -7,20 +7,8 @@
     <title>{% block title %}NetSanctum{% endblock %}</title>
     <meta name="description" content="NetSanctum — Modular Monolith Control Panel">
 
-    <!-- Tailwind CSS (Local for Offline/Self-Hosted usage) -->
-    <script src="/static/tailwind.min.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        mono: ['"JetBrains Mono"', '"Fira Code"', 'monospace'],
-                        sans: ['"Inter"', 'system-ui', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- Precompiled Tailwind CSS (local and offline-safe) -->
+    <link rel="stylesheet" href="/static/tailwind.css">
 
     <!-- Google Fonts (Asynchronous fallback to prevent offline blocking) -->
     <link rel="stylesheet"
