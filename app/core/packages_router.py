@@ -16,6 +16,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/packages", tags=["packages"])
 
 
+def make_package_manifest(
+    *,
+    module_id: str,
+    package_id: str,
+    package_title: str,
+    root_url: str,
+    resources: list[dict],
+) -> dict:
+    """Build the versioned, module-agnostic offline package contract."""
+    record = next(
+        (record for record in module_registry.active_records() if record.id == module_id and record.spec),
+        None,
+    )
+    if not record or not record.spec or not record.spec.dashboard_url:
+        raise RuntimeError(f"Active module {module_id!r} has no offline-capable dashboard")
+    return {
+        "schema_version": 1,
+        "package_id": package_id,
+        "package_title": package_title,
+        "package_name": package_title,
+        "title": package_title,
+        "name": package_title,
+        "module": {
+            "id": record.spec.id,
+            "title": record.spec.title_en,
+            "title_en": record.spec.title_en,
+            "title_ru": record.spec.title_ru,
+            "root_url": record.spec.dashboard_url,
+        },
+        "root_url": root_url,
+        "resources": resources,
+    }
+
+
 async def get_resources_for_package(pkg_id: str) -> list:
     """Resolve package_id to its full list of resource dictionaries by querying database."""
     resolver = module_registry.package_resolver(pkg_id)

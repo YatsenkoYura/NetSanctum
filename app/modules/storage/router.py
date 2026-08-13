@@ -258,16 +258,16 @@ async def clean_module(
 @router.get("/api/sync-manifest", include_in_schema=False)
 async def get_storage_sync_manifest(user=Depends(get_current_user)):
     """API: Sync manifest for offline access to storage panel."""
-    return {
-        "package_id": "storage_manager",
-        "package_title": "Storage Manager",
-        "package_name": "Storage Manager",
-        "title": "Storage Manager",
-        "name": "Storage Manager",
-        "root_url": "/storage/dashboard",
-        "resources": [
+    from app.core.packages_router import make_package_manifest
+
+    return make_package_manifest(
+        module_id="storage",
+        package_id="storage_manager",
+        package_title="Storage Manager",
+        root_url="/storage/dashboard",
+        resources=[
             {"url": "/static/tailwind.css", "type": "css"},
             {"url": "/static/htmx.min.js", "type": "js"},
             {"url": "/storage/dashboard", "type": "html"},
         ],
-    }
+    )

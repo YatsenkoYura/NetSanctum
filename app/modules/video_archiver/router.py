@@ -1,5 +1,6 @@
 import json
 import subprocess
+import urllib.parse
 
 import anyio
 import redis.asyncio as aioredis
@@ -114,10 +115,19 @@ async def list_videos(
     status: str | None = None,
     is_deleted: bool | None = None,
     sort_by: str = "archived_at",
+    package_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
     """API: Lists archived videos with optional filtering by platform, channel, or search query."""
+    if package_id and package_id.startswith("video_playlist_"):
+        try:
+            playlist_id = int(package_id.removeprefix("video_playlist_"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid package ID")
+        return await PlaylistService.get_playlist_videos(db, playlist_id)
+    if package_id and package_id.startswith("video_"):
+        return [await VideoService.get_video(db, package_id.removeprefix("video_"))]
     return await VideoService.list_videos(
         db,
         search=search,
@@ -133,6 +143,61 @@ async def list_videos(
 async def get_video(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API: Get video metadata."""
     return await VideoService.get_video(db, video_id)
+
+
+def _video_resources(video: ArchivedVideo, package_id: str) -> list[dict]:
+    query = urllib.parse.urlencode({"package_id": package_id})
+    resources = [
+        {"url": f"/api/video-archiver/videos/{video.id}?{query}", "type": "json"},
+    ]
+    if video.file_path:
+        resources.append({"url": f"/api/video-archiver/videos/{video.id}/stream", "type": "binary"})
+    if video.thumbnail_path:
+        resources.append({"url": f"/api/video-archiver/videos/{video.id}/thumbnail", "type": "image"})
+    if video.channel_avatar_url:
+        resources.append({"url": f"/api/video-archiver/videos/{video.id}/avatar", "type": "image"})
+    if isinstance(video.subtitles, dict):
+        resources.extend(
+            {
+                "url": (
+                    f"/api/video-archiver/videos/{video.id}/subtitles/"
+                    f"{urllib.parse.quote(str(language), safe='')}"
+                ),
+                "type": "text",
+            }
+            for language in video.subtitles
+        )
+    return resources
+
+
+@router.get("/api/video-archiver/videos/{video_id}/sync-manifest")
+async def get_video_sync_manifest(
+    video_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    hybrid: bool = True,
+):
+    """Build an offline package for one archived video."""
+    video = await VideoService.get_video(db, video_id)
+    package_id = f"video_{video.id}"
+    query = urllib.parse.urlencode({"package_id": package_id})
+    resources = [
+        {"url": "/static/tailwind.css", "type": "css"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": f"/video-archiver/dashboard?{query}", "type": "html"},
+        {"url": f"/api/video-archiver/videos?{query}", "type": "json"},
+        *_video_resources(video, package_id),
+    ]
+    from app.core.packages_router import make_hybrid_manifest, make_package_manifest
+
+    manifest = make_package_manifest(
+        module_id="video_archiver",
+        package_id=package_id,
+        package_title=f"Video: {video.title}",
+        root_url=f"/video-archiver/dashboard?{query}",
+        resources=resources,
+    )
+    return make_hybrid_manifest(package_id, manifest) if hybrid else manifest
 
 
 @router.delete("/api/video-archiver/videos/{video_id}")
@@ -572,6 +637,42 @@ async def get_playlist_detail(
         "created_at": playlist.created_at,
         "videos": videos,
     }
+
+
+@router.get("/api/video-archiver/playlists/{playlist_id}/sync-manifest")
+async def get_playlist_sync_manifest(
+    playlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    hybrid: bool = True,
+):
+    """Build an offline package for a custom video playlist."""
+    playlist = await db.get(VideoPlaylist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    videos = await PlaylistService.get_playlist_videos(db, playlist_id)
+    package_id = f"video_playlist_{playlist.id}"
+    query = urllib.parse.urlencode({"package_id": package_id})
+    resources = [
+        {"url": "/static/tailwind.css", "type": "css"},
+        {"url": "/static/htmx.min.js", "type": "js"},
+        {"url": f"/video-archiver/dashboard?{query}", "type": "html"},
+        {"url": f"/api/video-archiver/videos?{query}", "type": "json"},
+        {"url": f"/api/video-archiver/playlists/{playlist.id}?{query}", "type": "json"},
+    ]
+    for video in videos:
+        resources.extend(_video_resources(video, package_id))
+
+    from app.core.packages_router import make_hybrid_manifest, make_package_manifest
+
+    manifest = make_package_manifest(
+        module_id="video_archiver",
+        package_id=package_id,
+        package_title=f"Video Playlist: {playlist.name}",
+        root_url=f"/video-archiver/dashboard?{query}",
+        resources=resources,
+    )
+    return make_hybrid_manifest(package_id, manifest) if hybrid else manifest
 
 
 @router.delete("/api/video-archiver/playlists/{playlist_id}")

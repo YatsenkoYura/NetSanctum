@@ -318,15 +318,15 @@ async def get_vault_sync_manifest(
         if item.og_image:
             resources.append({"url": item.og_image, "type": "image"})
 
-    manifest = {
-        "package_id": pkg_id,
-        "package_title": "Vault — Личный архив",
-        "package_name": "Vault — Личный архив",
-        "title": "Vault — Личный архив",
-        "name": "Vault — Личный архив",
-        "root_url": "/vault/dashboard",
-        "resources": resources,
-    }
+    from app.core.packages_router import make_package_manifest
+
+    manifest = make_package_manifest(
+        module_id="vault",
+        package_id=pkg_id,
+        package_title="Vault — Личный архив",
+        root_url="/vault/dashboard",
+        resources=resources,
+    )
 
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest

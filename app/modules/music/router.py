@@ -627,15 +627,15 @@ async def get_song_sync_manifest(
         resources.append({"url": f"/music/cover/{song_id}", "type": "image"})
 
     title_str = f"Song: {song.title}" + (f" - {song.author}" if song.author else "")
-    manifest = {
-        "package_id": pkg_id,
-        "package_title": title_str,
-        "package_name": title_str,
-        "title": title_str,
-        "name": title_str,
-        "root_url": f"/music/dashboard?package_id={pkg_id}",
-        "resources": resources,
-    }
+    from app.core.packages_router import make_package_manifest
+
+    manifest = make_package_manifest(
+        module_id="music",
+        package_id=pkg_id,
+        package_title=title_str,
+        root_url=f"/music/dashboard?package_id={pkg_id}",
+        resources=resources,
+    )
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
 
@@ -680,15 +680,15 @@ async def get_playlist_sync_manifest(
             resources.append({"url": f"/music/cover/{song.id}", "type": "image"})
 
     playlist_title = f"Music Playlist: {playlist.name}"
-    manifest = {
-        "package_id": pkg_id,
-        "package_title": playlist_title,
-        "package_name": playlist_title,
-        "title": playlist_title,
-        "name": playlist_title,
-        "root_url": f"/music/dashboard?package_id={pkg_id}",
-        "resources": resources,
-    }
+    from app.core.packages_router import make_package_manifest
+
+    manifest = make_package_manifest(
+        module_id="music",
+        package_id=pkg_id,
+        package_title=playlist_title,
+        root_url=f"/music/dashboard?package_id={pkg_id}",
+        resources=resources,
+    )
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
 

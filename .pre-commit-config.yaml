@@ -13,6 +13,7 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
+        exclude: ^static/tailwind\.css$
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

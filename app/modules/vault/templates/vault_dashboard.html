@@ -67,7 +67,7 @@
 
   <!-- ── LEFT SIDEBAR (COLLAPSIBLE) ─────────────────────────── -->
   <aside id="sidebar" class="vault-sidebar bg-zinc-950 border-r border-zinc-800 flex flex-col py-3 relative">
-    
+
     <div class="px-3 pb-3 border-b border-zinc-800 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <span class="w-2.5 h-2.5 bg-teal-400 inline-block"></span>
@@ -111,10 +111,10 @@
   <div class="flex-1 flex flex-col min-w-0" id="main-workspace-root">
 
     <div class="bg-zinc-950 border-b border-zinc-800 px-4 py-2 flex items-center justify-between gap-3">
-      
+
       <div class="flex items-center gap-3">
         <button onclick="toggleSidebar()" class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
-        
+
         <div class="flex items-center gap-2 text-xs">
           <span class="text-zinc-500 font-bold uppercase">Vault</span>
           <span class="text-zinc-700">/</span>
@@ -136,9 +136,13 @@
       </div>
 
       <div class="flex items-center gap-2">
+        <button onclick="sendToOutpost('/api/vault/sync-manifest')"
+                class="outpost-only text-[11px] text-teal-400 border border-teal-500/40 px-2 py-1 uppercase font-bold hover:bg-teal-950/40">
+          Сохранить на устройство
+        </button>
         <input type="text" id="vault-search" oninput="debounceSearch()" placeholder="Поиск..."
                class="bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none w-44">
-        
+
         <div class="relative">
           <button onclick="toggleExportMenu(event)" class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
           <div id="export-dropdown" class="hidden absolute right-0 top-7 w-28 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
@@ -168,10 +172,10 @@
         <!-- Full-size Image Preview in Editor View -->
         <div id="editor-image-container" class="hidden"></div>
 
-        <input type="text" id="editor-title" oninput="triggerAutoSave()" placeholder="Заголовок (необязательно)..." 
+        <input type="text" id="editor-title" oninput="triggerAutoSave()" placeholder="Заголовок (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
-        
-        <textarea id="editor-content" oninput="triggerAutoSave()" rows="14" placeholder="Пишите мысли здесь..." 
+
+        <textarea id="editor-content" oninput="triggerAutoSave()" rows="14" placeholder="Пишите мысли здесь..."
                   class="w-full bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-200 focus:outline-none focus:border-teal-400 resize-y leading-relaxed font-mono"></textarea>
       </div>
 
@@ -182,8 +186,8 @@
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="sheet-save-status">Сохранено</span>
         </div>
         <input type="hidden" id="sheet-id">
-        
-        <input type="text" id="sheet-title" oninput="triggerSheetAutoSave()" placeholder="Название таблицы (необязательно)..." 
+
+        <input type="text" id="sheet-title" oninput="triggerSheetAutoSave()" placeholder="Название таблицы (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         <div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
@@ -225,7 +229,7 @@
 
             <div class="flex items-center border border-zinc-800 bg-zinc-950 px-1">
               <button onclick="changeBrushSize(-2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">-</button>
-              <input type="number" id="wb-brush-val" value="4" min="1" max="50" onchange="validateBrushSize()" 
+              <input type="number" id="wb-brush-val" value="4" min="1" max="50" onchange="validateBrushSize()"
                      class="w-8 text-center bg-black text-[10px] font-bold text-teal-400 focus:outline-none">
               <button onclick="changeBrushSize(2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
             </div>
@@ -243,7 +247,7 @@
         </div>
 
         <input type="hidden" id="wb-id">
-        <input type="text" id="wb-title" oninput="triggerWbAutoSave()" placeholder="Название доски (необязательно)..." 
+        <input type="text" id="wb-title" oninput="triggerWbAutoSave()" placeholder="Название доски (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         <div class="wb-viewport" id="wb-viewport-el">
@@ -299,7 +303,7 @@
       </div>
       <div class="space-y-1">
         <label class="text-[10px] text-zinc-500 uppercase font-bold">Название (необязательно)</label>
-        <input type="text" id="link-title-input" placeholder="Оставьте пустым если не нужно" 
+        <input type="text" id="link-title-input" placeholder="Оставьте пустым если не нужно"
                class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
       </div>
     </div>
@@ -356,7 +360,7 @@ document.addEventListener('keydown', (e) => {
 // ── FAST CLIPBOARD PASTE (CTRL+V) & DRAG & DROP ────────────────────────────
 document.addEventListener('paste', async (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  
+
   const clipboardData = e.clipboardData || window.clipboardData;
   if (!clipboardData) return;
 
@@ -916,7 +920,7 @@ function renderWhiteboardNodes() {
 
 function handleWbNodeMouseDown(e, idx) {
   if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
-  
+
   if (wbMode === 'line') {
     e.stopPropagation();
     const canvas = document.getElementById('wb-canvas-layer');
@@ -1318,7 +1322,7 @@ function renderTiles(items) {
   grid.innerHTML = sortedItems.map(item => {
     const isTable = item.node_type === 'table';
     const isWb = item.node_type === 'whiteboard';
-    
+
     const wbDrawingPreview = isWb && item.canvas_data?.drawing && item.canvas_data.drawing.length > 100 ? item.canvas_data.drawing : null;
     const displayImg = item.og_image || wbDrawingPreview;
 
@@ -1369,7 +1373,7 @@ function renderTiles(items) {
           <img src="${displayImg}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
         </div>
       ` : ''}
-      
+
       <div class="p-3 flex flex-col gap-2">
         ${hasTitle ? `
           <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400" onclick="${clickHandler}">
@@ -1380,7 +1384,7 @@ function renderTiles(items) {
         ${item.content ? `
           <div class="text-xs text-zinc-300 leading-relaxed bg-zinc-950/80 p-2 border border-zinc-800/80 rounded-sm cursor-pointer font-mono break-words whitespace-pre-wrap" onclick="${clickHandler}">${displayText}</div>
         ` : ''}
-        
+
         ${miniTableHtml}
 
         <div class="flex items-center justify-between text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 mt-1">
@@ -1491,8 +1495,8 @@ function handleSheetPaste(e) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => { 
-  loadWorkspace(); 
+document.addEventListener('DOMContentLoaded', () => {
+  loadWorkspace();
   const sheetCanvas = document.getElementById('sheet-canvas');
   if (sheetCanvas) {
     sheetCanvas.addEventListener('paste', handleSheetPaste);

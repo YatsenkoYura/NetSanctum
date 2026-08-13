@@ -545,6 +545,11 @@
         // NetOutpost Bridge helper & detection
         window.sendToOutpost = async function (manifestUrl) {
             try {
+                if (window.__NETSANCTUM_DESKTOP__?.requestDownload) {
+                    window.__NETSANCTUM_DESKTOP__.requestDownload(manifestUrl);
+                    alert("Package sync requested.");
+                    return;
+                }
                 const response = await fetch(manifestUrl);
                 if (!response.ok) throw new Error("Failed to fetch sync manifest");
                 const manifest = await response.json();
@@ -575,7 +580,7 @@
 
         (function () {
             function detectBridge() {
-                if (window.NetOutpostBridge || window.flutter_inappwebview || navigator.userAgent.includes("NetOutpost")) {
+                if (window.__NETSANCTUM_DESKTOP__ || window.NetOutpostBridge || window.flutter_inappwebview || navigator.userAgent.includes("NetOutpost")) {
                     document.documentElement.classList.add("has-outpost-bridge");
                     return true;
                 }

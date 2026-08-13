@@ -1298,15 +1298,15 @@ async def get_media_sync_manifest(
             resources.append({"url": f"/alllib/api/video/stream?path={encoded_path}", "type": "binary"})
 
     pkg_title = f"{media.media_type.capitalize()}: {media.title}"
-    manifest = {
-        "package_id": pkg_id,
-        "package_title": pkg_title,
-        "package_name": pkg_title,
-        "title": pkg_title,
-        "name": pkg_title,
-        "root_url": f"/alllib/reader/{media_id}?package_id={pkg_id}",
-        "resources": resources,
-    }
+    from app.core.packages_router import make_package_manifest
+
+    manifest = make_package_manifest(
+        module_id="alllib",
+        package_id=pkg_id,
+        package_title=pkg_title,
+        root_url=f"/alllib/reader/{media_id}?package_id={pkg_id}",
+        resources=resources,
+    )
     if hybrid:
         from app.core.packages_router import make_hybrid_manifest
 
