@@ -106,8 +106,7 @@
 
                 {% if user %}
                 <!-- Desktop Module Switcher (Horizontal stark tabs) -->
-                <div class="hidden md:flex items-center gap-2 border-l-2 border-zinc-800 pl-4" hx-boost="true"
-                    hx-target="#main-content" hx-select="#main-content">
+                <div class="hidden md:flex items-center gap-2 border-l-2 border-zinc-800 pl-4">
                     {% if navigation_modules %}
                     {% for mod in navigation_modules %}
                     <a href="{{ mod.dashboard_url }}"
