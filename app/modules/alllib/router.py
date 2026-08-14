@@ -5,6 +5,7 @@ FastAPI router for Lib Network (alllib) module.
 import asyncio
 import hashlib
 import hmac
+import html as html_lib
 import io
 import json
 import logging
@@ -47,6 +48,8 @@ ALLOWED_LIB_HOSTS = {
     "comixlib.me",
     "anilib.me",
     "cdnlibs.org",
+    "ranobehub.org",
+    "ranobe.space",
 }
 
 
@@ -108,6 +111,8 @@ async def get_helper_userscript(request: Request, user=Depends(get_current_user)
 // @match        https://*.slashlib.me/*
 // @match        https://*.comixlib.me/*
 // @match        https://*.anilib.me/*
+// @match        https://*.ranobehub.org/*
+// @match        https://*.ranobe.space/*
 // @allframes    true
 // @grant        none
 // ==/UserScript==
@@ -490,7 +495,7 @@ async def get_library_ui(
         # Determine type badge color and name
         badge_cls = "border-teal-400 text-teal-400"
         type_key = f"type_{m.media_type}"
-        if m.site_id == 3:  # Novel
+        if m.site_id in (3, 7):  # Novel
             badge_cls = "border-amber-400 text-amber-400"
         elif m.site_id == 4:  # Hentai
             badge_cls = "border-red-400 text-red-400"
@@ -582,6 +587,7 @@ async def get_chapter_ui(
     title = f"Vol. {chapter.volume} Chapter {chapter.number}"
     if chapter.name:
         title += f" — {chapter.name}"
+    title = html_lib.escape(title)
 
     # Determine layout based on media type
     if media.media_type == "novel":
@@ -1120,7 +1126,7 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Image host is not allowed")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://ranobelib.me/",
+        "Referer": f"https://{urlparse(url).hostname}/",
     }
     try:
         import requests as requests_lib

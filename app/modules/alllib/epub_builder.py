@@ -1,7 +1,6 @@
 import html
 import io
 import logging
-import mimetypes
 import re
 import urllib.parse
 import uuid
@@ -11,6 +10,21 @@ from app.core.storage import get_storage
 from app.modules.alllib.models import LibChapter, LibMedia
 
 logger = logging.getLogger(__name__)
+IMAGE_MEDIA_TYPES = {
+    "avif": "image/avif",
+    "gif": "image/gif",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
+
+
+def _image_type_from_path(path: str) -> tuple[str, str]:
+    clear_path = path.removesuffix(".enc")
+    extension = clear_path.rsplit(".", 1)[-1].lower() if "." in clear_path else "jpg"
+    media_type = IMAGE_MEDIA_TYPES.get(extension, "image/jpeg")
+    return ("jpg" if media_type == "image/jpeg" else extension), media_type
 
 
 class EPUBBuilder:
@@ -40,6 +54,7 @@ class EPUBBuilder:
             has_cover = False
             cover_bytes = None
             cover_media_type = "image/jpeg"
+            cover_ext = "jpg"
             if novel.cover_path:
                 storage = get_storage()
                 try:
@@ -47,15 +62,12 @@ class EPUBBuilder:
                         with storage.get_file_stream(novel.cover_path) as f:
                             cover_bytes = f.read()
                         has_cover = True
-                        if novel.cover_path.lower().endswith(".png"):
-                            cover_media_type = "image/png"
-                        elif novel.cover_path.lower().endswith(".gif"):
-                            cover_media_type = "image/gif"
+                        cover_ext, cover_media_type = _image_type_from_path(novel.cover_path)
                 except Exception as e:
                     logger.warning(f"Failed to read cover: {e}")
 
             if has_cover and cover_bytes:
-                epub.writestr("OEBPS/cover.jpg", cover_bytes)
+                epub.writestr(f"OEBPS/cover.{cover_ext}", cover_bytes)
 
             # 4. Title Page
             escaped_title = html.escape(novel.title or "")
@@ -79,7 +91,7 @@ class EPUBBuilder:
 <body>
   <h1>{escaped_title}</h1>
   {f"<h2>{escaped_eng} / {escaped_rus}</h2>" if escaped_eng or escaped_rus else ""}
-  {'<img class="cover-img" src="cover.jpg" alt="Cover"/>' if has_cover else ""}
+  {f'<img class="cover-img" src="cover.{cover_ext}" alt="Cover"/>' if has_cover else ""}
   <div class="description">
     <h3>Description / Описание:</h3>
     {escaped_desc}
@@ -98,7 +110,7 @@ class EPUBBuilder:
 
             if has_cover:
                 manifest_items.append(
-                    f'<item id="cover-image" href="cover.jpg" media-type="{cover_media_type}"/>'
+                    f'<item id="cover-image" href="cover.{cover_ext}" media-type="{cover_media_type}"/>'
                 )
 
             img_tag_pattern = re.compile(r'<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
@@ -136,9 +148,7 @@ class EPUBBuilder:
                                         with storage.get_file_stream(storage_path) as f:
                                             content_bytes = f.read()
 
-                                    content_type, _ = mimetypes.guess_type(storage_path)
-                                    content_type = content_type or "image/jpeg"
-                                    ext = "png" if "png" in content_type else "jpg"
+                                    ext, content_type = _image_type_from_path(storage_path)
 
                                     epub_href = f"images/img_{image_counter}.{ext}"
                                     epub.writestr(f"OEBPS/{epub_href}", content_bytes)

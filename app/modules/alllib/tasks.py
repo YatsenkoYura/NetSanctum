@@ -2,9 +2,11 @@
 Asynchronous Celery tasks for unified Lib Network downloader.
 """
 
+import html
 import json
 import logging
 import os
+import urllib.parse
 
 import redis
 from sqlalchemy import select
@@ -13,12 +15,32 @@ from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
-from app.modules.alllib.api import LibAPI, LibParser
+from app.modules.alllib.api import LibParser
 from app.modules.alllib.models import LibChapter, LibMedia
+from app.modules.alllib.ranobehub import RANOBEHUB_SITE_ID, get_source_api
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+TRUSTED_NOVEL_IMAGE_HOSTS = {
+    "anilib.me",
+    "cdnlibs.org",
+    "comixlib.me",
+    "hentailib.org",
+    "mangalib.me",
+    "mixlib.me",
+    "ranobehub.org",
+    "ranobelib.me",
+    "ranobe.space",
+    "slashlib.me",
+}
+SAFE_IMAGE_TYPES = {
+    "image/avif": "avif",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
 
 
 def parse_float(val: str) -> float:
@@ -92,13 +114,12 @@ def _make_storage_key(slug: str, site_id: int) -> str:
     return slug
 
 
-def localize_novel_images(html_content: str, slug: str, site_id: int, api, storage) -> str:
+def localize_novel_images(html_content: str, slug: str, site_id: int, domain: str, api, storage) -> str:
     """Download external images in novel chapter content and save them to local storage,
     rewriting image sources to point to local page endpoints.
     """
     import hashlib
     import re
-    import urllib.parse
 
     img_tag_pattern = re.compile(r'<img\s+[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
     urls = img_tag_pattern.findall(html_content)
@@ -110,13 +131,13 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, api, stora
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://ranobelib.me/",
+        "Referer": f"https://{domain}/",
     }
     if api._auth_token:
         headers["Authorization"] = f"Bearer {api._auth_token}"
 
     for src in set(urls):
-        img_url = src
+        img_url = html.unescape(src)
         if "/alllib/api/proxy-image?url=" in src:
             try:
                 parsed = urllib.parse.urlparse(src)
@@ -129,23 +150,45 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, api, stora
         if not (img_url.startswith("http://") or img_url.startswith("https://")):
             continue
 
+        parsed_image_url = urllib.parse.urlparse(img_url)
+        image_hostname = (parsed_image_url.hostname or "").lower().rstrip(".")
+        if parsed_image_url.scheme != "https" or not (
+            image_hostname == domain
+            or image_hostname.endswith(f".{domain}")
+            or any(
+                image_hostname == trusted or image_hostname.endswith(f".{trusted}")
+                for trusted in TRUSTED_NOVEL_IMAGE_HOSTS
+            )
+        ):
+            logger.warning(f"Skipped novel image from untrusted host: {img_url}")
+            continue
+
         url_hash = hashlib.md5(img_url.encode("utf-8")).hexdigest()
-        ext = "jpg"
-        if ".png" in img_url.lower():
-            ext = "png"
-        elif ".gif" in img_url.lower():
-            ext = "gif"
+        url_ext = os.path.splitext(parsed_image_url.path)[1].lower().lstrip(".")
+        ext = url_ext if url_ext in {"avif", "gif", "jpeg", "jpg", "png", "webp"} else None
+        response = None
+        if ext is None:
+            try:
+                response = api.session.get(img_url, headers=headers, timeout=15)
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                ext = SAFE_IMAGE_TYPES.get(content_type)
+                if not ext:
+                    logger.warning(f"Skipped unsupported novel image type {content_type}: {img_url}")
+                    continue
+            except Exception as e:
+                logger.warning(f"Failed to download novel image {img_url}: {e}")
+                continue
 
         filename = f"{url_hash}.{ext}"
+        page_storage_path = f"alllib/novel/{storage_key}/images/{filename}"
         if is_sensitive:
-            page_storage_path = f"alllib/novel/{storage_key}/images/{filename}.enc"
-        else:
-            page_storage_path = f"alllib/novel/{storage_key}/images/{filename}"
+            page_storage_path += ".enc"
 
         if not storage.file_exists(page_storage_path):
             try:
-                resp = api.session.get(img_url, headers=headers, timeout=15)
-                if resp.status_code == 200 and len(resp.content) > 100:
+                resp = response or api.session.get(img_url, headers=headers, timeout=15)
+                content_type = resp.headers.get("content-type", "").split(";", 1)[0].lower()
+                if resp.status_code == 200 and content_type in SAFE_IMAGE_TYPES and len(resp.content) > 100:
                     if is_sensitive:
                         storage.save_file_encrypted(resp.content, page_storage_path)
                     else:
@@ -189,11 +232,11 @@ def download_lib_task(
 
     update_redis("Initializing Lib Network Client...", "5%")
 
-    api = LibAPI(auth_token=auth_token)
+    api = get_source_api(url, auth_token=auth_token)
     site_id, domain = api.get_site_info_from_url(url)
 
     # Auto-detect media type
-    if site_id == 3:
+    if site_id in (3, RANOBEHUB_SITE_ID):
         media_type = "novel"
     elif site_id == 6:
         media_type = "anime"
@@ -310,11 +353,10 @@ def download_lib_task(
                     cover_headers["Authorization"] = f"Bearer {api._auth_token}"
 
                 resp = api.session.get(cover_url, headers=cover_headers, timeout=10)
-                if resp.status_code == 200 and len(resp.content) > 200:
+                content_type = resp.headers.get("content-type", "").split(";", 1)[0].lower()
+                if resp.status_code == 200 and content_type in SAFE_IMAGE_TYPES and len(resp.content) > 200:
                     storage = get_storage()
-                    ext = cover_url.split("?")[0].split(".")[-1] or "jpg"
-                    if ext.lower() not in ("jpg", "jpeg", "png", "webp"):
-                        ext = "jpg"
+                    ext = SAFE_IMAGE_TYPES[content_type]
                     is_sensitive = site_id in (2, 4)
                     storage_key = _make_storage_key(slug, site_id)
                     if is_sensitive:
@@ -411,6 +453,7 @@ def download_lib_task(
 
             if media_type == "novel":
                 parser = LibParser()
+                failed_chapters = []
                 for idx, (ch_info, b_id) in enumerate(filtered_chapters):
                     # Check for cancellation
                     if not redis_client.exists(f"alllib_dl:{task_id}"):
@@ -449,7 +492,7 @@ def download_lib_task(
 
                             # Localize external images to local storage
                             if html:
-                                html = localize_novel_images(html, slug, site_id, api, storage)
+                                html = localize_novel_images(html, slug, site_id, domain, api, storage)
 
                         stmt_ch = select(LibChapter).where(
                             (LibChapter.media_id == media_db_id)
@@ -475,7 +518,12 @@ def download_lib_task(
                         session.commit()
                     except Exception as ch_err:
                         logger.error(f"Failed to download chapter {num} (Vol {vol}): {ch_err}")
+                        failed_chapters.append(f"{vol}/{num}")
                         continue
+                if failed_chapters:
+                    raise RuntimeError(
+                        f"Failed to download {len(failed_chapters)} chapter(s): {', '.join(failed_chapters[:5])}"
+                    )
 
             elif media_type == "manga":
                 image_servers = api.get_image_servers(site_id=site_id, domain=domain)

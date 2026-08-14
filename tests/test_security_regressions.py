@@ -62,6 +62,8 @@ class ExternalFetchSecurityTests(unittest.TestCase):
     def test_image_proxy_only_accepts_known_https_hosts(self):
         self.assertTrue(_is_allowed_lib_url("https://img.cdnlibs.org/page.jpg"))
         self.assertTrue(_is_allowed_lib_url("https://ranobelib.me/uploads/page.jpg"))
+        self.assertTrue(_is_allowed_lib_url("https://ranobehub.org/api/media/1"))
+        self.assertTrue(_is_allowed_lib_url("https://ranobe.space/api/media/1"))
         self.assertFalse(_is_allowed_lib_url("http://cdnlibs.org/page.jpg"))
         self.assertFalse(_is_allowed_lib_url("https://cdnlibs.org.example.com/page.jpg"))
         self.assertFalse(_is_allowed_lib_url("https://127.0.0.1/admin"))
