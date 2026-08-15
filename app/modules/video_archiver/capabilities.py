@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.video_archiver.models import ArchivedVideo
+from app.modules.video_archiver.providers import PlatformRegistry
 
 
 async def resolve_package_resources(package_id: str, db: AsyncSession) -> list:
@@ -21,9 +22,11 @@ async def resolve_entity(db: AsyncSession, entity_type: str, entity_id: str) -> 
     video = await db.get(ArchivedVideo, entity_id)
     if not video:
         return None
+    source_url = PlatformRegistry.get_provider_by_id(video.platform).build_video_url(video.id)
     return {
         "type": entity_type,
         "title": video.title,
         "url": f"/video-archiver/dashboard?video_id={video.id}",
         "thumbnail": f"/api/video-archiver/videos/{video.id}/thumbnail" if video.thumbnail_path else None,
+        "source_url": source_url,
     }

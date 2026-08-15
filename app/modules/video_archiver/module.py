@@ -19,6 +19,7 @@ MODULE = ModuleSpec(
     package_resolver="app.modules.video_archiver.capabilities:resolve_package_resources",
     entity_types=("video",),
     entity_resolver="app.modules.video_archiver.capabilities:resolve_entity",
+    uses_integrations=("media.audio.import.v1",),
     progress_key_patterns=("video_dl:*", "video_oauth:*"),
     dependency_extra="video_archiver",
     system_packages=("deno", "ffmpeg"),

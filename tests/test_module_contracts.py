@@ -290,6 +290,9 @@ class ModuleManifestTests(unittest.TestCase):
                 spec.module_cleanup,
                 spec.package_resolver,
                 spec.entity_resolver,
+                *(integration.handler for integration in spec.integrations),
+                *(integration.request_model for integration in spec.integrations),
+                *(integration.result_model for integration in spec.integrations),
             ):
                 if path:
                     with self.subTest(module=record.id, component=path):

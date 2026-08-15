@@ -10,9 +10,17 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.core.config import get_settings
 from app.core.module_config import load_enabled_module_ids
-from app.core.module_types import MODULE_API_VERSION, ModuleSpec
+from app.core.module_types import (
+    MODULE_API_VERSION,
+    IntegrationContext,
+    IntegrationSpec,
+    IntegrationUnavailableError,
+    ModuleSpec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +122,8 @@ class ModuleRegistry:
         storage_namespaces: dict[str, ModuleRecord] = {}
         package_prefixes: dict[str, ModuleRecord] = {}
         entity_types: dict[str, ModuleRecord] = {}
+        integrations: dict[str, ModuleRecord] = {}
+        ui_actions: dict[str, ModuleRecord] = {}
         for record in self.installed_records():
             spec = record.spec
             if not spec:
@@ -126,6 +136,8 @@ class ModuleRegistry:
                 ),
                 *((prefix, package_prefixes, "package prefix") for prefix in spec.package_prefixes),
                 *((entity_type, entity_types, "entity type") for entity_type in spec.entity_types),
+                *((item.id, integrations, "integration") for item in spec.integrations),
+                *((item.id, ui_actions, "UI action") for item in spec.ui_actions),
             )
             for declaration in declarations:
                 if declaration is None:
@@ -396,6 +408,116 @@ class ModuleRegistry:
                 )
                 return None
         return None
+
+    def integration_provider(self, integration_id: str) -> tuple[ModuleRecord, IntegrationSpec] | None:
+        for record in self.active_records():
+            if not record.spec:
+                continue
+            for integration in record.spec.integrations:
+                if integration.id == integration_id:
+                    return record, integration
+        return None
+
+    def has_integration(self, integration_id: str) -> bool:
+        return self.integration_provider(integration_id) is not None
+
+    def integration_catalog(self) -> list[dict[str, Any]]:
+        """Describe active integrations for API clients and diagnostics."""
+        catalog = []
+        for record in self.active_records():
+            if not record.spec:
+                continue
+            for integration in record.spec.integrations:
+                try:
+                    request_model = self._load_object(integration.request_model)
+                    result_model = self._load_object(integration.result_model)
+                    catalog.append(
+                        {
+                            "id": integration.id,
+                            "module_id": record.id,
+                            "request_schema": request_model.model_json_schema(),
+                            "result_schema": result_model.model_json_schema(),
+                            "used_by": sorted(
+                                consumer.id
+                                for consumer in self.active_records()
+                                if consumer.spec and integration.id in consumer.spec.uses_integrations
+                            ),
+                        }
+                    )
+                except Exception as exc:
+                    self._component_error(record, f"integration:{integration.id}", exc)
+        return sorted(catalog, key=lambda item: item["id"])
+
+    async def invoke_integration(
+        self,
+        integration_id: str,
+        payload: dict[str, Any],
+        context: IntegrationContext,
+    ) -> dict[str, Any]:
+        """Validate and invoke an active module's versioned integration handler."""
+        provider = self.integration_provider(integration_id)
+        if not provider:
+            raise IntegrationUnavailableError(f"No active provider for integration {integration_id!r}")
+
+        record, integration = provider
+        try:
+            request_model = self._load_object(integration.request_model)
+            result_model = self._load_object(integration.result_model)
+            handler = self._load_object(integration.handler)
+        except Exception as exc:
+            self._component_error(record, f"integration:{integration_id}", exc)
+            raise IntegrationUnavailableError(f"Integration {integration_id!r} could not be loaded") from exc
+
+        request = request_model.model_validate(payload)
+        result = handler(request, context)
+        if inspect.isawaitable(result):
+            result = await result
+        try:
+            validated_result = result_model.model_validate(result)
+        except ValidationError as exc:
+            raise RuntimeError(f"Integration {integration_id!r} returned an invalid result") from exc
+        return validated_result.model_dump(mode="json")
+
+    def ui_actions(self, slot: str, context: dict[str, str], lang: str = "en") -> list[dict[str, Any]]:
+        """Return safe, structured actions contributed by active modules."""
+        entity_type = context.get("entity_type")
+        entity_owner = next(
+            (
+                record
+                for record in self.active_records()
+                if record.spec and entity_type in record.spec.entity_types
+            ),
+            None,
+        )
+        actions = []
+        for record in self.active_records():
+            if not record.spec:
+                continue
+            for action in record.spec.ui_actions:
+                if action.slot != slot or not self.has_integration(action.integration):
+                    continue
+                if action.entity_types:
+                    if entity_type not in action.entity_types:
+                        continue
+                    if (
+                        not entity_owner
+                        or not entity_owner.spec
+                        or action.integration not in entity_owner.spec.uses_integrations
+                    ):
+                        continue
+                actions.append(
+                    {
+                        "id": action.id,
+                        "module_id": record.id,
+                        "label": action.label_ru if lang == "ru" else action.label_en,
+                        "integration": action.integration,
+                        "method": "POST",
+                        "href": f"/api/integrations/{action.integration}",
+                        "payload": context,
+                        "order": action.order,
+                    }
+                )
+        return sorted(actions, key=lambda action: (action["order"], action["id"]))
 
     async def run_startup_hooks(self) -> None:
         for record in self.active_records():

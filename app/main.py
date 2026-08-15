@@ -174,7 +174,10 @@ app.add_middleware(
 )
 
 # ── Static Files ─────────────────────────────────────────
-app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+static_directory = Path("/app/static")
+if not static_directory.is_dir():
+    static_directory = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=static_directory), name="static")
 
 
 # ── Auto-mount module routers and register templates variables ────────────
@@ -192,9 +195,11 @@ def _module_guard(module_id: str):
 for module_id, module_router in module_registry.load_routers():
     app.include_router(module_router, dependencies=[Depends(_module_guard(module_id))])
 
+from app.core.integrations_router import router as integrations_router
 from app.core.packages_router import router as packages_router
 
 app.include_router(packages_router)
+app.include_router(integrations_router)
 
 templates.env.globals["active_modules"] = module_registry.navigation
 

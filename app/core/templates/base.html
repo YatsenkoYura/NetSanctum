@@ -594,6 +594,86 @@
             }
         })();
 
+        class NetSanctumActions extends HTMLElement {
+            static observedAttributes = ['data-slot', 'data-entity-type', 'data-entity-id'];
+
+            connectedCallback() {
+                this.renderActions();
+            }
+
+            attributeChangedCallback() {
+                if (this.isConnected) this.renderActions();
+            }
+
+            async renderActions() {
+                const slot = this.dataset.slot;
+                const entityType = this.dataset.entityType;
+                const entityId = this.dataset.entityId;
+                const renderId = (this.renderId || 0) + 1;
+                this.renderId = renderId;
+                this.replaceChildren();
+                if (!slot || !entityType || !entityId) return;
+
+                const query = new URLSearchParams({
+                    slot: slot,
+                    entity_type: entityType,
+                    entity_id: entityId,
+                });
+                try {
+                    const response = await fetch(`/api/integrations/ui-actions?${query}`);
+                    if (!response.ok) throw new Error(`Could not load actions (${response.status})`);
+                    const actions = await response.json();
+                    if (this.renderId !== renderId) return;
+
+                    for (const action of actions) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.textContent = action.label;
+                        button.className = 'bg-zinc-900 border border-zinc-700 hover:border-teal-400 text-zinc-300 hover:text-teal-400 font-mono text-xs px-3 py-1.5 uppercase transition-colors disabled:opacity-50';
+                        button.addEventListener('click', () => this.invokeAction(button, action));
+                        this.append(button);
+                    }
+                } catch (error) {
+                    console.error('Integration actions error:', error);
+                }
+            }
+
+            async invokeAction(button, action) {
+                button.disabled = true;
+                try {
+                    const response = await fetch(action.href, {
+                        method: action.method,
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(action.payload),
+                    });
+                    const result = await response.json();
+                    if (!response.ok) {
+                        const detail = typeof result.detail === 'string' ? result.detail : 'Integration failed';
+                        throw new Error(detail);
+                    }
+                    window.dispatchEvent(new CustomEvent('netsanctum:integration-complete', {
+                        detail: {action: action, result: result},
+                    }));
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Action completed');
+                    }
+                } catch (error) {
+                    console.error('Integration invocation error:', error);
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Integration failed', 'error');
+                    } else {
+                        alert('Integration failed');
+                    }
+                } finally {
+                    button.disabled = false;
+                }
+            }
+        }
+
+        if (!customElements.get('netsanctum-actions')) {
+            customElements.define('netsanctum-actions', NetSanctumActions);
+        }
+
         // Package context preservation and request interception
         (function () {
             // Read and persist package_id from URL query params

@@ -135,6 +135,53 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
+### Module integrations
+
+Modules expose versioned operations through the central registry instead of importing or calling one
+another directly. A provider declares a typed handler and optional UI contribution:
+
+```python
+from app.core.module_types import IntegrationSpec, ModuleSpec, UiActionSpec
+
+MUSIC_MODULE = ModuleSpec(
+    # ...regular module metadata...
+    integrations=(
+        IntegrationSpec(
+            id="media.audio.import.v1",
+            handler="example.integrations:import_audio",
+            request_model="example.integrations:ImportRequest",
+            result_model="example.integrations:ImportResult",
+        ),
+    ),
+    ui_actions=(
+        UiActionSpec(
+            id="example.import_audio",
+            slot="entity.actions",
+            integration="media.audio.import.v1",
+            label_en="Import audio",
+            label_ru="Импортировать аудио",
+            entity_types=("video",),
+        ),
+    ),
+)
+```
+
+The entity-owning module explicitly allows the action without importing its provider:
+
+```python
+VIDEO_MODULE = ModuleSpec(
+    # ...regular module metadata and entity resolver...
+    uses_integrations=("media.audio.import.v1",),
+)
+```
+
+Handlers accept their declared Pydantic request model and an `IntegrationContext`, then return the
+declared result model. `GET /api/integrations` exposes active contracts and JSON schemas;
+`POST /api/integrations/{integration_id}` invokes them. UI pages provide generic
+`<netsanctum-actions>` slots, and the framework renders only actions whose provider is active and whose
+contract the entity-owning module declared in `uses_integrations`. UI contributions contain structured
+metadata only, never arbitrary HTML or JavaScript.
+
 ## Quick Start
 
 Requirements:

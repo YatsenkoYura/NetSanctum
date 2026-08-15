@@ -2,9 +2,75 @@
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 MODULE_API_VERSION = 1
 MODULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+INTEGRATION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
+UI_EXTENSION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
+
+
+def _validate_object_path(path: str, label: str) -> None:
+    module_path, separator, attribute = path.partition(":")
+    if not separator or not module_path or not attribute:
+        raise ValueError(f"{label} must use 'module:attribute' syntax: {path!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationSpec:
+    """A versioned operation implemented by a module."""
+
+    id: str
+    handler: str
+    request_model: str
+    result_model: str
+
+    def __post_init__(self) -> None:
+        if not INTEGRATION_ID_PATTERN.fullmatch(self.id):
+            raise ValueError(f"Invalid versioned integration id: {self.id!r}")
+        _validate_object_path(self.handler, "Integration handler")
+        _validate_object_path(self.request_model, "Integration request model")
+        _validate_object_path(self.result_model, "Integration result model")
+
+
+@dataclass(frozen=True, slots=True)
+class UiActionSpec:
+    """Structured UI contribution that invokes an integration."""
+
+    id: str
+    slot: str
+    integration: str
+    label_en: str
+    label_ru: str
+    entity_types: tuple[str, ...] = ()
+    order: int = 100
+
+    def __post_init__(self) -> None:
+        if not UI_EXTENSION_ID_PATTERN.fullmatch(self.id):
+            raise ValueError(f"Invalid UI action id: {self.id!r}")
+        if not UI_EXTENSION_ID_PATTERN.fullmatch(self.slot):
+            raise ValueError(f"Invalid UI action slot: {self.slot!r}")
+        if not INTEGRATION_ID_PATTERN.fullmatch(self.integration):
+            raise ValueError(f"Invalid UI action integration id: {self.integration!r}")
+        if not self.label_en.strip() or not self.label_ru.strip():
+            raise ValueError(f"UI action {self.id!r} must declare English and Russian labels")
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationContext:
+    """Request-scoped infrastructure passed to an integration handler."""
+
+    session: Any
+    user: Any
+    registry: Any
+
+
+class IntegrationUnavailableError(LookupError):
+    """Raised when no active module provides an integration."""
+
+
+class IntegrationRejectedError(ValueError):
+    """Raised when an integration cannot handle the supplied context."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +97,9 @@ class ModuleSpec:
     package_resolver: str | None = None
     entity_types: tuple[str, ...] = ()
     entity_resolver: str | None = None
+    integrations: tuple[IntegrationSpec, ...] = ()
+    uses_integrations: tuple[str, ...] = ()
+    ui_actions: tuple[UiActionSpec, ...] = ()
     progress_key_patterns: tuple[str, ...] = ()
     dependency_extra: str | None = None
     system_packages: tuple[str, ...] = ()
@@ -54,3 +123,14 @@ class ModuleSpec:
             raise ValueError(f"Module {self.id!r} must declare entity_types and entity_resolver together")
         if (self.file_cleanup or self.module_cleanup) and not self.storage_namespaces:
             raise ValueError(f"Module {self.id!r} cleanup hooks require storage_namespaces")
+        integration_ids = [integration.id for integration in self.integrations]
+        if len(integration_ids) != len(set(integration_ids)):
+            raise ValueError(f"Module {self.id!r} declares duplicate integrations")
+        for integration_id in self.uses_integrations:
+            if not INTEGRATION_ID_PATTERN.fullmatch(integration_id):
+                raise ValueError(f"Invalid used integration id: {integration_id!r}")
+        if len(self.uses_integrations) != len(set(self.uses_integrations)):
+            raise ValueError(f"Module {self.id!r} declares duplicate integration uses")
+        action_ids = [action.id for action in self.ui_actions]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError(f"Module {self.id!r} declares duplicate UI actions")
