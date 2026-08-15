@@ -40,6 +40,11 @@ jobs:
     - name: Verify Dependency Lock
       run: uv lock --check
 
+    - name: Verify Wheel Migration Runtime
+      run: |
+        uv build --wheel
+        python -c "import glob, zipfile; names=set(zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist()); assert 'netsanctum_alembic/env.py' in names; assert 'netsanctum_alembic/module_env/env.py' in names; assert any(name.startswith('netsanctum_alembic/versions/') for name in names)"
+
     - name: Verify Module Build Catalog
       run: python scripts/module_build.py check
 
@@ -95,3 +100,43 @@ jobs:
         assert importlib.util.find_spec('yt_dlp') is None;
         assert importlib.util.find_spec('openai') is None;
         assert importlib.util.find_spec('requests') is None"
+
+  migration-compatibility:
+    name: Migration Compatibility
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netsanctum
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: netsanctum_test
+        ports:
+        - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U netsanctum -d netsanctum_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL_SYNC: postgresql+psycopg2://netsanctum:test@localhost:5432/netsanctum_test
+      MIGRATION_TEST_DATABASE_URL: postgresql+psycopg2://netsanctum:test@localhost:5432/netsanctum_test
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      with:
+        version: '0.11.18'
+
+    - name: Install Dependencies
+      run: uv sync --locked
+
+    - name: Verify Fresh and Legacy Migrations
+      run: uv run python -m unittest tests.test_migrations.PostgresMigrationSmokeTests -v

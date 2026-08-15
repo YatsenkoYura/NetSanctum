@@ -1,4 +1,4 @@
-from app.core.module_types import IntegrationSpec, ModuleSpec, UiActionSpec
+from app.core.module_types import IntegrationSpec, MigrationSpec, ModuleSpec, UiActionSpec
 
 MODULE = ModuleSpec(
     id="music",
@@ -9,6 +9,12 @@ MODULE = ModuleSpec(
     order=10,
     router="app.modules.music.router:router",
     models="app.modules.music.models",
+    migrations=MigrationSpec(
+        path="migrations",
+        baseline_revision="music_0001",
+        tables=("songs", "playlists", "playlist_songs"),
+        legacy_tables=("songs", "playlists", "playlist_songs"),
+    ),
     tasks="app.modules.music.tasks",
     templates="templates",
     i18n="app.modules.music.i18n",

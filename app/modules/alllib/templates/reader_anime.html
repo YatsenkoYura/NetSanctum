@@ -139,7 +139,7 @@
     .center-play-btn {
       padding: 16px !important;
     }
-    
+
     /* Make progress bar easier to tap */
     .progress-container {
       height: 6px !important;
@@ -205,7 +205,7 @@
       const container = video.closest('.custom-video-player') || video.parentElement;
       const playBtn = container.querySelector('.play-btn');
       const centerPlayBtn = container.querySelector('.center-play-btn');
-      
+
       if (video.paused) {
           video.play();
           if (playBtn) playBtn.innerHTML = PAUSE_ICON;
@@ -330,9 +330,9 @@
       if (!container) return;
       container.classList.add('show-controls');
       container.classList.remove('controls-hidden');
-      
+
       if (controlsTimeout) clearTimeout(controlsTimeout);
-      
+
       if (!video.paused) {
           controlsTimeout = setTimeout(() => {
               const activeV = document.getElementById('anime-video-player');

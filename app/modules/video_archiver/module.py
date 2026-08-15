@@ -1,4 +1,4 @@
-from app.core.module_types import ModuleSpec
+from app.core.module_types import MigrationSpec, ModuleSpec
 
 MODULE = ModuleSpec(
     id="video_archiver",
@@ -9,6 +9,22 @@ MODULE = ModuleSpec(
     order=20,
     router="app.modules.video_archiver.router:router",
     models="app.modules.video_archiver.models",
+    migrations=MigrationSpec(
+        path="migrations",
+        baseline_revision="video_0001",
+        tables=(
+            "video_channels",
+            "archived_videos",
+            "video_playlists",
+            "video_playlist_association",
+        ),
+        legacy_tables=(
+            "video_channels",
+            "archived_videos",
+            "video_playlists",
+            "video_playlist_association",
+        ),
+    ),
     tasks="app.modules.video_archiver.tasks",
     templates="templates",
     i18n="app.modules.video_archiver.i18n",

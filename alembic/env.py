@@ -54,9 +54,15 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    supplied_connection = config.attributes.get("connection")
+    if supplied_connection is not None:
+        context.configure(connection=supplied_connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     settings = get_settings()
     connectable = create_engine(settings.DATABASE_URL_SYNC)
-
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
 

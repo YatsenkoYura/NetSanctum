@@ -118,6 +118,18 @@ class ModuleRegistry:
         return registry
 
     def _validate_capabilities(self) -> None:
+        migration_owners: dict[str, ModuleRecord] = {}
+        for record in self.declared_records():
+            if not record.spec or not record.spec.migrations:
+                continue
+            for table in record.spec.migrations.owned_tables:
+                owner = migration_owners.get(table)
+                if owner:
+                    raise RuntimeError(
+                        f"Duplicate migration table {table!r} declared by {owner.id!r} and {record.id!r}"
+                    )
+                migration_owners[table] = record
+
         dashboards: dict[str, ModuleRecord] = {}
         storage_namespaces: dict[str, ModuleRecord] = {}
         package_prefixes: dict[str, ModuleRecord] = {}

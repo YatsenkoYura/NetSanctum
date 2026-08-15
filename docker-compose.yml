@@ -48,8 +48,8 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "python -m app.core.migrations upgrade &&
+             exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   # ── Celery Worker ──────────────────────────────────────
   worker:
@@ -71,9 +71,10 @@ services:
       redis:
         condition: service_healthy
     command: >
-      celery -A app.core.scheduler:celery_app worker
-      --loglevel=info
-      --concurrency=2
+      sh -c "python -m app.core.migrations upgrade &&
+             exec celery -A app.core.scheduler:celery_app worker
+             --loglevel=info
+             --concurrency=2"
 
 volumes:
   pg_data:

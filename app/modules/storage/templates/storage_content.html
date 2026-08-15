@@ -34,7 +34,7 @@
 
     <!-- ── Capacity Statistics Grid ────────────────── -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        
+
         <!-- Used space (with bar) -->
         <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col justify-between min-h-[140px]">
             <div>
@@ -45,7 +45,7 @@
                     {{ stats.used_human }}
                 </span>
             </div>
-            
+
             {% if not stats.is_s3 %}
             <div class="mt-4 space-y-2">
                 <div class="w-full bg-zinc-900 h-3 border border-zinc-800 relative overflow-hidden">
@@ -107,7 +107,7 @@
                 {{ _('storage', 'module_caches') }}
             </span>
         </div>
-        
+
         <div class="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-zinc-800">
             {% for mod in stats.modules %}
             <div class="p-6 flex flex-col justify-between min-h-[180px] hover:bg-zinc-900/10 transition-colors">
@@ -122,7 +122,7 @@
                         {{ _('storage', 'file_count', count=mod.file_count) }}
                     </div>
                 </div>
-                
+
                 <div class="mt-6">
                     {% if mod.file_count > 0 %}
                     <button hx-post="/storage/api/clean-module?module={{ mod.name }}"
@@ -154,7 +154,7 @@
                 TOP 50 LARGEST ITEMS
             </span>
         </div>
-        
+
         <div class="overflow-x-auto">
             <table class="w-full border-collapse text-left text-xs font-mono">
                 <thead>

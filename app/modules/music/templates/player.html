@@ -7,16 +7,16 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path>
             </svg>
             <input type="text" name="search" value="{{ search }}"
-                   placeholder="{{ _('music', 'search_placeholder') }}" 
-                   hx-get="/music/ui/player" 
-                   hx-trigger="keyup changed delay:300ms, search" 
+                   placeholder="{{ _('music', 'search_placeholder') }}"
+                   hx-get="/music/ui/player"
+                   hx-trigger="keyup changed delay:300ms, search"
                    hx-target="#content-songs"
                    hx-push-url="false"
                    class="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-teal-400 focus:outline-none transition-all shadow-sm rounded-none">
         </div>
 
         <!-- Combined Single Tab Switcher Icon Button (Shows target view) -->
-        <button onclick="switchMusicTab('playlists')" 
+        <button onclick="switchMusicTab('playlists')"
                 title="Плейлисты"
                 class="music-tab-toggle h-[34px] w-[34px] shrink-0 bg-zinc-900/90 border border-zinc-800 hover:border-teal-500/50 hover:bg-zinc-800/80 transition-all flex items-center justify-center cursor-pointer rounded-none group">
             <svg class="w-4 h-4 text-zinc-300 group-hover:text-teal-400 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -25,7 +25,7 @@
         </button>
 
         <!-- Download Green Plus Button -->
-        <button onclick="toggleDownloadDrawer()" 
+        <button onclick="toggleDownloadDrawer()"
                 title="{{ _('music', 'download') }}"
                 class="h-[34px] w-[34px] shrink-0 text-emerald-400 hover:text-emerald-300 font-bold transition-all border border-emerald-500/40 bg-emerald-950/40 hover:bg-emerald-900/70 flex items-center justify-center shadow-sm cursor-pointer rounded-none">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
@@ -47,7 +47,7 @@
                   hx-target="#download-feedback"
                   hx-swap="innerHTML"
                   class="flex flex-col gap-4">
-                
+
                 <div>
                     <label class="block text-[10px] font-mono text-zinc-400 mb-1">Track or Playlist URL</label>
                     <input type="text" name="url" required
@@ -90,9 +90,9 @@
                     {{ _('music', 'btn_download') }}
                 </button>
             </form>
-            
+
             <div id="download-feedback" class="mt-4"></div>
-            
+
             <div class="mt-6 border-t border-zinc-900 pt-4">
                 <div class="flex justify-between items-center mb-3">
                     <h4 class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Active Downloads</h4>
@@ -103,7 +103,7 @@
                     <div class="text-xs font-mono text-zinc-600">Loading...</div>
                 </div>
             </div>
-            
+
             <p class="text-[10px] font-mono text-zinc-600 mt-6 leading-relaxed border-t border-zinc-900 pt-3">
                 {{ _('music', 'download_hint') }}
             </p>
@@ -121,11 +121,11 @@
              data-song-audio="{{ song.audio_url }}"
              data-song-cover="{{ song.cover_url or '' }}"
              class="song-card group relative cursor-pointer">
-            
+
             <!-- Square Cover Art -->
             <div class="song-cover-wrapper">
                 {% if song.cover_url %}
-                    <img src="{{ song.cover_url }}" alt="Cover" 
+                    <img src="{{ song.cover_url }}" alt="Cover"
                          class="song-cover-img"
                          style="object-position: {{ song.cover_offset_x|default(50) }}% {{ song.cover_offset_y|default(50) }}%;">
                 {% else %}
@@ -143,7 +143,7 @@
 
                 {% if song.cover_url %}
                 <!-- Cover Reposition Button (top-right, appears on hover) -->
-                <button onclick="event.stopPropagation(); openCoverEditor(this.closest('.song-card'), {{ song.id }})" 
+                <button onclick="event.stopPropagation(); openCoverEditor(this.closest('.song-card'), {{ song.id }})"
                         class="reposition-btn" title="Adjust cover position">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"></path></svg>
                 </button>
@@ -159,16 +159,16 @@
                             class="outpost-only action-btn" title="Save to Device">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     </button>
-                    <button hx-delete="/music/ui/songs/{{ song.id }}" 
-                            hx-target="closest .song-card" 
-                            hx-swap="outerHTML" 
-                            onclick="event.stopPropagation();" 
+                    <button hx-delete="/music/ui/songs/{{ song.id }}"
+                            hx-target="closest .song-card"
+                            hx-swap="outerHTML"
+                            onclick="event.stopPropagation();"
                             class="action-btn action-btn-danger" title="Delete Song">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </div>
             </div>
-            
+
             <!-- Song Info -->
             <div class="song-info flex justify-between items-start">
                 <div class="min-w-0 flex-1">
@@ -206,7 +206,7 @@
                     <div class="control-row">
                         <button onclick="nudgeCover('x', -10)" class="nudge-btn">◀◀</button>
                         <button onclick="nudgeCover('x', -2)" class="nudge-btn">◀</button>
-                        <input type="range" id="cover-offset-x" min="0" max="100" value="50" 
+                        <input type="range" id="cover-offset-x" min="0" max="100" value="50"
                                oninput="updateCoverPreview()" class="cover-slider">
                         <button onclick="nudgeCover('x', 2)" class="nudge-btn">▶</button>
                         <button onclick="nudgeCover('x', 10)" class="nudge-btn">▶▶</button>
@@ -217,7 +217,7 @@
                     <div class="control-row">
                         <button onclick="nudgeCover('y', -10)" class="nudge-btn">▲▲</button>
                         <button onclick="nudgeCover('y', -2)" class="nudge-btn">▲</button>
-                        <input type="range" id="cover-offset-y" min="0" max="100" value="50" 
+                        <input type="range" id="cover-offset-y" min="0" max="100" value="50"
                                oninput="updateCoverPreview()" class="cover-slider">
                         <button onclick="nudgeCover('y', 2)" class="nudge-btn">▼</button>
                         <button onclick="nudgeCover('y', 10)" class="nudge-btn">▼▼</button>
@@ -593,22 +593,22 @@
     function openCoverEditor(cardEl, songId) {
         _coverEditorSongId = songId;
         _coverEditorCardEl = cardEl;
-        
+
         const img = cardEl.querySelector('.song-cover-img');
         if (!img) return;
-        
+
         const previewImg = document.getElementById('cover-preview-img');
         previewImg.src = img.src;
-        
+
         // Parse current object-position
         const pos = img.style.objectPosition || '50% 50%';
         const parts = pos.split(/\s+/);
         const ox = parseFloat(parts[0]) || 50;
         const oy = parseFloat(parts[1]) || 50;
-        
+
         document.getElementById('cover-offset-x').value = ox;
         document.getElementById('cover-offset-y').value = oy;
-        
+
         previewImg.style.objectPosition = ox + '% ' + oy + '%';
         document.getElementById('cover-editor-modal').classList.remove('hidden');
     }
@@ -641,10 +641,10 @@
 
     function saveCoverPosition() {
         if (!_coverEditorSongId) return;
-        
+
         const ox = document.getElementById('cover-offset-x').value;
         const oy = document.getElementById('cover-offset-y').value;
-        
+
         fetch('/music/api/songs/' + _coverEditorSongId + '/cover-position', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },

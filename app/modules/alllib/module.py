@@ -1,4 +1,4 @@
-from app.core.module_types import ModuleSpec
+from app.core.module_types import MigrationSpec, ModuleSpec
 
 MODULE = ModuleSpec(
     id="alllib",
@@ -9,6 +9,12 @@ MODULE = ModuleSpec(
     order=40,
     router="app.modules.alllib.router:router",
     models="app.modules.alllib.models",
+    migrations=MigrationSpec(
+        path="migrations",
+        baseline_revision="alllib_0001",
+        tables=("lib_media", "lib_chapters"),
+        legacy_tables=("lib_media", "lib_chapters"),
+    ),
     tasks="app.modules.alllib.tasks",
     templates="templates",
     i18n="app.modules.alllib.i18n",

@@ -261,14 +261,49 @@ python scripts/module_build.py check
 Apply database migrations:
 
 ```bash
-alembic upgrade head
+python -m app.core.migrations upgrade
+```
+
+Each database-backed module owns an independent Alembic history and version table under its package.
+The runner upgrades installed modules, including disabled ones so their data remains compatible. Existing
+databases using the legacy global history are upgraded and adopted automatically; no manual `stamp` is
+required.
+
+Database-backed module manifests declare their migration directory and table ownership:
+
+```python
+migrations=MigrationSpec(
+    path="migrations",
+    baseline_revision="example_0001",
+    tables=("example_items",),
+    legacy_tables=(),
+)
+```
+
+`legacy_tables` is only for bundled schemas that existed in the former global migration history.
+`tables` is the module's permanent ownership namespace; names of removed tables move to
+`historical_tables` so another module cannot reuse them.
+
+Create a migration for one module:
+
+```bash
+python -m app.core.migrations revision music -m "add album field"
+python -m app.core.migrations upgrade music
+python -m app.core.migrations check music
+```
+
+External module authors must point revision generation at their writable source tree instead of the
+installed wheel:
+
+```bash
+python -m app.core.migrations revision example -m "add field" \
+  --version-path ./example_netsanctum/migrations/versions
 ```
 
 ## Direction
 
 The next framework-level milestones are:
 
-- move module migrations into module-owned branches
 - add isolated module tests and health checks
 - document a stable module authoring API
 - support external modules without modifying the core repository

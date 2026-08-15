@@ -2,12 +2,15 @@
 
 import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 MODULE_API_VERSION = 1
 MODULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 INTEGRATION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
 UI_EXTENSION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
+MIGRATION_REVISION_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _validate_object_path(path: str, label: str) -> None:
@@ -74,6 +77,52 @@ class IntegrationRejectedError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class MigrationSpec:
+    """Module-owned Alembic history and its immutable legacy boundary."""
+
+    path: str
+    baseline_revision: str
+    tables: tuple[str, ...]
+    legacy_tables: tuple[str, ...] = ()
+    historical_tables: tuple[str, ...] = ()
+
+    @property
+    def owned_tables(self) -> tuple[str, ...]:
+        return (*self.tables, *self.historical_tables)
+
+    def __post_init__(self) -> None:
+        migration_path = PurePosixPath(self.path)
+        if (
+            self.path != self.path.strip()
+            or not self.path
+            or migration_path.is_absolute()
+            or ".." in migration_path.parts
+            or "\\" in self.path
+        ):
+            raise ValueError(f"Migration path must be package-relative: {self.path!r}")
+        if not MIGRATION_REVISION_PATTERN.fullmatch(self.baseline_revision):
+            raise ValueError(f"Invalid migration baseline revision: {self.baseline_revision!r}")
+        if not self.tables:
+            raise ValueError("Module migrations must declare owned tables")
+        if len(self.owned_tables) != len(set(self.owned_tables)):
+            raise ValueError("Module migrations declare duplicate tables")
+        for table in self.owned_tables:
+            if not TABLE_NAME_PATTERN.fullmatch(table):
+                raise ValueError(f"Invalid owned table name: {table!r}")
+            if table == "alembic_version" or table.startswith("alembic_version_"):
+                raise ValueError(f"Migration table name is reserved: {table!r}")
+            if table == "netsanctum_migration_ownership":
+                raise ValueError(f"Migration table name is reserved: {table!r}")
+        if len(self.legacy_tables) != len(set(self.legacy_tables)):
+            raise ValueError("Module migrations declare duplicate legacy tables")
+        unknown_legacy_tables = set(self.legacy_tables) - set(self.owned_tables)
+        if unknown_legacy_tables:
+            raise ValueError(
+                "Legacy tables must be owned by the module: " + ", ".join(sorted(unknown_legacy_tables))
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleSpec:
     """Declarative contract exported by an installed NetSanctum module."""
 
@@ -97,6 +146,7 @@ class ModuleSpec:
     package_resolver: str | None = None
     entity_types: tuple[str, ...] = ()
     entity_resolver: str | None = None
+    migrations: MigrationSpec | None = None
     integrations: tuple[IntegrationSpec, ...] = ()
     uses_integrations: tuple[str, ...] = ()
     ui_actions: tuple[UiActionSpec, ...] = ()
@@ -123,6 +173,10 @@ class ModuleSpec:
             raise ValueError(f"Module {self.id!r} must declare entity_types and entity_resolver together")
         if (self.file_cleanup or self.module_cleanup) and not self.storage_namespaces:
             raise ValueError(f"Module {self.id!r} cleanup hooks require storage_namespaces")
+        if self.migrations and not self.models:
+            raise ValueError(f"Module {self.id!r} migrations require a models module")
+        if self.migrations and len(f"alembic_version_{self.id}") > 63:
+            raise ValueError(f"Module {self.id!r} is too long for a PostgreSQL migration version table")
         integration_ids = [integration.id for integration in self.integrations]
         if len(integration_ids) != len(set(integration_ids)):
             raise ValueError(f"Module {self.id!r} declares duplicate integrations")
