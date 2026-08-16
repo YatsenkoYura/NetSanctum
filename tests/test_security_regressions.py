@@ -64,6 +64,8 @@ class ExternalFetchSecurityTests(unittest.TestCase):
         self.assertTrue(_is_allowed_lib_url("https://ranobelib.me/uploads/page.jpg"))
         self.assertTrue(_is_allowed_lib_url("https://ranobehub.org/api/media/1"))
         self.assertTrue(_is_allowed_lib_url("https://ranobe.space/api/media/1"))
+        self.assertTrue(_is_allowed_lib_url("https://uploads.mangadex.org/covers/id/file.jpg"))
+        self.assertTrue(_is_allowed_lib_url("https://novel-bin.net/files/image/book.jpg"))
         self.assertFalse(_is_allowed_lib_url("http://cdnlibs.org/page.jpg"))
         self.assertFalse(_is_allowed_lib_url("https://cdnlibs.org.example.com/page.jpg"))
         self.assertFalse(_is_allowed_lib_url("https://127.0.0.1/admin"))

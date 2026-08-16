@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_LIB_HOSTS = {
     "mangalib.me",
+    "mangadex.org",
+    "novel-bin.com",
+    "novel-bin.net",
     "ranobelib.me",
     "hentailib.org",
     "slashlib.me",
@@ -106,6 +109,9 @@ async def get_helper_userscript(request: Request, user=Depends(get_current_user)
 // @version      0.1
 // @description  Autofills Lib network titles/tokens to NetSanctum
 // @match        https://*.mangalib.me/*
+// @match        https://*.mangadex.org/*
+// @match        https://*.novel-bin.net/*
+// @match        https://*.novel-bin.com/*
 // @match        https://*.ranobelib.me/*
 // @match        https://*.hentailib.org/*
 // @match        https://*.slashlib.me/*
@@ -495,7 +501,7 @@ async def get_library_ui(
         # Determine type badge color and name
         badge_cls = "border-teal-400 text-teal-400"
         type_key = f"type_{m.media_type}"
-        if m.site_id in (3, 7):  # Novel
+        if m.site_id in (3, 7, 9):  # Novel
             badge_cls = "border-amber-400 text-amber-400"
         elif m.site_id == 4:  # Hentai
             badge_cls = "border-red-400 text-red-400"

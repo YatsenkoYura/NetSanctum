@@ -126,8 +126,10 @@
                         <select id="find-source-select" onchange="alllibChangeFindSource()"
                                 class="bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs font-mono text-white focus:outline-none transition-colors">
                             <option value="https://mangalib.me">MangaLib</option>
+                            <option value="https://mangadex.org">MangaDex</option>
                             <option value="https://ranobelib.me">RanobeLib</option>
                             <option value="https://ranobehub.org">RanobeHub</option>
+                            <option value="https://novel-bin.net">NovelBin</option>
                             <option value="https://hentailib.org">HentaiLib (18+)</option>
                             <option value="https://slashlib.me">SlashLib (18+)</option>
                             <option value="https://comixlib.me">ComixLib</option>
@@ -188,6 +190,9 @@
 // @version      0.1
 // @description  Autofills Lib network titles/tokens to NetSanctum
 // @match        https://*.mangalib.me/*
+// @match        https://*.mangadex.org/*
+// @match        https://*.novel-bin.net/*
+// @match        https://*.novel-bin.com/*
 // @match        https://*.ranobelib.me/*
 // @match        https://*.hentailib.org/*
 // @match        https://*.slashlib.me/*
@@ -544,7 +549,7 @@
                     </h3>
                     <div class="text-[11px] font-mono text-zinc-400 space-y-2 leading-relaxed">
                         <p>
-                            Чтобы поставить тайтл на закачку, перейдите на вкладку <span class="text-white font-bold">"Скачать"</span> (или <span class="text-white font-bold">"Найти"</span>) и введите ссылку на главную страницу произведения из сети сайтов Lib Network (MangaLib, RanobeLib, AniLib и др.).
+                            Чтобы поставить тайтл на закачку, перейдите на вкладку <span class="text-white font-bold">"Скачать"</span> (или <span class="text-white font-bold">"Найти"</span>) и введите ссылку на главную страницу произведения из поддерживаемого источника (MangaLib, MangaDex, RanobeLib, NovelBin, AniLib и др.).
                         </p>
                         <p class="text-zinc-500">
                             Пример рабочей ссылки: <code class="text-zinc-400 bg-zinc-950 px-1 py-0.5 select-all">https://mangalib.me/manga/chainsaw-man</code>

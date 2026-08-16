@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import os
+import time
 import urllib.parse
 
 import redis
@@ -17,6 +18,7 @@ from app.core.scheduler import celery_app
 from app.core.storage import get_storage
 from app.modules.alllib.api import LibParser
 from app.modules.alllib.models import LibChapter, LibMedia
+from app.modules.alllib.novelbin import NOVELBIN_SITE_ID
 from app.modules.alllib.ranobehub import RANOBEHUB_SITE_ID, get_source_api
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,8 @@ TRUSTED_NOVEL_IMAGE_HOSTS = {
     "hentailib.org",
     "mangalib.me",
     "mixlib.me",
+    "novel-bin.com",
+    "novel-bin.net",
     "ranobehub.org",
     "ranobelib.me",
     "ranobe.space",
@@ -236,7 +240,7 @@ def download_lib_task(
     site_id, domain = api.get_site_info_from_url(url)
 
     # Auto-detect media type
-    if site_id in (3, RANOBEHUB_SITE_ID):
+    if site_id in (3, RANOBEHUB_SITE_ID, NOVELBIN_SITE_ID):
         media_type = "novel"
     elif site_id == 6:
         media_type = "anime"
@@ -581,11 +585,28 @@ def download_lib_task(
                             if api._auth_token:
                                 headers["Authorization"] = f"Bearer {api._auth_token}"
 
-                            for server in image_servers:
-                                image_url = f"{server}/{rel_path}"
+                            if page_url_path.startswith("https://"):
+                                if not getattr(api, "direct_image_urls", False):
+                                    raise RuntimeError("Source returned an unexpected absolute page URL")
+                                image_urls = [page_url_path]
+                            else:
+                                image_urls = [f"{server}/{rel_path}" for server in image_servers]
+                            for image_url in image_urls:
+                                started_at = time.monotonic()
+                                resp = None
                                 try:
                                     resp = api.session.get(image_url, headers=headers, timeout=15)
-                                    if resp.status_code == 200 and len(resp.content) > 200:
+                                    image_ok = resp.status_code == 200 and len(resp.content) > 200
+                                    report_result = getattr(api, "report_image_result", None)
+                                    if report_result:
+                                        report_result(
+                                            image_url,
+                                            image_ok,
+                                            len(resp.content),
+                                            int((time.monotonic() - started_at) * 1000),
+                                            resp.headers.get("X-Cache", "").upper().startswith("HIT"),
+                                        )
+                                    if image_ok:
                                         is_sensitive = site_id in (2, 4)
                                         storage_key = _make_storage_key(slug, site_id)
                                         if is_sensitive:
@@ -603,10 +624,19 @@ def download_lib_task(
                                         break
                                     else:
                                         logger.debug(
-                                            f"CDN {server} returned status {resp.status_code} or small/empty content ({len(resp.content)} bytes)"
+                                            f"Image URL {image_url} returned status {resp.status_code} "
+                                            f"or small/empty content ({len(resp.content)} bytes)"
                                         )
                                 except Exception as e:
-                                    logger.debug(f"CDN {server} failed: {e}")
+                                    report_result = getattr(api, "report_image_result", None)
+                                    if report_result and resp is None:
+                                        report_result(
+                                            image_url,
+                                            False,
+                                            0,
+                                            int((time.monotonic() - started_at) * 1000),
+                                        )
+                                    logger.debug(f"Image URL {image_url} failed: {e}")
                                     continue
 
                             if not success:

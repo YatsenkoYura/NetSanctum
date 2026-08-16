@@ -166,7 +166,7 @@ app.add_middleware(
     allow_origin_regex=(
         r"https://([a-z0-9-]+\.)?"
         r"(mangalib\.me|ranobelib\.me|hentailib\.org|slashlib\.me|comixlib\.me|anilib\.me|"
-        r"ranobehub\.org|ranobe\.space)"
+        r"ranobehub\.org|ranobe\.space|mangadex\.org|novel-bin\.net|novel-bin\.com)"
     ),
     allow_credentials=False,
     allow_methods=["*"],
