@@ -47,6 +47,13 @@
             scrollbar-width: none;
         }
     </style>
+    <script>
+        window.sendToOutpost = function () {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Shared access is read-only', 'error');
+            }
+        };
+    </script>
     {% block head_extra %}{% endblock %}
 </head>
 <body class="bg-black text-zinc-300 min-h-screen font-sans antialiased pb-24 sm:pb-6">

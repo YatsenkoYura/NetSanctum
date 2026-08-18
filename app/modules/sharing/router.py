@@ -3,11 +3,14 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.routing import compile_path
 
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -52,8 +55,9 @@ def _harden_shared_response(response: Response) -> Response:
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'none'; style-src 'self'; img-src 'self' data:; "
-        "media-src 'self'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        "default-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     )
     return response
 
@@ -63,6 +67,91 @@ def _provider(module_id: str):
     if provider is None:
         raise HTTPException(status_code=400, detail="Module does not support sharing")
     return provider
+
+
+def _share_spec(module_id: str):
+    spec = module_registry.share_spec(module_id)
+    if spec is None:
+        raise HTTPException(status_code=400, detail="Module does not support sharing")
+    return spec
+
+
+def _match_share_path(path: str, declarations: tuple) -> tuple[Any, dict] | None:
+    candidate = f"/{path.strip('/')}"
+    for declaration in declarations:
+        regex, _format, converters = compile_path(f"/{declaration.path}")
+        match = regex.fullmatch(candidate)
+        if not match:
+            continue
+        params = {name: converters[name].convert(value) for name, value in match.groupdict().items()}
+        return declaration, params
+    return None
+
+
+def _shared_response(payload) -> Response:
+    if isinstance(payload, Response):
+        return payload
+    return JSONResponse(jsonable_encoder(payload))
+
+
+async def _render_shared_application(request: Request, share: ShareLink) -> Response:
+    spec = _share_spec(share.module_id)
+    response = templates.TemplateResponse(
+        request,
+        spec.dashboard_template,
+        {
+            "module_base": "shared_base.html",
+            "shared_mode": True,
+            "share": share,
+            "user": None,
+            "lang": request.cookies.get("lang", "en"),
+        },
+    )
+    response.body = response.body.replace(
+        spec.api_prefix.encode(),
+        f"/s/{share.id}{spec.api_prefix}".encode(),
+    )
+    response.headers["Content-Length"] = str(len(response.body))
+    return response
+
+
+async def _dispatch_shared_api(
+    request: Request,
+    share: ShareLink,
+    db: AsyncSession,
+    path: str,
+) -> Response:
+    if request.method not in {"GET", "HEAD"}:
+        return JSONResponse({"detail": "Shared access is read-only"}, status_code=403)
+
+    spec = _share_spec(share.module_id)
+    provider = _provider(share.module_id)
+    expected_prefix = spec.api_prefix.removeprefix("/api/")
+    normalized = path.strip("/")
+    if normalized == expected_prefix:
+        relative_path = ""
+    elif normalized.startswith(f"{expected_prefix}/"):
+        relative_path = normalized.removeprefix(f"{expected_prefix}/")
+    else:
+        raise _not_found()
+
+    matched_route = _match_share_path(relative_path, spec.routes)
+    if matched_route:
+        route, params = matched_route
+        handler = getattr(provider, route.source, None)
+        if handler is None:
+            raise RuntimeError(f"Share provider has no {route.source!r} handler")
+        return _shared_response(await handler(request, share, db, route, params))
+
+    matched_asset = _match_share_path(relative_path, spec.assets)
+    if matched_asset:
+        asset, params = matched_asset
+        handler = getattr(provider, "asset", None)
+        if handler is None:
+            raise RuntimeError("Share provider has no asset handler")
+        return _shared_response(await handler(request, share, db, asset, params))
+
+    raise _not_found()
 
 
 def _summary(share: ShareLink) -> dict:
@@ -219,7 +308,7 @@ async def shares_dashboard(request: Request, user=Depends(get_current_user)):
 async def list_share_providers(user=Depends(get_current_user)):
     providers = []
     for record in module_registry.active_records():
-        if not record.spec or not record.spec.share_provider:
+        if not record.spec or not record.spec.share:
             continue
         provider = module_registry.share_provider(record.id)
         if provider is not None:
@@ -228,7 +317,7 @@ async def list_share_providers(user=Depends(get_current_user)):
                     "module_id": record.id,
                     "title_en": record.spec.title_en,
                     "title_ru": record.spec.title_ru,
-                    "selector_key": provider.selector_key,
+                    "selector_key": record.spec.share.selector_key,
                 }
             )
     return providers
@@ -240,7 +329,7 @@ async def list_shareable_content(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    return await _provider(module_id).list_content(db)
+    return await _provider(module_id).catalog(db)
 
 
 @router.get("/api/shares")
@@ -260,8 +349,20 @@ async def create_share(
     if body.expires_at is not None and body.expires_at <= now:
         raise HTTPException(status_code=422, detail="Expiration must be in the future")
 
-    provider = _provider(body.module_id)
-    selector = await provider.validate_selection(db, body.selection_mode, body.selector)
+    share_spec = _share_spec(body.module_id)
+    selected_items = body.selector.get(share_spec.selector_key, [])
+    if body.selection_mode == "selected" and (
+        not isinstance(selected_items, list) or len(selected_items) > share_spec.max_items
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"A share may contain at most {share_spec.max_items} items",
+        )
+    selector = await _provider(body.module_id).selection(
+        db,
+        body.selection_mode,
+        body.selector,
+    )
     secret = None if body.public else secrets.token_urlsafe(32)
     share = ShareLink(
         id=str(uuid.uuid4()),
@@ -348,32 +449,21 @@ async def unlock_public_share(
     return await _establish_session(request, share, db)
 
 
-@router.get("/s/{share_id}/resource/{resource_id}/subtitle/{language}", include_in_schema=False)
-async def shared_subtitle(
+@router.api_route(
+    "/s/{share_id}/api/{path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+async def shared_module_api(
     share_id: str,
-    resource_id: str,
-    language: str,
+    path: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     share = await _active_share(db, share_id)
     if not await _is_authorized(request, share):
         raise _not_found()
-    return await _provider(share.module_id).serve_asset(request, share, db, resource_id, "subtitle", language)
-
-
-@router.get("/s/{share_id}/resource/{resource_id}/{asset}", include_in_schema=False)
-async def shared_resource(
-    share_id: str,
-    resource_id: str,
-    asset: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    share = await _active_share(db, share_id)
-    if not await _is_authorized(request, share):
-        raise _not_found()
-    return await _provider(share.module_id).serve_asset(request, share, db, resource_id, asset)
+    return await _dispatch_shared_api(request, share, db, path)
 
 
 @router.get("/s/{share_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -384,7 +474,7 @@ async def shared_application(
 ):
     share = await _active_share(db, share_id)
     if share.is_public and not share.password_hash:
-        response = await _provider(share.module_id).render(request, share, db)
+        response = await _render_shared_application(request, share)
         return _harden_shared_response(response)
 
     if not await _has_session(request, share.id):
@@ -398,5 +488,5 @@ async def shared_application(
         if share.password_hash:
             return _unlock_page(request, share, f"/s/{share.id}/unlock")
 
-    response = await _provider(share.module_id).render(request, share, db)
+    response = await _render_shared_application(request, share)
     return _harden_shared_response(response)

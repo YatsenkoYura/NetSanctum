@@ -5,16 +5,18 @@ from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.module_types import ShareAsset, ShareRoute
 from app.core.responses import serve_media_stream, serve_storage_file_chunked
-from app.core.templates import templates
-from app.modules.video_archiver.models import ArchivedVideo, VideoChannel
-from app.modules.video_archiver.providers import PlatformRegistry
+from app.modules.video_archiver.models import (
+    ArchivedVideo,
+    VideoChannel,
+    VideoPlaylist,
+    video_playlist_association,
+)
 
 
 class VideoShareProvider:
-    selector_key = "video_ids"
-
-    async def list_content(self, db: AsyncSession) -> list[dict]:
+    async def catalog(self, db: AsyncSession) -> list[dict]:
         result = await db.execute(select(ArchivedVideo).order_by(ArchivedVideo.archived_at.desc()))
         return [
             {
@@ -29,7 +31,7 @@ class VideoShareProvider:
             for video in result.scalars().all()
         ]
 
-    async def validate_selection(
+    async def selection(
         self,
         db: AsyncSession,
         selection_mode: str,
@@ -79,67 +81,179 @@ class VideoShareProvider:
         videos = {video.id: video for video in result.scalars().all()}
         return [videos[video_id] for video_id in video_ids if video_id in videos]
 
-    async def render(self, request: Request, share, db: AsyncSession):
-        videos = await self._selected_videos(db, share)
-        payload = [
-            {
-                "id": video.id,
-                "title": video.title,
-                "description": video.description,
-                "platform": video.platform,
-                "channel_name": video.channel_name,
-                "duration": video.duration,
-                "resolution": video.resolution,
-                "archived_at": video.archived_at.isoformat() if video.archived_at else None,
-                "like_count": video.like_count,
-                "view_count": video.view_count,
-                "tags": video.tags or [],
-                "comments": video.comments or [],
-                "subtitles": sorted((video.subtitles or {}).keys()),
-                "has_file": bool(video.file_path),
-                "has_thumbnail": bool(video.thumbnail_path),
-                "has_avatar": bool(video.channel_avatar_url or video.channel_id),
-                "source_url": PlatformRegistry.get_provider_by_id(video.platform).build_video_url(video.id),
-            }
-            for video in videos
-        ]
-        return templates.TemplateResponse(
-            request,
-            "shared_video.html",
-            {
-                "share": share,
-                "videos": videos,
-                "video_payload": payload,
-                "lang": request.cookies.get("lang", "en"),
-            },
-        )
+    @staticmethod
+    def _serialize_video(video: ArchivedVideo) -> dict:
+        return {
+            "id": video.id,
+            "title": video.title,
+            "description": video.description,
+            "platform": video.platform,
+            "channel_id": video.channel_id,
+            "channel_name": video.channel_name,
+            "channel_avatar_url": bool(video.channel_avatar_url or video.channel_id),
+            "duration": video.duration,
+            "resolution": video.resolution,
+            "file_path": bool(video.file_path),
+            "thumbnail_path": bool(video.thumbnail_path),
+            "status": video.status,
+            "comments": video.comments or [],
+            "subtitles": dict.fromkeys(video.subtitles or {}, True),
+            "like_count": video.like_count,
+            "view_count": video.view_count,
+            "tags": video.tags or [],
+            "archived_at": video.archived_at,
+            "updated_at": video.updated_at,
+            "original_publish_date": video.original_publish_date,
+            "auto_update": False,
+            "is_deleted_on_youtube": video.is_deleted_on_youtube,
+        }
 
-    async def serve_asset(
+    async def _shared_playlists(self, db: AsyncSession, share) -> list[dict]:
+        videos = await self._selected_videos(db, share)
+        allowed_ids = {video.id for video in videos}
+        if not allowed_ids:
+            return []
+        result = await db.execute(
+            select(VideoPlaylist, video_playlist_association.c.video_id)
+            .join(
+                video_playlist_association,
+                VideoPlaylist.id == video_playlist_association.c.playlist_id,
+            )
+            .where(video_playlist_association.c.video_id.in_(allowed_ids))
+            .order_by(VideoPlaylist.created_at.desc())
+        )
+        playlists: dict[int, dict] = {}
+        for playlist, video_id in result.all():
+            item = playlists.setdefault(
+                playlist.id,
+                {
+                    "id": playlist.id,
+                    "name": playlist.name,
+                    "description": playlist.description,
+                    "created_at": playlist.created_at,
+                    "video_ids": [],
+                },
+            )
+            item["video_ids"].append(video_id)
+        return list(playlists.values())
+
+    async def entities(
         self,
         request: Request,
         share,
         db: AsyncSession,
-        resource_id: str,
-        asset: str,
-        argument: str | None = None,
+        route: ShareRoute,
+        params: dict,
     ):
-        video = await self._get_allowed_video(db, share, resource_id)
-        if asset == "stream":
+        if route.name == "videos":
+            videos = await self._selected_videos(db, share)
+            search = (request.query_params.get("search") or "").lower()
+            channel_id = request.query_params.get("channel_id")
+            status = request.query_params.get("status")
+            deleted = request.query_params.get("is_deleted")
+            if search:
+                videos = [
+                    video
+                    for video in videos
+                    if search in video.title.lower()
+                    or search in (video.description or "").lower()
+                    or search in video.channel_name.lower()
+                ]
+            if channel_id:
+                videos = [
+                    video
+                    for video in videos
+                    if video.channel_id == channel_id or video.channel_name == channel_id
+                ]
+            if status:
+                videos = [video for video in videos if video.status == status]
+            if deleted in {"true", "false"}:
+                expected = deleted == "true"
+                videos = [video for video in videos if video.is_deleted_on_youtube is expected]
+            if request.query_params.get("sort_by") == "updated_at":
+                videos.sort(key=lambda video: video.updated_at or video.archived_at, reverse=True)
+            return [self._serialize_video(video) for video in videos]
+        if route.name == "video_detail":
+            video = await self._get_allowed_video(db, share, str(params["video_id"]))
+            return self._serialize_video(video)
+        raise HTTPException(status_code=404, detail="Shared entity route not found")
+
+    async def relations(
+        self,
+        request: Request,
+        share,
+        db: AsyncSession,
+        route: ShareRoute,
+        params: dict,
+    ):
+        if route.name == "playlists":
+            return await self._shared_playlists(db, share)
+        if route.name == "tasks_active":
+            return []
+        if route.name == "sync_dates":
+            return {"never": 0, "dates": [], "platforms": []}
+        if route.name == "cookies":
+            return {
+                "platform": params["platform"],
+                "cookies_text": "",
+                "has_cookies": False,
+                "auth_active": False,
+            }
+        if route.name == "youtube_oauth_status":
+            return {"status": "not_found"}
+        if route.name == "playlist_detail":
+            playlist_id = int(params["playlist_id"])
+            playlists = await self._shared_playlists(db, share)
+            playlist = next((item for item in playlists if item["id"] == playlist_id), None)
+            if not playlist:
+                raise HTTPException(status_code=404, detail="Shared playlist not found")
+            videos = await self._selected_videos(db, share)
+            video_map = {video.id: video for video in videos}
+            return {
+                **playlist,
+                "videos": [
+                    self._serialize_video(video_map[video_id])
+                    for video_id in playlist["video_ids"]
+                    if video_id in video_map
+                ],
+            }
+        raise HTTPException(status_code=404, detail="Shared relation route not found")
+
+    async def asset(
+        self,
+        request: Request,
+        share,
+        db: AsyncSession,
+        asset: ShareAsset,
+        params: dict,
+    ):
+        if asset.name == "channel_avatar":
+            channel_id = str(params["channel_id"])
+            videos = await self._selected_videos(db, share)
+            video = next((item for item in videos if item.channel_id == channel_id), None)
+            if not video:
+                raise HTTPException(status_code=404, detail="Shared avatar not found")
+            asset_name = "video_avatar"
+        else:
+            video = await self._get_allowed_video(db, share, str(params["video_id"]))
+            asset_name = asset.name
+
+        if asset_name == "video_stream":
             if not video.file_path:
                 raise HTTPException(status_code=404, detail="Video file not found")
             response = serve_media_stream(request, video.file_path)
-        elif asset == "download":
+        elif asset_name == "video_download":
             if not share.allow_download or not video.file_path:
                 raise HTTPException(status_code=404, detail="Shared content not found")
             response = serve_storage_file_chunked(video.file_path)
             suffix = PurePosixPath(video.file_path).suffix
             filename = urllib.parse.quote(f"{video.title}{suffix}")
             response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{filename}"
-        elif asset == "thumbnail":
+        elif asset_name == "video_thumbnail":
             if not video.thumbnail_path:
                 raise HTTPException(status_code=404, detail="Thumbnail not found")
             response = serve_storage_file_chunked(video.thumbnail_path)
-        elif asset == "avatar":
+        elif asset_name == "video_avatar":
             avatar_path = video.channel_avatar_url
             if not avatar_path and video.channel_id:
                 channel = await db.get(VideoChannel, video.channel_id)
@@ -147,10 +261,11 @@ class VideoShareProvider:
             if not avatar_path:
                 raise HTTPException(status_code=404, detail="Avatar not found")
             response = serve_storage_file_chunked(avatar_path)
-        elif asset == "subtitle":
-            if not argument or not isinstance(video.subtitles, dict) or argument not in video.subtitles:
+        elif asset_name == "video_subtitle":
+            language = str(params["language"])
+            if not isinstance(video.subtitles, dict) or language not in video.subtitles:
                 raise HTTPException(status_code=404, detail="Subtitle not found")
-            response = serve_storage_file_chunked(video.subtitles[argument])
+            response = serve_storage_file_chunked(video.subtitles[language])
         else:
             raise HTTPException(status_code=404, detail="Shared content not found")
 

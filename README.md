@@ -137,6 +137,38 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
+### Module sharing
+
+Modules opt into isolated read-only sharing through a declarative manifest contract. Core owns link
+authentication, expiry, dashboard rendering, URL scoping, route matching, and the deny-by-default
+mutation policy. A provider implements only module-specific catalog, selection, entity, relation, and
+asset handlers:
+
+```python
+from app.core.module_types import ShareAsset, ShareRoute, ShareSpec
+
+MODULE = ModuleSpec(
+    # ...regular module metadata...
+    share=ShareSpec(
+        provider="example.share:PROVIDER",
+        selector_key="item_ids",
+        dashboard_template="example_dashboard.html",
+        api_prefix="/api/example",
+        routes=(
+            ShareRoute(name="items", path="items"),
+            ShareRoute(name="item", path="items/{item_id}"),
+        ),
+        assets=(
+            ShareAsset(name="file", path="items/{item_id}/file"),
+        ),
+    ),
+)
+```
+
+Shared templates reuse the owner dashboard with `{% extends module_base|default("base.html") %}`.
+Only declared GET/HEAD routes are dispatched; all unsafe methods and undeclared paths are rejected by
+the framework before provider code runs.
+
 ### Module integrations
 
 Modules expose versioned operations through the central registry instead of importing or calling one

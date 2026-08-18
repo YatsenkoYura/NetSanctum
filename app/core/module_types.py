@@ -11,6 +11,7 @@ INTEGRATION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
 UI_EXTENSION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
 MIGRATION_REVISION_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+SHARE_PATH_PARAMETER_PATTERN = re.compile(r"^\{([a-z][a-z0-9_]*)\}$")
 
 
 def _validate_object_path(path: str, label: str) -> None:
@@ -122,6 +123,95 @@ class MigrationSpec:
             )
 
 
+def _validate_share_path(path: str, label: str) -> None:
+    parsed = PurePosixPath(path)
+    if (
+        not path
+        or path != path.strip("/")
+        or parsed.is_absolute()
+        or ".." in parsed.parts
+        or "?" in path
+        or "#" in path
+        or "\\" in path
+    ):
+        raise ValueError(f"{label} must be a relative URL path: {path!r}")
+    for part in parsed.parts:
+        if "{" in part or "}" in part:
+            if not SHARE_PATH_PARAMETER_PATTERN.fullmatch(part):
+                raise ValueError(f"{label} has an invalid path parameter: {path!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class ShareRoute:
+    """Read-only API route exposed inside a scoped share."""
+
+    name: str
+    path: str
+    source: str = "entities"
+
+    def __post_init__(self) -> None:
+        if not UI_EXTENSION_ID_PATTERN.fullmatch(self.name):
+            raise ValueError(f"Invalid share route name: {self.name!r}")
+        _validate_share_path(self.path, "Share route")
+        if self.source not in {"entities", "relations"}:
+            raise ValueError(f"Invalid share route source: {self.source!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class ShareAsset:
+    """Binary or text asset exposed inside a scoped share."""
+
+    name: str
+    path: str
+
+    def __post_init__(self) -> None:
+        if not UI_EXTENSION_ID_PATTERN.fullmatch(self.name):
+            raise ValueError(f"Invalid share asset name: {self.name!r}")
+        _validate_share_path(self.path, "Share asset")
+
+
+@dataclass(frozen=True, slots=True)
+class ShareSpec:
+    """Declarative read-only sharing contract implemented by a module."""
+
+    provider: str
+    selector_key: str
+    dashboard_template: str
+    api_prefix: str
+    routes: tuple[ShareRoute, ...] = ()
+    assets: tuple[ShareAsset, ...] = ()
+    max_items: int = 500
+
+    def __post_init__(self) -> None:
+        _validate_object_path(self.provider, "Share provider")
+        if not TABLE_NAME_PATTERN.fullmatch(self.selector_key):
+            raise ValueError(f"Invalid share selector key: {self.selector_key!r}")
+        template_path = PurePosixPath(self.dashboard_template)
+        if (
+            not self.dashboard_template.endswith(".html")
+            or template_path.is_absolute()
+            or ".." in template_path.parts
+            or "\\" in self.dashboard_template
+        ):
+            raise ValueError(
+                f"Share dashboard template must be package-relative: {self.dashboard_template!r}"
+            )
+        if not self.api_prefix.startswith("/api/") or self.api_prefix.endswith("/"):
+            raise ValueError("Share API prefix must start with '/api/' and have no trailing slash")
+        if self.max_items < 1:
+            raise ValueError("Share max_items must be positive")
+        route_names = [route.name for route in self.routes]
+        route_paths = [route.path for route in self.routes]
+        asset_names = [asset.name for asset in self.assets]
+        asset_paths = [asset.path for asset in self.assets]
+        if len(route_names) != len(set(route_names)) or len(route_paths) != len(set(route_paths)):
+            raise ValueError("Share routes must have unique names and paths")
+        if len(asset_names) != len(set(asset_names)) or len(asset_paths) != len(set(asset_paths)):
+            raise ValueError("Share assets must have unique names and paths")
+        if set(route_paths) & set(asset_paths):
+            raise ValueError("Share routes and assets must not use the same path")
+
+
 @dataclass(frozen=True, slots=True)
 class ModuleSpec:
     """Declarative contract exported by an installed NetSanctum module."""
@@ -144,7 +234,7 @@ class ModuleSpec:
     storage_namespaces: tuple[str, ...] = ()
     package_prefixes: tuple[str, ...] = ()
     package_resolver: str | None = None
-    share_provider: str | None = None
+    share: ShareSpec | None = None
     entity_types: tuple[str, ...] = ()
     entity_resolver: str | None = None
     migrations: MigrationSpec | None = None
@@ -170,8 +260,8 @@ class ModuleSpec:
             raise ValueError(
                 f"Module {self.id!r} must declare package_prefixes and package_resolver together"
             )
-        if self.share_provider:
-            _validate_object_path(self.share_provider, "Share provider")
+        if self.share and not self.templates:
+            raise ValueError(f"Module {self.id!r} sharing requires templates")
         if bool(self.entity_types) != bool(self.entity_resolver):
             raise ValueError(f"Module {self.id!r} must declare entity_types and entity_resolver together")
         if (self.file_cleanup or self.module_cleanup) and not self.storage_namespaces:

@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from app.core.module_types import ShareAsset, ShareRoute, ShareSpec
 from app.core.modules import (
     MODULE_API_VERSION,
     ModuleRecord,
@@ -215,6 +216,33 @@ class ModuleManifestTests(unittest.TestCase):
                 file_cleanup="invalid:cleanup",
             )
 
+    def test_share_contract_rejects_unsafe_or_duplicate_routes(self):
+        with self.assertRaises(ValueError):
+            ShareSpec(
+                provider="example:PROVIDER",
+                selector_key="item_ids",
+                dashboard_template="dashboard.html",
+                api_prefix="/api/example",
+                routes=(
+                    ShareRoute(name="items", path="items"),
+                    ShareRoute(name="items_duplicate", path="items"),
+                ),
+            )
+        with self.assertRaises(ValueError):
+            ShareAsset(name="unsafe", path="../storage/{item_id}")
+
+    def test_video_declares_complete_share_contract(self):
+        registry = ModuleRegistry.discover({"video_archiver"})
+        spec = registry.share_spec("video_archiver")
+
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        self.assertEqual("video_ids", spec.selector_key)
+        self.assertEqual("video_dashboard.html", spec.dashboard_template)
+        self.assertEqual("/api/video-archiver", spec.api_prefix)
+        self.assertIn("videos/{video_id}", {route.path for route in spec.routes})
+        self.assertIn("videos/{video_id}/stream", {asset.path for asset in spec.assets})
+
     def test_navigation_reflects_runtime_failure(self):
         registry = ModuleRegistry.discover({"music"})
         music = next(record for record in registry.records if record.id == "music")
@@ -306,7 +334,7 @@ class ModuleManifestTests(unittest.TestCase):
                 spec.file_cleanup,
                 spec.module_cleanup,
                 spec.package_resolver,
-                spec.share_provider,
+                spec.share.provider if spec.share else None,
                 spec.entity_resolver,
                 *(integration.handler for integration in spec.integrations),
                 *(integration.request_model for integration in spec.integrations),
@@ -319,6 +347,26 @@ class ModuleManifestTests(unittest.TestCase):
                 if path:
                     with self.subTest(module=record.id, component=path):
                         __import__(path)
+
+    def test_share_providers_follow_framework_contract(self):
+        registry = ModuleRegistry.discover()
+        for record in registry.active_records():
+            spec = record.spec
+            if not spec or not spec.share:
+                continue
+            provider = registry.share_provider(record.id)
+            self.assertIsNotNone(provider, record.id)
+            assert provider is not None
+            for method_name in ("catalog", "selection", "entities", "relations", "asset"):
+                with self.subTest(module=record.id, method=method_name):
+                    self.assertTrue(callable(getattr(provider, method_name, None)))
+
+            package = __import__(record.package, fromlist=["__file__"])
+            assert spec.templates is not None
+            template = (
+                Path(package.__file__).resolve().parent / spec.templates / spec.share.dashboard_template
+            )
+            self.assertTrue(template.is_file(), f"Missing shared dashboard template: {template}")
 
     def test_public_modules_activate_without_registry_failures(self):
         registry = ModuleRegistry.discover(PUBLIC_MODULES)

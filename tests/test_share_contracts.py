@@ -12,7 +12,13 @@ from pydantic import ValidationError
 
 from app.core.modules import ModuleRegistry
 from app.modules.sharing import router as sharing_router
-from app.modules.sharing.router import _harden_shared_response, shared_application, shared_resource
+from app.modules.sharing.router import (
+    _dispatch_shared_api,
+    _harden_shared_response,
+    _render_shared_application,
+    shared_application,
+    shared_module_api,
+)
 from app.modules.sharing.schemas import ShareCreate
 from app.modules.sharing.service import (
     CREATE_SESSION_SCRIPT,
@@ -105,11 +111,14 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
             module_id="video_archiver",
         )
         db = AsyncMock()
-        provider = SimpleNamespace(render=AsyncMock(return_value=Response("shared")))
 
         with (
             patch.object(sharing_router, "_active_share", AsyncMock(return_value=share)) as active_share,
-            patch.object(sharing_router, "_provider", return_value=provider),
+            patch.object(
+                sharing_router,
+                "_render_shared_application",
+                AsyncMock(return_value=Response("shared")),
+            ) as render,
             patch.object(sharing_router, "_has_session", AsyncMock()) as has_session,
             patch.object(sharing_router, "_establish_session", AsyncMock()) as establish_session,
         ):
@@ -119,10 +128,11 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
         active_share.assert_awaited_once_with(db, "share-id")
         has_session.assert_not_awaited()
         establish_session.assert_not_awaited()
+        render.assert_awaited_once_with(request, share)
         db.commit.assert_not_awaited()
 
     async def test_public_resource_is_authorized_without_session(self):
-        request = make_request("/s/share-id/resource/video-id/video")
+        request = make_request("/s/share-id/api/video-archiver/videos")
         share = SimpleNamespace(
             id="share-id",
             is_public=True,
@@ -130,18 +140,22 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
             module_id="video_archiver",
         )
         db = AsyncMock()
-        provider = SimpleNamespace(serve_asset=AsyncMock(return_value=Response("asset")))
 
         with (
             patch.object(sharing_router, "_active_share", AsyncMock(return_value=share)) as active_share,
-            patch.object(sharing_router, "_provider", return_value=provider),
+            patch.object(
+                sharing_router,
+                "_dispatch_shared_api",
+                AsyncMock(return_value=Response("asset")),
+            ) as dispatch,
             patch.object(sharing_router, "_has_session", AsyncMock()) as has_session,
         ):
-            response = await shared_resource("share-id", "video-id", "video", request, db)
+            response = await shared_module_api("share-id", "video-archiver/videos", request, db)
 
         self.assertEqual(b"asset", response.body)
         active_share.assert_awaited_once_with(db, "share-id")
         has_session.assert_not_awaited()
+        dispatch.assert_awaited_once_with(request, share, db, "video-archiver/videos")
 
     async def test_password_rate_limit_has_retry_after_header(self):
         request = make_request()
@@ -223,9 +237,11 @@ class ShareProviderTests(unittest.TestCase):
         disabled = ModuleRegistry.discover(set())
 
         provider = active.share_provider("video_archiver")
+        spec = active.share_spec("video_archiver")
         self.assertIsNotNone(provider)
-        assert provider is not None
-        self.assertEqual("video_ids", provider.selector_key)
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        self.assertEqual("video_ids", spec.selector_key)
         self.assertIsNone(disabled.share_provider("video_archiver"))
 
     def test_selected_video_outside_scope_is_hidden(self):
@@ -241,19 +257,79 @@ class ShareProviderTests(unittest.TestCase):
         application_dependencies = {
             parameter.name for parameter in inspect.signature(shared_application).parameters.values()
         }
-        resource_dependencies = {
-            parameter.name for parameter in inspect.signature(shared_resource).parameters.values()
+        api_dependencies = {
+            parameter.name for parameter in inspect.signature(shared_module_api).parameters.values()
         }
 
         self.assertNotIn("user", application_dependencies)
-        self.assertNotIn("user", resource_dependencies)
+        self.assertNotIn("user", api_dependencies)
 
     def test_shared_video_template_uses_only_scoped_resource_urls(self):
-        template = (ROOT / "app/modules/video_archiver/templates/shared_video.html").read_text()
+        template = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
+        provider = (ROOT / "app/modules/video_archiver/share.py").read_text()
+        router = (ROOT / "app/modules/sharing/router.py").read_text()
 
-        self.assertIn("/s/{{ share.id }}/resource/", template)
-        self.assertNotIn("/api/video-archiver", template)
-        self.assertNotIn('extends "base.html"', template)
+        self.assertIn('extends module_base|default("base.html")', template)
+        self.assertNotIn("handle_api", provider)
+        self.assertNotIn("serve_asset", provider)
+        self.assertIn('"/s/{share_id}/api/{path:path}"', router)
+        self.assertFalse((ROOT / "app/modules/video_archiver/templates/shared_video.html").exists())
+
+
+class SharedVideoUiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_core_renders_owner_dashboard_with_scoped_urls(self):
+        request = make_request()
+        share = SimpleNamespace(id="share-id", module_id="video_archiver")
+
+        response = await _render_shared_application(request, share)
+        body = response.body.decode()
+
+        self.assertIn(
+            'module_base|default("base.html")',
+            (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text(),
+        )
+        self.assertIn("/s/share-id/api/video-archiver/videos", body)
+        self.assertNotIn('src="/api/video-archiver', body)
+
+    async def test_core_rejects_mutations_before_provider_dispatch(self):
+        request = make_request()
+        request.scope["method"] = "DELETE"
+        share = SimpleNamespace(id="share-id", module_id="video_archiver")
+
+        with patch.object(sharing_router, "_provider") as provider:
+            response = await _dispatch_shared_api(
+                request,
+                share,
+                AsyncMock(),
+                "video-archiver/videos/video-id",
+            )
+
+        provider.assert_not_called()
+        self.assertEqual(403, response.status_code)
+
+    async def test_core_dispatches_only_declared_routes(self):
+        request = make_request()
+        share = SimpleNamespace(id="share-id", module_id="video_archiver")
+        provider = SimpleNamespace(entities=AsyncMock(return_value=[{"id": "video-id"}]))
+
+        with patch.object(sharing_router, "_provider", return_value=provider):
+            response = await _dispatch_shared_api(
+                request,
+                share,
+                AsyncMock(),
+                "video-archiver/videos",
+            )
+
+        self.assertEqual(200, response.status_code)
+        provider.entities.assert_awaited_once()
+        with self.assertRaises(HTTPException) as raised:
+            await _dispatch_shared_api(
+                request,
+                share,
+                AsyncMock(),
+                "video-archiver/undeclared",
+            )
+        self.assertEqual(404, raised.exception.status_code)
 
 
 if __name__ == "__main__":

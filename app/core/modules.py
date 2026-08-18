@@ -20,6 +20,7 @@ from app.core.module_types import (
     IntegrationSpec,
     IntegrationUnavailableError,
     ModuleSpec,
+    ShareSpec,
 )
 
 logger = logging.getLogger(__name__)
@@ -407,18 +408,20 @@ class ModuleRegistry:
     def share_provider(self, module_id: str) -> Any | None:
         """Load the active module's optional, read-only sharing provider."""
         record = self._records.get(module_id)
-        if (
-            not record
-            or record.status != ModuleStatus.ACTIVE
-            or not record.spec
-            or not record.spec.share_provider
-        ):
+        if not record or record.status != ModuleStatus.ACTIVE or not record.spec or not record.spec.share:
             return None
         try:
-            return self._load_object(record.spec.share_provider)
+            return self._load_object(record.spec.share.provider)
         except Exception as exc:
             self._component_error(record, "share_provider", exc)
             return None
+
+    def share_spec(self, module_id: str) -> ShareSpec | None:
+        """Return an active module's declarative sharing contract."""
+        record = self._records.get(module_id)
+        if not record or record.status != ModuleStatus.ACTIVE or not record.spec:
+            return None
+        return record.spec.share
 
     async def resolve_entity(self, entity_type: str, entity_id: str, session: Any) -> dict | None:
         for record in self.active_records():

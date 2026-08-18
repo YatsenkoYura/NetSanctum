@@ -1,4 +1,4 @@
-from app.core.module_types import MigrationSpec, ModuleSpec
+from app.core.module_types import MigrationSpec, ModuleSpec, ShareAsset, ShareRoute, ShareSpec
 
 MODULE = ModuleSpec(
     id="video_archiver",
@@ -33,7 +33,41 @@ MODULE = ModuleSpec(
     storage_namespaces=("video_archiver",),
     package_prefixes=("video_playlist_", "video_"),
     package_resolver="app.modules.video_archiver.capabilities:resolve_package_resources",
-    share_provider="app.modules.video_archiver.share:PROVIDER",
+    share=ShareSpec(
+        provider="app.modules.video_archiver.share:PROVIDER",
+        selector_key="video_ids",
+        dashboard_template="video_dashboard.html",
+        api_prefix="/api/video-archiver",
+        routes=(
+            ShareRoute(name="videos", path="videos"),
+            ShareRoute(name="video_detail", path="videos/{video_id}"),
+            ShareRoute(name="playlists", path="playlists", source="relations"),
+            ShareRoute(
+                name="playlist_detail",
+                path="playlists/{playlist_id}",
+                source="relations",
+            ),
+            ShareRoute(name="tasks_active", path="tasks/active", source="relations"),
+            ShareRoute(name="sync_dates", path="sync-dates", source="relations"),
+            ShareRoute(name="cookies", path="cookies/{platform}", source="relations"),
+            ShareRoute(
+                name="youtube_oauth_status",
+                path="youtube-oauth/status/{task_id}",
+                source="relations",
+            ),
+        ),
+        assets=(
+            ShareAsset(name="channel_avatar", path="channels/{channel_id}/avatar"),
+            ShareAsset(name="video_stream", path="videos/{video_id}/stream"),
+            ShareAsset(name="video_thumbnail", path="videos/{video_id}/thumbnail"),
+            ShareAsset(name="video_avatar", path="videos/{video_id}/avatar"),
+            ShareAsset(
+                name="video_subtitle",
+                path="videos/{video_id}/subtitles/{language}",
+            ),
+            ShareAsset(name="video_download", path="videos/{video_id}/download"),
+        ),
+    ),
     entity_types=("video",),
     entity_resolver="app.modules.video_archiver.capabilities:resolve_entity",
     uses_integrations=("media.audio.import.v1",),
