@@ -1,9 +1,13 @@
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import yaml
 from fastapi import Request
 
 from app.core.http_security import is_cross_site_request
@@ -206,6 +210,37 @@ class CoreBoundarySecurityTests(unittest.TestCase):
         self.assertIn("no-new-privileges:true", compose)
         self.assertIn("USER netsanctum", dockerfile)
         self.assertIn("APP_UID", dockerfile)
+
+        parsed = yaml.safe_load(compose)
+        worker_command = parsed["services"]["worker"]["command"]
+        self.assertEqual("sh", worker_command[0])
+        self.assertIn("worker --loglevel=info --concurrency=2", worker_command[2])
+        self.assertEqual("0", parsed["services"]["worker"]["environment"]["NETSANCTUM_LOAD_DOTENV"])
+
+    def test_container_environment_does_not_read_unreadable_dotenv(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            dotenv = Path(directory) / ".env"
+            dotenv.write_text("MASTER_API_KEY=must-not-be-read\n")
+            dotenv.chmod(0)
+            environment = os.environ.copy()
+            environment["NETSANCTUM_LOAD_DOTENV"] = "0"
+            environment["MASTER_API_KEY"] = "injected-environment-value"
+            environment["PYTHONPATH"] = str(root)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from app.core.config import Settings; print(Settings().MASTER_API_KEY)",
+                ],
+                cwd=directory,
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual("injected-environment-value", result.stdout.strip())
 
 
 class LocalStorageSecurityTests(unittest.TestCase):

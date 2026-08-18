@@ -39,6 +39,7 @@ services:
     env_file: .env
     environment:
       NETSANCTUM_PROCESS_ROLE: web
+      NETSANCTUM_LOAD_DOTENV: "0"
     ports:
       - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
@@ -56,9 +57,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: >
-      sh -c "python -m app.core.migrations upgrade &&
-             exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command:
+      - sh
+      - -c
+      - python -m app.core.migrations upgrade && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   # ── Celery Worker ──────────────────────────────────────
   worker:
@@ -73,6 +75,7 @@ services:
     env_file: .env
     environment:
       NETSANCTUM_PROCESS_ROLE: worker
+      NETSANCTUM_LOAD_DOTENV: "0"
     volumes:
       - .:/app:ro
       - ./storage:/app/storage
@@ -88,11 +91,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: >
-      sh -c "python -m app.core.migrations upgrade &&
-             exec celery -A app.core.scheduler:celery_app worker
-             --loglevel=info
-             --concurrency=2"
+    command:
+      - sh
+      - -c
+      - python -m app.core.migrations upgrade && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2
 
 volumes:
   pg_data:

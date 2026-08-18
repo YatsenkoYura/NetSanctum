@@ -5,16 +5,19 @@ All values are loaded from environment variables (or .env file).
 Modules MUST NOT define their own config — they read from this single source.
 """
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DOTENV_FILE = ".env" if os.getenv("NETSANCTUM_LOAD_DOTENV", "1") == "1" else None
 
 
 class Settings(BaseSettings):
     """Immutable application-level settings loaded once at startup."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_DOTENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
