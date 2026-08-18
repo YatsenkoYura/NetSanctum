@@ -54,23 +54,6 @@ fi
 if ! grep -q '^PGID=' "$ENV_FILE"; then
     echo "PGID=$(id -g)" >> "$ENV_FILE"
 fi
-mkdir -p storage/config
-if [ -f access_token.hash ] && [ ! -f storage/config/access_token.hash ]; then
-    cp access_token.hash storage/config/access_token.hash
-fi
-if [ -f access_token.txt ] && [ ! -f storage/config/access_token.txt ]; then
-    cp access_token.txt storage/config/access_token.txt
-fi
-for credential_file in access_token.txt access_token.hash; do
-    if [ -f "$credential_file" ]; then
-        chmod 600 "$credential_file"
-    fi
-done
-for credential_file in storage/config/access_token.txt storage/config/access_token.hash; do
-    if [ -f "$credential_file" ]; then
-        chmod 600 "$credential_file"
-    fi
-done
 
 if grep -q '^FILE_ENCRYPTION_KEY=dev-file-encryption-key-change-me$' "$ENV_FILE"; then
     echo "NOTICE: the known development file key is ignored; the private MASTER_API_KEY is used instead."

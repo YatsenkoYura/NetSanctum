@@ -216,6 +216,16 @@ class CoreBoundarySecurityTests(unittest.TestCase):
         self.assertEqual("sh", worker_command[0])
         self.assertIn("worker --loglevel=info --concurrency=2", worker_command[2])
         self.assertEqual("0", parsed["services"]["worker"]["environment"]["NETSANCTUM_LOAD_DOTENV"])
+        storage_init = parsed["services"]["storage-init"]
+        self.assertEqual("0:0", storage_init["user"])
+        self.assertIn("chown -R", storage_init["command"][2])
+        self.assertEqual(
+            "service_completed_successfully",
+            parsed["services"]["web"]["depends_on"]["storage-init"]["condition"],
+        )
+
+        start_script = (root / "start.sh").read_text()
+        self.assertNotIn("mkdir -p storage/config", start_script)
 
     def test_container_environment_does_not_read_unreadable_dotenv(self):
         root = Path(__file__).resolve().parents[1]

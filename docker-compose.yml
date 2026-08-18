@@ -26,6 +26,44 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── One-time storage ownership migration ───────────────
+  storage-init:
+    image: alpine:3.20
+    user: "0:0"
+    restart: "no"
+    environment:
+      TARGET_UID: ${PUID:-1000}
+      TARGET_GID: ${PGID:-1000}
+    volumes:
+      - .:/repo:ro
+      - ./storage:/app/storage
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /app/storage/config
+        for name in access_token.hash access_token.txt; do
+          if [ -f "/repo/$$name" ] && [ ! -f "/app/storage/config/$$name" ]; then
+            cp "/repo/$$name" "/app/storage/config/$$name"
+          fi
+        done
+        marker="/app/storage/config/.owner-$${TARGET_UID}-$${TARGET_GID}"
+        if [ ! -f "$$marker" ]; then
+          chown -R "$${TARGET_UID}:$${TARGET_GID}" /app/storage
+          rm -f /app/storage/config/.owner-*
+          touch "$$marker"
+          chown "$${TARGET_UID}:$${TARGET_GID}" "$$marker"
+        fi
+        chmod 700 /app/storage/config
+        for name in access_token.hash access_token.txt enabled-modules.json; do
+          if [ -f "/app/storage/config/$$name" ]; then
+            chmod 600 "/app/storage/config/$$name"
+          fi
+        done
+
   # ── FastAPI Web Server ─────────────────────────────────
   web:
     build:
@@ -53,6 +91,8 @@ services:
     security_opt:
       - no-new-privileges:true
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -87,6 +127,8 @@ services:
     security_opt:
       - no-new-privileges:true
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
