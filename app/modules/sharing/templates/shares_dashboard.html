@@ -97,7 +97,12 @@
         };
         const response = await fetch('/api/shares', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
         const data = await response.json();
-        if (!response.ok) return alert(data.detail || 'Could not create share.');
+        if (!response.ok) {
+            const detail = Array.isArray(data.detail)
+                ? data.detail.map(item => item.msg || item.message || JSON.stringify(item)).join('\n')
+                : data.detail || 'Could not create share.';
+            return alert(detail);
+        }
         const result = document.getElementById('share-result');
         result.classList.remove('hidden');
         result.replaceChildren();

@@ -7,11 +7,17 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CROSS_SITE_CAPABILITY_PATHS = frozenset({"/alllib/api/save_token_external"})
 
 
+def _is_capability_route(path: str) -> bool:
+    return path in CROSS_SITE_CAPABILITY_PATHS or (
+        path.startswith("/s/") and (path.endswith("/access") or path.endswith("/unlock"))
+    )
+
+
 def is_cross_site_request(request: Request) -> bool:
     """Reject browser cross-site mutations while leaving non-browser API clients usable."""
     if request.method not in UNSAFE_METHODS:
         return False
-    if request.url.path in CROSS_SITE_CAPABILITY_PATHS:
+    if _is_capability_route(request.url.path):
         return False
 
     fetch_site = request.headers.get("sec-fetch-site", "").lower()
