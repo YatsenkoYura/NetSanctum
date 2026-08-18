@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.responses import serve_media_stream, serve_storage_file_chunked
 from app.core.templates import templates
 from app.modules.video_archiver.models import ArchivedVideo, VideoChannel
+from app.modules.video_archiver.providers import PlatformRegistry
 
 
 class VideoShareProvider:
@@ -80,12 +81,35 @@ class VideoShareProvider:
 
     async def render(self, request: Request, share, db: AsyncSession):
         videos = await self._selected_videos(db, share)
+        payload = [
+            {
+                "id": video.id,
+                "title": video.title,
+                "description": video.description,
+                "platform": video.platform,
+                "channel_name": video.channel_name,
+                "duration": video.duration,
+                "resolution": video.resolution,
+                "archived_at": video.archived_at.isoformat() if video.archived_at else None,
+                "like_count": video.like_count,
+                "view_count": video.view_count,
+                "tags": video.tags or [],
+                "comments": video.comments or [],
+                "subtitles": sorted((video.subtitles or {}).keys()),
+                "has_file": bool(video.file_path),
+                "has_thumbnail": bool(video.thumbnail_path),
+                "has_avatar": bool(video.channel_avatar_url or video.channel_id),
+                "source_url": PlatformRegistry.get_provider_by_id(video.platform).build_video_url(video.id),
+            }
+            for video in videos
+        ]
         return templates.TemplateResponse(
             request,
             "shared_video.html",
             {
                 "share": share,
                 "videos": videos,
+                "video_payload": payload,
                 "lang": request.cookies.get("lang", "en"),
             },
         )

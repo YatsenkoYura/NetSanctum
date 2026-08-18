@@ -3,51 +3,348 @@
 {% block title %}{{ share.title }} | NetSanctum{% endblock %}
 
 {% block content %}
-<section class="mb-8 border-2 border-zinc-800 bg-zinc-950 p-5 sm:p-7">
-    <div class="font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">Video archive</div>
-    <h1 class="mt-2 text-2xl font-black text-white sm:text-4xl">{{ share.title }}</h1>
-    <div class="mt-4 flex flex-wrap gap-2 font-mono text-[10px] uppercase text-zinc-500">
-        <span class="border border-zinc-800 px-2 py-1">{{ videos|length }} videos</span>
-        {% if share.expires_at %}<span class="border border-zinc-800 px-2 py-1">Expires {{ share.expires_at.strftime('%Y-%m-%d %H:%M UTC') }}</span>{% endif %}
-    </div>
-</section>
+<div class="space-y-6">
+    <div class="flex flex-col md:flex-row gap-4 w-full">
+        <div class="flex flex-shrink-0 overflow-x-auto gap-1 bg-black p-1 border-2 border-zinc-800 no-scrollbar w-fit">
+            <button type="button" class="p-3 transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center justify-center" title="Library">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+                </svg>
+            </button>
+        </div>
 
-{% if videos %}
-<div class="grid gap-6 lg:grid-cols-2">
-    {% for video in videos %}
-    <article class="overflow-hidden border-2 border-zinc-800 bg-zinc-950">
-        <div class="aspect-video bg-black">
-            {% if video.file_path %}
-            <video controls preload="metadata" class="h-full w-full object-contain"
-                   {% if video.thumbnail_path %}poster="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/thumbnail"{% endif %}>
-                <source src="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/stream">
-                {% if video.subtitles %}
-                {% for language in video.subtitles %}
-                <track kind="subtitles" srclang="{{ language }}" label="{{ language }}"
-                       src="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/subtitle/{{ language|urlencode }}">
-                {% endfor %}
-                {% endif %}
-            </video>
-            {% else %}
-            <div class="flex h-full items-center justify-center font-mono text-xs uppercase text-zinc-600">File unavailable</div>
-            {% endif %}
-        </div>
-        <div class="space-y-4 p-5">
-            <div>
-                <div class="font-mono text-[10px] uppercase text-teal-400">{{ video.platform }} · {{ video.resolution }}</div>
-                <h2 class="mt-1 text-lg font-bold text-white">{{ video.title }}</h2>
-                <p class="mt-1 text-xs text-zinc-500">{{ video.channel_name }}</p>
+        <div id="universal-search-bar" class="flex-1 flex flex-col sm:flex-row gap-4">
+            <div class="flex-1 relative">
+                <input type="text" id="shared-search-input" placeholder="Search shared videos"
+                       class="w-full bg-zinc-950 border-2 border-zinc-800 focus:border-teal-400 px-4 h-full text-sm rounded-none text-white focus:outline-none transition-colors font-mono">
             </div>
-            {% if video.description %}<p class="line-clamp-4 whitespace-pre-line text-sm leading-6 text-zinc-400">{{ video.description }}</p>{% endif %}
-            {% if share.allow_download and video.file_path %}
-            <a href="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/download"
-               class="inline-flex border border-zinc-700 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-300 hover:border-teal-400 hover:text-teal-400">Download</a>
-            {% endif %}
+            <div class="w-full sm:w-56">
+                <select id="shared-sort-select" class="w-full h-full bg-zinc-950 border-2 border-zinc-800 focus:border-teal-400 px-4 py-3 text-sm rounded-none text-zinc-400 focus:outline-none transition-colors font-mono">
+                    <option value="archived_at">Date Added</option>
+                    <option value="title">Title</option>
+                </select>
+            </div>
         </div>
-    </article>
-    {% endfor %}
+    </div>
+
+    <div id="tab-content-library" class="space-y-6">
+        <div class="bg-zinc-950 border-2 border-zinc-800 p-5 sm:p-6">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <div class="text-[10px] font-mono uppercase tracking-[0.3em] text-teal-400">Video Archive</div>
+                    <h1 class="mt-2 text-xl sm:text-2xl font-black text-white">{{ share.title }}</h1>
+                </div>
+                <div class="flex flex-wrap gap-2 font-mono text-[10px] uppercase text-zinc-500">
+                    <span class="border border-zinc-800 px-2 py-1">{{ videos|length }} videos</span>
+                    {% if share.expires_at %}<span class="border border-zinc-800 px-2 py-1">Expires {{ share.expires_at.strftime('%Y-%m-%d %H:%M UTC') }}</span>{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div id="videos-grid-container" class="block">
+            <div id="videos-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6"></div>
+        </div>
+
+        <div id="library-player-view" class="hidden">
+            <div class="flex justify-between items-center bg-zinc-950 border-t-2 border-x-2 border-zinc-800 p-3">
+                <button onclick="closeSharedPlayer()" class="bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-white font-mono text-xs px-3 py-1.5 uppercase transition-colors">
+                    &larr; Back to Grid
+                </button>
+                {% if share.allow_download %}
+                <a id="shared-download-link" href="#" class="bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors hidden">
+                    Download
+                </a>
+                {% endif %}
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-4 sm:p-6 bg-zinc-950 items-start">
+                <div class="col-span-1 lg:col-span-8 space-y-6">
+                    <div class="relative aspect-video bg-black border-2 border-zinc-800 overflow-hidden">
+                        <video id="shared-player" controls preload="metadata" class="w-full h-full object-contain focus:outline-none"></video>
+                    </div>
+                </div>
+
+                <div class="col-span-1 lg:col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col gap-4">
+                    <div class="border-b border-zinc-800 pb-3">
+                        <div class="text-[10px] font-mono uppercase text-zinc-500">Accessible videos</div>
+                        <div id="shared-queue" class="mt-3 space-y-2"></div>
+                    </div>
+                    <div class="text-[10px] font-mono text-zinc-500 uppercase">Read-only shared library</div>
+                </div>
+
+                <div class="col-span-1 lg:col-span-8 bg-zinc-900/20 border-2 border-zinc-800 p-4 sm:p-6 space-y-6">
+                    <div class="space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-4">
+                            <h2 id="player-detail-title" class="text-base sm:text-lg font-bold text-white leading-tight">Video title</h2>
+                            <span id="player-detail-resolution" class="bg-teal-400/10 text-teal-400 border border-teal-500/20 px-2 py-0.5 text-[9px] font-mono">Resolution</span>
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div id="player-detail-avatar-container" class="w-10 h-10 border-2 border-zinc-700 bg-zinc-950 flex-shrink-0 flex items-center justify-center font-bold font-mono text-sm text-teal-400 uppercase overflow-hidden">
+                                    <span id="player-detail-avatar">C</span>
+                                </div>
+                                <div class="min-w-0">
+                                    <div id="player-detail-channel" class="text-xs font-bold text-white font-mono truncate">Channel</div>
+                                    <div class="text-[9px] text-zinc-500 font-mono">Shared playback</div>
+                                </div>
+                            </div>
+                            <div class="text-right text-[10px] font-mono text-zinc-500 space-y-1">
+                                <div>Duration: <span id="player-detail-duration">0:00</span></div>
+                                <div>Archived: <span id="player-detail-archived">...</span></div>
+                                <div class="flex items-center justify-end gap-2 text-[10px] text-zinc-400 mt-1">
+                                    <span title="Views">Views <span id="player-detail-views">-</span></span>
+                                    <span title="Likes">Likes <span id="player-detail-likes">-</span></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="player-detail-tags-container" class="hidden space-y-2">
+                        <div class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Tags</div>
+                        <div id="player-detail-tags" class="flex flex-wrap gap-2"></div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <div class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Description</div>
+                        <div id="player-detail-desc" class="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap"></div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <div class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Original Source</div>
+                        <a id="player-detail-source" href="#" target="_blank" rel="noopener noreferrer" class="text-xs text-teal-400 hover:text-teal-300 underline break-all"></a>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div class="text-[10px] font-mono uppercase tracking-wider text-zinc-500">Comments</div>
+                        <div id="player-detail-comments" class="space-y-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
-{% else %}
-<div class="border-2 border-zinc-800 bg-zinc-950 p-12 text-center font-mono text-xs uppercase text-zinc-600">No shared videos are available.</div>
-{% endif %}
+
+<script>
+    const sharedVideos = {{ video_payload|tojson }};
+    let filteredVideos = [...sharedVideos];
+    let currentVideo = null;
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    function pathSegment(value) {
+        return encodeURIComponent(String(value ?? ''));
+    }
+
+    function formatDuration(seconds) {
+        const total = Number(seconds || 0);
+        const mins = Math.floor(total / 60);
+        const secs = total % 60;
+        return `${mins}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function formatDate(value) {
+        if (!value) return '...';
+        return new Date(value).toLocaleDateString(undefined, {year: 'numeric', month: '2-digit', day: '2-digit'});
+    }
+
+    function videoThumbnail(video) {
+        if (video.has_thumbnail) return `/s/{{ share.id }}/resource/${pathSegment(video.id)}/thumbnail`;
+        return 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" fill="%2318181b"><rect width="16" height="9"/><path d="M6 3v3l4-2z" fill="%2327272a"/></svg>';
+    }
+
+    function renderLibrary() {
+        const grid = document.getElementById('videos-grid');
+        if (!filteredVideos.length) {
+            grid.innerHTML = '<div class="col-span-full py-12 text-center text-zinc-500 font-mono text-sm border-2 border-dashed border-zinc-800">No shared videos</div>';
+            return;
+        }
+
+        grid.innerHTML = filteredVideos.map(video => {
+            const initial = escapeHtml((video.channel_name || 'C').charAt(0).toUpperCase());
+            const title = escapeHtml(video.title);
+            const channel = escapeHtml(video.channel_name || 'Channel');
+            const resolution = escapeHtml(video.resolution || '');
+            const badge = escapeHtml((video.platform || 'other').toUpperCase());
+            return `
+                <div class="bg-zinc-950 border-2 border-zinc-800 hover:border-zinc-700 transition-colors flex flex-col group cursor-pointer" onclick="openSharedPlayer('${pathSegment(video.id)}')">
+                    <div class="relative aspect-video bg-black overflow-hidden border-b-2 border-zinc-800">
+                        <img src="${videoThumbnail(video)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${title}">
+                        <span class="absolute top-2 left-2 bg-black/80 px-2 py-0.5 text-[9px] font-mono text-teal-400 border border-zinc-800">${resolution}</span>
+                        <div class="absolute bottom-2 right-2 flex items-center gap-1">
+                            <span class="bg-black/80 px-2 py-0.5 text-[8px] font-mono text-zinc-300 border border-zinc-800 uppercase">${badge}</span>
+                            <span class="bg-black/80 px-2 py-0.5 text-[9px] font-mono text-zinc-300 border border-zinc-800">${escapeHtml(formatDuration(video.duration))}</span>
+                        </div>
+                    </div>
+                    <div class="p-4 flex-1 flex flex-col justify-between space-y-4">
+                        <div class="space-y-2">
+                            <h3 class="text-xs font-bold text-white line-clamp-2 leading-snug group-hover:text-teal-400 transition-colors">${title}</h3>
+                            <div class="flex items-center gap-2 mt-1">
+                                <div class="w-5 h-5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[9px] text-teal-400 uppercase rounded-none overflow-hidden">${initial}</div>
+                                <span class="text-[10px] font-mono text-zinc-400 truncate max-w-[180px]">${channel}</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col text-[8px] font-mono text-zinc-600 border-t border-zinc-900 pt-3">
+                            <div class="flex justify-between items-center">
+                                <span>ID: ${escapeHtml(video.id)}</span>
+                                <span>${escapeHtml(formatDate(video.archived_at))}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    function renderQueue() {
+        const queue = document.getElementById('shared-queue');
+        queue.innerHTML = filteredVideos.map(video => `
+            <button type="button" onclick="openSharedPlayer('${pathSegment(video.id)}')" class="w-full flex items-center gap-3 p-2 bg-zinc-950/40 border border-zinc-900/60 hover:border-zinc-700 text-left ${currentVideo && currentVideo.id === video.id ? 'border-teal-400' : ''}">
+                <img src="${videoThumbnail(video)}" class="w-16 h-10 object-cover border border-zinc-800 flex-shrink-0" alt="${escapeHtml(video.title)}">
+                <div class="min-w-0 flex-1">
+                    <div class="text-[10px] font-bold text-zinc-100 truncate">${escapeHtml(video.title)}</div>
+                    <div class="text-[9px] font-mono text-zinc-500 truncate">${escapeHtml(video.channel_name || 'Channel')} • ${escapeHtml(formatDuration(video.duration))}</div>
+                </div>
+            </button>
+        `).join('');
+    }
+
+    function renderComments(comments) {
+        const container = document.getElementById('player-detail-comments');
+        if (!comments || !comments.length) {
+            container.innerHTML = '<div class="text-center py-6 text-zinc-600 text-xs font-mono border border-dashed border-zinc-800">No comments</div>';
+            return;
+        }
+
+        container.innerHTML = comments.map(comment => {
+            const replies = Array.isArray(comment.replies) ? comment.replies : [];
+            const repliesHtml = replies.length ? `
+                <div class="ml-6 mt-3 pl-4 border-l-2 border-zinc-800 space-y-2">
+                    ${replies.map(reply => `
+                        <div class="bg-zinc-900/40 border border-zinc-800 p-2 font-mono text-[9px] space-y-1">
+                            <div class="flex justify-between text-zinc-500 font-bold">
+                                <span>@${escapeHtml(reply.author || 'Unknown')}</span>
+                                <span>${escapeHtml(reply.time || '')}</span>
+                            </div>
+                            <p class="text-zinc-300 leading-normal">${escapeHtml(reply.text || '')}</p>
+                        </div>`).join('')}
+                </div>` : '';
+            return `
+                <div class="bg-zinc-950 border border-zinc-850 p-4 font-mono text-[10px] space-y-2">
+                    <div class="flex justify-between text-zinc-400 font-bold border-b border-zinc-900 pb-1.5">
+                        <span>@${escapeHtml(comment.author || 'Unknown')}</span>
+                        <span>${escapeHtml(comment.time || '')}</span>
+                    </div>
+                    <p class="text-zinc-200 leading-normal">${escapeHtml(comment.text || '')}</p>
+                    ${repliesHtml}
+                </div>`;
+        }).join('');
+    }
+
+    function applyVideoDetails(video) {
+        currentVideo = video;
+        document.getElementById('player-detail-title').textContent = video.title;
+        document.getElementById('player-detail-channel').textContent = video.channel_name || 'Channel';
+        document.getElementById('player-detail-resolution').textContent = video.resolution || 'Resolution';
+        document.getElementById('player-detail-duration').textContent = formatDuration(video.duration);
+        document.getElementById('player-detail-archived').textContent = formatDate(video.archived_at);
+        document.getElementById('player-detail-views').textContent = video.view_count ?? '-';
+        document.getElementById('player-detail-likes').textContent = video.like_count ?? '-';
+        document.getElementById('player-detail-desc').textContent = video.description || '';
+        const source = document.getElementById('player-detail-source');
+        source.href = video.source_url || '#';
+        source.textContent = video.source_url || 'Unavailable';
+
+        const avatar = document.getElementById('player-detail-avatar-container');
+        const initial = (video.channel_name || 'C').charAt(0).toUpperCase();
+        avatar.innerHTML = video.has_avatar
+            ? `<img src="/s/{{ share.id }}/resource/${pathSegment(video.id)}/avatar" class="w-full h-full object-cover" alt="${escapeHtml(video.channel_name || 'Channel')}">`
+            : `<span id="player-detail-avatar">${escapeHtml(initial)}</span>`;
+
+        const tagsContainer = document.getElementById('player-detail-tags-container');
+        const tags = document.getElementById('player-detail-tags');
+        if (video.tags && video.tags.length) {
+            tagsContainer.classList.remove('hidden');
+            tags.innerHTML = video.tags.map(tag => `<span class="bg-zinc-900 border border-zinc-800 text-zinc-400 text-[9px] px-2 py-0.5 font-mono">#${escapeHtml(tag)}</span>`).join('');
+        } else {
+            tagsContainer.classList.add('hidden');
+            tags.innerHTML = '';
+        }
+
+        renderComments(video.comments);
+        const player = document.getElementById('shared-player');
+        player.poster = video.has_thumbnail ? `/s/{{ share.id }}/resource/${pathSegment(video.id)}/thumbnail` : '';
+        player.innerHTML = '';
+        if (video.has_file) {
+            const source = document.createElement('source');
+            source.src = `/s/{{ share.id }}/resource/${pathSegment(video.id)}/stream`;
+            player.append(source);
+            for (const language of video.subtitles || []) {
+                const track = document.createElement('track');
+                track.kind = 'subtitles';
+                track.srclang = language;
+                track.label = language;
+                track.src = `/s/{{ share.id }}/resource/${pathSegment(video.id)}/subtitle/${encodeURIComponent(language)}`;
+                player.append(track);
+            }
+            player.load();
+        }
+
+        {% if share.allow_download %}
+        const downloadLink = document.getElementById('shared-download-link');
+        if (video.has_file) {
+            downloadLink.href = `/s/{{ share.id }}/resource/${pathSegment(video.id)}/download`;
+            downloadLink.classList.remove('hidden');
+        } else {
+            downloadLink.classList.add('hidden');
+        }
+        {% endif %}
+    }
+
+    window.openSharedPlayer = function (encodedId) {
+        const videoId = decodeURIComponent(encodedId);
+        const video = sharedVideos.find(item => item.id === videoId);
+        if (!video) return;
+        document.getElementById('videos-grid-container').classList.add('hidden');
+        document.getElementById('library-player-view').classList.remove('hidden');
+        applyVideoDetails(video);
+        renderQueue();
+    };
+
+    window.closeSharedPlayer = function () {
+        const player = document.getElementById('shared-player');
+        player.pause();
+        document.getElementById('library-player-view').classList.add('hidden');
+        document.getElementById('videos-grid-container').classList.remove('hidden');
+        currentVideo = null;
+        renderQueue();
+    };
+
+    function applyFilters() {
+        const search = document.getElementById('shared-search-input').value.trim().toLowerCase();
+        const sortBy = document.getElementById('shared-sort-select').value;
+        filteredVideos = [...sharedVideos].filter(video => {
+            if (!search) return true;
+            return [video.title, video.description, video.channel_name].filter(Boolean).some(value => String(value).toLowerCase().includes(search));
+        });
+        filteredVideos.sort((a, b) => {
+            if (sortBy === 'title') return String(a.title).localeCompare(String(b.title));
+            return new Date(b.archived_at || 0) - new Date(a.archived_at || 0);
+        });
+        renderLibrary();
+        renderQueue();
+        if (currentVideo && !filteredVideos.some(video => video.id === currentVideo.id)) {
+            closeSharedPlayer();
+        }
+    }
+
+    document.getElementById('shared-search-input').addEventListener('input', applyFilters);
+    document.getElementById('shared-sort-select').addEventListener('change', applyFilters);
+    applyFilters();
+</script>
 {% endblock %}
