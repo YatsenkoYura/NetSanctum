@@ -57,7 +57,8 @@ def _harden_shared_response(response: Response) -> Response:
     response.headers["Content-Security-Policy"] = (
         "default-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        "script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
+        "base-uri 'none'; frame-ancestors 'none'"
     )
     return response
 

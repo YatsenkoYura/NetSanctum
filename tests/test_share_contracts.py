@@ -76,6 +76,7 @@ class ShareServiceTests(unittest.TestCase):
         response = _harden_shared_response(Response())
 
         self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
+        self.assertIn("connect-src 'self'", response.headers["Content-Security-Policy"])
         self.assertEqual("DENY", response.headers["X-Frame-Options"])
         self.assertEqual("no-referrer", response.headers["Referrer-Policy"])
 
