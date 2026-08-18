@@ -1,17 +1,15 @@
 import asyncio
 import datetime
-import ipaddress
 import logging
 import re
-import socket
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
-import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.modules import module_registry
+from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked, validate_remote_url
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.schemas import (
     VaultCollectionCreate,
@@ -23,47 +21,26 @@ logger = logging.getLogger(__name__)
 
 
 async def _is_public_http_url(url: str) -> bool:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username:
-        return False
-
     try:
-        addresses = await asyncio.to_thread(
-            socket.getaddrinfo,
-            parsed.hostname,
-            parsed.port or (443 if parsed.scheme == "https" else 80),
-            type=socket.SOCK_STREAM,
-        )
-    except (OSError, ValueError):
+        await asyncio.to_thread(validate_remote_url, url)
+    except (RemoteFetchError, OSError):
         return False
-
-    return bool(addresses) and all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+    return True
 
 
 async def _fetch_public_html(url: str, headers: dict[str, str]) -> str | None:
-    async with httpx.AsyncClient(timeout=4.0, follow_redirects=False) as client:
-        current_url = url
-        for _ in range(4):
-            if not await _is_public_http_url(current_url):
-                return None
-
-            async with client.stream("GET", current_url, headers=headers) as response:
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        return None
-                    current_url = urljoin(current_url, location)
-                    continue
-                if response.status_code != 200:
-                    return None
-
-                content = bytearray()
-                async for chunk in response.aiter_bytes():
-                    content.extend(chunk[: 150000 - len(content)])
-                    if len(content) >= 150000:
-                        break
-                return content.decode(response.encoding or "utf-8", errors="replace")
-    return None
+    try:
+        content, _content_type, _final_url = await asyncio.to_thread(
+            fetch_bytes_checked,
+            url,
+            headers=headers,
+            max_redirects=4,
+            max_bytes=150000,
+            allowed_content_prefixes=("text/html", "application/xhtml+xml"),
+        )
+    except (RemoteFetchError, OSError):
+        return None
+    return content.decode("utf-8", errors="replace")
 
 
 async def fetch_url_metadata(url: str) -> dict[str, str | None]:

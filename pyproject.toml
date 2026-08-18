@@ -19,7 +19,7 @@ dependencies = [
     "pydantic==2.11.3",
     "pydantic-settings==2.9.1",
     "python-dotenv==1.2.2",
-    "python-multipart==0.0.27",
+    "python-multipart==0.0.31",
     "redis==8.1.0",
     "sqlalchemy==2.0.41",
     "uvicorn[standard]==0.34.3",
@@ -33,11 +33,11 @@ alllib = [
 music = [
     "openai==1.59.3",
     "requests==2.33.0",
-    "yt-dlp==2026.3.17",
+    "yt-dlp==2026.7.4",
 ]
 video_archiver = [
     "requests==2.33.0",
-    "yt-dlp==2026.3.17",
+    "yt-dlp==2026.7.4",
 ]
 
 [dependency-groups]

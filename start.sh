@@ -12,22 +12,69 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
+umask 077
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
 ENV_FILE=".env"
 ENV_EXAMPLE=".env.example"
+CREATED_ENV=0
 
 # Ensure .env exists
 if [ ! -f "$ENV_FILE" ]; then
     if [ -f "$ENV_EXAMPLE" ]; then
         echo "Creating .env from .env.example..."
         cp "$ENV_EXAMPLE" "$ENV_FILE"
+        CREATED_ENV=1
     else
         echo "Error: Neither .env nor .env.example found!"
         exit 1
     fi
+fi
+
+if [ "$CREATED_ENV" = "1" ]; then
+    DB_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    API_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    FILE_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+    sed -i "s/change_me_in_production/$DB_SECRET/g" "$ENV_FILE"
+    sed -i "s/dev-api-key-change-me/$API_SECRET/g" "$ENV_FILE"
+    sed -i "s/dev-file-encryption-key-change-me/$FILE_SECRET/g" "$ENV_FILE"
+fi
+
+if grep -q '^MASTER_API_KEY=dev-api-key-change-me$' "$ENV_FILE"; then
+    API_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    sed -i "s/^MASTER_API_KEY=.*/MASTER_API_KEY=$API_SECRET/" "$ENV_FILE"
+fi
+
+chmod 600 "$ENV_FILE"
+if ! grep -q '^PUID=' "$ENV_FILE"; then
+    echo "PUID=$(id -u)" >> "$ENV_FILE"
+fi
+if ! grep -q '^PGID=' "$ENV_FILE"; then
+    echo "PGID=$(id -g)" >> "$ENV_FILE"
+fi
+mkdir -p storage/config
+if [ -f access_token.hash ] && [ ! -f storage/config/access_token.hash ]; then
+    cp access_token.hash storage/config/access_token.hash
+fi
+if [ -f access_token.txt ] && [ ! -f storage/config/access_token.txt ]; then
+    cp access_token.txt storage/config/access_token.txt
+fi
+for credential_file in access_token.txt access_token.hash; do
+    if [ -f "$credential_file" ]; then
+        chmod 600 "$credential_file"
+    fi
+done
+for credential_file in storage/config/access_token.txt storage/config/access_token.hash; do
+    if [ -f "$credential_file" ]; then
+        chmod 600 "$credential_file"
+    fi
+done
+
+if grep -q '^FILE_ENCRYPTION_KEY=dev-file-encryption-key-change-me$' "$ENV_FILE"; then
+    echo "NOTICE: the known development file key is ignored; the private MASTER_API_KEY is used instead."
+    echo "Existing .enc files will be rotated automatically on web startup."
 fi
 
 # Parse CLI arguments

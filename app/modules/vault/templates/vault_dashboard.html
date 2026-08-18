@@ -91,10 +91,10 @@
       </div>
 
       {% for c in collections %}
-      <div onclick="selectWorkspace({{ c.id }}, '{{ c.name }}')" id="ws-item-{{ c.id }}" class="ws-item">
+      <div onclick="selectWorkspace({{ c.id|int }}, this.querySelector('[data-workspace-name]').textContent)" id="ws-item-{{ c.id|int }}" class="ws-item">
         <div class="flex items-center gap-2 truncate">
           <span class="w-1.5 h-1.5 bg-teal-400 inline-block"></span>
-          <span class="truncate">{{ c.name }}</span>
+          <span class="truncate" data-workspace-name>{{ c.name }}</span>
         </div>
         <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
       </div>
@@ -323,6 +323,32 @@ let wbSaveTimer = null;
 let searchTimer = null;
 let activeCell = null;
 window._vaultCache = {};
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[ch]);
+}
+
+function escapeAttr(value) { return escapeHtml(value); }
+
+function pathSegment(value) { return encodeURIComponent(String(value ?? '')); }
+
+function safeExternalUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(String(value), window.location.origin);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function safeImageUrl(value) {
+  const raw = String(value || '');
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(raw)) return raw;
+  return safeExternalUrl(raw);
+}
 
 let wbMode = 'select';
 let wbZoom = 1.0;
@@ -643,12 +669,18 @@ function openEditorView(item) {
 
   const imgContainer = document.getElementById('editor-image-container');
   if (item.og_image) {
-    imgContainer.innerHTML = `<div class="mb-4 border border-zinc-800 bg-zinc-950 p-2 flex items-center justify-center rounded-sm">
-      <img src="${item.og_image}" class="max-h-[65vh] w-auto object-contain rounded">
-    </div>`;
-    imgContainer.classList.remove('hidden');
+    const imageUrl = safeImageUrl(item.og_image);
+    if (!imageUrl) {
+      imgContainer.replaceChildren();
+      imgContainer.classList.add('hidden');
+    } else {
+      imgContainer.innerHTML = `<div class="mb-4 border border-zinc-800 bg-zinc-950 p-2 flex items-center justify-center rounded-sm">
+        <img src="${escapeAttr(imageUrl)}" class="max-h-[65vh] w-auto object-contain rounded">
+      </div>`;
+      imgContainer.classList.remove('hidden');
+    }
   } else {
-    imgContainer.innerHTML = '';
+    imgContainer.replaceChildren();
     imgContainer.classList.add('hidden');
   }
 
@@ -679,7 +711,7 @@ async function saveCurrentEditorData() {
   const content = document.getElementById('editor-content').value.trim();
   if (!id) return;
 
-  await fetch(`/api/vault/items/${id}`, {
+  await fetch(`/api/vault/items/${pathSegment(id)}`, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, content })
@@ -717,7 +749,7 @@ function renderSheetCanvas() {
   activeSheetData.headers.forEach((h, colIdx) => {
     html += `<th class="sheet-header">
       <div class="flex items-center justify-between px-1">
-        <input type="text" value="${h}" onchange="updateHeader(${colIdx}, this.value)" class="cell-edit font-bold text-teal-400">
+        <input type="text" value="${escapeAttr(h)}" onchange="updateHeader(${colIdx}, this.value)" class="cell-edit font-bold text-teal-400">
         <button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>
       </div>
     </th>`;
@@ -733,7 +765,7 @@ function renderSheetCanvas() {
         </div>
       </td>`;
     row.forEach((cell, colIdx) => {
-      html += `<td><input type="text" value="${cell||''}" data-row="${rowIdx}" data-col="${colIdx}" onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)" class="cell-edit"></td>`;
+      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)" class="cell-edit"></td>`;
     });
     html += '</tr>';
   });
@@ -844,7 +876,7 @@ async function saveCurrentSheetData() {
   const title = document.getElementById('sheet-title').value.trim();
   if (!id) return;
 
-  await fetch(`/api/vault/items/${id}`, {
+  await fetch(`/api/vault/items/${pathSegment(id)}`, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, canvas_data: activeSheetData })
@@ -907,15 +939,19 @@ function initWbCanvas() {
 
 function renderWhiteboardNodes() {
   const container = document.getElementById('wb-nodes-layer');
-  container.innerHTML = activeWbNodes.map((node, idx) => `
-    <div class="wb-node" id="wb-node-${idx}" style="left:${node.x}px; top:${node.y}px;" onmousedown="handleWbNodeMouseDown(event, ${idx})">
+  container.innerHTML = activeWbNodes.map((node, idx) => {
+    const x = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
+    const y = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
+    return `
+    <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" onmousedown="handleWbNodeMouseDown(event, ${idx})">
       <div class="flex justify-between items-center pb-1 mb-1 border-b border-zinc-800">
         <span class="text-[9px] text-zinc-500 font-bold">CARD #${idx + 1}</span>
         <button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>
       </div>
-      <textarea oninput="updateWbNodeText(${idx}, this.value)" class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${node.text||''}</textarea>
+      <textarea oninput="updateWbNodeText(${idx}, this.value)" class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function handleWbNodeMouseDown(e, idx) {
@@ -1256,7 +1292,7 @@ async function saveCurrentWbData() {
   if (!id) return;
 
   const previewData = generateWbCroppedPreview();
-  await fetch(`/api/vault/items/${id}`, {
+  await fetch(`/api/vault/items/${pathSegment(id)}`, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, canvas_data: { nodes: activeWbNodes, strokes: activeWbStrokes, drawing: previewData } })
@@ -1320,17 +1356,19 @@ function renderTiles(items) {
   });
 
   grid.innerHTML = sortedItems.map(item => {
+    const itemId = Number(item.id);
+    if (!Number.isInteger(itemId)) return '';
     const isTable = item.node_type === 'table';
     const isWb = item.node_type === 'whiteboard';
 
     const wbDrawingPreview = isWb && item.canvas_data?.drawing && item.canvas_data.drawing.length > 100 ? item.canvas_data.drawing : null;
-    const displayImg = item.og_image || wbDrawingPreview;
+    const displayImg = safeImageUrl(item.og_image || wbDrawingPreview);
 
     let itemColSpan = displayImg || isWb ? 'sm:col-span-2 lg:col-span-2' : '';
 
-    let clickHandler = `openEditorView(window._vaultCache[${item.id}])`;
-    if (isTable) clickHandler = `openSheetView(window._vaultCache[${item.id}])`;
-    if (isWb) clickHandler = `openWhiteboardView(window._vaultCache[${item.id}])`;
+    let clickHandler = `openEditorView(window._vaultCache[${itemId}])`;
+    if (isTable) clickHandler = `openSheetView(window._vaultCache[${itemId}])`;
+    if (isWb) clickHandler = `openWhiteboardView(window._vaultCache[${itemId}])`;
 
     let miniTableHtml = '';
     if (isTable && item.canvas_data?.headers) {
@@ -1353,8 +1391,8 @@ function renderTiles(items) {
 
       miniTableHtml = `<div class="mini-sheet-container">
         <table class="mini-sheet-table">
-          <thead><tr>${displayHeaders.map(h => `<th class="bg-zinc-900 text-teal-400 font-bold">${h||''}</th>`).join('')}</tr></thead>
-          <tbody>${displayRows.map(r => `<tr>${r.map(c => `<td class="text-zinc-300">${c||''}</td>`).join('')}</tr>`).join('')}</tbody>
+          <thead><tr>${displayHeaders.map(h => `<th class="bg-zinc-900 text-teal-400 font-bold">${escapeHtml(h || '')}</th>`).join('')}</tr></thead>
+          <tbody>${displayRows.map(r => `<tr>${r.map(c => `<td class="text-zinc-300">${escapeHtml(c || '')}</td>`).join('')}</tr>`).join('')}</tbody>
         </table>
       </div>`;
     }
@@ -1365,31 +1403,34 @@ function renderTiles(items) {
     if (displayText.length > 350) {
       displayText = displayText.substring(0, 280).trim() + '...';
     }
+    const itemUrl = safeExternalUrl(item.url);
+    const escapedTitle = escapeHtml(item.title || '');
+    const escapedUrl = escapeAttr(itemUrl);
 
     return `
     <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}">
       ${displayImg ? `
         <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" onclick="${clickHandler}">
-          <img src="${displayImg}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
+          <img src="${escapeAttr(displayImg)}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
         </div>
       ` : ''}
 
       <div class="p-3 flex flex-col gap-2">
         ${hasTitle ? `
           <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400" onclick="${clickHandler}">
-            ${item.url ? `<a href="${item.url}" target="_blank" onclick="event.stopPropagation()">${item.title} <span class="text-teal-400">↗</span></a>` : item.title}
+            ${itemUrl ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
           </div>
-        ` : (item.url ? `<div class="text-xs font-bold text-teal-400 truncate"><a href="${item.url}" target="_blank">${item.url} ↗</a></div>` : '')}
+        ` : (itemUrl ? `<div class="text-xs font-bold text-teal-400 truncate"><a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)} ↗</a></div>` : '')}
 
         ${item.content ? `
-          <div class="text-xs text-zinc-300 leading-relaxed bg-zinc-950/80 p-2 border border-zinc-800/80 rounded-sm cursor-pointer font-mono break-words whitespace-pre-wrap" onclick="${clickHandler}">${displayText}</div>
+          <div class="text-xs text-zinc-300 leading-relaxed bg-zinc-950/80 p-2 border border-zinc-800/80 rounded-sm cursor-pointer font-mono break-words whitespace-pre-wrap" onclick="${clickHandler}">${escapeHtml(displayText)}</div>
         ` : ''}
 
         ${miniTableHtml}
 
         <div class="flex items-center justify-between text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 mt-1">
           <div class="flex items-center gap-2">
-            <button onclick="togglePin(${item.id})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
+            <button onclick="togglePin(${itemId})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
               ${item.is_pinned ? '★' : '☆'}
             </button>
             <span>${new Date(item.created_at).toLocaleDateString('ru-RU')}</span>
@@ -1397,7 +1438,7 @@ function renderTiles(items) {
 
           <div class="flex gap-2 font-bold">
             <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
-            <button onclick="deleteItem(${item.id})" class="hover:text-red-400 uppercase">✕</button>
+            <button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase">✕</button>
           </div>
         </div>
       </div>
@@ -1418,8 +1459,8 @@ function renderTiles(items) {
   });
 }
 
-async function togglePin(id) { await fetch(`/api/vault/items/${id}/pin`, {method:'POST'}); loadWorkspace(); }
-async function deleteItem(id) { if (!confirm('Удалить?')) return; await fetch(`/api/vault/items/${id}`, {method:'DELETE'}); loadWorkspace(); }
+async function togglePin(id) { await fetch(`/api/vault/items/${pathSegment(id)}/pin`, {method:'POST'}); loadWorkspace(); }
+async function deleteItem(id) { if (!confirm('Удалить?')) return; await fetch(`/api/vault/items/${pathSegment(id)}`, {method:'DELETE'}); loadWorkspace(); }
 
 async function exportItems() {
   const resp = await fetch('/api/vault/items?limit=500&is_archived=false');

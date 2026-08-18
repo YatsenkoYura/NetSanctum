@@ -144,6 +144,7 @@ class ModuleSpec:
     storage_namespaces: tuple[str, ...] = ()
     package_prefixes: tuple[str, ...] = ()
     package_resolver: str | None = None
+    share_provider: str | None = None
     entity_types: tuple[str, ...] = ()
     entity_resolver: str | None = None
     migrations: MigrationSpec | None = None
@@ -169,6 +170,8 @@ class ModuleSpec:
             raise ValueError(
                 f"Module {self.id!r} must declare package_prefixes and package_resolver together"
             )
+        if self.share_provider:
+            _validate_object_path(self.share_provider, "Share provider")
         if bool(self.entity_types) != bool(self.entity_resolver):
             raise ValueError(f"Module {self.id!r} must declare entity_types and entity_resolver together")
         if (self.file_cleanup or self.module_cleanup) and not self.storage_namespaces:

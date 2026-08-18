@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.templates import templates
@@ -33,6 +34,7 @@ from app.modules.vault.services import (
 )
 
 router = APIRouter()
+settings = get_settings()
 
 
 async def _get_lang(request: Request) -> str:
@@ -211,6 +213,8 @@ async def fetch_meta_url(
     user=Depends(get_current_user),
 ):
     """Scrape OpenGraph metadata for a URL."""
+    if not settings.ALLOW_REMOTE_METADATA_FETCH:
+        raise HTTPException(status_code=403, detail="Remote metadata fetching is disabled")
     url = payload.get("url")
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")

@@ -1,0 +1,53 @@
+{% extends "shared_base.html" %}
+
+{% block title %}{{ share.title }} | NetSanctum{% endblock %}
+
+{% block content %}
+<section class="mb-8 border-2 border-zinc-800 bg-zinc-950 p-5 sm:p-7">
+    <div class="font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">Video archive</div>
+    <h1 class="mt-2 text-2xl font-black text-white sm:text-4xl">{{ share.title }}</h1>
+    <div class="mt-4 flex flex-wrap gap-2 font-mono text-[10px] uppercase text-zinc-500">
+        <span class="border border-zinc-800 px-2 py-1">{{ videos|length }} videos</span>
+        {% if share.expires_at %}<span class="border border-zinc-800 px-2 py-1">Expires {{ share.expires_at.strftime('%Y-%m-%d %H:%M UTC') }}</span>{% endif %}
+    </div>
+</section>
+
+{% if videos %}
+<div class="grid gap-6 lg:grid-cols-2">
+    {% for video in videos %}
+    <article class="overflow-hidden border-2 border-zinc-800 bg-zinc-950">
+        <div class="aspect-video bg-black">
+            {% if video.file_path %}
+            <video controls preload="metadata" class="h-full w-full object-contain"
+                   {% if video.thumbnail_path %}poster="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/thumbnail"{% endif %}>
+                <source src="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/stream">
+                {% if video.subtitles %}
+                {% for language in video.subtitles %}
+                <track kind="subtitles" srclang="{{ language }}" label="{{ language }}"
+                       src="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/subtitle/{{ language|urlencode }}">
+                {% endfor %}
+                {% endif %}
+            </video>
+            {% else %}
+            <div class="flex h-full items-center justify-center font-mono text-xs uppercase text-zinc-600">File unavailable</div>
+            {% endif %}
+        </div>
+        <div class="space-y-4 p-5">
+            <div>
+                <div class="font-mono text-[10px] uppercase text-teal-400">{{ video.platform }} · {{ video.resolution }}</div>
+                <h2 class="mt-1 text-lg font-bold text-white">{{ video.title }}</h2>
+                <p class="mt-1 text-xs text-zinc-500">{{ video.channel_name }}</p>
+            </div>
+            {% if video.description %}<p class="line-clamp-4 whitespace-pre-line text-sm leading-6 text-zinc-400">{{ video.description }}</p>{% endif %}
+            {% if share.allow_download and video.file_path %}
+            <a href="/s/{{ share.id }}/resource/{{ video.id|urlencode }}/download"
+               class="inline-flex border border-zinc-700 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-300 hover:border-teal-400 hover:text-teal-400">Download</a>
+            {% endif %}
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{% else %}
+<div class="border-2 border-zinc-800 bg-zinc-950 p-12 text-center font-mono text-xs uppercase text-zinc-600">No shared videos are available.</div>
+{% endif %}
+{% endblock %}

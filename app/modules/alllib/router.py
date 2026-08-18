@@ -4,7 +4,6 @@ FastAPI router for Lib Network (alllib) module.
 
 import asyncio
 import hashlib
-import hmac
 import html as html_lib
 import io
 import json
@@ -25,7 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.scheduler import celery_app
-from app.core.security import TOKEN_FILE_PATH, get_current_user
+from app.core.secret_values import decrypt_secret_value
+from app.core.security import get_current_user
 from app.core.storage import get_storage
 from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
@@ -39,6 +39,7 @@ router = APIRouter(prefix="/alllib", tags=["alllib"])
 settings = get_settings()
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 logger = logging.getLogger(__name__)
+PAIRING_TTL_SECONDS = 300
 
 ALLOWED_LIB_HOSTS = {
     "mangalib.me",
@@ -61,6 +62,11 @@ class ExternalTokenRequest(BaseModel):
     pairing_code: str = Field(min_length=32, max_length=256)
 
 
+class AnimeOptionsRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    token: str | None = Field(default=None, max_length=8192)
+
+
 def _is_allowed_lib_url(url: str) -> bool:
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower().rstrip(".")
@@ -69,25 +75,19 @@ def _is_allowed_lib_url(url: str) -> bool:
     )
 
 
-def _create_pairing_code() -> str:
-    nonce = secrets.token_urlsafe(32)
-    signature = hmac.new(_pairing_secret(), nonce.encode(), hashlib.sha256).hexdigest()
-    return f"{nonce}.{signature}"
+def _pairing_key(pairing_code: str) -> str:
+    digest = hashlib.sha256(pairing_code.encode("utf-8")).hexdigest()
+    return f"alllib_pairing:{digest}"
 
 
-def _pairing_secret() -> bytes:
-    if TOKEN_FILE_PATH.is_file():
-        return TOKEN_FILE_PATH.read_bytes().strip()
-    return settings.FILE_ENCRYPTION_KEY.encode()
+async def _create_pairing_code() -> str:
+    pairing_code = secrets.token_urlsafe(32)
+    await redis_client.setex(_pairing_key(pairing_code), PAIRING_TTL_SECONDS, "1")
+    return pairing_code
 
 
-def _verify_pairing_code(pairing_code: str) -> bool:
-    try:
-        nonce, signature = pairing_code.rsplit(".", 1)
-    except ValueError:
-        return False
-    expected = hmac.new(_pairing_secret(), nonce.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature, expected)
+async def _verify_pairing_code(pairing_code: str) -> bool:
+    return await redis_client.getdel(_pairing_key(pairing_code)) == "1"
 
 
 def _get_lang(request: Request) -> str:
@@ -101,8 +101,8 @@ def _t(key: str, lang: str = "en") -> str:
 @router.get("/helper.user.js", include_in_schema=False)
 async def get_helper_userscript(request: Request, user=Depends(get_current_user)):
     """Return the Tampermonkey helper userscript for direct installation."""
-    base_url = str(request.base_url).rstrip("/")
-    pairing_code = _create_pairing_code()
+    base_url = settings.PUBLIC_BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
+    pairing_code = await _create_pairing_code()
     userscript_content = f"""// ==UserScript==
 // @name         NetSanctum Autofill Helper
 // @namespace    http://tampermonkey.net/
@@ -311,8 +311,8 @@ async def alllib_dashboard(
     lang: str = Depends(_get_lang),
 ):
     """Render the primary Lib Network dashboard."""
-    base_url = str(request.base_url).rstrip("/")
-    pairing_code = _create_pairing_code()
+    base_url = settings.PUBLIC_BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
+    pairing_code = await _create_pairing_code()
     return templates.TemplateResponse(
         request,
         "alllib_dashboard.html",
@@ -529,10 +529,10 @@ async def get_library_ui(
         elif m.site_id == 6:
             fmt_slug = "anime"
 
-        # Escaping quotes to prevent HTML layout break
-        safe_title = m.title.replace('"', "&quot;")
-        safe_eng = (m.eng_name or "").replace('"', "&quot;")
-        safe_rus = (m.rus_name or "").replace('"', "&quot;")
+        safe_title = html_lib.escape(m.title, quote=True)
+        safe_eng = html_lib.escape(m.eng_name or "", quote=True)
+        safe_rus = html_lib.escape(m.rus_name or "", quote=True)
+        display_name = html_lib.escape(m.eng_name or m.rus_name or "")
 
         pkg_id = f"{m.media_type}_{m.id}"
         pkg_suffix = f"?package_id={pkg_id}"
@@ -553,9 +553,9 @@ async def get_library_ui(
                 <div class="space-y-1.5">
                     <div class="flex items-center gap-1.5">{type_badge}</div>
                     <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
-                        <h3 class="text-xs font-bold text-zinc-100 line-clamp-2 hover:text-teal-400 transition-colors" title="{m.title}">{m.title}</h3>
+                        <h3 class="text-xs font-bold text-zinc-100 line-clamp-2 hover:text-teal-400 transition-colors" title="{safe_title}">{safe_title}</h3>
                     </button>
-                    <p class="text-[9px] text-zinc-500 font-mono mt-0.5 truncate">{m.eng_name or m.rus_name or ""}</p>
+                    <p class="text-[9px] text-zinc-500 font-mono mt-0.5 truncate">{display_name}</p>
                 </div>
 
                 <div class="mt-4">
@@ -597,8 +597,10 @@ async def get_chapter_ui(
 
     # Determine layout based on media type
     if media.media_type == "novel":
+        from app.modules.alllib.ranobehub import sanitize_chapter_html
+
         content = (
-            chapter.content_html
+            sanitize_chapter_html(chapter.content_html)
             or '<div class="text-center text-zinc-500 text-xs">No content downloaded for this chapter.</div>'
         )
         html = f"""
@@ -843,15 +845,20 @@ async def get_active_downloads_ui(
 
     html = '<div class="space-y-3">'
     for t in tasks:
-        progress_val = t.get("progress", "0%")
+        title = html_lib.escape(str(t.get("title") or ""), quote=True)
+        url = html_lib.escape(str(t.get("url") or ""))
+        status_text = html_lib.escape(str(t.get("status") or ""))
+        task_id = html_lib.escape(str(t.get("task_id") or ""), quote=True)
+        progress_raw = str(t.get("progress") or "0%")
+        progress_val = progress_raw if re.fullmatch(r"(?:100|[0-9]{1,2})%", progress_raw) else "0%"
         html += f"""
         <div class="border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-2">
             <div class="flex justify-between items-start">
                 <div class="min-w-0">
-                    <span class="text-[10px] font-mono text-teal-400 truncate block max-w-[400px]" title="{t.get("title")}">{t.get("title")}</span>
-                    <span class="text-[9px] font-mono text-zinc-600 block mt-0.5 truncate max-w-[400px]">{t.get("url")}</span>
+                    <span class="text-[10px] font-mono text-teal-400 truncate block max-w-[400px]" title="{title}">{title}</span>
+                    <span class="text-[9px] font-mono text-zinc-600 block mt-0.5 truncate max-w-[400px]">{url}</span>
                 </div>
-                <button hx-delete="/alllib/api/tasks/{t.get("task_id")}"
+                <button hx-delete="/alllib/api/tasks/{task_id}"
                         hx-swap="outerHTML"
                         class="text-[10px] text-red-500 font-mono hover:text-red-400 font-bold ml-4 cursor-pointer">
                     ❌
@@ -859,7 +866,7 @@ async def get_active_downloads_ui(
             </div>
             <div>
                 <div class="flex justify-between text-[9px] font-mono text-zinc-500 mb-1">
-                    <span>{t.get("status")}</span>
+                    <span>{status_text}</span>
                     <span>{progress_val}</span>
                 </div>
                 <div class="w-full bg-zinc-900 h-1">
@@ -875,18 +882,18 @@ async def get_active_downloads_ui(
 # ── API Endpoints ────────────────────────────────────────
 
 
-@router.get("/api/anime-options")
-async def get_anime_options(url: str, token: str | None = None, user=Depends(get_current_user)):
+@router.post("/api/anime-options")
+async def get_anime_options(payload: AnimeOptionsRequest, user=Depends(get_current_user)):
     """Fetch available seasons, episode count, and translation teams for an AnimeLib URL."""
     from app.modules.alllib.api import LibAPI
 
-    api = LibAPI(auth_token=token)
+    api = LibAPI(auth_token=payload.token)
 
-    site_id, domain = api.get_site_info_from_url(url)
+    site_id, domain = api.get_site_info_from_url(payload.url)
     if site_id != 6:
         raise HTTPException(status_code=400, detail="Not an AnimeLib URL")
 
-    slug = api.extract_slug_from_url(url)
+    slug = api.extract_slug_from_url(payload.url)
     if not slug:
         raise HTTPException(status_code=400, detail="Invalid AnimeLib URL format")
 
@@ -946,6 +953,20 @@ async def trigger_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Trigger background download task."""
+    if req.token:
+        from app.modules.settings import service as settings_service
+
+        await settings_service.upsert_setting(
+            db,
+            key="lib_auth_token",
+            value=req.token,
+            scope="module",
+            module_name="alllib",
+            description="Bearer token for Lib Network API",
+            value_type="string",
+            is_secret=True,
+        )
+        await db.commit()
     task = await dispatch_tracked_async(
         download_lib_task,
         redis_client,
@@ -953,7 +974,7 @@ async def trigger_download(
         {"url": req.url, "title": "Resolving...", "status": "Queued", "progress": "0%"},
         kwargs={
             "url": req.url,
-            "auth_token": req.token,
+            "auth_token": None,
             "seasons": req.seasons,
             "episodes_range": req.episodes_range,
             "translation_team": req.translation_team,
@@ -1095,7 +1116,11 @@ async def export_media(media_id: int, db: AsyncSession = Depends(get_db), user=D
 
 
 @router.get("/api/cover/{media_id}", include_in_schema=False)
-async def get_cover(media_id: int, db: AsyncSession = Depends(get_db)):
+async def get_cover(
+    media_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
     """Serve cover image from storage backend (auto-decrypts encrypted covers)."""
     media = await db.get(LibMedia, media_id)
     if not media or not media.cover_path:
@@ -1130,27 +1155,21 @@ async def proxy_image(url: str, user=Depends(get_current_user)):
     """Proxy/cache novel chapter images to bypass WAF referer checks."""
     if not _is_allowed_lib_url(url):
         raise HTTPException(status_code=400, detail="Image host is not allowed")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": f"https://{urlparse(url).hostname}/",
-    }
     try:
-        import requests as requests_lib
+        from app.core.remote_fetch import fetch_bytes_checked
 
-        resp = await asyncio.to_thread(
-            requests_lib.get,
+        content, mime_type, _ = await asyncio.to_thread(
+            fetch_bytes_checked,
             url,
-            headers=headers,
-            timeout=15,
-            allow_redirects=False,
+            allowed_hosts=frozenset(ALLOWED_LIB_HOSTS),
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Referer": f"https://{urlparse(url).hostname}/",
+            },
+            max_redirects=0,
+            max_bytes=20 * 1024 * 1024,
         )
-        if resp.status_code == 200:
-            mime_type = resp.headers.get("content-type", "image/jpeg")
-            if not mime_type.lower().startswith("image/") or len(resp.content) > 20 * 1024 * 1024:
-                raise HTTPException(status_code=400, detail="External resource is not a valid image")
-            return Response(content=resp.content, media_type=mime_type)
-        else:
-            raise HTTPException(status_code=400, detail="External image load returned non-200")
+        return Response(content=content, media_type=mime_type)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Proxy error: {e}")
 
@@ -1350,7 +1369,7 @@ async def get_settings_ui(
             )
         )
     )
-    current_token = result.scalar_one_or_none() or ""
+    current_token = decrypt_secret_value(result.scalar_one_or_none())
     token_preview = (
         f"…{current_token[-12:]}" if len(current_token) > 12 else ("Set" if current_token else "Not set")
     )
@@ -1460,7 +1479,7 @@ async def save_settings(
 @router.post("/api/save_token_external", include_in_schema=False)
 async def save_token_external(payload: ExternalTokenRequest, db: AsyncSession = Depends(get_db)):
     """Save authorization token received from external userscript."""
-    if not _verify_pairing_code(payload.pairing_code):
+    if not await _verify_pairing_code(payload.pairing_code):
         raise HTTPException(status_code=403, detail="Invalid pairing code")
 
     token = payload.token.strip()

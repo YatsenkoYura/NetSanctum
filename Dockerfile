@@ -43,6 +43,8 @@ FROM ${PYTHON_IMAGE} AS runtime
 
 ARG NETSANCTUM_MODULES
 ARG NETSANCTUM_EXTERNAL_MODULES
+ARG APP_UID=1000
+ARG APP_GID=1000
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -74,7 +76,12 @@ COPY --from=dependencies /opt/netsanctum /opt/netsanctum
 COPY . .
 
 RUN mkdir -p /app/storage && \
-    python -c "from app.core.modules import module_registry; print(module_registry.diagnostics())"
+    python -c "from app.core.modules import module_registry; print(module_registry.diagnostics())" && \
+    groupadd --gid "${APP_GID}" netsanctum && \
+    useradd --uid "${APP_UID}" --gid "${APP_GID}" --home-dir /app --shell /usr/sbin/nologin netsanctum && \
+    chown -R netsanctum:netsanctum /app/storage
+
+USER netsanctum
 
 EXPOSE 8000
 

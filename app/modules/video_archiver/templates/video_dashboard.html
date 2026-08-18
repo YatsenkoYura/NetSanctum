@@ -105,7 +105,7 @@
                                         data-slot="entity.actions"
                                         data-entity-type="video"
                                         class="flex items-center gap-2"></netsanctum-actions>
-                    <button onclick="sendToOutpost('/api/video-archiver/videos/' + currentVideo.id + '/sync-manifest')"
+                    <button onclick="sendToOutpost('/api/video-archiver/videos/' + pathSegment(currentVideo.id) + '/sync-manifest')"
                             class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
                         Save to Device
                     </button>
@@ -552,7 +552,7 @@
                     &larr; {{ _('video_archiver', 'back_to_playlists') }}
                 </button>
                 <div class="flex items-center gap-2">
-                    <button onclick="sendToOutpost('/api/video-archiver/playlists/' + currentPlaylist.id + '/sync-manifest')"
+                    <button onclick="sendToOutpost('/api/video-archiver/playlists/' + pathSegment(currentPlaylist.id) + '/sync-manifest')"
                             class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors mr-2">
                         Save to Device
                     </button>
@@ -1000,31 +1000,49 @@
 
     // JavaScript client-side translations mapped from server Jinja
     var i18n = {
-        now_playing: "{{ _('video_archiver', 'now_playing') }}",
-        no_comments: "{{ _('video_archiver', 'no_comments') }}",
-        delete_playlist_confirm: "{{ _('video_archiver', 'delete_playlist_confirm') }}",
-        cancel_all_confirm: "{{ _('video_archiver', 'cancel_all_confirm') }}",
-        task_dispatched: "{{ _('video_archiver', 'task_dispatched') }}",
-        download_cancelled: "{{ _('video_archiver', 'download_cancelled') }}",
-        queue_purged: "{{ _('video_archiver', 'queue_purged') }}",
-        video_linked: "{{ _('video_archiver', 'video_linked') }}",
-        video_unlinked: "{{ _('video_archiver', 'video_unlinked') }}",
-        playlist_created: "{{ _('video_archiver', 'playlist_created') }}",
-        global_sync_scheduled: "{{ _('video_archiver', 'global_sync_scheduled') }}",
-        all_available: "{{ _('video_archiver', 'all_available') }}",
-        no_matches: "{{ _('video_archiver', 'no_matches') }}",
-        no_videos_in_playlist: "{{ _('video_archiver', 'no_videos_in_playlist') }}",
-        duration_label: "{{ _('video_archiver', 'duration_label') }}",
-        archived_label: "{{ _('video_archiver', 'archived_label') }}",
-        resolution: "{{ _('video_archiver', 'resolution') }}",
-        unavailable_on_youtube: "{{ _('video_archiver', 'video_unavailable') }}",
-        choose_video: "{{ _('video_archiver', 'choose_video') }}",
-        btn_delete: "{{ _('video_archiver', 'btn_delete') }}",
-        btn_open: "{{ _('video_archiver', 'btn_open') }}",
-        theater_mode: "{{ _('video_archiver', 'theater_mode') }}",
-        show_sidebar: "{{ _('video_archiver', 'show_sidebar') }}",
-        description_label: "{{ _('video_archiver', 'description_label') }}"
+        now_playing: {{ _('video_archiver', 'now_playing')|tojson }},
+        no_comments: {{ _('video_archiver', 'no_comments')|tojson }},
+        delete_playlist_confirm: {{ _('video_archiver', 'delete_playlist_confirm')|tojson }},
+        cancel_all_confirm: {{ _('video_archiver', 'cancel_all_confirm')|tojson }},
+        task_dispatched: {{ _('video_archiver', 'task_dispatched')|tojson }},
+        download_cancelled: {{ _('video_archiver', 'download_cancelled')|tojson }},
+        queue_purged: {{ _('video_archiver', 'queue_purged')|tojson }},
+        video_linked: {{ _('video_archiver', 'video_linked')|tojson }},
+        video_unlinked: {{ _('video_archiver', 'video_unlinked')|tojson }},
+        playlist_created: {{ _('video_archiver', 'playlist_created')|tojson }},
+        global_sync_scheduled: {{ _('video_archiver', 'global_sync_scheduled')|tojson }},
+        all_available: {{ _('video_archiver', 'all_available')|tojson }},
+        no_matches: {{ _('video_archiver', 'no_matches')|tojson }},
+        no_videos_in_playlist: {{ _('video_archiver', 'no_videos_in_playlist')|tojson }},
+        duration_label: {{ _('video_archiver', 'duration_label')|tojson }},
+        archived_label: {{ _('video_archiver', 'archived_label')|tojson }},
+        resolution: {{ _('video_archiver', 'resolution')|tojson }},
+        unavailable_on_youtube: {{ _('video_archiver', 'video_unavailable')|tojson }},
+        choose_video: {{ _('video_archiver', 'choose_video')|tojson }},
+        btn_delete: {{ _('video_archiver', 'btn_delete')|tojson }},
+        btn_open: {{ _('video_archiver', 'btn_open')|tojson }},
+        theater_mode: {{ _('video_archiver', 'theater_mode')|tojson }},
+        show_sidebar: {{ _('video_archiver', 'show_sidebar')|tojson }},
+        description_label: {{ _('video_archiver', 'description_label')|tojson }}
     };
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        })[ch]);
+    }
+
+    function escapeAttr(value) {
+        return escapeHtml(value);
+    }
+
+    function escapedJsArg(value) {
+        return escapeAttr(JSON.stringify(String(value ?? '')));
+    }
+
+    function pathSegment(value) {
+        return encodeURIComponent(String(value ?? ''));
+    }
 
     // Custom Toast system
     function showToast(message, type = 'success') {
@@ -1034,10 +1052,14 @@
         const textColor = type === 'error' ? 'text-red-400' : 'text-teal-400';
 
         toast.className = `bg-black border-2 ${borderColor} p-4 font-mono text-xs uppercase font-bold tracking-wider shadow-[4px_4px_0px_#000] pointer-events-auto flex justify-between items-center gap-4 transition-all duration-300 transform translate-y-2 opacity-0`;
-        toast.innerHTML = `
-            <span class="${textColor}">${message}</span>
-            <button onclick="this.parentElement.remove()" class="text-zinc-500 hover:text-white font-mono text-sm font-bold">&times;</button>
-        `;
+        const messageElement = document.createElement('span');
+        messageElement.className = textColor;
+        messageElement.textContent = String(message ?? '');
+        const closeButton = document.createElement('button');
+        closeButton.className = 'text-zinc-500 hover:text-white font-mono text-sm font-bold';
+        closeButton.innerHTML = '&times;';
+        closeButton.addEventListener('click', () => toast.remove());
+        toast.append(messageElement, closeButton);
         container.appendChild(toast);
 
         setTimeout(() => {
@@ -1155,14 +1177,18 @@
         const banner = document.getElementById('channel-banner');
         if (banner) {
             banner.classList.remove('hidden');
-            document.getElementById('channel-banner-name').innerText = channelName;
+            document.getElementById('channel-banner-name').textContent = channelName;
             const avatarEl = document.getElementById('channel-banner-avatar');
             if (avatarEl) {
                 const initial = channelName ? channelName.charAt(0).toUpperCase() : 'C';
+                avatarEl.textContent = initial;
                 if (channelId && channelId !== 'Unknown') {
-                    avatarEl.innerHTML = `<img src="/api/video-archiver/channels/${encodeURIComponent(channelId)}/avatar" class="w-full h-full object-cover" onerror="this.onerror=null; this.parentElement.innerText='${initial}';">`;
-                } else {
-                    avatarEl.innerText = initial;
+                    avatarEl.classList.add('relative');
+                    const avatar = document.createElement('img');
+                    avatar.src = `/api/video-archiver/channels/${pathSegment(channelId)}/avatar`;
+                    avatar.className = 'absolute inset-0 w-full h-full object-cover';
+                    avatar.addEventListener('error', () => avatar.remove());
+                    avatarEl.appendChild(avatar);
                 }
             }
         }
@@ -1232,7 +1258,7 @@
                     (v.channel_name && v.channel_name === currentChannelFilter.name)
                 );
                 const countEl = document.getElementById('channel-banner-video-count');
-                if (countEl) countEl.innerText = `${videos.length} ${videos.length === 1 ? 'video' : 'videos'}`;
+                if (countEl) countEl.textContent = `${videos.length} ${videos.length === 1 ? 'video' : 'videos'}`;
             }
 
             if ((packageId && search) || (currentChannelFilter && search)) {
@@ -1246,17 +1272,19 @@
             allLibraryVideos = videos;
 
             if (videos.length === 0) {
-                grid.innerHTML = `<div class="col-span-full py-12 text-center text-zinc-500 font-mono text-sm border-2 border-dashed border-zinc-800">${search ? i18n.no_matches : '{{ _("video_archiver", "no_videos") }}'}</div>`;
+                grid.innerHTML = `<div class="col-span-full py-12 text-center text-zinc-500 font-mono text-sm border-2 border-dashed border-zinc-800">${escapeHtml(search ? i18n.no_matches : '{{ _("video_archiver", "no_videos") }}')}</div>`;
                 return;
             }
 
             grid.innerHTML = videos.map(video => {
-                const thumbnailSrc = video.thumbnail_path ? `/api/video-archiver/videos/${video.id}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" fill="%2318181b"><rect width="16" height="9"/><path d="M6 3v3l4-2z" fill="%2327272a"/></svg>';
-                const resolutionBadge = video.resolution ? `<span class="absolute top-2 left-2 bg-black/80 px-2 py-0.5 text-[9px] font-mono text-teal-400 border border-zinc-800">${video.resolution}</span>` : '';
+                const videoIdPath = pathSegment(video.id);
+                const videoIdArg = escapedJsArg(video.id);
+                const thumbnailSrc = video.thumbnail_path ? `/api/video-archiver/videos/${videoIdPath}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" fill="%2318181b"><rect width="16" height="9"/><path d="M6 3v3l4-2z" fill="%2327272a"/></svg>';
+                const resolutionBadge = video.resolution ? `<span class="absolute top-2 left-2 bg-black/80 px-2 py-0.5 text-[9px] font-mono text-teal-400 border border-zinc-800">${escapeHtml(video.resolution)}</span>` : '';
                 const deletedBadge = video.is_deleted_on_youtube ? `
                     <span class="absolute top-2 right-2 bg-red-950 px-2 py-0.5 text-[9px] font-mono text-red-400 border border-red-800 uppercase flex items-center gap-1">
                         <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                        <span>${i18n.unavailable_on_youtube}</span>
+                        <span>${escapeHtml(i18n.unavailable_on_youtube)}</span>
                     </span>` : '';
 
                 const platformBadges = {
@@ -1266,19 +1294,19 @@
                     boosty: '<span class="bg-amber-950/90 text-amber-400 border border-amber-800 text-[8px] font-mono px-1 font-bold uppercase">BOOSTY</span>',
                     rutube: '<span class="bg-emerald-950/90 text-emerald-400 border border-emerald-800 text-[8px] font-mono px-1 font-bold uppercase">RUTUBE</span>',
                 };
-                const platformBadge = platformBadges[video.platform] || `<span class="bg-zinc-900/90 text-zinc-400 border border-zinc-700 text-[8px] font-mono px-1 font-bold uppercase">${(video.platform || 'OTHER').toUpperCase()}</span>`;
+                const platformBadge = platformBadges[video.platform] || `<span class="bg-zinc-900/90 text-zinc-400 border border-zinc-700 text-[8px] font-mono px-1 font-bold uppercase">${escapeHtml((video.platform || 'OTHER').toUpperCase())}</span>`;
 
-                const safeChannelName = (video.channel_name || '').replace(/'/g, "\\'");
+                const channelName = video.channel_name || '';
                 const initialChar = video.channel_name ? video.channel_name.charAt(0).toUpperCase() : 'C';
                 const avatarInnerHtml = video.channel_avatar_url
-                    ? `<img src="/api/video-archiver/videos/${video.id}/avatar" class="w-full h-full object-cover" onerror="this.onerror=null; this.parentElement.innerText='${initialChar}';">`
-                    : initialChar;
+                    ? `<span>${escapeHtml(initialChar)}</span><img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">`
+                    : escapeHtml(initialChar);
 
                 return `
-                    <div class="bg-zinc-950 border-2 border-zinc-800 hover:border-zinc-700 transition-colors flex flex-col group cursor-pointer" onclick="playVideoInLibrary('${video.id}')">
+                    <div class="bg-zinc-950 border-2 border-zinc-800 hover:border-zinc-700 transition-colors flex flex-col group cursor-pointer" onclick="playVideoInLibrary(${videoIdArg})">
                         <!-- Thumbnail Area -->
                         <div class="relative aspect-video bg-black overflow-hidden border-b-2 border-zinc-800">
-                            <img src="${thumbnailSrc}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${video.title}">
+                            <img src="${escapeAttr(thumbnailSrc)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${escapeAttr(video.title)}">
                             ${resolutionBadge}
                             ${deletedBadge}
                             <div class="absolute bottom-2 right-2 flex items-center gap-1">
@@ -1286,9 +1314,9 @@
                                 <span class="bg-black/80 px-2 py-0.5 text-[9px] font-mono text-zinc-300 border border-zinc-800">${formatDuration(video.duration)}</span>
                             </div>
                             <!-- Delete button — visible on hover -->
-                            <button onclick="event.stopPropagation(); deleteVideo('${video.id}')"
+                            <button onclick="event.stopPropagation(); deleteVideo(${videoIdArg})"
                                     class="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 bg-red-950/90 border border-red-800 hover:bg-red-900 text-red-400 p-1 transition-all"
-                                    title="${i18n.btn_delete}">
+                                    title="${escapeAttr(i18n.btn_delete)}">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             </button>
                         </div>
@@ -1296,28 +1324,28 @@
                         <!-- Metadata Area -->
                         <div class="p-4 flex-1 flex flex-col justify-between space-y-4">
                             <div class="space-y-2">
-                                <h3 class="text-xs font-bold text-white line-clamp-2 leading-snug group-hover:text-teal-400 transition-colors">${video.title}</h3>
-                                <div class="flex items-center gap-2 mt-1" onclick="event.stopPropagation(); filterByChannel('${video.channel_id || safeChannelName}', '${safeChannelName}')" title="Открыть канал: ${video.channel_name}">
-                                    <div class="w-5 h-5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[9px] text-teal-400 uppercase rounded-none overflow-hidden hover:border-teal-400 transition-colors">
+                                <h3 class="text-xs font-bold text-white line-clamp-2 leading-snug group-hover:text-teal-400 transition-colors">${escapeHtml(video.title)}</h3>
+                                <div class="flex items-center gap-2 mt-1" onclick="event.stopPropagation(); filterByChannel(${escapedJsArg(video.channel_id || channelName)}, ${escapedJsArg(channelName)})" title="Открыть канал: ${escapeAttr(channelName)}">
+                                    <div class="relative w-5 h-5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[9px] text-teal-400 uppercase rounded-none overflow-hidden hover:border-teal-400 transition-colors">
                                         ${avatarInnerHtml}
                                     </div>
-                                    <span class="text-[10px] font-mono text-zinc-400 hover:text-teal-400 transition-colors truncate max-w-[180px]">${video.channel_name}</span>
+                                    <span class="text-[10px] font-mono text-zinc-400 hover:text-teal-400 transition-colors truncate max-w-[180px]">${escapeHtml(channelName)}</span>
                                 </div>
                             </div>
 
                             <div class="flex flex-col text-[8px] font-mono text-zinc-600 border-t border-zinc-900 pt-3">
                                 <div class="flex justify-between items-center">
-                                    <span>ID: ${video.id}</span>
+                                    <span>ID: ${escapeHtml(video.id)}</span>
                                     <span>${formatDate(video.archived_at)}</span>
                                 </div>
-                                ${video.updated_at ? `<div class="mt-1 text-right text-zinc-700">Upd: ${formatDate(video.updated_at)}</div>` : ''}
+                                ${video.updated_at ? `<div class="mt-1 text-right text-zinc-700">Upd: ${escapeHtml(formatDate(video.updated_at))}</div>` : ''}
                             </div>
                         </div>
                     </div>
                 `;
             }).join('');
         } catch (err) {
-            grid.innerHTML = `<div class="col-span-full py-12 text-center text-red-500 font-mono text-sm">Failed to load library: ${err.message || err}</div>`;
+            grid.innerHTML = `<div class="col-span-full py-12 text-center text-red-500 font-mono text-sm">Failed to load library: ${escapeHtml(err.message || err)}</div>`;
         }
     }
 
@@ -1344,7 +1372,7 @@
         loader.classList.remove('hidden');
 
         try {
-            const resp = await fetch(`/api/video-archiver/videos/${videoId}`);
+            const resp = await fetch(`/api/video-archiver/videos/${pathSegment(videoId)}`);
             const video = await resp.json();
             currentVideo = video;
             document.getElementById('video-entity-actions').setAttribute('data-entity-id', video.id);
@@ -1353,23 +1381,29 @@
             loadQueue();
 
             // Populate Info
-            document.getElementById('player-detail-title').innerText = video.title;
-            document.getElementById('player-detail-channel').innerText = video.channel_name;
+            document.getElementById('player-detail-title').textContent = video.title;
+            document.getElementById('player-detail-channel').textContent = video.channel_name;
             const avatarContainer = document.getElementById('player-detail-avatar-container');
             if (avatarContainer) {
                 const initial = video.channel_name ? video.channel_name.charAt(0).toUpperCase() : 'C';
-                avatarContainer.innerHTML = `<img src="/api/video-archiver/videos/${video.id}/avatar" class="w-full h-full object-cover" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<span id=\\'player-detail-avatar\\'>${initial}</span>';">`;
+                avatarContainer.textContent = initial;
+                avatarContainer.classList.add('relative');
+                const avatar = document.createElement('img');
+                avatar.src = `/api/video-archiver/videos/${pathSegment(video.id)}/avatar`;
+                avatar.className = 'absolute inset-0 w-full h-full object-cover';
+                avatar.addEventListener('error', () => avatar.remove());
+                avatarContainer.appendChild(avatar);
             }
-            document.getElementById('player-detail-resolution').innerText = video.resolution || '720p';
-            document.getElementById('player-detail-duration').innerText = formatDuration(video.duration);
-            document.getElementById('player-detail-archived').innerText = formatDate(video.archived_at);
-            document.getElementById('player-detail-desc').innerText = video.description || '';
+            document.getElementById('player-detail-resolution').textContent = video.resolution || '720p';
+            document.getElementById('player-detail-duration').textContent = formatDuration(video.duration);
+            document.getElementById('player-detail-archived').textContent = formatDate(video.archived_at);
+            document.getElementById('player-detail-desc').textContent = video.description || '';
 
             // Views & Likes
             const viewsEl = document.getElementById('player-detail-views');
-            if (viewsEl) viewsEl.innerText = video.view_count !== null ? Number(video.view_count).toLocaleString() : '-';
+            if (viewsEl) viewsEl.textContent = video.view_count !== null ? Number(video.view_count).toLocaleString() : '-';
             const likesEl = document.getElementById('player-detail-likes');
-            if (likesEl) likesEl.innerText = video.like_count !== null ? Number(video.like_count).toLocaleString() : '-';
+            if (likesEl) likesEl.textContent = video.like_count !== null ? Number(video.like_count).toLocaleString() : '-';
 
             // Tags
             const tagsContainer = document.getElementById('player-detail-tags-container');
@@ -1378,7 +1412,7 @@
                 if (video.tags && video.tags.length > 0) {
                     tagsContainer.classList.remove('hidden');
                     tagsList.innerHTML = video.tags.map(t =>
-                        `<span class="bg-zinc-900 border border-zinc-800 text-zinc-400 text-[9px] px-2 py-0.5 font-mono">#${t}</span>`
+                        `<span class="bg-zinc-900 border border-zinc-800 text-zinc-400 text-[9px] px-2 py-0.5 font-mono">#${escapeHtml(t)}</span>`
                     ).join('');
                 } else {
                     tagsContainer.classList.add('hidden');
@@ -1397,7 +1431,7 @@
                 // Initialize custom subtitles menu
                 setupSubtitlesForCustomPlayer('shared-video-player', video.subtitles, video.id);
 
-                document.getElementById('shared-video-source').src = `/api/video-archiver/videos/${video.id}/stream`;
+                document.getElementById('shared-video-source').src = `/api/video-archiver/videos/${pathSegment(video.id)}/stream`;
                 player.load();
                 player.play();
                 showToast(`${i18n.now_playing} ${video.title.substring(0, 30)}...`);
@@ -1430,7 +1464,7 @@
             return;
         }
         try {
-            const resp = await fetch(`/api/video-archiver/videos/${videoId}`, {
+            const resp = await fetch(`/api/video-archiver/videos/${pathSegment(videoId)}`, {
                 method: 'DELETE'
             });
             if (resp.ok) {
@@ -1449,7 +1483,7 @@
     function renderComments(comments, targetElementId) {
         const container = document.getElementById(targetElementId);
         if (!comments || comments.length === 0) {
-            container.innerHTML = `<div class="text-center py-6 text-zinc-600 text-xs font-mono border border-dashed border-zinc-800">${i18n.no_comments}</div>`;
+            container.innerHTML = `<div class="text-center py-6 text-zinc-600 text-xs font-mono border border-dashed border-zinc-800">${escapeHtml(i18n.no_comments)}</div>`;
             return;
         }
 
@@ -1461,13 +1495,13 @@
                         ${c.replies.map(r => `
                             <div class="bg-zinc-900/40 border border-zinc-800 p-2 font-mono text-[9px] space-y-1">
                                 <div class="flex justify-between text-zinc-500 font-bold">
-                                    <span>@${r.author}</span>
-                                    <span>${r.time || ''}</span>
+                                    <span>@${escapeHtml(r.author)}</span>
+                                    <span>${escapeHtml(r.time || '')}</span>
                                 </div>
-                                <p class="text-zinc-300 leading-normal">${r.text}</p>
+                                <p class="text-zinc-300 leading-normal">${escapeHtml(r.text)}</p>
                                 <div class="text-zinc-600 text-[8px] flex items-center gap-1 mt-1">
                                     <svg class="w-2.5 h-2.5 text-zinc-500" fill="currentColor" viewBox="0 0 20 20"><path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 00.458 1.272l1.642 1.97A1.667 1.667 0 009.387 19H12a2 2 0 002-2v-4.5h2.5a2.5 2.5 0 002.5-2.5V8.5A2.5 2.5 0 0016.5 6h-4.32a2 2 0 00-1.897 1.37l-1.04 3.124A1.667 1.667 0 008.287 11.5H6.286a1.95 1.95 0 00-.286-.333z" /></svg>
-                                    <span>${r.likes || 0}</span>
+                                    <span>${escapeHtml(r.likes || 0)}</span>
                                 </div>
                             </div>
                         `).join('')}
@@ -1478,13 +1512,13 @@
             return `
                 <div class="bg-zinc-950 border border-zinc-850 p-4 font-mono text-[10px] space-y-2">
                     <div class="flex justify-between text-zinc-400 font-bold border-b border-zinc-900 pb-1.5">
-                        <span>@${c.author}</span>
-                        <span>${c.time || ''}</span>
+                        <span>@${escapeHtml(c.author)}</span>
+                        <span>${escapeHtml(c.time || '')}</span>
                     </div>
-                    <p class="text-zinc-200 leading-normal">${c.text}</p>
+                    <p class="text-zinc-200 leading-normal">${escapeHtml(c.text)}</p>
                     <div class="text-zinc-500 text-[8px] font-bold flex items-center gap-1">
                         <svg class="w-3.5 h-3.5 text-zinc-500" fill="currentColor" viewBox="0 0 20 20"><path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 00.458 1.272l1.642 1.97A1.667 1.667 0 009.387 19H12a2 2 0 002-2v-4.5h2.5a2.5 2.5 0 002.5-2.5V8.5A2.5 2.5 0 0016.5 6h-4.32a2 2 0 00-1.897 1.37l-1.04 3.124A1.667 1.667 0 008.287 11.5H6.286a1.95 1.95 0 00-.286-.333z" /></svg>
-                        <span>${c.likes || 0}</span>
+                        <span>${escapeHtml(c.likes || 0)}</span>
                     </div>
                     ${repliesHtml}
                 </div>
@@ -1561,7 +1595,7 @@
         );
 
         if (filtered.length === 0) {
-            list.innerHTML = `<div class="text-center py-6 text-zinc-600 text-xs font-mono">${i18n.no_matches}</div>`;
+            list.innerHTML = `<div class="text-center py-6 text-zinc-600 text-xs font-mono">${escapeHtml(i18n.no_matches)}</div>`;
             return;
         }
 
@@ -1569,16 +1603,19 @@
 
         let html = visibleChunk.map(v => {
             const activeBg = (currentVideo && currentVideo.id === v.id) ? 'border-teal-400 bg-zinc-900/55' : 'border-zinc-800 hover:border-zinc-700 bg-black';
+            const videoIdPath = pathSegment(v.id);
+            const videoIdArg = escapedJsArg(v.id);
+            const initial = v.channel_name ? v.channel_name.charAt(0).toUpperCase() : 'C';
             return `
-                <div onclick="playVideoInLibrary('${v.id}')" class="border-2 ${activeBg} p-2 font-mono cursor-pointer flex gap-3 items-center transition-colors">
-                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${v.id}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-16 h-10 object-cover border border-zinc-800 flex-shrink-0">
+                <div onclick="playVideoInLibrary(${videoIdArg})" class="border-2 ${activeBg} p-2 font-mono cursor-pointer flex gap-3 items-center transition-colors">
+                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${videoIdPath}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-16 h-10 object-cover border border-zinc-800 flex-shrink-0">
                     <div class="truncate min-w-0 flex-1">
-                        <div class="text-[10px] font-bold text-white truncate leading-snug">${v.title}</div>
+                        <div class="text-[10px] font-bold text-white truncate leading-snug">${escapeHtml(v.title)}</div>
                         <div class="flex items-center gap-1.5 text-[9px] text-zinc-500 truncate mt-0.5">
-                            <div class="w-3.5 h-3.5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[7px] text-teal-400 uppercase rounded-none overflow-hidden">
-                                <img src="/api/video-archiver/videos/${v.id}/avatar" class="w-full h-full object-cover" onerror="this.onerror=null; this.src=''; this.parentElement.innerText='${v.channel_name ? v.channel_name.charAt(0).toUpperCase() : 'C'}';">
+                            <div class="relative w-3.5 h-3.5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[7px] text-teal-400 uppercase rounded-none overflow-hidden">
+                                <span>${escapeHtml(initial)}</span><img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">
                             </div>
-                            <span class="truncate">${v.channel_name || 'Channel'} • ${formatDuration(v.duration)}</span>
+                            <span class="truncate">${escapeHtml(v.channel_name || 'Channel')} • ${escapeHtml(formatDuration(v.duration))}</span>
                         </div>
                     </div>
                 </div>
@@ -1733,8 +1770,8 @@
             if (globalSyncTask) {
                 currentGlobalSyncTaskId = globalSyncTask.task_id;
                 if (syncProgress) syncProgress.classList.remove('hidden');
-                document.getElementById('sync-title').innerText = globalSyncTask.title || 'Syncing Metadata...';
-                document.getElementById('sync-status').innerText = globalSyncTask.progress || '0%';
+                document.getElementById('sync-title').textContent = globalSyncTask.title || 'Syncing Metadata...';
+                document.getElementById('sync-status').textContent = globalSyncTask.progress || '0%';
 
                 const btnCancel = document.getElementById('btn-cancel-sync');
                 if (btnCancel) btnCancel.classList.remove('hidden');
@@ -1748,11 +1785,11 @@
                 document.getElementById('sync-bar-success').style.width = `${(success / total) * 100}%`;
                 document.getElementById('sync-bar-failed').style.width = `${(failed / total) * 100}%`;
 
-                document.getElementById('sync-detail').innerText = `Processed: ${success + failed} / ${total}`;
+                document.getElementById('sync-detail').textContent = `Processed: ${success + failed} / ${total}`;
                 if (failed > 0) {
-                    document.getElementById('sync-errors').innerText = `${failed} failed`;
+                    document.getElementById('sync-errors').textContent = `${failed} failed`;
                 } else {
-                    document.getElementById('sync-errors').innerText = '';
+                    document.getElementById('sync-errors').textContent = '';
                 }
 
                 if (globalSyncTask.status.includes('Finished')) {
@@ -1780,27 +1817,30 @@
             }
 
             container.innerHTML = regularTasks.map(t => {
-                const pct = t.progress || '0%';
+                const pct = String(t.progress || '0%');
+                const pctValue = Math.max(0, Math.min(100, Number.parseFloat(pct) || 0));
+                const status = String(t.status || '');
                 let statusColor = 'text-teal-400';
-                if (t.status.startsWith('Error') || t.status.startsWith('Failed')) {
+                if (status.startsWith('Error') || status.startsWith('Failed')) {
                     statusColor = 'text-red-500';
                 }
+                const taskId = String(t.task_id || '');
                 return `
                     <div class="bg-black border border-zinc-800 p-3 font-mono space-y-2 relative">
-                        <button onclick="cancelSingleDownload('${t.task_id}')"
+                        <button onclick="cancelSingleDownload(${escapedJsArg(taskId)})"
                                 class="absolute top-2 right-2 text-zinc-500 hover:text-red-400 font-bold text-xs uppercase cursor-pointer">
                             &times;
                         </button>
                         <div class="flex justify-between text-[10px] font-bold text-white truncate gap-6 pr-4">
-                            <span class="truncate">${t.title}</span>
-                            <span class="${statusColor}">${pct}</span>
+                            <span class="truncate">${escapeHtml(t.title)}</span>
+                            <span class="${statusColor}">${escapeHtml(pct)}</span>
                         </div>
                         <div class="w-full bg-zinc-900 h-1.5 border border-zinc-850">
-                            <div class="bg-teal-400 h-full transition-all duration-300" style="width: ${pct}"></div>
+                            <div class="bg-teal-400 h-full transition-all duration-300" style="width: ${pctValue}%"></div>
                         </div>
                         <div class="flex justify-between text-[8px] text-zinc-500">
-                            <span class="truncate max-w-[200px]">${t.status}</span>
-                            <span>Task ID: ${t.task_id.substring(0, 6)}</span>
+                            <span class="truncate max-w-[200px]">${escapeHtml(status)}</span>
+                            <span>Task ID: ${escapeHtml(taskId.substring(0, 6))}</span>
                         </div>
                     </div>
                 `;
@@ -1812,7 +1852,7 @@
 
     window.cancelSingleDownload = async function(taskId) {
         try {
-            await fetch(`/api/video-archiver/tasks/${taskId}`, {method: 'DELETE'});
+            await fetch(`/api/video-archiver/tasks/${pathSegment(taskId)}`, {method: 'DELETE'});
             showToast(i18n.download_cancelled);
             pollActiveTasks();
         } catch (err) {
@@ -1857,20 +1897,20 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
                             </svg>
                         </div>
-                        <h4 class="text-sm font-bold text-white uppercase">${p.name}</h4>
-                        <p class="text-xs text-zinc-500 line-clamp-2">${p.description || ''}</p>
+                        <h4 class="text-sm font-bold text-white uppercase">${escapeHtml(p.name)}</h4>
+                        <p class="text-xs text-zinc-500 line-clamp-2">${escapeHtml(p.description || '')}</p>
                     </div>
                     <div class="flex justify-between items-center pt-2 border-t border-zinc-900">
                         <span class="text-[10px] text-zinc-600">${formatDate(p.created_at)}</span>
-                        <button onclick="openPlaylistDetail(${p.id})"
+                        <button onclick="openPlaylistDetail(${escapedJsArg(p.id)})"
                                 class="bg-teal-400 text-black font-bold text-[10px] px-3 py-1.5 uppercase hover:bg-teal-300">
-                            ${i18n.btn_open}
+                            ${escapeHtml(i18n.btn_open)}
                         </button>
                     </div>
                 </div>
             `).join('');
         } catch (err) {
-            container.innerHTML = `<div class="col-span-full py-12 text-center text-red-500 font-mono text-sm">Failed to load playlists: ${err}</div>`;
+            container.innerHTML = `<div class="col-span-full py-12 text-center text-red-500 font-mono text-sm">Failed to load playlists: ${escapeHtml(err)}</div>`;
         }
     }
 
@@ -1881,7 +1921,7 @@
         try {
             const urlParams = new URLSearchParams(window.location.search);
             const packageId = urlParams.get('package_id');
-            let url = `/api/video-archiver/playlists/${playlistId}`;
+            let url = `/api/video-archiver/playlists/${pathSegment(playlistId)}`;
             if (packageId) {
                 url += `?package_id=${encodeURIComponent(packageId)}`;
             }
@@ -1891,8 +1931,8 @@
             playlistVideos = data.videos;
 
             // Load playlist sidebar info
-            document.getElementById('sidebar-playlist-title').innerText = data.name;
-            document.getElementById('sidebar-playlist-desc').innerText = data.description || '';
+            document.getElementById('sidebar-playlist-title').textContent = data.name;
+            document.getElementById('sidebar-playlist-desc').textContent = data.description || '';
             document.getElementById('sidebar-playlist-delete-btn').onclick = () => deletePlaylist(data.id);
 
             // Populate Add Video Selector (Videos not in playlist)
@@ -1900,8 +1940,8 @@
             const inPlaylistIds = playlistVideos.map(v => v.id);
             const availableVideos = allLibraryVideos.filter(v => !inPlaylistIds.includes(v.id));
 
-            addSelect.innerHTML = `<option value="">${i18n.choose_video}</option>` + availableVideos.map(v => `
-                <option value="${v.id}">${v.title}</option>
+            addSelect.innerHTML = `<option value="">${escapeHtml(i18n.choose_video)}</option>` + availableVideos.map(v => `
+                <option value="${escapeAttr(v.id)}">${escapeHtml(v.title)}</option>
             `).join('');
 
             // Draw Video List in Sidebar
@@ -1937,29 +1977,34 @@
         );
 
         if (filtered.length === 0) {
-            list.innerHTML = `<div class="text-center py-6 text-zinc-600 text-xs font-mono">${i18n.no_videos_in_playlist}</div>`;
+            list.innerHTML = `<div class="text-center py-6 text-zinc-600 text-xs font-mono">${escapeHtml(i18n.no_videos_in_playlist)}</div>`;
             return;
         }
 
-        list.innerHTML = filtered.map(v => `
+        list.innerHTML = filtered.map(v => {
+            const videoIdPath = pathSegment(v.id);
+            const videoIdArg = escapedJsArg(v.id);
+            const initial = v.channel_name ? v.channel_name.charAt(0).toUpperCase() : 'C';
+            return `
             <div class="border-2 border-zinc-800 bg-black p-2 font-mono flex justify-between items-center gap-2 group hover:border-zinc-700 transition-colors">
-                <div onclick="playVideoInPlaylist('${v.id}')" class="flex-1 flex gap-2 items-center cursor-pointer min-w-0">
-                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${v.id}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-14 h-9 object-cover border border-zinc-800">
+                <div onclick="playVideoInPlaylist(${videoIdArg})" class="flex-1 flex gap-2 items-center cursor-pointer min-w-0">
+                    <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${videoIdPath}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-14 h-9 object-cover border border-zinc-800">
                     <div class="truncate min-w-0">
-                        <div class="text-[9px] font-bold text-white truncate leading-snug group-hover:text-teal-400 transition-colors">${v.title}</div>
+                        <div class="text-[9px] font-bold text-white truncate leading-snug group-hover:text-teal-400 transition-colors">${escapeHtml(v.title)}</div>
                         <div class="flex items-center gap-1.5 text-[8px] text-zinc-500 truncate mt-0.5">
-                            <div class="w-3.5 h-3.5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[7px] text-teal-400 uppercase rounded-none overflow-hidden">
-                                <img src="/api/video-archiver/videos/${v.id}/avatar" class="w-full h-full object-cover" onerror="this.onerror=null; this.src=''; this.parentElement.innerText='${v.channel_name ? v.channel_name.charAt(0).toUpperCase() : 'C'}';">
+                            <div class="relative w-3.5 h-3.5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[7px] text-teal-400 uppercase rounded-none overflow-hidden">
+                                <span>${escapeHtml(initial)}</span><img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">
                             </div>
-                            <span class="truncate">${v.channel_name} • ${formatDuration(v.duration)}</span>
+                            <span class="truncate">${escapeHtml(v.channel_name)} • ${escapeHtml(formatDuration(v.duration))}</span>
                         </div>
                     </div>
                 </div>
-                <button onclick="unlinkVideoFromPlaylist('${v.id}')" class="text-red-500 hover:text-red-400 text-xs font-black px-1.5 uppercase cursor-pointer">
+                <button onclick="unlinkVideoFromPlaylist(${videoIdArg})" class="text-red-500 hover:text-red-400 text-xs font-black px-1.5 uppercase cursor-pointer">
                     &times;
                 </button>
             </div>
-        `).join('');
+        `;
+        }).join('');
     }
 
     // Filters / Sort within playlist sidebar
@@ -2000,17 +2045,17 @@
         loader.classList.remove('hidden');
 
         try {
-            const resp = await fetch(`/api/video-archiver/videos/${videoId}`);
+            const resp = await fetch(`/api/video-archiver/videos/${pathSegment(videoId)}`);
             const video = await resp.json();
 
             // Populate Metadata
-            document.getElementById('playlist-detail-video-title').innerText = video.title;
-            document.getElementById('playlist-detail-video-channel').innerText = video.channel_name;
-            document.getElementById('playlist-detail-video-avatar').innerText = video.channel_name ? video.channel_name.charAt(0).toUpperCase() : 'C';
-            document.getElementById('playlist-detail-video-res').innerText = video.resolution || '720p';
-            document.getElementById('playlist-detail-video-duration').innerText = formatDuration(video.duration);
-            document.getElementById('playlist-detail-video-archived').innerText = formatDate(video.archived_at);
-            document.getElementById('playlist-detail-video-desc').innerText = video.description || '';
+            document.getElementById('playlist-detail-video-title').textContent = video.title;
+            document.getElementById('playlist-detail-video-channel').textContent = video.channel_name;
+            document.getElementById('playlist-detail-video-avatar').textContent = video.channel_name ? video.channel_name.charAt(0).toUpperCase() : 'C';
+            document.getElementById('playlist-detail-video-res').textContent = video.resolution || '720p';
+            document.getElementById('playlist-detail-video-duration').textContent = formatDuration(video.duration);
+            document.getElementById('playlist-detail-video-archived').textContent = formatDate(video.archived_at);
+            document.getElementById('playlist-detail-video-desc').textContent = video.description || '';
 
             // Comments
             renderComments(video.comments, 'playlist-detail-video-comments');
@@ -2024,7 +2069,7 @@
                 // Initialize custom subtitles menu
                 setupSubtitlesForCustomPlayer('playlist-video-player', video.subtitles, video.id);
 
-                document.getElementById('playlist-video-source').src = `/api/video-archiver/videos/${video.id}/stream`;
+                document.getElementById('playlist-video-source').src = `/api/video-archiver/videos/${pathSegment(video.id)}/stream`;
                 player.load();
                 player.play();
                 showToast(`${i18n.now_playing} ${video.title.substring(0, 35)}...`);
@@ -2044,7 +2089,7 @@
         if (!videoId || !currentPlaylist) return;
 
         try {
-            const resp = await fetch(`/api/video-archiver/playlists/${currentPlaylist.id}/videos/${videoId}`, {method: 'POST'});
+            const resp = await fetch(`/api/video-archiver/playlists/${pathSegment(currentPlaylist.id)}/videos/${pathSegment(videoId)}`, {method: 'POST'});
             await resp.json();
             showToast(i18n.video_linked);
 
@@ -2058,7 +2103,7 @@
     window.unlinkVideoFromPlaylist = async function(videoId) {
         if (!currentPlaylist) return;
         try {
-            await fetch(`/api/video-archiver/playlists/${currentPlaylist.id}/videos/${videoId}`, {method: 'DELETE'});
+            await fetch(`/api/video-archiver/playlists/${pathSegment(currentPlaylist.id)}/videos/${pathSegment(videoId)}`, {method: 'DELETE'});
             showToast(i18n.video_unlinked);
 
             // Reload playlist detail
@@ -2071,7 +2116,7 @@
     window.deletePlaylist = async function(playlistId) {
         if (!confirm(i18n.delete_playlist_confirm)) return;
         try {
-            await fetch(`/api/video-archiver/playlists/${playlistId}`, {method: 'DELETE'});
+            await fetch(`/api/video-archiver/playlists/${pathSegment(playlistId)}`, {method: 'DELETE'});
             showToast(i18n.playlist_created); // (Playlist deleted successfully)
             closePlaylistDetail();
             loadPlaylists();
@@ -2090,11 +2135,11 @@
         if (isPlaylistTheater) {
             main.className = "col-span-12 space-y-6";
             sidebar.className = "hidden";
-            btn.innerHTML = `[${i18n.show_sidebar}]`;
+            btn.textContent = `[${i18n.show_sidebar}]`;
         } else {
             main.className = "col-span-8 space-y-6";
             sidebar.className = "col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[650px] space-y-4";
-            btn.innerHTML = `[${i18n.theater_mode}]`;
+            btn.textContent = `[${i18n.theater_mode}]`;
         }
     };
 
@@ -2184,20 +2229,20 @@
                 const videos = await resp.json();
 
                 if (videos.length === 0) {
-                    container.innerHTML = `<div class="text-center py-6 text-zinc-600 font-mono text-xs">${i18n.all_available}</div>`;
+                    container.innerHTML = `<div class="text-center py-6 text-zinc-600 font-mono text-xs">${escapeHtml(i18n.all_available)}</div>`;
                 } else {
                     container.innerHTML = videos.map(v => `
                         <div class="bg-red-950/20 border border-red-900/50 p-3 font-mono flex items-center justify-between gap-4">
                             <div class="truncate min-w-0">
-                                <h5 class="text-xs font-bold text-white truncate cursor-pointer hover:text-red-400" onclick="switchTab('library'); playVideoInLibrary('${v.id}')">${v.title}</h5>
+                                <h5 class="text-xs font-bold text-white truncate cursor-pointer hover:text-red-400" onclick="switchTab('library'); playVideoInLibrary(${escapedJsArg(v.id)})">${escapeHtml(v.title)}</h5>
                                 <p class="text-[9px] text-red-400 uppercase mt-0.5 font-bold flex items-center gap-1">
                                     <svg class="w-2.5 h-2.5 text-red-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                    <span>${i18n.unavailable_on_youtube}</span>
+                                    <span>${escapeHtml(i18n.unavailable_on_youtube)}</span>
                                 </p>
                             </div>
-                            <button onclick="switchTab('library'); playVideoInLibrary('${v.id}')"
+                            <button onclick="switchTab('library'); playVideoInLibrary(${escapedJsArg(v.id)})"
                                     class="bg-red-950 border border-red-800 text-red-400 font-bold text-[10px] px-3 py-1.5 uppercase hover:bg-red-900">
-                                ${i18n.btn_open}
+                                ${escapeHtml(i18n.btn_open)}
                             </button>
                         </div>
                     `).join('');
@@ -2220,7 +2265,7 @@
                             <input type="checkbox" name="sync_filter" value="never" class="accent-teal-400 w-4 h-4 cursor-pointer" checked>
                             <span class="text-xs font-mono text-zinc-300 group-hover:text-white transition-colors">Ни разу не обновлялись</span>
                         </div>
-                        <span class="text-[10px] font-mono text-teal-400 font-bold">(${data.never || 0})</span>
+                        <span class="text-[10px] font-mono text-teal-400 font-bold">(${escapeHtml(data.never || 0)})</span>
                     </label>
                 `;
 
@@ -2228,10 +2273,10 @@
                     html += `
                     <label class="flex items-center justify-between cursor-pointer group p-1 hover:bg-zinc-900/60">
                         <div class="flex items-center gap-3">
-                            <input type="checkbox" name="sync_filter" value="${item.date}" class="accent-teal-400 w-4 h-4 cursor-pointer">
-                            <span class="text-xs font-mono text-zinc-300 group-hover:text-white transition-colors">${formatDate(item.date)}</span>
+                            <input type="checkbox" name="sync_filter" value="${escapeAttr(item.date)}" class="accent-teal-400 w-4 h-4 cursor-pointer">
+                            <span class="text-xs font-mono text-zinc-300 group-hover:text-white transition-colors">${escapeHtml(formatDate(item.date))}</span>
                         </div>
-                        <span class="text-[10px] font-mono text-zinc-500 font-bold">(${item.count})</span>
+                        <span class="text-[10px] font-mono text-zinc-500 font-bold">(${escapeHtml(item.count)})</span>
                     </label>
                     `;
                 });
@@ -2265,8 +2310,8 @@
                     }
 
                     return `
-                        <div title="${p.message || ''}" class="px-3 py-1.5 text-[10px] font-mono border ${badgeColor} flex items-center justify-between gap-2 uppercase font-bold flex-1 min-w-[140px]">
-                            <span class="truncate text-white">${p.platform} (${p.count})</span>
+                        <div title="${escapeAttr(p.message || '')}" class="px-3 py-1.5 text-[10px] font-mono border ${badgeColor} flex items-center justify-between gap-2 uppercase font-bold flex-1 min-w-[140px]">
+                            <span class="truncate text-white">${escapeHtml(p.platform)} (${escapeHtml(p.count)})</span>
                             <span class="whitespace-nowrap ml-1">${icon} ${text}</span>
                         </div>
                     `;
@@ -2331,7 +2376,7 @@
             if (window.oauthPollInterval) clearInterval(window.oauthPollInterval);
 
             window.oauthPollInterval = setInterval(async () => {
-                const sResp = await fetch(`/api/video-archiver/youtube-oauth/status/${data.task_id}`);
+                const sResp = await fetch(`/api/video-archiver/youtube-oauth/status/${pathSegment(data.task_id)}`);
                 const sData = await sResp.json();
 
                 if (sData.status === 'pending') {
@@ -2532,7 +2577,7 @@
         track.kind = 'subtitles';
         track.label = lang.toUpperCase();
         track.srclang = lang;
-        track.src = `/api/video-archiver/videos/${currentVideo.id}/subtitles/${lang}`;
+        track.src = `/api/video-archiver/videos/${pathSegment(currentVideo.id)}/subtitles/${pathSegment(lang)}`;
         track.default = true;
 
         video.appendChild(track);
@@ -2574,12 +2619,12 @@
 
         if (listContainer) {
             let html = `
-                <button onclick="selectSubtitleLang('${videoId}', 'off')" class="text-left px-2 py-1 hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors border-b border-zinc-900 uppercase font-bold text-[9px]">OFF</button>
+                <button onclick="selectSubtitleLang(${escapedJsArg(videoId)}, 'off')" class="text-left px-2 py-1 hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors border-b border-zinc-900 uppercase font-bold text-[9px]">OFF</button>
             `;
             for (const lang in subtitles) {
                 const label = lang.toUpperCase() === 'RU' ? 'Русский' : (lang.toUpperCase() === 'EN' ? 'English' : lang.toUpperCase());
                 html += `
-                    <button onclick="selectSubtitleLang('${videoId}', '${lang}')" class="text-left px-2 py-1 hover:bg-zinc-900 text-zinc-300 hover:text-teal-400 transition-colors uppercase font-bold text-[9px]">${label}</button>
+                    <button onclick="selectSubtitleLang(${escapedJsArg(videoId)}, ${escapedJsArg(lang)})" class="text-left px-2 py-1 hover:bg-zinc-900 text-zinc-300 hover:text-teal-400 transition-colors uppercase font-bold text-[9px]">${escapeHtml(label)}</button>
                 `;
             }
             listContainer.innerHTML = html;

@@ -1,0 +1,25 @@
+{% extends "shared_base.html" %}
+
+{% block title %}{{ share.title }} | NetSanctum{% endblock %}
+
+{% block content %}
+<div class="mx-auto mt-8 max-w-md border-2 border-zinc-800 bg-zinc-950 p-6 sm:p-8">
+    <div class="mb-6">
+        <div class="mb-2 font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">Protected share</div>
+        <h1 class="text-2xl font-black text-white">{{ share.title }}</h1>
+        <p class="mt-2 text-sm text-zinc-500">Enter the password supplied by the owner.</p>
+    </div>
+    {% if error %}
+    <div class="mb-4 border border-red-500/60 bg-red-950/30 px-3 py-2 font-mono text-xs text-red-300">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="{{ action }}" class="space-y-4">
+        {% if secret %}<input type="hidden" name="secret" value="{{ secret }}">{% endif %}
+        <input type="password" name="password" required autofocus autocomplete="current-password"
+               class="w-full border-2 border-zinc-800 bg-black px-4 py-3 text-white outline-none focus:border-teal-400"
+               placeholder="Password">
+        <button type="submit" class="w-full border-2 border-teal-400 bg-teal-400 px-4 py-3 font-mono text-xs font-black uppercase text-black hover:bg-black hover:text-teal-400">
+            Open module
+        </button>
+    </form>
+</div>
+{% endblock %}

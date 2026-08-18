@@ -7,13 +7,14 @@ import tempfile
 import time
 
 import redis
-import requests
 import yt_dlp
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
+from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.scheduler import celery_app
+from app.core.secret_values import decrypt_secret_value
 from app.core.storage import get_storage
 from app.core.task_dispatch import dispatch_tracked_sync
 from app.modules.settings.models import Setting
@@ -22,6 +23,19 @@ from app.modules.video_archiver.providers import PlatformRegistry
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+VIDEO_IMAGE_HOSTS = frozenset(
+    {
+        "youtube.com",
+        "ytimg.com",
+        "googleusercontent.com",
+        "ggpht.com",
+        "userapi.com",
+        "vkuser.net",
+        "telegram-cdn.org",
+        "boosty.to",
+        "rutubelist.ru",
+    }
+)
 
 # Initialize Redis client using dynamic REDIS_URL
 redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -40,7 +54,7 @@ def _get_platform_cookies(platform_id: str) -> str | None:
             .first()
         )
         if setting and setting.value and setting.value.strip():
-            return setting.value
+            return decrypt_secret_value(setting.value)
     return None
 
 
@@ -88,7 +102,11 @@ def process_video_url_task(
 
     update_status("Fetching info...")
 
-    provider = PlatformRegistry.get_provider(url)
+    try:
+        provider = PlatformRegistry.require_supported_url(url)
+    except ValueError as exc:
+        update_status(str(exc), "Error")
+        return f"Error: {exc}"
     if not cookies_text:
         cookies_text = _get_platform_cookies(provider.platform_id)
 
@@ -97,7 +115,6 @@ def process_video_url_task(
             "quiet": True,
             "extract_flat": "in_playlist",
             "js_runtimes": {"deno": {}},
-            "remote_components": {"ejs:github"},
         }
     )
 
@@ -232,7 +249,11 @@ def download_video_task(
     update_redis("Extracting full metadata...", "5%")
 
     temp_dir = tempfile.mkdtemp()
-    provider = PlatformRegistry.get_provider(url)
+    try:
+        provider = PlatformRegistry.require_supported_url(url)
+    except ValueError as exc:
+        update_redis(str(exc), "Error")
+        return f"Error: {exc}"
     if not cookies_text:
         cookies_text = _get_platform_cookies(provider.platform_id)
 
@@ -248,7 +269,6 @@ def download_video_task(
             "getcomments": comments_enabled,
             "extractor_retries": 1,
             "js_runtimes": {"deno": {}},
-            "remote_components": {"ejs:github"},
             "ignoreerrors": True,
         }
     )
@@ -343,14 +363,20 @@ def download_video_task(
         thumbnail_url = info_dict.get("thumbnail")
         if thumbnail_url:
             try:
-                resp = requests.get(thumbnail_url, timeout=10)
-                if resp.status_code == 200:
-                    ext = "jpg"
-                    if "webp" in resp.headers.get("Content-Type", ""):
-                        ext = "webp"
-                    thumbnail_storage_path = f"video_archiver/thumbnails/{video_id}.{ext}"
-                    storage.save_file(resp.content, thumbnail_storage_path)
-            except Exception as thumbnail_err:
+                content, content_type, _ = fetch_bytes_checked(
+                    thumbnail_url,
+                    allowed_hosts=VIDEO_IMAGE_HOSTS,
+                )
+                ext = (
+                    "webp"
+                    if content_type == "image/webp"
+                    else "png"
+                    if content_type == "image/png"
+                    else "jpg"
+                )
+                thumbnail_storage_path = f"video_archiver/thumbnails/{video_id}.{ext}"
+                storage.save_file(content, thumbnail_storage_path)
+            except (RemoteFetchError, OSError) as thumbnail_err:
                 logger.warning(f"Failed to download thumbnail: {thumbnail_err}")
 
         # Collect and save subtitles if downloaded
@@ -528,19 +554,16 @@ def _get_or_create_channel(session, info_dict: dict | None) -> VideoChannel | No
 
     if avatar_url:
         try:
-            resp = requests.get(avatar_url, timeout=10)
-            if resp.status_code == 200:
-                storage = get_storage()
-                ext = "jpg"
-                ct = resp.headers.get("Content-Type", "")
-                if "webp" in ct:
-                    ext = "webp"
-                elif "png" in ct:
-                    ext = "png"
-                avatar_storage_path = f"video_archiver/avatars/{channel_id}.{ext}"
-                storage.save_file(resp.content, avatar_storage_path)
-                channel.avatar_path = avatar_storage_path
-        except Exception as err:
+            content, content_type, _ = fetch_bytes_checked(
+                avatar_url,
+                allowed_hosts=VIDEO_IMAGE_HOSTS,
+            )
+            storage = get_storage()
+            ext = "webp" if content_type == "image/webp" else "png" if content_type == "image/png" else "jpg"
+            avatar_storage_path = f"video_archiver/avatars/{channel_id}.{ext}"
+            storage.save_file(content, avatar_storage_path)
+            channel.avatar_path = avatar_storage_path
+        except (RemoteFetchError, OSError) as err:
             logger.warning(f"Failed to download channel avatar for {channel_id}: {err}")
 
     return channel
@@ -587,7 +610,6 @@ def _sync_video_metadata(video_id: str, task_id: str | None = None) -> str:
             "extractor_retries": 0,
             "ignoreerrors": True,
             "js_runtimes": {"deno": {}},
-            "remote_components": {"ejs:github"},
         }
     )
 

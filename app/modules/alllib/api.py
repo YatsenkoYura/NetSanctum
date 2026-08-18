@@ -15,6 +15,7 @@ import requests
 from sqlalchemy import and_, select
 
 from app.core.database import SyncSessionLocal
+from app.core.secret_values import decrypt_secret_value
 from app.modules.settings.models import Setting
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class LibAPI:
                 token = result.scalar_one_or_none()
                 if token and token.strip():
                     logger.debug("Lib Network auth token loaded from settings.")
-                    return token.strip()
+                    return decrypt_secret_value(token).strip()
         except Exception as e:
             logger.warning(f"Could not load lib_auth_token from settings: {e}")
         return None

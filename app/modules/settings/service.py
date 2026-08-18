@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.secret_values import encrypt_secret_value
 from app.modules.settings.models import Setting
 
 
@@ -53,6 +54,7 @@ async def upsert_setting(
     """
     Create or update a setting identified by (scope, module_name, user_id, key).
     """
+    stored_value = encrypt_secret_value(value) if is_secret else value
     stmt = select(Setting).where(
         and_(
             Setting.scope == scope,
@@ -65,7 +67,7 @@ async def upsert_setting(
     existing = result.scalar_one_or_none()
 
     if existing:
-        existing.value = value
+        existing.value = stored_value
         if description is not None:
             existing.description = description
         existing.value_type = value_type
@@ -79,7 +81,7 @@ async def upsert_setting(
         module_name=module_name,
         user_id=user_id,
         key=key,
-        value=value,
+        value=stored_value,
         description=description,
         value_type=value_type,
         is_secret=is_secret,

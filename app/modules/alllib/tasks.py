@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
+from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
 from app.modules.alllib.api import LibParser
@@ -22,6 +23,35 @@ from app.modules.alllib.novelbin import NOVELBIN_SITE_ID
 from app.modules.alllib.ranobehub import RANOBEHUB_SITE_ID, get_source_api
 
 logger = logging.getLogger(__name__)
+ALLLIB_COVER_HOSTS = frozenset(
+    {
+        "mangalib.me",
+        "ranobelib.me",
+        "hentailib.org",
+        "slashlib.me",
+        "comixlib.me",
+        "anilib.me",
+        "cdnlibs.org",
+        "mixlib.me",
+        "ranobehub.org",
+        "ranobe.space",
+        "novel-bin.net",
+        "novel-bin.com",
+        "mangadex.org",
+    }
+)
+ALLLIB_AUTH_HOSTS = frozenset(
+    {
+        "mangalib.me",
+        "ranobelib.me",
+        "hentailib.org",
+        "slashlib.me",
+        "comixlib.me",
+        "anilib.me",
+        "cdnlibs.org",
+        "mixlib.me",
+    }
+)
 settings = get_settings()
 redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 TRUSTED_NOVEL_IMAGE_HOSTS = {
@@ -167,14 +197,20 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, domain: st
             logger.warning(f"Skipped novel image from untrusted host: {img_url}")
             continue
 
-        url_hash = hashlib.md5(img_url.encode("utf-8")).hexdigest()
+        url_hash = hashlib.md5(img_url.encode("utf-8"), usedforsecurity=False).hexdigest()
         url_ext = os.path.splitext(parsed_image_url.path)[1].lower().lstrip(".")
         ext = url_ext if url_ext in {"avif", "gif", "jpeg", "jpg", "png", "webp"} else None
-        response = None
+        image_content = None
+        content_type = ""
         if ext is None:
             try:
-                response = api.session.get(img_url, headers=headers, timeout=15)
-                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                image_content, content_type, _ = fetch_bytes_checked(
+                    img_url,
+                    allowed_hosts=ALLLIB_COVER_HOSTS,
+                    auth_hosts=ALLLIB_AUTH_HOSTS,
+                    headers=headers,
+                    session=api.session,
+                )
                 ext = SAFE_IMAGE_TYPES.get(content_type)
                 if not ext:
                     logger.warning(f"Skipped unsupported novel image type {content_type}: {img_url}")
@@ -190,17 +226,23 @@ def localize_novel_images(html_content: str, slug: str, site_id: int, domain: st
 
         if not storage.file_exists(page_storage_path):
             try:
-                resp = response or api.session.get(img_url, headers=headers, timeout=15)
-                content_type = resp.headers.get("content-type", "").split(";", 1)[0].lower()
-                if resp.status_code == 200 and content_type in SAFE_IMAGE_TYPES and len(resp.content) > 100:
+                if image_content is None:
+                    image_content, content_type, _ = fetch_bytes_checked(
+                        img_url,
+                        allowed_hosts=ALLLIB_COVER_HOSTS,
+                        auth_hosts=ALLLIB_AUTH_HOSTS,
+                        headers=headers,
+                        session=api.session,
+                    )
+                if content_type in SAFE_IMAGE_TYPES and len(image_content) > 100:
                     if is_sensitive:
-                        storage.save_file_encrypted(resp.content, page_storage_path)
+                        storage.save_file_encrypted(image_content, page_storage_path)
                     else:
-                        storage.save_file(resp.content, page_storage_path)
+                        storage.save_file(image_content, page_storage_path)
                 else:
-                    logger.warning(f"Failed to download novel image {img_url}: status {resp.status_code}")
+                    logger.warning(f"Failed to download novel image {img_url}: invalid image response")
                     continue
-            except Exception as e:
+            except (RemoteFetchError, OSError) as e:
                 logger.warning(f"Failed to download novel image {img_url}: {e}")
                 continue
 
@@ -356,20 +398,26 @@ def download_lib_task(
                 if api._auth_token:
                     cover_headers["Authorization"] = f"Bearer {api._auth_token}"
 
-                resp = api.session.get(cover_url, headers=cover_headers, timeout=10)
-                content_type = resp.headers.get("content-type", "").split(";", 1)[0].lower()
-                if resp.status_code == 200 and content_type in SAFE_IMAGE_TYPES and len(resp.content) > 200:
+                content, content_type, _ = fetch_bytes_checked(
+                    cover_url,
+                    allowed_hosts=ALLLIB_COVER_HOSTS,
+                    auth_hosts=ALLLIB_AUTH_HOSTS,
+                    headers=cover_headers,
+                    session=api.session,
+                    allowed_content_prefixes=("image/",),
+                )
+                if content_type in SAFE_IMAGE_TYPES and len(content) > 200:
                     storage = get_storage()
                     ext = SAFE_IMAGE_TYPES[content_type]
                     is_sensitive = site_id in (2, 4)
                     storage_key = _make_storage_key(slug, site_id)
                     if is_sensitive:
                         cover_storage_path = f"alllib/covers/{storage_key}.{ext}.enc"
-                        storage.save_file_encrypted(resp.content, cover_storage_path)
+                        storage.save_file_encrypted(content, cover_storage_path)
                     else:
                         cover_storage_path = f"alllib/covers/{storage_key}.{ext}"
-                        storage.save_file(resp.content, cover_storage_path)
-            except Exception as cover_err:
+                        storage.save_file(content, cover_storage_path)
+            except (RemoteFetchError, OSError) as cover_err:
                 logger.warning(f"Failed to fetch cover: {cover_err}")
 
         # Filter & Sort
@@ -492,7 +540,9 @@ def download_lib_task(
                                     content.get("content", []), chapter_data.get("attachments", [])
                                 )
                             elif isinstance(content, str):
-                                html = content
+                                from app.modules.alllib.ranobehub import sanitize_chapter_html
+
+                                html = sanitize_chapter_html(content)
 
                             # Localize external images to local storage
                             if html:
@@ -593,18 +643,23 @@ def download_lib_task(
                                 image_urls = [f"{server}/{rel_path}" for server in image_servers]
                             for image_url in image_urls:
                                 started_at = time.monotonic()
-                                resp = None
                                 try:
-                                    resp = api.session.get(image_url, headers=headers, timeout=15)
-                                    image_ok = resp.status_code == 200 and len(resp.content) > 200
+                                    image_content, content_type, _ = fetch_bytes_checked(
+                                        image_url,
+                                        allowed_hosts=ALLLIB_COVER_HOSTS,
+                                        auth_hosts=ALLLIB_AUTH_HOSTS,
+                                        headers=headers,
+                                        session=api.session,
+                                    )
+                                    image_ok = content_type in SAFE_IMAGE_TYPES and len(image_content) > 200
                                     report_result = getattr(api, "report_image_result", None)
                                     if report_result:
                                         report_result(
                                             image_url,
                                             image_ok,
-                                            len(resp.content),
+                                            len(image_content),
                                             int((time.monotonic() - started_at) * 1000),
-                                            resp.headers.get("X-Cache", "").upper().startswith("HIT"),
+                                            False,
                                         )
                                     if image_ok:
                                         is_sensitive = site_id in (2, 4)
@@ -613,23 +668,23 @@ def download_lib_task(
                                             page_storage_path = (
                                                 f"alllib/manga/{storage_key}/{vol}_{num}/{page_filename}.enc"
                                             )
-                                            storage.save_file_encrypted(resp.content, page_storage_path)
+                                            storage.save_file_encrypted(image_content, page_storage_path)
                                         else:
                                             page_storage_path = (
                                                 f"alllib/manga/{storage_key}/{vol}_{num}/{page_filename}"
                                             )
-                                            storage.save_file(resp.content, page_storage_path)
+                                            storage.save_file(image_content, page_storage_path)
                                         downloaded_pages_paths.append(page_storage_path)
                                         success = True
                                         break
                                     else:
                                         logger.debug(
-                                            f"Image URL {image_url} returned status {resp.status_code} "
-                                            f"or small/empty content ({len(resp.content)} bytes)"
+                                            f"Image URL {image_url} returned unsupported or small content "
+                                            f"({len(image_content)} bytes)"
                                         )
-                                except Exception as e:
+                                except (RemoteFetchError, OSError) as e:
                                     report_result = getattr(api, "report_image_result", None)
-                                    if report_result and resp is None:
+                                    if report_result:
                                         report_result(
                                             image_url,
                                             False,

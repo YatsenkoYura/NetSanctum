@@ -7,6 +7,7 @@ import json
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from markupsafe import escape
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from app.core.templates import templates
 redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 from app.modules.music.models import Playlist, Song
 from app.modules.music.schemas import DownloadRequest
+from app.modules.music.security import validate_music_url
 from app.modules.music.tasks import process_youtube_url_task
 from app.modules.settings import service as settings_service
 
@@ -222,6 +224,15 @@ async def api_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """API: Trigger YouTube download via Celery."""
+    try:
+        validate_music_url(req.url, resolve=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if req.openai_api_key or req.openai_base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Configure AI credentials in owner settings instead of sending them with a task",
+        )
     if req.youtube_cookies:
         if req.youtube_cookies.strip().upper() == "CLEAR":
             setting = await settings_service.resolve_setting(db, key="youtube_cookies")
@@ -248,7 +259,7 @@ async def api_download(
         redis_client,
         "music_dl",
         {"url": req.url, "title": "Resolving URL...", "status": "Queued", "progress": "0%"},
-        args=(req.url, req.use_ai, req.openai_api_key, req.openai_base_url, req.playlist_id),
+        args=(req.url, req.use_ai, None, None, req.playlist_id),
     )
     return {"status": "dispatched", "url": req.url, "use_ai": req.use_ai}
 
@@ -400,10 +411,12 @@ async def get_playlist_library_ui(
     in_playlist_res = await db.execute(in_playlist_stmt)
     in_playlist_ids = set(in_playlist_res.scalars().all())
 
+    escaped_search = escape(search or "")
+    escaped_placeholder = escape(_t("search_library_placeholder", lang))
     html = f"""
     <div class="mb-4">
-        <input type="text" name="search" value="{search or ""}"
-               placeholder="{_t("search_library_placeholder", lang)}"
+        <input type="text" name="search" value="{escaped_search}"
+               placeholder="{escaped_placeholder}"
                hx-get="/music/ui/playlists/{playlist_id}/library"
                hx-trigger="keyup changed delay:200ms"
                hx-target="#playlist-library-sidebar"
@@ -412,18 +425,18 @@ async def get_playlist_library_ui(
     <div class="space-y-2 overflow-y-auto max-h-[400px] pr-2">
     """
     if not songs:
-        html += f'<div class="text-xs font-mono text-zinc-600 text-center py-4">{_t("no_songs_in_library", lang)}</div>'
+        html += f'<div class="text-xs font-mono text-zinc-600 text-center py-4">{escape(_t("no_songs_in_library", lang))}</div>'
     for song in songs:
         is_added = song.id in in_playlist_ids
         btn = (
-            f'<span class="text-[10px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5">{_t("in_list", lang)}</span>'
+            f'<span class="text-[10px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5">{escape(_t("in_list", lang))}</span>'
             if is_added
             else f"""
         <button hx-post="/music/ui/playlists/{playlist_id}/songs/{song.id}"
                 hx-target="this"
                 hx-swap="outerHTML"
                 class="text-[10px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-950/20 px-2 py-0.5 hover:bg-emerald-500 hover:text-black transition-all">
-            {_t("add", lang)}
+            {escape(_t("add", lang))}
         </button>
         """
         )
@@ -441,12 +454,14 @@ async def get_playlist_library_ui(
             </div>
             """
 
+        escaped_title = escape(song.title)
+        escaped_author = escape(song.author or "Unknown")
         html += f"""
         <div class="flex items-center gap-3 p-2 bg-zinc-950/40 border border-zinc-900/60 hover:border-zinc-800">
             {cover_html}
             <div class="flex-1 min-w-0">
-                <div class="text-xs font-semibold text-zinc-200 truncate" title="{song.title}">{song.title}</div>
-                <div class="text-[10px] text-zinc-500 truncate">{song.author or "Unknown"}</div>
+                <div class="text-xs font-semibold text-zinc-200 truncate" title="{escaped_title}">{escaped_title}</div>
+                <div class="text-[10px] text-zinc-500 truncate">{escaped_author}</div>
             </div>
             <div class="flex-shrink-0">
                 {btn}
@@ -478,7 +493,9 @@ async def add_song_to_playlist_ui(
     )
     exists_res = await db.execute(exists_stmt)
     if exists_res.scalar_one_or_none():
-        return HTMLResponse(f'<span class="text-zinc-500 font-mono text-[10px]">{_t("in_list", lang)}</span>')
+        return HTMLResponse(
+            f'<span class="text-zinc-500 font-mono text-[10px]">{escape(_t("in_list", lang))}</span>'
+        )
 
     pos_stmt = select(func.coalesce(func.max(PlaylistSong.position), -1)).where(
         PlaylistSong.playlist_id == playlist_id
@@ -493,7 +510,7 @@ async def add_song_to_playlist_ui(
     await db.commit()
 
     response = HTMLResponse(
-        f'<span class="text-emerald-400 font-bold font-mono text-[10px]">{_t("added", lang)}</span>'
+        f'<span class="text-emerald-400 font-bold font-mono text-[10px]">{escape(_t("added", lang))}</span>'
     )
     response.headers["HX-Trigger"] = "reloadPlaylistDetail"
     return response
@@ -531,7 +548,7 @@ async def start_download(
         await api_download(req_model, db, user)
     except HTTPException as e:
         return HTMLResponse(
-            f'<div class="text-red-500 font-mono text-xs border border-red-500 p-2">{e.detail}</div>'
+            f'<div class="text-red-500 font-mono text-xs border border-red-500 p-2">{escape(e.detail)}</div>'
         )
 
     success_msg = "Download task dispatched!" if lang == "en" else "Задача скачивания запущена!"
@@ -559,15 +576,19 @@ async def active_downloads_ui(request: Request, user=Depends(get_current_user)):
 
     html = '<div class="space-y-2">'
     for d in downloads:
+        title = escape(d.get("title") or "")
+        task_id = escape(d.get("task_id") or "")
+        status = escape(d.get("status") or "")
+        progress = escape(d.get("progress") or "")
         html += f'''
         <div class="border border-zinc-800 bg-zinc-950 p-2 flex flex-col gap-1">
             <div class="flex justify-between items-center">
-                <span class="text-[10px] font-mono text-emerald-400 truncate max-w-[200px]" title="{d.get("title")}">{d.get("title")}</span>
-                <button hx-delete="/music/ui/downloads/{d.get("task_id")}" hx-swap="outerHTML" class="text-red-500 hover:text-red-400 font-bold ml-2">❌</button>
+                <span class="text-[10px] font-mono text-emerald-400 truncate max-w-[200px]" title="{title}">{title}</span>
+                <button hx-delete="/music/ui/downloads/{task_id}" hx-swap="outerHTML" class="text-red-500 hover:text-red-400 font-bold ml-2">❌</button>
             </div>
             <div class="flex justify-between items-center text-[9px] font-mono text-zinc-500">
-                <span>{d.get("status")}</span>
-                <span>{d.get("progress")}</span>
+                <span>{status}</span>
+                <span>{progress}</span>
             </div>
         </div>
         '''

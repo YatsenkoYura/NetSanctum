@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Sharing | NetSanctum{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-6xl space-y-6 py-4">
+    <div class="border-2 border-zinc-800 bg-zinc-950 p-5">
+        <div class="font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">Access control</div>
+        <h1 class="mt-2 text-2xl font-black text-white">Shared modules</h1>
+        <p class="mt-2 max-w-2xl text-sm text-zinc-500">Publish a read-only module with all content or a selected subset.</p>
+    </div>
+
+    <form id="share-form" class="grid gap-4 border-2 border-zinc-800 bg-black p-5 md:grid-cols-2">
+        <label class="space-y-2 text-xs font-mono uppercase text-zinc-500">Module
+            <select id="share-module" class="w-full border border-zinc-700 bg-zinc-950 px-3 py-3 text-zinc-200"></select>
+        </label>
+        <label class="space-y-2 text-xs font-mono uppercase text-zinc-500">Title
+            <input id="share-title" required value="Shared video archive" class="w-full border border-zinc-700 bg-zinc-950 px-3 py-3 text-zinc-200">
+        </label>
+        <label class="space-y-2 text-xs font-mono uppercase text-zinc-500">Expiration
+            <input id="share-expiration" type="datetime-local" class="w-full border border-zinc-700 bg-zinc-950 px-3 py-3 text-zinc-200">
+        </label>
+        <label class="space-y-2 text-xs font-mono uppercase text-zinc-500">Optional password
+            <input id="share-password" type="password" maxlength="64" class="w-full border border-zinc-700 bg-zinc-950 px-3 py-3 text-zinc-200">
+        </label>
+        <div class="flex flex-wrap gap-5 md:col-span-2">
+            <label class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-all" type="checkbox"> Entire module</label>
+            <label class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-public" type="checkbox"> Public URL</label>
+            <label class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-download" type="checkbox"> Show download button</label>
+        </div>
+        <div class="md:col-span-2">
+            <div class="mb-2 font-mono text-xs uppercase text-zinc-500">Content</div>
+            <div id="share-content" class="grid max-h-80 gap-2 overflow-y-auto border border-zinc-800 bg-zinc-950 p-3 sm:grid-cols-2"></div>
+        </div>
+        <button class="border-2 border-teal-400 bg-teal-400 px-5 py-3 font-mono text-xs font-black uppercase text-black hover:bg-black hover:text-teal-400 md:col-span-2">Create link</button>
+    </form>
+
+    <div id="share-result" class="hidden border-2 border-teal-400 bg-teal-950/20 p-5"></div>
+    <div id="shares-list" class="space-y-3"></div>
+</div>
+
+<script>
+    const moduleSelect = document.getElementById('share-module');
+    const contentRoot = document.getElementById('share-content');
+    const shareAll = document.getElementById('share-all');
+    let providersById = {};
+
+    async function loadProviders() {
+        const providers = await fetch('/api/shares/providers').then(r => r.json());
+        providersById = Object.fromEntries(providers.map(provider => [provider.module_id, provider]));
+        moduleSelect.replaceChildren(...providers.map(provider => {
+            const option = document.createElement('option');
+            option.value = provider.module_id;
+            option.textContent = provider.title_en;
+            return option;
+        }));
+        if (providers.length) await loadContent();
+    }
+
+    async function loadContent() {
+        const items = await fetch(`/api/shares/providers/${encodeURIComponent(moduleSelect.value)}/content`).then(r => r.json());
+        contentRoot.replaceChildren(...items.map(item => {
+            const label = document.createElement('label');
+            label.className = 'flex gap-3 border border-zinc-800 bg-black p-3 text-sm text-zinc-300';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'shared-content';
+            checkbox.value = item.id;
+            const text = document.createElement('span');
+            text.textContent = `${item.title} · ${item.channel_name || item.platform || ''}`;
+            label.append(checkbox, text);
+            return label;
+        }));
+    }
+
+    shareAll.addEventListener('change', () => {
+        contentRoot.classList.toggle('opacity-40', shareAll.checked);
+        contentRoot.querySelectorAll('input').forEach(input => input.disabled = shareAll.checked);
+    });
+    moduleSelect.addEventListener('change', loadContent);
+
+    document.getElementById('share-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const ids = [...document.querySelectorAll('input[name="shared-content"]:checked')].map(input => input.value);
+        if (!shareAll.checked && !ids.length) return alert('Select at least one item.');
+        const expiration = document.getElementById('share-expiration').value;
+        const selectorKey = providersById[moduleSelect.value].selector_key;
+        const payload = {
+            module_id: moduleSelect.value,
+            title: document.getElementById('share-title').value,
+            selection_mode: shareAll.checked ? 'all' : 'selected',
+            selector: shareAll.checked ? {} : {[selectorKey]: ids},
+            public: document.getElementById('share-public').checked,
+            password: document.getElementById('share-password').value || null,
+            expires_at: expiration ? new Date(expiration).toISOString() : null,
+            allow_download: document.getElementById('share-download').checked,
+        };
+        const response = await fetch('/api/shares', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+        const data = await response.json();
+        if (!response.ok) return alert(data.detail || 'Could not create share.');
+        const result = document.getElementById('share-result');
+        result.classList.remove('hidden');
+        result.replaceChildren();
+        const label = document.createElement('div');
+        label.className = 'font-mono text-xs uppercase text-teal-400';
+        label.textContent = 'Link created';
+        const link = document.createElement('a');
+        link.className = 'mt-2 block break-all text-white underline';
+        link.href = data.url;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        link.textContent = data.url;
+        const hint = document.createElement('div');
+        hint.className = 'mt-2 text-xs text-zinc-500';
+        hint.textContent = 'Private links are shown only once.';
+        result.append(label, link, hint);
+        await loadShares();
+    });
+
+    async function revokeShare(id) {
+        await fetch(`/api/shares/${encodeURIComponent(id)}`, {method: 'DELETE'});
+        await loadShares();
+    }
+
+    async function loadShares() {
+        const shares = await fetch('/api/shares').then(r => r.json());
+        const root = document.getElementById('shares-list');
+        root.replaceChildren(...shares.map(share => {
+            const row = document.createElement('div');
+            row.className = 'flex flex-col gap-3 border border-zinc-800 bg-zinc-950 p-4 sm:flex-row sm:items-center sm:justify-between';
+            const info = document.createElement('div');
+            info.innerHTML = `<div class="font-bold text-white"></div><div class="mt-1 font-mono text-[10px] uppercase text-zinc-500"></div>`;
+            info.children[0].textContent = share.title;
+            info.children[1].textContent = `${share.module_id} · ${share.status} · ${share.access_count} accesses`;
+            const button = document.createElement('button');
+            button.className = 'border border-red-500/60 px-3 py-2 font-mono text-xs uppercase text-red-300 disabled:opacity-30';
+            button.textContent = 'Revoke';
+            button.disabled = share.status !== 'active';
+            button.addEventListener('click', () => revokeShare(share.id));
+            row.append(info, button);
+            return row;
+        }));
+    }
+
+    loadProviders().catch(console.error);
+    loadShares().catch(console.error);
+</script>
+{% endblock %}

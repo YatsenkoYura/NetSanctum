@@ -23,6 +23,7 @@ PUBLIC_MODULES = {
     "auth",
     "music",
     "settings",
+    "sharing",
     "storage",
     "vault",
     "video_archiver",
@@ -57,6 +58,7 @@ class ModuleManifestTests(unittest.TestCase):
 
         self.assertTrue(registry.is_active("auth"))
         self.assertTrue(registry.is_active("settings"))
+        self.assertTrue(registry.is_active("sharing"))
         self.assertTrue(registry.is_active("music"))
         self.assertFalse(registry.is_active("vault"))
         self.assertTrue(registry.is_installed("vault"))
@@ -113,7 +115,7 @@ class ModuleManifestTests(unittest.TestCase):
             text=True,
         )
 
-        self.assertEqual("auth,settings", result.stdout.strip())
+        self.assertEqual("auth,settings,sharing", result.stdout.strip())
 
     def test_external_module_requires_matching_optional_extra(self):
         from scripts.module_build import resolve_external_modules
@@ -289,6 +291,7 @@ class ModuleManifestTests(unittest.TestCase):
                 spec.file_cleanup,
                 spec.module_cleanup,
                 spec.package_resolver,
+                spec.share_provider,
                 spec.entity_resolver,
                 *(integration.handler for integration in spec.integrations),
                 *(integration.request_model for integration in spec.integrations),
@@ -398,6 +401,7 @@ print(json.dumps({
         self.assertNotIn("/api/video-archiver/videos", paths)
         self.assertNotIn("app.modules.vault.router", loaded)
         self.assertNotIn("app.modules.video_archiver.router", loaded)
+        self.assertNotIn("app.modules.video_archiver.share", loaded)
         self.assertNotIn("app.modules.video_archiver.tasks", loaded)
 
 

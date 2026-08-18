@@ -43,10 +43,12 @@ class ModuleMigrationTests(unittest.TestCase):
         self.assertLessEqual(
             {
                 "settings",
+                "share_links",
                 "songs",
                 "playlists",
                 "playlist_songs",
                 "alembic_version_settings",
+                "alembic_version_sharing",
                 "alembic_version_music",
             },
             tables,
@@ -69,6 +71,7 @@ class ModuleMigrationTests(unittest.TestCase):
             }
         self.assertEqual("video_0002", revisions["video_archiver"])
         self.assertEqual("music_0001", revisions["music"])
+        self.assertEqual("sharing_0001", revisions["sharing"])
 
     def test_disabled_installed_module_is_still_migrated(self):
         engine = self.make_engine()
@@ -121,6 +124,8 @@ class ModuleMigrationTests(unittest.TestCase):
         all_modules.import_models(include_disabled=True, strict=True)
         Base.metadata.create_all(engine)
         with engine.begin() as connection:
+            # This fixture emulates the old global head, which predates the sharing module.
+            connection.execute(text("DROP TABLE share_links"))
             connection.execute(
                 text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
             )
@@ -197,7 +202,7 @@ class ModuleMigrationTests(unittest.TestCase):
         migrations = installed_migrations(registry)
 
         self.assertEqual(
-            {"alllib", "music", "settings", "vault", "video_archiver"},
+            {"alllib", "music", "settings", "sharing", "vault", "video_archiver"},
             {migration.module_id for migration in migrations},
         )
         for migration in migrations:

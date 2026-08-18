@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 
 class BasePlatformProvider(ABC):
+    platform_id = "unknown"
+    name = "Unknown"
     domains: tuple[str, ...] = ()
     extractor_keywords: tuple[str, ...] = ()
     key_cookies: tuple[str, ...] = ()
@@ -21,8 +23,11 @@ class BasePlatformProvider(ABC):
             if any(kw in ext for kw in cls.extractor_keywords):
                 return True
         if url:
-            netloc = urlparse(url).netloc.lower()
-            if any(domain in netloc for domain in cls.domains):
+            parsed = urlparse(url)
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+            if parsed.scheme in {"http", "https"} and any(
+                hostname == domain or hostname.endswith(f".{domain}") for domain in cls.domains
+            ):
                 return True
         return False
 
@@ -247,6 +252,13 @@ class PlatformRegistry:
             if provider_cls.matches(url, extractor_name):
                 return provider_cls()
         return GenericProvider()
+
+    @classmethod
+    def require_supported_url(cls, url: str) -> BasePlatformProvider:
+        provider = cls.get_provider(url)
+        if isinstance(provider, GenericProvider):
+            raise ValueError("Only supported video platform URLs are allowed")
+        return provider
 
     @classmethod
     def get_provider_by_id(cls, platform_id: str) -> BasePlatformProvider:

@@ -33,6 +33,7 @@ MODULE = ModuleSpec(
     storage_namespaces=("video_archiver",),
     package_prefixes=("video_playlist_", "video_"),
     package_resolver="app.modules.video_archiver.capabilities:resolve_package_resources",
+    share_provider="app.modules.video_archiver.share:PROVIDER",
     entity_types=("video",),
     entity_resolver="app.modules.video_archiver.capabilities:resolve_entity",
     uses_integrations=("media.audio.import.v1",),

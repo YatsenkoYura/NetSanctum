@@ -13,6 +13,7 @@ The goal is not to build one application with an endless list of features. The g
 ```text
 NetSanctum core
 ├── authentication
+├── scoped module sharing
 ├── database sessions and migrations
 ├── background task runtime
 ├── local and S3 storage
@@ -132,6 +133,7 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **Vault** stores notes, bookmarks, collections, ratings, and media progress.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
 - **Auth and Settings** provide internal platform services used by the other modules.
+- **Sharing** publishes an isolated, read-only module view with optional content selection, password, and expiry.
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
@@ -190,13 +192,15 @@ Requirements:
 - Docker Compose
 
 ```bash
-cp .env.example .env
 ./start.sh
 ```
 
 Open `http://localhost:8000` by default.
 
-On the first start, NetSanctum creates `access_token.txt`. Use the token to sign in, store it safely, and remove the plaintext file afterward.
+The default Compose port is bound to `127.0.0.1`. For remote sharing, place NetSanctum behind an
+HTTPS reverse proxy or VPN, set `TRUSTED_HOSTS` and `PUBLIC_BASE_URL`, and enable `SECURE_COOKIES`.
+
+On the first start, NetSanctum creates `storage/config/access_token.txt`. Use the token to sign in, store it safely, and remove the plaintext file afterward. Owner credentials are accepted only through the login form, session cookie, or `Authorization: Bearer`; query-string credentials are intentionally rejected.
 
 Management commands:
 

@@ -33,7 +33,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 from pathlib import Path
 
-TOKEN_FILE_PATH = Path("/app/access_token.hash")
+TOKEN_FILE_PATH = Path(settings.ACCESS_TOKEN_HASH_PATH)
 
 # Async Redis for non-blocking session lookups in async request handlers
 import redis.asyncio as aioredis
@@ -83,12 +83,10 @@ async def get_current_user(request: Request):
     Validate the session cookie or the Bearer token.
     Returns OwnerUser() if valid, otherwise raises HTTPException.
     """
-    token = None
-
     # 1. Check Bearer token (API)
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
+        token = auth_header.removeprefix("Bearer ").strip()
         if verify_access_token(token):
             return OwnerUser()
 
@@ -99,21 +97,15 @@ async def get_current_user(request: Request):
         if user_data == "1":
             return OwnerUser()
 
-    # 3. Check Query Parameter (for external players like VLC/mpv)
-    query_token = request.query_params.get("token")
-    if query_token:
-        # Check if it is a raw master token
-        if verify_access_token(query_token):
-            return OwnerUser()
-        # Or check if it is a session ID
-        user_data = await redis_client.get(f"session:{query_token}")
-        if user_data == "1":
-            return OwnerUser()
-
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid access token or session",
     )
+
+
+def use_secure_cookies(request: Request) -> bool:
+    """Require Secure cookies when configured or when TLS reaches the application directly."""
+    return settings.SECURE_COOKIES or request.url.scheme == "https"
 
 
 async def verify_api_key(

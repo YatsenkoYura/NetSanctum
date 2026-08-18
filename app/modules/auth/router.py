@@ -15,7 +15,13 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app.core.security import OwnerUser, get_current_user, redis_client, verify_access_token
+from app.core.security import (
+    OwnerUser,
+    get_current_user,
+    redis_client,
+    use_secure_cookies,
+    verify_access_token,
+)
 from app.core.templates import templates
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -105,6 +111,7 @@ async def ui_login(
         key="access_token",
         value=session_id,
         httponly=True,
+        secure=use_secure_cookies(request),
         samesite="lax",
         max_age=86400 * 7,  # 7-day session for convenient personal use
     )

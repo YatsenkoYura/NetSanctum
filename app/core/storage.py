@@ -21,10 +21,30 @@ class StorageInterface(ABC):
     """Abstract contract for all storage backends."""
 
     def _get_encryption_key(self) -> bytes:
-        """Derive a 32-byte key from the configured file encryption key or master key."""
+        """Derive the primary key; known development values fall back to the private API key."""
         settings = get_settings()
-        raw_key = getattr(settings, "FILE_ENCRYPTION_KEY", None) or settings.MASTER_API_KEY
+        configured = getattr(settings, "FILE_ENCRYPTION_KEY", None)
+        raw_key = (
+            settings.MASTER_API_KEY
+            if not configured or configured == "dev-file-encryption-key-change-me"
+            else configured
+        )
         return hashlib.sha256(raw_key.encode("utf-8")).digest()
+
+    def _get_legacy_encryption_keys(self) -> tuple[bytes, ...]:
+        settings = get_settings()
+        candidates = tuple(
+            hashlib.sha256(value.encode("utf-8")).digest()
+            for value in (
+                settings.MASTER_API_KEY,
+                settings.FILE_ENCRYPTION_KEY,
+                "dev-api-key-change-me",
+                "dev-file-encryption-key-change-me",
+            )
+            if value
+        )
+        primary = self._get_encryption_key()
+        return tuple(key for key in dict.fromkeys(candidates) if key != primary)
 
     @abstractmethod
     def save_file(self, data: bytes, path: str) -> str:
@@ -59,7 +79,6 @@ class StorageInterface(ABC):
         """
         Retrieve the encrypted file, decrypt it using AES-256-GCM, and return a readable stream.
         """
-        key = self._get_encryption_key()
         stream = self.get_file_stream(path)
         try:
             payload = stream.read()
@@ -71,11 +90,15 @@ class StorageInterface(ABC):
 
         nonce = payload[:12]
         ciphertext = payload[12:]
-        aesgcm = AESGCM(key)
-        try:
-            decrypted_data = aesgcm.decrypt(nonce, ciphertext, None)
-        except Exception as e:
-            raise ValueError(f"Failed to decrypt file '{path}': {e}")
+        last_error = None
+        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+            try:
+                decrypted_data = AESGCM(key).decrypt(nonce, ciphertext, None)
+                break
+            except Exception as error:
+                last_error = error
+        else:
+            raise ValueError(f"Failed to decrypt file '{path}': {last_error}")
 
         return io.BytesIO(decrypted_data)
 
@@ -98,6 +121,9 @@ class StorageInterface(ABC):
     def file_exists(self, path: str) -> bool:
         """Check whether a file exists at the given path."""
         ...
+
+    def migrate_legacy_encryption(self) -> int:
+        return 0
 
 
 class LocalStorage(StorageInterface):
@@ -135,6 +161,40 @@ class LocalStorage(StorageInterface):
 
     def file_exists(self, path: str) -> bool:
         return self._full_path(path).is_file()
+
+    def migrate_legacy_encryption(self) -> int:
+        """Atomically rewrite legacy-key objects with the current primary key."""
+        legacy_keys = self._get_legacy_encryption_keys()
+        if not legacy_keys:
+            return 0
+        migrated = 0
+        primary = self._get_encryption_key()
+        for full_path in self._root.rglob("*.enc"):
+            payload = full_path.read_bytes()
+            if len(payload) < 12:
+                continue
+            nonce, ciphertext = payload[:12], payload[12:]
+            try:
+                AESGCM(primary).decrypt(nonce, ciphertext, None)
+                continue
+            except Exception:
+                pass
+            plaintext = None
+            for legacy in legacy_keys:
+                try:
+                    plaintext = AESGCM(legacy).decrypt(nonce, ciphertext, None)
+                    break
+                except Exception:
+                    continue
+            if plaintext is None:
+                continue
+            new_nonce = os.urandom(12)
+            replacement = new_nonce + AESGCM(primary).encrypt(new_nonce, plaintext, None)
+            temporary = full_path.with_suffix(full_path.suffix + ".rotate")
+            temporary.write_bytes(replacement)
+            os.replace(temporary, full_path)
+            migrated += 1
+        return migrated
 
 
 class S3Storage(StorageInterface):
@@ -194,6 +254,43 @@ class S3Storage(StorageInterface):
             return True
         except Exception:
             return False
+
+    def migrate_legacy_encryption(self) -> int:
+        legacy_keys = self._get_legacy_encryption_keys()
+        if not legacy_keys:
+            return 0
+        primary = self._get_encryption_key()
+        migrated = 0
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket):
+            for item in page.get("Contents", []):
+                key = item.get("Key", "")
+                if not key.endswith(".enc"):
+                    continue
+                with self.get_file_stream(key) as stream:
+                    payload = stream.read()
+                if len(payload) < 12:
+                    continue
+                nonce, ciphertext = payload[:12], payload[12:]
+                try:
+                    AESGCM(primary).decrypt(nonce, ciphertext, None)
+                    continue
+                except Exception:
+                    pass
+                plaintext = None
+                for legacy in legacy_keys:
+                    try:
+                        plaintext = AESGCM(legacy).decrypt(nonce, ciphertext, None)
+                        break
+                    except Exception:
+                        continue
+                if plaintext is None:
+                    continue
+                new_nonce = os.urandom(12)
+                replacement = new_nonce + AESGCM(primary).encrypt(new_nonce, plaintext, None)
+                self._client.put_object(Bucket=self._bucket, Key=key, Body=replacement)
+                migrated += 1
+        return migrated
 
 
 # ── Factory ──────────────────────────────────────────────

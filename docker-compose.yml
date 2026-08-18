@@ -33,15 +33,24 @@ services:
       args:
         NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
         NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
     restart: unless-stopped
     env_file: .env
     environment:
       NETSANCTUM_PROCESS_ROLE: web
     ports:
-      - "${HOST_PORT:-8000}:8000"
+      - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
-      - .:/app
+      - .:/app:ro
       - ./storage:/app/storage
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,13 +67,22 @@ services:
       args:
         NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
         NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
     restart: unless-stopped
     env_file: .env
     environment:
       NETSANCTUM_PROCESS_ROLE: worker
     volumes:
-      - .:/app
+      - .:/app:ro
       - ./storage:/app/storage
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       postgres:
         condition: service_healthy

@@ -136,10 +136,10 @@
         <div class="bg-zinc-950 divide-y divide-zinc-900">
 
             <!-- Source URL -->
-            {% if media.source_url %}
+            {% if media.source_url and (media.source_url.startswith('https://') or media.source_url.startswith('http://')) %}
             <div class="px-6 py-3 flex items-center gap-2 text-[11px] font-mono">
                 <span class="text-zinc-600 uppercase tracking-wider flex-shrink-0">Source:</span>
-                <a href="{{ media.source_url }}" target="_blank" class="text-teal-400/70 hover:text-teal-400 underline underline-offset-2 transition-colors truncate">{{ media.source_url }}</a>
+                <a href="{{ media.source_url }}" target="_blank" rel="noopener noreferrer" class="text-teal-400/70 hover:text-teal-400 underline underline-offset-2 transition-colors truncate">{{ media.source_url }}</a>
             </div>
             {% endif %}
 
@@ -151,7 +151,11 @@
                 </h4>
                 <div class="text-[13px] text-zinc-300 leading-relaxed font-sans space-y-3 max-h-48 overflow-y-auto pr-2
                             [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-zinc-900 [&::-webkit-scrollbar-thumb]:bg-zinc-700">
-                    {{ media.description|safe if media.description else '<span class="text-zinc-600 italic">No description available.</span>' }}
+                    {% if media.description %}
+                    <p class="whitespace-pre-wrap">{{ media.description }}</p>
+                    {% else %}
+                    <span class="text-zinc-600 italic">No description available.</span>
+                    {% endif %}
                 </div>
             </div>
 

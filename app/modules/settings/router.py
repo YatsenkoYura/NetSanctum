@@ -33,6 +33,7 @@ from app.core.control_center import (
 from app.core.database import get_db
 from app.core.module_config import reset_enabled_module_ids, save_enabled_module_ids
 from app.core.modules import module_registry
+from app.core.secret_values import decrypt_secret_value, encrypt_secret_value
 from app.core.security import get_current_user
 from app.core.templates import templates
 from app.modules.settings import schemas, service
@@ -186,8 +187,13 @@ async def update_setting(
         raise HTTPException(403, "Only superusers can modify global/module settings")
     if setting.scope == "user" and setting.user_id != current_user.id:
         raise HTTPException(403, "Cannot modify another user's settings")
+    resulting_secret = body.is_secret if body.is_secret is not None else setting.is_secret
     if body.value is not None:
-        setting.value = body.value
+        setting.value = encrypt_secret_value(body.value) if resulting_secret else body.value
+    elif body.is_secret is True and not setting.is_secret:
+        setting.value = encrypt_secret_value(setting.value)
+    elif body.is_secret is False and setting.is_secret:
+        setting.value = decrypt_secret_value(setting.value)
     if body.description is not None:
         setting.description = body.description
     if body.value_type is not None:

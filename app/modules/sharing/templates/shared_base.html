@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="{{ lang or 'en' }}" class="antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex,nofollow">
+    <title>{% block title %}NetSanctum{% endblock %}</title>
+    <link rel="stylesheet" href="/static/tailwind.css">
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="min-h-screen bg-black text-zinc-300">
+    <header class="border-b-2 border-zinc-800 bg-black px-4 py-4 sm:px-8">
+        <div class="mx-auto flex max-w-7xl items-center justify-between gap-4">
+            <div class="flex items-center gap-3 font-mono font-black uppercase tracking-tight text-white">
+                <span class="h-3.5 w-3.5 bg-teal-400"></span>
+                NetSanctum
+            </div>
+            <span class="border border-zinc-700 px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">Shared access</span>
+        </div>
+    </header>
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-10">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

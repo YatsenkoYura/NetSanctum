@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     INSTALLED_MODULES: str = ""
     INSTALLED_MODULES_FILE: str = "/opt/netsanctum/installed-modules"
     REQUIRE_INSTALLED_MODULES_MARKER: bool = False
+    ACCESS_TOKEN_HASH_PATH: str = "/app/storage/config/access_token.hash"
+    ACCESS_TOKEN_PLAINTEXT_PATH: str = "/app/storage/config/access_token.txt"
+    PUBLIC_BASE_URL: str = ""
+    SECURE_COOKIES: bool = False
+    TRUSTED_HOSTS: str = "localhost,127.0.0.1,testserver"
+    ALLOW_REMOTE_METADATA_FETCH: bool = False
 
     # ── Observability ─────────────────────────────────────
     OBSERVABILITY_LOG_KEY: str = "netsanctum:logs"

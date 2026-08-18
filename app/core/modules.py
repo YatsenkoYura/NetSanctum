@@ -24,7 +24,7 @@ from app.core.module_types import (
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_MODULE_IDS = frozenset({"auth", "settings"})
+REQUIRED_MODULE_IDS = frozenset({"auth", "settings", "sharing"})
 
 
 class ModuleStatus(StrEnum):
@@ -401,6 +401,22 @@ class ModuleRegistry:
                     self._component_error(record, "package_resolver", exc)
                     return None
         return None
+
+    def share_provider(self, module_id: str) -> Any | None:
+        """Load the active module's optional, read-only sharing provider."""
+        record = self._records.get(module_id)
+        if (
+            not record
+            or record.status != ModuleStatus.ACTIVE
+            or not record.spec
+            or not record.spec.share_provider
+        ):
+            return None
+        try:
+            return self._load_object(record.spec.share_provider)
+        except Exception as exc:
+            self._component_error(record, "share_provider", exc)
+            return None
 
     async def resolve_entity(self, entity_type: str, entity_id: str, session: Any) -> dict | None:
         for record in self.active_records():

@@ -33,6 +33,11 @@
       "extra": null,
       "system_packages": []
     },
+    "sharing": {
+      "required": true,
+      "extra": null,
+      "system_packages": []
+    },
     "storage": {
       "required": false,
       "extra": null,

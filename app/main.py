@@ -6,6 +6,7 @@ Ensures physical filesystem access token exists at startup.
 Seeds default settings.
 """
 
+import asyncio
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -16,9 +17,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, async_engine
+from app.core.http_security import security_headers_middleware
 from app.core.modules import module_registry
 from app.core.observability import configure_observability, process_role
 from app.core.security import OwnerUser, get_current_user
@@ -28,7 +31,7 @@ settings = get_settings()
 configure_observability(process_role("web"))
 logger = logging.getLogger(__name__)
 
-TOKEN_FILE = Path("/app/access_token.hash")
+TOKEN_FILE = Path(settings.ACCESS_TOKEN_HASH_PATH)
 
 
 @asynccontextmanager
@@ -42,11 +45,14 @@ async def lifespan(application: FastAPI):
         # Generate dynamic secure key
         token = secrets.token_urlsafe(32)
         try:
+            TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
             token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
             TOKEN_FILE.write_text(token_hash)
+            TOKEN_FILE.chmod(0o600)
 
             # Write plain text to a file so it's not lost in noisy docker logs
-            plain_token_file = Path("/app/access_token.txt")
+            plain_token_file = Path(settings.ACCESS_TOKEN_PLAINTEXT_PATH)
+            plain_token_file.parent.mkdir(parents=True, exist_ok=True)
             plain_token_file.write_text(
                 f"YOUR MASTER TOKEN:\n\n{token}\n\n"
                 f"SAVE THIS AND DELETE THIS FILE (access_token.txt) IMMEDIATELY."
@@ -71,6 +77,31 @@ async def lifespan(application: FastAPI):
     # 2. Register active module models. Schema changes remain managed by Alembic.
     module_registry.import_models()
     logger.info("Database schemas verified (managed by Alembic)")
+
+    if process_role("web") == "web":
+        from app.core.storage import get_storage
+
+        storage = get_storage()
+        migrated_files = await asyncio.to_thread(storage.migrate_legacy_encryption)
+        if migrated_files:
+            logger.info("Rotated %s legacy encrypted storage objects", migrated_files)
+
+    # Encrypt secret settings created by older versions before serving requests.
+    try:
+        from app.core.secret_values import rotate_secret_value, secret_value_uses_current_key
+        from app.modules.settings.models import Setting
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Setting).where(Setting.is_secret.is_(True)))
+            changed = False
+            for setting in result.scalars():
+                if not secret_value_uses_current_key(setting.value):
+                    setting.value = rotate_secret_value(setting.value)
+                    changed = True
+            if changed:
+                await session.commit()
+    except ImportError:
+        logger.info("Settings module not installed; skipping secret migration.")
 
     # 3. Seed default Settings if empty
     try:
@@ -158,6 +189,11 @@ app = FastAPI(
     description="Single-User Self-Hosted Modular Monolith Backend.",
     lifespan=lifespan,
 )
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=[host.strip() for host in settings.TRUSTED_HOSTS.split(",") if host.strip()],
+)
+app.middleware("http")(security_headers_middleware)
 
 # ── CORS ─────────────────────────────────────────────────
 app.add_middleware(

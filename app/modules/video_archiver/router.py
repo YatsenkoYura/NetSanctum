@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.secret_values import decrypt_secret_value
 from app.core.security import get_current_user
 from app.core.storage import LocalStorage, get_storage
 from app.core.task_dispatch import dispatch_tracked_async
@@ -21,7 +22,6 @@ from app.modules.video_archiver.providers import PlatformRegistry
 from app.modules.video_archiver.schemas import DownloadRequest, PlaylistCreate, SyncAllRequest
 from app.modules.video_archiver.services import (
     ChannelService,
-    PlatformDetector,
     PlaylistService,
     VideoService,
 )
@@ -77,7 +77,11 @@ async def trigger_download(
         )
         await db.commit()
 
-    detected_platform = PlatformDetector.detect_platform(req.url)
+    try:
+        provider = PlatformRegistry.require_supported_url(req.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    detected_platform = provider.platform_id
     task = await dispatch_tracked_async(
         process_video_url_task,
         redis_client,
@@ -98,7 +102,7 @@ async def trigger_download(
             "comments_replies": req.comments_replies,
             "replies_limit": req.replies_limit,
             "auto_update": req.auto_update,
-            "cookies_text": req.cookies_text,
+            "cookies_text": None,
             "compress_video": req.compress_video,
             "download_subtitles": req.download_subtitles,
         },
@@ -258,7 +262,7 @@ async def get_sync_dates(db: AsyncSession = Depends(get_db), user=Depends(get_cu
             )
         )
         c_setting = res_cookie.scalar_one_or_none()
-        cookies_text = c_setting.value if (c_setting and c_setting.value) else ""
+        cookies_text = decrypt_secret_value(c_setting.value) if c_setting else ""
 
         provider = PlatformRegistry.get_provider_by_id(p)
         val_res = provider.validate_cookies(cookies_text)
@@ -336,7 +340,8 @@ async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=De
 
     return {
         "platform": platform,
-        "cookies_text": setting.value if setting else "",
+        "cookies_text": "",
+        "has_cookies": bool(setting and setting.value),
         "auth_active": auth_active,
     }
 

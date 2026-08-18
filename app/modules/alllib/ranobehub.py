@@ -102,9 +102,12 @@ class _ChapterHTMLSanitizer(HTMLParser):
         if tag == "img":
             src = attributes.get("src")
             if src:
-                absolute_src = urljoin(RANOBEHUB_API_BASE, src)
-                if is_ranobehub_url(absolute_src) and urlparse(absolute_src).scheme == "https":
-                    safe_attributes.append(("src", absolute_src))
+                if src.startswith("/alllib/api/page?") or src.startswith("/alllib/api/proxy-image?"):
+                    safe_attributes.append(("src", src))
+                else:
+                    absolute_src = urljoin(RANOBEHUB_API_BASE, src)
+                    if is_ranobehub_url(absolute_src) and urlparse(absolute_src).scheme == "https":
+                        safe_attributes.append(("src", absolute_src))
             for name in ("alt", "title"):
                 if attributes.get(name):
                     safe_attributes.append((name, attributes[name] or ""))
