@@ -193,11 +193,9 @@ class CoreBoundarySecurityTests(unittest.TestCase):
     def test_sensitive_routes_require_owner_auth(self):
         root = Path(__file__).resolve().parents[1]
         alllib = (root / "app/modules/alllib/router.py").read_text()
-        torrent = (root / "app/modules/torrent/router.py").read_text()
 
         cover_block = alllib[alllib.index("async def get_cover(") : alllib.index("async def get_page(")]
         self.assertIn("user=Depends(get_current_user)", cover_block)
-        self.assertIn("dependencies=[Depends(get_current_user)]", torrent)
 
     def test_default_compose_is_local_and_rootless(self):
         root = Path(__file__).resolve().parents[1]

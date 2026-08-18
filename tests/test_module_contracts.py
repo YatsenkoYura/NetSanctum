@@ -176,6 +176,21 @@ class ModuleManifestTests(unittest.TestCase):
         self.assertFalse(registry.is_installed("external_without_marker"))
         load.assert_not_called()
 
+    def test_unbundled_module_requires_explicit_installed_marker(self):
+        registry = ModuleRegistry()
+        spec = ModuleSpec(
+            id="local_extension",
+            version="1.0.0",
+            title_en="Local extension",
+            title_ru="Local extension",
+            bundled=False,
+        )
+
+        registry._register_spec("local_extension", spec)
+
+        self.assertFalse(registry.is_installed("local_extension"))
+        self.assertFalse(registry.is_active("local_extension"))
+
     def test_unknown_enabled_module_is_reported(self):
         registry = ModuleRegistry.discover({"does_not_exist"})
 

@@ -218,6 +218,8 @@ class ModuleRegistry:
                 status=ModuleStatus.INCOMPATIBLE,
                 error=f"Module API {spec.api_version} is not supported (expected {MODULE_API_VERSION})",
             )
+        elif not spec.required and not spec.bundled and self._installed_modules is None:
+            record = ModuleRecord(package=package, spec=spec, status=ModuleStatus.UNAVAILABLE)
         elif (
             not spec.required
             and self._installed_modules is not None
