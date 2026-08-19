@@ -11,59 +11,54 @@
 {% if shared_mode %}<script src="/static/htmx.min.js"></script>{% endif %}
 <div class="space-y-4 sm:space-y-6">
     <!-- Compact module toolbar -->
-    <div class="bg-zinc-950 border border-zinc-800 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
-        <div class="flex flex-shrink-0 gap-1 bg-black p-1 border border-zinc-800">
+    <div class="bg-zinc-950 border border-zinc-800 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+        <div class="flex flex-shrink-0 gap-1.5 bg-black p-1.5 border border-zinc-800">
             <button onclick="alllibSwitchTab('library')" id="btn-tab-library" type="button"
                     title="{{ _('alllib', 'tab_library') }}" aria-label="{{ _('alllib', 'tab_library') }}" aria-selected="true"
-                    class="alllib-tab-button w-9 h-9 border border-zinc-800 bg-zinc-900 text-teal-400 hover:border-teal-400 flex items-center justify-center transition-colors">
+                    class="alllib-tab-button w-10 h-10 border border-zinc-800 bg-zinc-900 text-teal-400 hover:border-teal-400 flex items-center justify-center transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z" />
                 </svg>
-                <span class="sr-only">{{ _('alllib', 'tab_library') }}</span>
             </button>
             {% if not shared_mode and not package_mode %}
             <button onclick="alllibSwitchTab('find')" id="btn-tab-find" type="button"
                     title="{{ _('alllib', 'tab_find') }}" aria-label="{{ _('alllib', 'tab_find') }}" aria-selected="false"
-                    class="alllib-tab-button w-9 h-9 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
+                    class="alllib-tab-button w-10 h-10 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
-                <span class="sr-only">{{ _('alllib', 'tab_find') }}</span>
             </button>
             <button onclick="alllibSwitchTab('download')" id="btn-tab-download" type="button"
                     title="{{ _('alllib', 'tab_download') }}" aria-label="{{ _('alllib', 'tab_download') }}" aria-selected="false"
-                    class="alllib-tab-button w-9 h-9 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
+                    class="alllib-tab-button w-10 h-10 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                <span class="sr-only">{{ _('alllib', 'tab_download') }}</span>
             </button>
             <button onclick="alllibSwitchTab('faq')" id="btn-tab-faq" type="button"
                     title="{{ _('alllib', 'tab_faq') }}" aria-label="{{ _('alllib', 'tab_faq') }}" aria-selected="false"
-                    class="alllib-tab-button w-9 h-9 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
+                    class="alllib-tab-button w-10 h-10 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span class="sr-only">{{ _('alllib', 'tab_faq') }}</span>
             </button>
             <button onclick="alllibSwitchTab('settings')" id="btn-tab-settings" type="button"
                     title="Settings" aria-label="Settings" aria-selected="false"
-                    class="alllib-tab-button w-9 h-9 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
+                    class="alllib-tab-button w-10 h-10 border border-transparent text-zinc-400 hover:text-white hover:border-zinc-700 flex items-center justify-center transition-colors">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                <span class="sr-only">Settings</span>
             </button>
             {% endif %}
         </div>
 
-        <div id="alllib-library-controls" class="flex-1 flex flex-col sm:flex-row gap-3 min-w-0">
+        <div id="alllib-library-controls" class="flex-1 flex flex-col sm:flex-row gap-3 min-w-0 sm:ml-auto">
             <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
                    placeholder="{{ _('alllib', 'search_placeholder') }}"
-                   class="flex-1 min-w-0 bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors">
+                   class="h-11 flex-1 min-w-0 bg-black border border-zinc-800 focus:border-teal-400 px-4 text-xs font-mono text-white focus:outline-none transition-colors">
             <select id="library-format" name="format_filter" onchange="alllibRefreshLibrary(); alllibApplyFilters();"
-                    class="bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-zinc-400 focus:outline-none transition-colors sm:w-52">
+                    class="h-11 bg-black border border-zinc-800 focus:border-teal-400 px-4 text-xs font-mono text-zinc-400 focus:outline-none transition-colors sm:w-60">
                 <option value="all">{{ _('alllib', 'filter_all') }}</option>
                 <option value="all_18plus">{{ _('alllib', 'filter_all_18plus') }}</option>
                 <option value="novel">{{ _('alllib', 'type_novel') }}</option>
