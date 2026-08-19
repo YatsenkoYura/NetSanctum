@@ -102,7 +102,6 @@ async def trigger_download(
             "comments_replies": req.comments_replies,
             "replies_limit": req.replies_limit,
             "auto_update": req.auto_update,
-            "cookies_text": None,
             "compress_video": req.compress_video,
             "download_subtitles": req.download_subtitles,
         },
@@ -320,8 +319,6 @@ async def start_youtube_oauth(user=Depends(get_current_user)):
 @router.get("/api/video-archiver/cookies/{platform}")
 async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API: Gets saved cookies and auth status for a platform."""
-    import os
-
     from app.modules.settings.models import Setting
 
     key = f"{platform}_cookies"
@@ -334,15 +331,11 @@ async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=De
     )
     setting = res.scalar_one_or_none()
 
-    auth_active = False
-    if platform == "youtube":
-        auth_active = os.path.exists("/app/storage/.youtube_oauth_enabled")
-
     return {
         "platform": platform,
         "cookies_text": "",
         "has_cookies": bool(setting and setting.value),
-        "auth_active": auth_active,
+        "auth_active": bool(setting and setting.value),
     }
 
 

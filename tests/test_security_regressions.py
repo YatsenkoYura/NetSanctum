@@ -220,6 +220,8 @@ class CoreBoundarySecurityTests(unittest.TestCase):
         self.assertIn("APP_UID", dockerfile)
 
         parsed = yaml.safe_load(compose)
+        self.assertNotIn("ports", parsed["services"]["youtube-pot"])
+        self.assertTrue(parsed["services"]["youtube-pot"]["read_only"])
         worker_command = parsed["services"]["worker"]["command"]
         self.assertEqual("sh", worker_command[0])
         self.assertIn("worker --loglevel=info --concurrency=2", worker_command[2])

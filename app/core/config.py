@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
+    # ── YouTube / yt-dlp ─────────────────────────────────
+    YTDLP_CACHE_DIR: str = "/app/storage/.cache/yt-dlp"
+    YOUTUBE_POT_PROVIDER_URL: str = ""
+    YOUTUBE_YTDLP_PUBLIC_INTERVAL_SECONDS: float = 5.0
+    YOUTUBE_YTDLP_AUTH_INTERVAL_SECONDS: float = 10.0
+    YOUTUBE_YTDLP_REQUEST_INTERVAL_SECONDS: float = 1.0
+    YOUTUBE_YTDLP_BACKOFF_SECONDS: int = 3600
+
     # ── API Key ──────────────────────────────────────────
     MASTER_API_KEY: str = "dev-api-key-change-me"
 

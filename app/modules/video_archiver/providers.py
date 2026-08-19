@@ -102,7 +102,12 @@ class BasePlatformProvider(ABC):
                 "message": "Часть куки устарела",
             }
 
-        return {"has_cookies": True, "is_valid": True, "status": "valid", "message": "Куки актуальны"}
+        return {
+            "has_cookies": True,
+            "is_valid": True,
+            "status": "format_valid",
+            "message": "Формат корректен; сессия проверяется только при обращении к платформе",
+        }
 
     @abstractmethod
     def get_ydl_opts(self, custom_opts: dict | None = None) -> dict[str, Any]:
@@ -123,20 +128,9 @@ class YouTubeProvider(BasePlatformProvider):
     key_cookies = ("SID", "HSID", "SSID", "LOGIN_INFO", "SAPISID", "__Secure-3PSIDTS")
 
     def get_ydl_opts(self, custom_opts: dict | None = None) -> dict[str, Any]:
-        opts = {
-            "cachedir": "/app/storage/.cache/yt-dlp",
-            "mark_watched": False,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["web", "mweb", "android", "ios"],
-                }
-            },
-        }
+        opts = {"mark_watched": False}
         if custom_opts:
-            # Merge extractor_args if provided
-            if "extractor_args" in custom_opts and "youtube" in custom_opts["extractor_args"]:
-                opts["extractor_args"]["youtube"].update(custom_opts["extractor_args"]["youtube"])
-            opts.update({k: v for k, v in custom_opts.items() if k != "extractor_args"})
+            opts.update(custom_opts)
         return opts
 
     def build_video_url(self, video_id: str) -> str:

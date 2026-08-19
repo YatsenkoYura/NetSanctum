@@ -6,11 +6,11 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 from urllib.parse import urlparse
 
 import redis
 import requests
-import yt_dlp
 from openai import OpenAI
 from sqlalchemy import select
 
@@ -21,6 +21,13 @@ from app.core.scheduler import celery_app
 from app.core.secret_values import decrypt_secret_value
 from app.core.storage import get_storage
 from app.core.task_dispatch import dispatch_tracked_sync
+from app.core.ytdlp_pipeline import (
+    YtDlpPipelineError,
+    error_status,
+    extract_info,
+    is_youtube_single_video_url,
+    is_youtube_url,
+)
 from app.modules.music.models import Playlist, PlaylistSong, Song
 from app.modules.music.schemas import MusicModel, VideoModel
 from app.modules.music.security import MUSIC_IMAGE_HOSTS, validate_music_url
@@ -31,9 +38,6 @@ logger = logging.getLogger(__name__)
 redis_client = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
 
-import tempfile
-
-
 def _get_api_keys() -> tuple[str, str]:
     """Retrieve OpenAI API key and Base URL from the database."""
     with SyncSessionLocal() as session:
@@ -42,17 +46,20 @@ def _get_api_keys() -> tuple[str, str]:
         return decrypt_secret_value(api_key), base_url or ""
 
 
-def _create_cookies_file() -> str | None:
-    """Retrieve cookies from DB and write to a temporary file."""
+def _get_youtube_cookies() -> str | None:
+    """Retrieve the encrypted global YouTube cookie jar without writing it to the task payload."""
     with SyncSessionLocal() as session:
-        cookies = session.scalar(select(Setting.value).where(Setting.key == "youtube_cookies"))
-    cookies = decrypt_secret_value(cookies)
-    if cookies and cookies.strip():
-        fd, path = tempfile.mkstemp(suffix=".txt", text=True)
-        with os.fdopen(fd, "w") as f:
-            f.write(cookies)
-        return path
-    return None
+        cookies = session.scalar(
+            select(Setting.value).where(Setting.key == "youtube_cookies", Setting.scope == "global")
+        )
+    return decrypt_secret_value(cookies) or None
+
+
+def _youtube_entry_url(entry: dict) -> str:
+    candidate = entry.get("webpage_url") or entry.get("url")
+    if candidate and str(candidate).startswith(("http://", "https://")):
+        return str(candidate)
+    return f"https://www.youtube.com/watch?v={entry.get('id')}"
 
 
 @celery_app.task(bind=True)
@@ -86,30 +93,18 @@ def process_youtube_url_task(
     ydl_opts = {
         "quiet": True,
         "extract_flat": "in_playlist",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
         "extractor_args": {
-            "youtube": {
-                "player_client": ["mweb", "tv", "android", "ios", "web"],
-                "client": ["mweb", "tv", "android", "ios", "web"],
-            },
             "soundcloud": {
                 "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
             },
         },
-        "js_runtimes": {"deno": {}},
     }
-
-    cookie_path = _create_cookies_file()
-    if cookie_path:
-        ydl_opts["cookiefile"] = cookie_path
+    cookies_text = _get_youtube_cookies()
 
     # Check if URL is Spotify
     is_spotify = (urlparse(url).hostname or "").lower().rstrip(".").endswith("spotify.com")
     info_dict = None
+    skip_resolver = is_youtube_single_video_url(url)
 
     if is_spotify:
         logger.info(f"Spotify link detected ({url}), resolving metadata via oEmbed...")
@@ -124,20 +119,36 @@ def process_youtube_url_task(
                 clean_query = spotify_title.replace("| Spotify", "").strip()
                 logger.info(f"Resolved Spotify oEmbed query: '{clean_query}'")
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl_search:
-                    search_res = ydl_search.extract_info(f"ytsearch1:{clean_query}", download=False)
-                    if search_res and "entries" in search_res and len(search_res["entries"]) > 0:
-                        info_dict = search_res["entries"][0]
-                        url = info_dict.get("url") or f"https://www.youtube.com/watch?v={info_dict.get('id')}"
+                search_res = extract_info(
+                    redis_client,
+                    f"ytsearch1:{clean_query}",
+                    options=ydl_opts,
+                    cookies_text=cookies_text,
+                )
+                entries = list(search_res.get("entries") or [])
+                if entries:
+                    info_dict = entries[0]
+                    url = _youtube_entry_url(info_dict)
+        except YtDlpPipelineError as exc:
+            message = error_status(exc)
+            logger.error("Spotify YouTube resolution failed: %s", message)
+            update_redis_status(message)
+            return f"Error: {message}"
         except Exception as oembed_err:
             logger.warning(f"Spotify oEmbed resolution failed: {oembed_err}")
 
-    if not info_dict:
+    if not info_dict and not skip_resolver:
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info_dict = ydl.extract_info(url, download=False)
-        except Exception as e:
-            err_msg = str(e)
+            platform = "youtube" if is_youtube_url(url) else "soundcloud"
+            info_dict = extract_info(
+                redis_client,
+                url,
+                options=ydl_opts,
+                cookies_text=cookies_text if platform == "youtube" else None,
+                platform=platform,
+            )
+        except YtDlpPipelineError as exc:
+            err_msg = error_status(exc)
             if "DRM" in err_msg or is_spotify:
                 logger.info(f"DRM restriction encountered for {url}, attempting YouTube fallback search...")
                 try:
@@ -147,26 +158,27 @@ def process_youtube_url_task(
                     search_query = " ".join(parts).replace("-", " ").replace("_", " ")
                     logger.info(f"Fallback searching YouTube for: '{search_query}'")
 
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl_search:
-                        search_res = ydl_search.extract_info(f"ytsearch1:{search_query}", download=False)
-                        if search_res and "entries" in search_res and len(search_res["entries"]) > 0:
-                            info_dict = search_res["entries"][0]
-                            url = (
-                                info_dict.get("url")
-                                or f"https://www.youtube.com/watch?v={info_dict.get('id')}"
-                            )
-                        else:
-                            raise Exception("No search results found")
+                    search_res = extract_info(
+                        redis_client,
+                        f"ytsearch1:{search_query}",
+                        options=ydl_opts,
+                        cookies_text=cookies_text,
+                    )
+                    entries = list(search_res.get("entries") or [])
+                    if not entries:
+                        raise RuntimeError("No search results found")
+                    info_dict = entries[0]
+                    url = _youtube_entry_url(info_dict)
                 except Exception as fb_err:
-                    update_redis_status("Error: Could not resolve track via fallback search")
+                    update_redis_status(f"Could not resolve track: {error_status(fb_err)}")
                     return f"Error: Fallback search failed ({fb_err})"
             else:
-                logger.error(f"Error fetching info for URL {url}: {e}")
-                update_redis_status(f"Error: {str(e)[:50]}...")
-                return f"Error: {e}"
-        finally:
-            if cookie_path and os.path.exists(cookie_path):
-                os.remove(cookie_path)
+                logger.error("Error fetching info for URL %s: %s", url, err_msg)
+                update_redis_status(err_msg)
+                return f"Error: {err_msg}"
+
+    if info_dict is None:
+        info_dict = {}
 
     if "entries" in info_dict:
         # It's a playlist
@@ -186,9 +198,7 @@ def process_youtube_url_task(
 
         with SyncSessionLocal() as session:
             for i, entry in enumerate(entries):
-                video_url = entry.get("url")
-                if not video_url:
-                    video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+                video_url = _youtube_entry_url(entry)
 
                 existing_song = session.scalar(select(Song).where(Song.youtube_url == video_url))
                 if existing_song:
@@ -257,125 +267,19 @@ def process_song_task(
     """Download video, extract MP3, download cover, analyze with AI, and save to DB."""
 
     task_id = self.request.id
+    display_title = "Fetching Metadata..."
 
     def update_redis_status(status_text: str, percent: str = "0%"):
         data = {
             "task_id": task_id,
             "url": url,
-            "title": "Fetching Metadata...",
+            "title": display_title,
             "status": status_text,
             "progress": percent,
         }
         redis_client.setex(f"music_dl:{task_id}", 86400, json.dumps(data))
 
     update_redis_status("Preparing")
-
-    # 1. Fetch metadata and comments for AI
-    ydl_opts_meta = {
-        "quiet": True,
-        "extract_flat": False,
-        "getcomments": use_ai,
-        "max_comments": 50,
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-        "extractor_args": {
-            "youtube": {
-                "comment_sort": ["top"],
-                "player_client": ["mweb", "tv", "android", "ios", "web"],
-                "client": ["mweb", "tv", "android", "ios", "web"],
-            },
-            "soundcloud": {
-                "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
-            },
-        },
-        "js_runtimes": {"deno": {}},
-    }
-
-    cookie_path = _create_cookies_file()
-    if cookie_path:
-        ydl_opts_meta["cookiefile"] = cookie_path
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            comments_data = info_dict.get("comments") or []
-    except Exception as e:
-        logger.error(f"Failed to fetch metadata for {url}: {e}")
-        if cookie_path and os.path.exists(cookie_path):
-            os.remove(cookie_path)
-        update_redis_status(f"Error: {str(e)[:50]}...")
-        return f"Error: {e}"
-
-    all_comments = []
-    if use_ai:
-        for c in comments_data:
-            text = c.get("text", "")
-            if len(text) > 200:
-                all_comments.append(text)
-
-    video_data = VideoModel(
-        title=info_dict.get("title", "Unknown"),
-        description=info_dict.get("description", ""),
-        comments=all_comments,
-    )
-
-    # Update redis with actual title
-    def update_redis_status(status_text: str, percent: str = "0%"):
-        data = {
-            "task_id": task_id,
-            "url": url,
-            "title": video_data.title,
-            "status": status_text,
-            "progress": percent,
-        }
-        redis_client.setex(f"music_dl:{task_id}", 86400, json.dumps(data))
-
-    update_redis_status("Analyzing AI (Optional)")
-
-    # 2. Analyze with AI
-    db_api_key, db_base_url = _get_api_keys()
-
-    api_key = openai_api_key or db_api_key
-    base_url = openai_base_url if openai_api_key and openai_base_url else db_base_url
-
-    music_info = None
-    if use_ai and api_key and base_url:
-        try:
-            client = OpenAI(base_url=base_url, api_key=api_key)
-            context_text = f"НАЗВАНИЕ ВИДЕО:\n{video_data.title}\n\n"
-            context_text += f"ОПИСАНИЕ ВИДЕО:\n{video_data.description}\n\n"
-            context_text += "КОММЕНТАРИИ:\n"
-            context_text += "\n---\n".join(video_data.comments)
-
-            system_prompt = (
-                "Ты — музыкальный AI-агент, эксперт по анализу метаданных. "
-                "Пользователь передаст тебе название, описание и комментарии из видео на YouTube. "
-                "Твоя задача — тщательно изучить этот текст и извлечь информацию о песне строго по запрошенной схеме. "
-                "Особое внимание удели разнице между авторами кавера и оригинальными исполнителями. "
-                "Не выдумывай текст песни, если его нет в предоставленных данных."
-            )
-
-            completion = client.beta.chat.completions.parse(
-                model="gemini-3-flash-preview",  # Can be configured
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": context_text},
-                ],
-                response_format=MusicModel,
-                temperature=0.1,
-            )
-            music_info = completion.choices[0].message.parsed
-        except Exception as e:
-            logger.error(f"AI Analysis failed: {e}")
-
-    # Fallback if AI fails or no keys
-    if not music_info:
-        music_info = MusicModel(
-            title=video_data.title, author=info_dict.get("uploader", "Unknown"), original_artist=None
-        )
 
     update_redis_status("Starting Download")
 
@@ -390,7 +294,7 @@ def process_song_task(
         elif d["status"] == "finished":
             update_redis_status("Extracting Audio", "100%")
 
-    # 3. Download Audio
+    # A single yt-dlp invocation downloads audio and returns the metadata used below.
     import glob
 
     download_dir = tempfile.mkdtemp(prefix="netsanctum_music_")
@@ -405,63 +309,96 @@ def process_song_task(
         ],
         "quiet": True,
         "progress_hooks": [progress_hook],
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
         "extractor_args": {
-            "youtube": {
-                "player_client": ["mweb", "tv", "android", "ios", "web"],
-                "client": ["mweb", "tv", "android", "ios", "web"],
-            },
             "soundcloud": {
                 "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
             },
         },
-        "js_runtimes": {"deno": {}},
         "outtmpl": f"{download_dir}/%(id)s.%(ext)s",
         "noplaylist": True,
+        "check_formats": "selected",
     }
-
-    if cookie_path:
-        download_opts["cookiefile"] = cookie_path
 
     audio_file_id = None
     try:
-        with yt_dlp.YoutubeDL(download_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_id = info["id"]
+        youtube = is_youtube_url(url)
+        info_dict = extract_info(
+            redis_client,
+            url,
+            options=download_opts,
+            download=True,
+            cookies_text=_get_youtube_cookies() if youtube else None,
+            platform="youtube" if youtube else "soundcloud",
+        )
+        video_id = str(info_dict.get("id") or "")
+        if not video_id:
+            raise RuntimeError("yt-dlp did not return a media id")
 
-            # Find the extracted audio file
-            downloaded_files = glob.glob(os.path.join(download_dir, f"{video_id}.*"))
-            audio_exts = {".mp3", ".m4a", ".webm", ".opus", ".aac", ".flac", ".wav", ".ogg"}
-            audio_filepath = None
-            for f in downloaded_files:
-                if os.path.splitext(f)[1].lower() in audio_exts:
-                    audio_filepath = f
-                    break
-
-            if audio_filepath:
-                with open(audio_filepath, "rb") as f:
-                    audio_data = f.read()
-                ext = os.path.splitext(audio_filepath)[1].lower()
-                audio_file_id = get_storage().save_file(audio_data, f"music/audio/{video_id}{ext}")
-                os.remove(audio_filepath)
-            else:
-                logger.error(f"No valid audio file found for {url}")
-                update_redis_status("Error: No valid audio file found")
-                return "Error: No valid audio file found"
-    except Exception as e:
-        logger.error(f"Failed to download audio for {url}: {e}")
-        update_redis_status(f"Error: {str(e)[:50]}...")
-        return f"Error downloading audio: {e}"
+        downloaded_files = glob.glob(os.path.join(download_dir, f"{video_id}.*"))
+        audio_exts = {".mp3", ".m4a", ".webm", ".opus", ".aac", ".flac", ".wav", ".ogg"}
+        audio_filepath = next(
+            (path for path in downloaded_files if os.path.splitext(path)[1].lower() in audio_exts),
+            None,
+        )
+        if not audio_filepath:
+            raise FileNotFoundError("No valid audio file found")
+        with open(audio_filepath, "rb") as audio_file:
+            audio_data = audio_file.read()
+        ext = os.path.splitext(audio_filepath)[1].lower()
+        audio_file_id = get_storage().save_file(audio_data, f"music/audio/{video_id}{ext}")
+        os.remove(audio_filepath)
+    except Exception as exc:
+        message = error_status(exc)
+        logger.error("Failed to download audio for %s: %s", url, message)
+        update_redis_status(message)
+        return f"Error downloading audio: {message}"
     finally:
-        if cookie_path and os.path.exists(cookie_path):
-            os.remove(cookie_path)
         shutil.rmtree(download_dir, ignore_errors=True)
 
-    # 4. Download Cover
+    video_data = VideoModel(
+        title=info_dict.get("title") or "Unknown",
+        description=info_dict.get("description") or "",
+    )
+    display_title = video_data.title
+
+    update_redis_status("Analyzing AI (Optional)")
+    db_api_key, db_base_url = _get_api_keys()
+    api_key = openai_api_key or db_api_key
+    base_url = openai_base_url if openai_api_key and openai_base_url else db_base_url
+
+    music_info = None
+    if use_ai and api_key and base_url:
+        try:
+            client = OpenAI(base_url=base_url, api_key=api_key)
+            context_text = (
+                f"НАЗВАНИЕ ВИДЕО:\n{video_data.title}\n\nОПИСАНИЕ ВИДЕО:\n{video_data.description}\n"
+            )
+            system_prompt = (
+                "Ты — музыкальный AI-агент, эксперт по анализу метаданных. "
+                "Извлеки информацию о песне строго по запрошенной схеме. "
+                "Особое внимание удели разнице между авторами кавера и оригинальными исполнителями."
+            )
+            completion = client.beta.chat.completions.parse(
+                model="gemini-3-flash-preview",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": context_text},
+                ],
+                response_format=MusicModel,
+                temperature=0.1,
+            )
+            music_info = completion.choices[0].message.parsed
+        except Exception as exc:
+            logger.error("AI analysis failed: %s", exc)
+
+    if not music_info:
+        music_info = MusicModel(
+            title=video_data.title,
+            author=info_dict.get("uploader") or "Unknown",
+            original_artist=None,
+        )
+
+    # Download Cover
     cover_file_id = None
     thumbnail_url = info_dict.get("thumbnail")
     if thumbnail_url:

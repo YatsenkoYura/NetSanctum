@@ -387,7 +387,7 @@
                         <!-- Detailed Comments Controls -->
                         <div class="bg-black border border-zinc-800 p-4 space-y-4">
                             <div class="flex items-center gap-3">
-                                <input type="checkbox" name="comments_enabled" id="comments_enabled" checked
+                                <input type="checkbox" name="comments_enabled" id="comments_enabled"
                                        onchange="toggleCommentsInputs()" class="w-4 h-4 accent-teal-400 cursor-pointer">
                                 <label for="comments_enabled" class="text-xs font-mono text-white font-bold cursor-pointer select-none uppercase">
                                     {{ _('video_archiver', 'download_comments') }}
@@ -2291,7 +2291,7 @@
                 let platHtml = data.platforms.map(p => {
                     let badgeColor = 'bg-emerald-950/40 text-emerald-400 border-emerald-800/80';
                     let icon = '✓';
-                    let text = 'Актуальны';
+                    let text = 'Формат OK';
 
                     if (!p.has_cookies) {
                         missingOrExpired = true;

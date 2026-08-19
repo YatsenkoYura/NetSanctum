@@ -6,7 +6,7 @@ from pydantic import BaseModel
 class DownloadRequest(BaseModel):
     url: str
     quality: str = "720"  # "720", "480", "1080"
-    comments_enabled: bool = True
+    comments_enabled: bool = False
     comments_type: str = "top"  # "top" or "all"
     comments_limit: int = 20
     comments_replies: bool = True

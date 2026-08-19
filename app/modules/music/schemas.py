@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 class VideoModel(BaseModel):
     title: str
     description: str
-    comments: list[str]
 
 
 class MusicModel(BaseModel):

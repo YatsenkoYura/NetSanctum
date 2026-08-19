@@ -116,7 +116,9 @@ class ModuleManifestTests(unittest.TestCase):
 
         for module_id in ("music", "video_archiver"):
             dependencies = project["project"]["optional-dependencies"][module_id]
-            self.assertTrue(any(dependency.startswith("yt-dlp[default]") for dependency in dependencies))
+            self.assertTrue(
+                any(dependency.startswith("yt-dlp[curl-cffi,default]") for dependency in dependencies)
+            )
             self.assertIn("deno", catalog["modules"][module_id]["system_packages"])
 
     def test_core_build_profile_contains_only_required_modules(self):

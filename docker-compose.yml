@@ -26,6 +26,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── YouTube proof-of-origin tokens ─────────────────────
+  youtube-pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:1.3.1-deno@sha256:bea3cfda79245700d7ad90500052b4358b1c1828fdc0961929624b83933121bc
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - deno
+        - eval
+        - const connection = await Deno.connect({hostname:'127.0.0.1',port:4416}); connection.close();
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── One-time storage ownership migration ───────────────
   storage-init:
     image: alpine:3.20
@@ -116,6 +138,7 @@ services:
     environment:
       NETSANCTUM_PROCESS_ROLE: worker
       NETSANCTUM_LOAD_DOTENV: "0"
+      YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
     volumes:
       - .:/app:ro
       - ./storage:/app/storage
@@ -132,6 +155,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      youtube-pot:
         condition: service_healthy
     command:
       - sh
