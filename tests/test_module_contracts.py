@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -107,6 +108,16 @@ class ModuleManifestTests(unittest.TestCase):
             [sys.executable, "scripts/module_build.py", "check"],
             check=True,
         )
+
+    def test_ytdlp_modules_include_ejs_and_supported_runtime(self):
+        root = Path(__file__).resolve().parents[1]
+        project = tomllib.loads((root / "pyproject.toml").read_text())
+        catalog = json.loads((root / "module-build.json").read_text())
+
+        for module_id in ("music", "video_archiver"):
+            dependencies = project["project"]["optional-dependencies"][module_id]
+            self.assertTrue(any(dependency.startswith("yt-dlp[default]") for dependency in dependencies))
+            self.assertIn("deno", catalog["modules"][module_id]["system_packages"])
 
     def test_core_build_profile_contains_only_required_modules(self):
         result = subprocess.run(

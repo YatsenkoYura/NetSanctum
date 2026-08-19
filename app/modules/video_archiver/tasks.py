@@ -269,7 +269,6 @@ def download_video_task(
             "getcomments": comments_enabled,
             "extractor_retries": 1,
             "js_runtimes": {"deno": {}},
-            "ignoreerrors": True,
         }
     )
 
@@ -608,7 +607,6 @@ def _sync_video_metadata(video_id: str, task_id: str | None = None) -> str:
             "quiet": True,
             "getcomments": False,  # Skip comments during background sync to avoid YouTube rate-limiting / slow retries
             "extractor_retries": 0,
-            "ignoreerrors": True,
             "js_runtimes": {"deno": {}},
         }
     )

@@ -100,7 +100,7 @@ def process_youtube_url_task(
                 "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
             },
         },
-        "js_runtimes": {"node": {}},
+        "js_runtimes": {"deno": {}},
     }
 
     cookie_path = _create_cookies_file()
@@ -291,7 +291,7 @@ def process_song_task(
                 "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
             },
         },
-        "js_runtimes": {"node": {}},
+        "js_runtimes": {"deno": {}},
     }
 
     cookie_path = _create_cookies_file()
@@ -419,7 +419,7 @@ def process_song_task(
                 "client_id": ["iZ8g4fk7bchWS1uTXWeKwMzhf9yC68gR", "a3e059563d7fd3372b49b37f00a00bcf"]
             },
         },
-        "js_runtimes": {"node": {}},
+        "js_runtimes": {"deno": {}},
         "outtmpl": f"{download_dir}/%(id)s.%(ext)s",
         "noplaylist": True,
     }

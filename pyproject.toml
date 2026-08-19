@@ -33,11 +33,11 @@ alllib = [
 music = [
     "openai==1.59.3",
     "requests==2.33.0",
-    "yt-dlp==2026.7.4",
+    "yt-dlp[default]==2026.7.4",
 ]
 video_archiver = [
     "requests==2.33.0",
-    "yt-dlp==2026.7.4",
+    "yt-dlp[default]==2026.7.4",
 ]
 
 [dependency-groups]

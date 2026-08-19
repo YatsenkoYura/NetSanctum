@@ -70,5 +70,5 @@ MODULE = ModuleSpec(
     ),
     progress_key_patterns=("music_dl:*",),
     dependency_extra="music",
-    system_packages=("ffmpeg", "nodejs"),
+    system_packages=("deno", "ffmpeg"),
 )

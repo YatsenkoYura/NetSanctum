@@ -24,8 +24,8 @@
       "required": false,
       "extra": "music",
       "system_packages": [
-        "ffmpeg",
-        "nodejs"
+        "deno",
+        "ffmpeg"
       ]
     },
     "settings": {
