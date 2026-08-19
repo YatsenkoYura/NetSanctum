@@ -1,4 +1,6 @@
-{% extends "base.html" %}
+{% extends module_base|default("base.html") %}
+{% set alllib_home_url = alllib_home_url|default('/alllib/dashboard') %}
+{% set chapter_url_prefix = chapter_url_prefix|default('/alllib/ui/chapter') %}
 {% block title %}{{ novel.title }} — Reader{% endblock %}
 
 {% block content %}
@@ -7,7 +9,7 @@
   <!-- TOP BAR: title + typography controls -->
   <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300">
     <div class="flex items-center gap-3 min-w-0">
-      <a href="/alllib/dashboard" class="text-zinc-600 hover:text-teal-400 transition-colors flex-shrink-0">
+      <a href="{{ alllib_home_url }}" class="text-zinc-600 hover:text-teal-400 transition-colors flex-shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
       </a>
       <span id="top-title" class="text-[11px] font-mono text-zinc-400 truncate">{{ novel.title }}</span>
@@ -68,7 +70,7 @@
   <!-- BOTTOM BAR -->
   <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
     <!-- Exit button: subtle, red on hover -->
-    <a href="/alllib/dashboard"
+    <a href="{{ alllib_home_url }}"
        class="group flex items-center gap-1.5 px-3 py-1.5 border border-zinc-800/60 text-zinc-500 hover:text-red-500 hover:border-red-500/50 transition-all duration-200 text-[10px] font-mono uppercase bg-zinc-900 rounded select-none">
       <svg class="w-3 h-3 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
       {{ _('alllib', 'exit') }}
@@ -114,9 +116,6 @@
   #chapter-content p { margin-bottom: 1em; }
   #chapter-content h1, #chapter-content h2 { margin: 1.5em 0 0.5em; font-weight: bold; }
 </style>
-{% endblock %}
-
-{% block scripts_extra %}
 <script>
   const CHAPTERS = [{% for ch in chapters %}{ id: '{{ ch.id }}', label: 'Vol.{{ ch.volume }} Ch.{{ ch.number }}{% if ch.name %} — {{ ch.name }}{% endif %}' },{% endfor %}];
   let currentChapterId = null;
@@ -228,7 +227,7 @@
     const content = document.getElementById('chapter-content');
     content.innerHTML = '<div class="text-center py-24 text-zinc-500 font-mono text-xs">{{ _('alllib', 'loading') }}</div>';
 
-    const resp = await fetch(`/alllib/ui/chapter/${chId}`);
+    const resp = await fetch(`{{ chapter_url_prefix }}/${chId}`);
     if (!resp.ok) { content.innerHTML = '<div class="text-red-500 text-xs font-mono py-12 text-center">{{ _('alllib', 'failed_load') }}</div>'; return; }
     const html = await resp.text();
     const tmp = document.createElement('div');

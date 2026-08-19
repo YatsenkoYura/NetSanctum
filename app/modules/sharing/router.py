@@ -464,7 +464,8 @@ async def shared_module_api(
     share = await _active_share(db, share_id)
     if not await _is_authorized(request, share):
         raise _not_found()
-    return await _dispatch_shared_api(request, share, db, path)
+    response = await _dispatch_shared_api(request, share, db, path)
+    return _harden_shared_response(response)
 
 
 @router.get("/s/{share_id}", response_class=HTMLResponse, include_in_schema=False)

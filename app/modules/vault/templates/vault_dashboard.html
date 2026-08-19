@@ -1,4 +1,7 @@
-{% extends "base.html" %}
+{% extends module_base|default("base.html") %}
+{% set is_shared = shared_mode|default(false) %}
+{% set collections = collections|default([]) %}
+{% set stats = stats|default({"total_items": 0, "avg_score": 0}) %}
 {% block title %}Vault — NetSanctum Workspaces{% endblock %}
 
 {% block head_extra %}
@@ -78,7 +81,7 @@
 
     <div class="px-3 py-2 flex items-center justify-between border-b border-zinc-800">
       <span class="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Воркспейсы</span>
-      <button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>
+      {% if not is_shared %}<button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
     </div>
 
     <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
@@ -90,6 +93,7 @@
         <span class="text-[9px] text-zinc-600 font-bold" id="ws-count-all">{{ stats.total_items }}</span>
       </div>
 
+      <div id="vault-collections" class="contents">
       {% for c in collections %}
       <div onclick="selectWorkspace({{ c.id|int }}, this.querySelector('[data-workspace-name]').textContent)" id="ws-item-{{ c.id|int }}" class="ws-item">
         <div class="flex items-center gap-2 truncate">
@@ -99,6 +103,7 @@
         <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
       </div>
       {% endfor %}
+      </div>
     </div>
 
     <div class="px-3 pt-2 border-t border-zinc-800 text-[10px] text-zinc-600 flex justify-between">
@@ -121,7 +126,7 @@
           <span class="text-white font-bold uppercase tracking-wider" id="active-ws-title">Все карточки</span>
         </div>
 
-        <div class="relative ml-2">
+        {% if not is_shared %}<div class="relative ml-2">
           <button onclick="togglePlusDropdown(event)" class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
             <span>+</span> <span class="text-[10px] uppercase hidden sm:inline">Создать</span> ▾
           </button>
@@ -132,24 +137,24 @@
             <button onclick="instantCreate('table')" class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
             <button onclick="instantCreate('whiteboard')" class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
           </div>
-        </div>
+        </div>{% endif %}
       </div>
 
       <div class="flex items-center gap-2">
-        <button onclick="sendToOutpost('/api/vault/sync-manifest')"
+        {% if not is_shared %}<button onclick="sendToOutpost('/api/vault/sync-manifest')"
                 class="outpost-only text-[11px] text-teal-400 border border-teal-500/40 px-2 py-1 uppercase font-bold hover:bg-teal-950/40">
           Сохранить на устройство
-        </button>
+        </button>{% endif %}
         <input type="text" id="vault-search" oninput="debounceSearch()" placeholder="Поиск..."
                class="bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none w-44">
 
-        <div class="relative">
+        {% if not is_shared or share.allow_download %}<div class="relative">
           <button onclick="toggleExportMenu(event)" class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
           <div id="export-dropdown" class="hidden absolute right-0 top-7 w-28 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
             <button onclick="exportItems()" class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
-            <a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>
+            {% if not is_shared %}<a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>{% endif %}
           </div>
-        </div>
+        </div>{% endif %}
       </div>
     </div>
 
@@ -172,10 +177,10 @@
         <!-- Full-size Image Preview in Editor View -->
         <div id="editor-image-container" class="hidden"></div>
 
-        <input type="text" id="editor-title" oninput="triggerAutoSave()" placeholder="Заголовок (необязательно)..."
+        <input type="text" id="editor-title" {% if is_shared %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} placeholder="Заголовок (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
-        <textarea id="editor-content" oninput="triggerAutoSave()" rows="14" placeholder="Пишите мысли здесь..."
+        <textarea id="editor-content" {% if is_shared %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} rows="14" placeholder="Пишите мысли здесь..."
                   class="w-full bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-200 focus:outline-none focus:border-teal-400 resize-y leading-relaxed font-mono"></textarea>
       </div>
 
@@ -187,10 +192,10 @@
         </div>
         <input type="hidden" id="sheet-id">
 
-        <input type="text" id="sheet-title" oninput="triggerSheetAutoSave()" placeholder="Название таблицы (необязательно)..."
+        <input type="text" id="sheet-title" {% if is_shared %}readonly{% else %}oninput="triggerSheetAutoSave()"{% endif %} placeholder="Название таблицы (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
-        <div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
+        {% if not is_shared %}<div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
           <button onclick="formatCell('bold')" class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
           <button onclick="formatCell('italic')" class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
           <button onclick="formatCell('strike')" class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
@@ -207,7 +212,7 @@
           <button onclick="addSheetColumn()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить новую колонку">+ Колонка</button>
           <button onclick="cleanEmptySheetRows()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-amber-950 hover:text-amber-400 border border-zinc-700 hover:border-amber-500/50 rounded transition-colors" title="Удалить все полностью пустые строки">Очистить пустые строки</button>
           <button onclick="clearSheetTable()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-red-950 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 rounded transition-colors" title="Очистить все данные из таблицы">Очистить таблицу</button>
-        </div>
+        </div>{% endif %}
 
         <div class="border border-zinc-800 overflow-x-auto bg-zinc-950">
           <table class="sheet-table" id="sheet-canvas"></table>
@@ -222,9 +227,9 @@
           <div class="flex items-center gap-2">
             <div class="flex border border-zinc-800 p-0.5 bg-black">
               <button onclick="setWbMode('select')" id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
-              <button onclick="setWbMode('draw')" id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
+              {% if not is_shared %}<button onclick="setWbMode('draw')" id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
               <button onclick="setWbMode('line')" id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
-              <button onclick="setWbMode('erase')" id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>
+              <button onclick="setWbMode('erase')" id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>{% endif %}
             </div>
 
             <div class="flex items-center border border-zinc-800 bg-zinc-950 px-1">
@@ -234,8 +239,8 @@
               <button onclick="changeBrushSize(2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
             </div>
 
-            <button onclick="clearWbCanvas()" class="tb-btn text-red-400 uppercase">Очистить все</button>
-            <button onclick="addWhiteboardNode()" class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>
+            {% if not is_shared %}<button onclick="clearWbCanvas()" class="tb-btn text-red-400 uppercase">Очистить все</button>
+            <button onclick="addWhiteboardNode()" class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>{% endif %}
 
             <div class="flex items-center gap-1 border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
               <button onclick="zoomWb(-0.1)" class="font-bold hover:text-white">-</button>
@@ -247,7 +252,7 @@
         </div>
 
         <input type="hidden" id="wb-id">
-        <input type="text" id="wb-title" oninput="triggerWbAutoSave()" placeholder="Название доски (необязательно)..."
+        <input type="text" id="wb-title" {% if is_shared %}readonly{% else %}oninput="triggerWbAutoSave()"{% endif %} placeholder="Название доски (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         <div class="wb-viewport" id="wb-viewport-el">
@@ -262,13 +267,14 @@
       <div id="vault-empty" class="hidden py-24 text-center space-y-3">
         <div class="w-10 h-10 border border-zinc-800 mx-auto flex items-center justify-center"><span class="text-zinc-700 text-xl font-mono">∅</span></div>
         <div class="text-xs font-bold text-zinc-600 uppercase tracking-widest">Пространство пусто</div>
-        <div class="text-[11px] text-zinc-700">Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера</div>
+        <div class="text-[11px] text-zinc-700">{% if is_shared %}В этой публикации нет доступных карточек{% else %}Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера{% endif %}</div>
       </div>
 
     </div>
   </div>
 </div>
 
+{% if not is_shared %}
 <!-- Modal: New Workspace Name -->
 <div id="modal-workspace" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
@@ -313,8 +319,10 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <script>
+const sharedMode = {{ is_shared|tojson }};
 let currentCollectionId = null;
 let currentItems = [];
 let autoSaveTimer = null;
@@ -365,16 +373,17 @@ let currentStroke = null;
 let wbCtx = null;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-function togglePlusDropdown(e) { e.stopPropagation(); document.getElementById('plus-dropdown').classList.toggle('show'); }
-function toggleExportMenu(e) { e.stopPropagation(); document.getElementById('export-dropdown').classList.toggle('hidden'); }
+function togglePlusDropdown(e) { e.stopPropagation(); document.getElementById('plus-dropdown')?.classList.toggle('show'); }
+function toggleExportMenu(e) { e.stopPropagation(); document.getElementById('export-dropdown')?.classList.toggle('hidden'); }
 
 document.addEventListener('click', () => {
-  document.getElementById('plus-dropdown').classList.remove('show');
-  document.getElementById('export-dropdown').classList.add('hidden');
+  document.getElementById('plus-dropdown')?.classList.remove('show');
+  document.getElementById('export-dropdown')?.classList.add('hidden');
 });
 
 // Tool Hotkeys
 document.addEventListener('keydown', (e) => {
+  if (sharedMode) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   const key = e.key.toLowerCase();
   if (key === 'v' || key === '1') setWbMode('select');
@@ -385,6 +394,7 @@ document.addEventListener('keydown', (e) => {
 
 // ── FAST CLIPBOARD PASTE (CTRL+V) & DRAG & DROP ────────────────────────────
 document.addEventListener('paste', async (e) => {
+  if (sharedMode) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
   const clipboardData = e.clipboardData || window.clipboardData;
@@ -509,6 +519,7 @@ document.addEventListener('DOMContentLoaded', () => {
   root.addEventListener('dragover', (e) => { e.preventDefault(); root.classList.add('drag-over-active'); });
   root.addEventListener('dragleave', () => { root.classList.remove('drag-over-active'); });
   root.addEventListener('drop', async (e) => {
+    if (sharedMode) return;
     e.preventDefault();
     root.classList.remove('drag-over-active');
 
@@ -706,6 +717,7 @@ function triggerAutoSave() {
 }
 
 async function saveCurrentEditorData() {
+  if (sharedMode) return;
   const id = document.getElementById('editor-id').value;
   const title = document.getElementById('editor-title').value.trim();
   const content = document.getElementById('editor-content').value.trim();
@@ -749,8 +761,8 @@ function renderSheetCanvas() {
   activeSheetData.headers.forEach((h, colIdx) => {
     html += `<th class="sheet-header">
       <div class="flex items-center justify-between px-1">
-        <input type="text" value="${escapeAttr(h)}" onchange="updateHeader(${colIdx}, this.value)" class="cell-edit font-bold text-teal-400">
-        <button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>
+        <input type="text" value="${escapeAttr(h)}" ${sharedMode ? 'readonly' : `onchange="updateHeader(${colIdx}, this.value)"`} class="cell-edit font-bold text-teal-400">
+        ${sharedMode ? '' : `<button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
       </div>
     </th>`;
   });
@@ -761,11 +773,11 @@ function renderSheetCanvas() {
       <td class="text-center text-zinc-600 font-bold text-[9px] bg-zinc-950">
         <div class="flex items-center justify-between px-1">
           <span>${rowIdx + 1}</span>
-          <button onclick="deleteRow(${rowIdx})" class="row-del-btn text-[9px]" title="Удалить строку">✕</button>
+          ${sharedMode ? '' : `<button onclick="deleteRow(${rowIdx})" class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
         </div>
       </td>`;
     row.forEach((cell, colIdx) => {
-      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)" class="cell-edit"></td>`;
+      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${sharedMode ? 'readonly' : `onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)"`} class="cell-edit"></td>`;
     });
     html += '</tr>';
   });
@@ -872,6 +884,7 @@ function triggerSheetAutoSave() {
 }
 
 async function saveCurrentSheetData() {
+  if (sharedMode) return;
   const id = document.getElementById('sheet-id').value;
   const title = document.getElementById('sheet-title').value.trim();
   if (!id) return;
@@ -943,12 +956,12 @@ function renderWhiteboardNodes() {
     const x = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
     const y = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
     return `
-    <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" onmousedown="handleWbNodeMouseDown(event, ${idx})">
+    <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" ${sharedMode ? '' : `onmousedown="handleWbNodeMouseDown(event, ${idx})"`}>
       <div class="flex justify-between items-center pb-1 mb-1 border-b border-zinc-800">
         <span class="text-[9px] text-zinc-500 font-bold">CARD #${idx + 1}</span>
-        <button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>
+        ${sharedMode ? '' : `<button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
       </div>
-      <textarea oninput="updateWbNodeText(${idx}, this.value)" class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
+      <textarea ${sharedMode ? 'readonly' : `oninput="updateWbNodeText(${idx}, this.value)"`} class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
     </div>
   `;
   }).join('');
@@ -1287,6 +1300,7 @@ function generateWbCroppedPreview() {
 }
 
 async function saveCurrentWbData() {
+  if (sharedMode) return;
   const id = document.getElementById('wb-id').value;
   const title = document.getElementById('wb-title').value.trim();
   if (!id) return;
@@ -1311,6 +1325,50 @@ function selectWorkspace(id, name) {
   closeSheetView();
   closeWhiteboardView();
   loadWorkspace();
+}
+
+async function loadSharedSummary() {
+  if (!sharedMode) return;
+  try {
+    const [statsResp, collectionsResp] = await Promise.all([
+      fetch('/api/vault/stats'),
+      fetch('/api/vault/collections')
+    ]);
+    if (!statsResp.ok || !collectionsResp.ok) throw new Error('Could not load shared Vault summary');
+    const [sharedStats, sharedCollections] = await Promise.all([
+      statsResp.json(),
+      collectionsResp.json()
+    ]);
+    document.getElementById('ws-count-all').textContent = sharedStats.total_items;
+    document.getElementById('stat-total').textContent = sharedStats.total_items;
+    document.getElementById('stat-score').textContent = sharedStats.avg_score;
+
+    const root = document.getElementById('vault-collections');
+    root.replaceChildren(...sharedCollections.map(collection => {
+      const item = document.createElement('div');
+      item.id = `ws-item-${collection.id}`;
+      item.className = 'ws-item';
+      item.addEventListener('click', () => selectWorkspace(collection.id, collection.name));
+
+      const label = document.createElement('div');
+      label.className = 'flex items-center gap-2 truncate';
+      const marker = document.createElement('span');
+      marker.className = 'w-1.5 h-1.5 bg-teal-400 inline-block';
+      const name = document.createElement('span');
+      name.className = 'truncate';
+      name.dataset.workspaceName = '';
+      name.textContent = collection.name;
+      label.append(marker, name);
+
+      const count = document.createElement('span');
+      count.className = 'text-[9px] text-zinc-600 font-bold';
+      count.textContent = collection.items_count;
+      item.append(label, count);
+      return item;
+    }));
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 async function loadWorkspace() {
@@ -1430,15 +1488,15 @@ function renderTiles(items) {
 
         <div class="flex items-center justify-between text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 mt-1">
           <div class="flex items-center gap-2">
-            <button onclick="togglePin(${itemId})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
+            ${sharedMode ? `<span class="text-xs ${item.is_pinned ? 'text-teal-400' : 'text-zinc-600'}">${item.is_pinned ? '★' : '☆'}</span>` : `<button onclick="togglePin(${itemId})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
               ${item.is_pinned ? '★' : '☆'}
-            </button>
+            </button>`}
             <span>${new Date(item.created_at).toLocaleDateString('ru-RU')}</span>
           </div>
 
           <div class="flex gap-2 font-bold">
             <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
-            <button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase">✕</button>
+            ${sharedMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase">✕</button>`}
           </div>
         </div>
       </div>
@@ -1537,6 +1595,7 @@ function handleSheetPaste(e) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  loadSharedSummary();
   loadWorkspace();
   const sheetCanvas = document.getElementById('sheet-canvas');
   if (sheetCanvas) {

@@ -357,7 +357,11 @@ class ModuleManifestTests(unittest.TestCase):
             provider = registry.share_provider(record.id)
             self.assertIsNotNone(provider, record.id)
             assert provider is not None
-            for method_name in ("catalog", "selection", "entities", "relations", "asset"):
+            required_methods = {"catalog", "selection"}
+            required_methods.update(route.source for route in spec.share.routes)
+            if spec.share.assets:
+                required_methods.add("asset")
+            for method_name in sorted(required_methods):
                 with self.subTest(module=record.id, method=method_name):
                     self.assertTrue(callable(getattr(provider, method_name, None)))
 

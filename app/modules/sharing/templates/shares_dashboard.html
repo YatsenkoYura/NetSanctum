@@ -67,7 +67,7 @@
             checkbox.name = 'shared-content';
             checkbox.value = item.id;
             const text = document.createElement('span');
-            text.textContent = `${item.title} · ${item.channel_name || item.platform || ''}`;
+            text.textContent = item.subtitle ? `${item.title} · ${item.subtitle}` : item.title;
             label.append(checkbox, text);
             return label;
         }));

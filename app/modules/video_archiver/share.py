@@ -22,6 +22,7 @@ class VideoShareProvider:
             {
                 "id": video.id,
                 "title": video.title,
+                "subtitle": f"{video.channel_name} · {video.platform}",
                 "channel_name": video.channel_name,
                 "platform": video.platform,
                 "duration": video.duration,

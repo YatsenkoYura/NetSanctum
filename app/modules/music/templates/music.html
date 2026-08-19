@@ -1,8 +1,177 @@
-{% extends "base.html" %}
+{% extends module_base|default("base.html") %}
 
 {% block title %}NetSanctum — {{ _('music', 'module_title') }}{% endblock %}
 
 {% block content %}
+{% if shared_mode %}
+<div class="space-y-5" id="shared-music-dashboard">
+    <div class="flex flex-col gap-3 border-b border-zinc-800 pb-4 sm:flex-row">
+        <input id="shared-music-search" type="search" placeholder="{{ _('music', 'search_placeholder') }}"
+               class="min-w-0 flex-1 border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-teal-400">
+        <div class="flex border border-zinc-800 bg-zinc-950 p-1 font-mono text-xs uppercase">
+            <button id="shared-songs-tab" class="bg-teal-400 px-4 py-2 font-bold text-black">Songs</button>
+            <button id="shared-playlists-tab" class="px-4 py-2 text-zinc-400 hover:text-white">Playlists</button>
+        </div>
+    </div>
+
+    <div id="shared-music-status" class="py-12 text-center font-mono text-xs text-zinc-500">Loading music...</div>
+    <div id="shared-songs" class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"></div>
+    <div id="shared-playlists" class="hidden grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"></div>
+    <div id="shared-playlist-detail" class="hidden space-y-3"></div>
+
+    <div id="shared-audio-bar" class="fixed inset-x-0 bottom-0 z-40 hidden border-t border-zinc-800 bg-black/95 p-3 backdrop-blur">
+        <div class="mx-auto flex max-w-[1000px] flex-col gap-2 sm:flex-row sm:items-center">
+            <div class="min-w-0 flex-1">
+                <div id="shared-now-title" class="truncate text-sm font-semibold text-white"></div>
+                <div id="shared-now-author" class="truncate text-xs text-zinc-500"></div>
+            </div>
+            <audio id="shared-audio" class="h-9 w-full sm:w-[420px]" controls preload="metadata"></audio>
+        </div>
+    </div>
+</div>
+
+<script>
+(() => {
+    const songsRoot = document.getElementById('shared-songs');
+    const playlistsRoot = document.getElementById('shared-playlists');
+    const detailRoot = document.getElementById('shared-playlist-detail');
+    const statusRoot = document.getElementById('shared-music-status');
+    const searchInput = document.getElementById('shared-music-search');
+    const songsTab = document.getElementById('shared-songs-tab');
+    const playlistsTab = document.getElementById('shared-playlists-tab');
+    const audio = document.getElementById('shared-audio');
+    let songs = [];
+    let playlists = [];
+
+    function setStatus(message) {
+        statusRoot.textContent = message;
+        statusRoot.classList.toggle('hidden', !message);
+    }
+
+    function play(song) {
+        audio.src = song.audio_url;
+        document.getElementById('shared-now-title').textContent = song.title;
+        document.getElementById('shared-now-author').textContent = song.author || song.original_artist || 'Unknown artist';
+        document.getElementById('shared-audio-bar').classList.remove('hidden');
+        audio.play().catch(() => {});
+    }
+
+    function songCard(song) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'group border border-zinc-800 bg-zinc-950 p-2 text-left hover:border-teal-500/70 hover:bg-zinc-900';
+        const artwork = document.createElement(song.cover_url ? 'img' : 'div');
+        artwork.className = 'mb-2 aspect-square w-full border border-zinc-800 bg-zinc-900 object-cover';
+        if (song.cover_url) {
+            artwork.src = song.cover_url;
+            artwork.alt = '';
+            artwork.style.objectPosition = `${song.cover_offset_x || 50}% ${song.cover_offset_y || 50}%`;
+        } else {
+            artwork.classList.add('flex', 'items-center', 'justify-center', 'font-mono', 'text-2xl', 'text-zinc-700');
+            artwork.textContent = 'MUSIC';
+        }
+        const title = document.createElement('div');
+        title.className = 'truncate text-xs font-semibold text-zinc-100 group-hover:text-teal-400';
+        title.textContent = song.title;
+        const author = document.createElement('div');
+        author.className = 'mt-1 truncate text-[10px] text-zinc-500';
+        author.textContent = song.author || song.original_artist || 'Unknown artist';
+        button.append(artwork, title, author);
+        button.addEventListener('click', () => play(song));
+        return button;
+    }
+
+    function renderSongs(items) {
+        songsRoot.replaceChildren(...items.map(songCard));
+        setStatus(items.length ? '' : '{{ _('music', 'no_songs') }}');
+    }
+
+    function showSongs() {
+        detailRoot.classList.add('hidden');
+        playlistsRoot.classList.add('hidden');
+        playlistsRoot.classList.remove('grid');
+        songsRoot.classList.remove('hidden');
+        songsTab.className = 'bg-teal-400 px-4 py-2 font-bold text-black';
+        playlistsTab.className = 'px-4 py-2 text-zinc-400 hover:text-white';
+        renderSongs(songs.filter(song => {
+            const query = searchInput.value.trim().toLowerCase();
+            return !query || [song.title, song.author, song.original_artist].some(value => (value || '').toLowerCase().includes(query));
+        }));
+    }
+
+    async function showPlaylist(playlist) {
+        setStatus('Loading playlist...');
+        const response = await fetch(`/api/music/playlists/${encodeURIComponent(playlist.id)}/songs`);
+        if (!response.ok) throw new Error('Could not load playlist');
+        const playlistSongs = await response.json();
+        songsRoot.classList.add('hidden');
+        playlistsRoot.classList.add('hidden');
+        playlistsRoot.classList.remove('grid');
+        detailRoot.classList.remove('hidden');
+        const header = document.createElement('div');
+        header.className = 'flex items-center gap-3 border-b border-zinc-800 pb-3';
+        const back = document.createElement('button');
+        back.className = 'border border-zinc-800 px-3 py-2 text-xs text-zinc-400 hover:border-teal-400 hover:text-white';
+        back.textContent = '< Playlists';
+        back.addEventListener('click', showPlaylists);
+        const title = document.createElement('h2');
+        title.className = 'truncate font-mono text-sm font-bold uppercase text-white';
+        title.textContent = playlist.name;
+        header.append(back, title);
+        const list = document.createElement('div');
+        list.className = 'grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6';
+        list.append(...playlistSongs.map(songCard));
+        detailRoot.replaceChildren(header, list);
+        setStatus(playlistSongs.length ? '' : '{{ _('music', 'no_songs') }}');
+    }
+
+    function showPlaylists() {
+        searchInput.value = '';
+        songsRoot.classList.add('hidden');
+        detailRoot.classList.add('hidden');
+        playlistsRoot.classList.remove('hidden');
+        playlistsRoot.classList.add('grid');
+        songsTab.className = 'px-4 py-2 text-zinc-400 hover:text-white';
+        playlistsTab.className = 'bg-teal-400 px-4 py-2 font-bold text-black';
+        playlistsRoot.replaceChildren(...playlists.map(playlist => {
+            const button = document.createElement('button');
+            button.className = 'border border-zinc-800 bg-zinc-950 p-3 text-left hover:border-teal-500/70 hover:bg-zinc-900';
+            const artwork = document.createElement(playlist.cover_url ? 'img' : 'div');
+            artwork.className = 'mb-3 aspect-square w-full border border-zinc-800 bg-zinc-900 object-cover';
+            if (playlist.cover_url) {
+                artwork.src = playlist.cover_url;
+                artwork.alt = '';
+            } else {
+                artwork.classList.add('flex', 'items-center', 'justify-center', 'font-mono', 'text-2xl', 'text-zinc-700');
+                artwork.textContent = 'LIST';
+            }
+            const title = document.createElement('div');
+            title.className = 'truncate text-xs font-semibold text-white';
+            title.textContent = playlist.name;
+            const count = document.createElement('div');
+            count.className = 'mt-1 font-mono text-[10px] text-zinc-500';
+            count.textContent = `${playlist.songs.length} tracks`;
+            button.append(artwork, title, count);
+            button.addEventListener('click', () => showPlaylist(playlist).catch(error => setStatus(error.message)));
+            return button;
+        }));
+        setStatus(playlists.length ? '' : '{{ _('music', 'no_playlists') }}');
+    }
+
+    songsTab.addEventListener('click', showSongs);
+    playlistsTab.addEventListener('click', showPlaylists);
+    searchInput.addEventListener('input', showSongs);
+    Promise.all([
+        fetch('/api/music/songs').then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load songs'))),
+        fetch('/api/music/playlists').then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load playlists'))),
+    ]).then(([loadedSongs, loadedPlaylists]) => {
+        songs = loadedSongs;
+        playlists = loadedPlaylists;
+        showSongs();
+    }).catch(error => setStatus(error.message));
+})();
+</script>
+{% else %}
 <div class="flex flex-col">
     <!-- Dynamic Content Area (HTMX) -->
     <div class="w-full">
@@ -27,5 +196,6 @@
         <div id="content-playlist-detail" class="hidden"></div>
     </div>
 </div>
+{% endif %}
 
 {% endblock %}

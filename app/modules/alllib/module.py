@@ -1,4 +1,4 @@
-from app.core.module_types import MigrationSpec, ModuleSpec
+from app.core.module_types import MigrationSpec, ModuleSpec, ShareAsset, ShareRoute, ShareSpec
 
 MODULE = ModuleSpec(
     id="alllib",
@@ -23,6 +23,32 @@ MODULE = ModuleSpec(
     storage_namespaces=("alllib", "ranobelib"),
     package_prefixes=("manga_", "novel_", "anime_"),
     package_resolver="app.modules.alllib.capabilities:resolve_package_resources",
+    share=ShareSpec(
+        provider="app.modules.alllib.share:PROVIDER",
+        selector_key="media_ids",
+        dashboard_template="alllib_dashboard.html",
+        api_prefix="/api/alllib",
+        routes=(
+            ShareRoute(name="media", path="media"),
+            ShareRoute(name="media_detail", path="media/{media_id}"),
+            ShareRoute(name="library", path="library"),
+            ShareRoute(name="library_tab", path="library-tab"),
+            ShareRoute(name="detail", path="media/{media_id}/detail"),
+            ShareRoute(name="reader", path="media/{media_id}/reader"),
+            ShareRoute(
+                name="chapters",
+                path="media/{media_id}/chapters",
+                source="relations",
+            ),
+            ShareRoute(name="chapter", path="chapters/{chapter_id}", source="relations"),
+        ),
+        assets=(
+            ShareAsset(name="cover", path="media/{media_id}/cover"),
+            ShareAsset(name="chapter_page", path="chapters/{chapter_id}/pages/{page_index}"),
+            ShareAsset(name="chapter_video", path="chapters/{chapter_id}/video"),
+            ShareAsset(name="export", path="media/{media_id}/export"),
+        ),
+    ),
     entity_types=("manga", "ranobe", "anime"),
     entity_resolver="app.modules.alllib.capabilities:resolve_entity",
     progress_key_patterns=("alllib_dl:*",),

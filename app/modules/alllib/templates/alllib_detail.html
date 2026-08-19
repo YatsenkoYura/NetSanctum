@@ -1,11 +1,15 @@
+{% set cover_url = cover_url|default('/alllib/api/cover/' ~ media.id) %}
+{% set detail_back_url = detail_back_url|default('/alllib/ui/library_tab') %}
+{% set reader_url = reader_url|default('/alllib/reader/' ~ media.id) %}
+{% set export_url = export_url|default('/alllib/api/novel/' ~ media.id ~ '/export') %}
 <div class="space-y-0">
     <!-- Hero Banner with Blurred Cover -->
     <div class="relative h-48 overflow-hidden border border-zinc-800 bg-zinc-950">
-        <img src="/alllib/api/cover/{{ media.id }}" class="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-20" loading="lazy">
+        <img src="{{ cover_url }}" class="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-20" loading="lazy">
         <div class="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/80 to-transparent"></div>
         <!-- Back button inside hero -->
         <div class="absolute top-4 left-4">
-            <button hx-get="/alllib/ui/library_tab" hx-target="#tab-content-library" hx-swap="innerHTML"
+            <button hx-get="{{ detail_back_url }}" hx-target="#tab-content-library" hx-swap="innerHTML"
                     class="flex items-center gap-2 px-3 py-1.5 bg-black/60 border border-zinc-700 text-[11px] font-mono font-bold uppercase text-teal-400 hover:bg-teal-400/10 hover:border-teal-400 transition-all cursor-pointer backdrop-blur-sm">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
@@ -48,7 +52,7 @@
             <!-- Cover -->
             <div class="p-4">
                 <div class="aspect-[2/3] bg-zinc-900 border border-zinc-800 overflow-hidden shadow-xl">
-                    <img src="/alllib/api/cover/{{ media.id }}" class="w-full h-full object-cover" loading="lazy">
+                    <img src="{{ cover_url }}" class="w-full h-full object-cover" loading="lazy">
                 </div>
             </div>
 
@@ -88,7 +92,7 @@
 
             <!-- Action Buttons -->
             <div class="p-4 space-y-2 border-t border-zinc-800">
-                <a href="/alllib/reader/{{ media.id }}{% if request.query_params.get('package_id') %}?package_id={{ request.query_params.get('package_id') }}{% endif %}"
+                <a href="{{ reader_url }}{% if not shared_mode and request.query_params.get('package_id') %}?package_id={{ request.query_params.get('package_id') }}{% endif %}"
                    class="w-full bg-teal-400 text-black font-mono font-black text-xs uppercase tracking-widest py-3 px-4 hover:bg-teal-300 transition-all cursor-pointer flex items-center justify-center gap-2">
                     {% if media.media_type == 'anime' %}
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -99,6 +103,7 @@
                     {% endif %}
                 </a>
 
+                {% if not shared_mode %}
                 <button hx-post="/alllib/api/novel/{{ media.id }}/sync"
                         hx-swap="none"
                         onclick="alllibOnSyncTriggered()"
@@ -106,15 +111,17 @@
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4"/></svg>
                     <span>{{ _t('sync', lang) }}</span>
                 </button>
+                {% endif %}
 
-                {% if media.media_type != 'anime' %}
-                <a href="/alllib/api/novel/{{ media.id }}/export"
+                {% if media.media_type != 'anime' and (not shared_mode or shared_allow_download) %}
+                <a href="{{ export_url }}"
                    class="w-full border border-zinc-700 text-zinc-300 font-mono font-bold text-xs uppercase tracking-wide py-2.5 px-4 hover:border-teal-400 hover:text-teal-400 hover:bg-teal-400/5 transition-all cursor-pointer flex items-center justify-center gap-2">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                     <span>{{ _t('export', lang) }}</span>
                 </a>
                 {% endif %}
 
+                {% if not shared_mode %}
                 <button onclick="sendToOutpost('/alllib/api/novel/{{ media.id }}/sync-manifest')"
                         class="outpost-only w-full border border-zinc-700 text-zinc-400 font-mono font-bold text-xs uppercase tracking-wide py-2.5 px-4 hover:border-zinc-500 hover:text-zinc-300 transition-all cursor-pointer flex items-center justify-center gap-2">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -129,6 +136,7 @@
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     <span>{{ _t('delete', lang) }}</span>
                 </button>
+                {% endif %}
             </div>
         </div>
 

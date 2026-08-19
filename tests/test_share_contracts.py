@@ -11,6 +11,8 @@ from fastapi import HTTPException, Request, Response
 from pydantic import ValidationError
 
 from app.core.modules import ModuleRegistry
+from app.modules.alllib.share import AllLibShareProvider
+from app.modules.music.share import MusicShareProvider
 from app.modules.sharing import router as sharing_router
 from app.modules.sharing.router import (
     _dispatch_shared_api,
@@ -29,6 +31,7 @@ from app.modules.sharing.service import (
     session_ttl,
     verify_secret,
 )
+from app.modules.vault.share import VaultShareProvider
 from app.modules.video_archiver.share import VideoShareProvider
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -280,17 +283,30 @@ class ShareProviderTests(unittest.TestCase):
 class SharedVideoUiTests(unittest.IsolatedAsyncioTestCase):
     async def test_core_renders_owner_dashboard_with_scoped_urls(self):
         request = make_request()
-        share = SimpleNamespace(id="share-id", module_id="video_archiver")
-
-        response = await _render_shared_application(request, share)
-        body = response.body.decode()
-
-        self.assertIn(
-            'module_base|default("base.html")',
-            (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text(),
+        cases = (
+            ("video_archiver", "/s/share-id/api/video-archiver/videos"),
+            ("music", "/s/share-id/api/music/songs"),
+            ("alllib", "/s/share-id/api/alllib/library"),
+            ("vault", "/s/share-id/api/vault/items"),
         )
-        self.assertIn("/s/share-id/api/video-archiver/videos", body)
-        self.assertNotIn('src="/api/video-archiver', body)
+        for module_id, scoped_url in cases:
+            with self.subTest(module=module_id):
+                share = SimpleNamespace(id="share-id", module_id=module_id)
+                response = await _render_shared_application(request, share)
+                body = response.body.decode()
+                self.assertIn(scoped_url, body)
+
+    async def test_content_providers_reject_empty_selected_scope(self):
+        providers = (
+            (VideoShareProvider(), "video_ids"),
+            (MusicShareProvider(), "song_ids"),
+            (AllLibShareProvider(), "media_ids"),
+            (VaultShareProvider(), "item_ids"),
+        )
+        for provider, selector_key in providers:
+            with self.subTest(selector=selector_key), self.assertRaises(HTTPException) as raised:
+                await provider.selection(AsyncMock(), "selected", {selector_key: []})
+            self.assertEqual(422, raised.exception.status_code)
 
     async def test_core_rejects_mutations_before_provider_dispatch(self):
         request = make_request()

@@ -1,4 +1,12 @@
-from app.core.module_types import IntegrationSpec, MigrationSpec, ModuleSpec, UiActionSpec
+from app.core.module_types import (
+    IntegrationSpec,
+    MigrationSpec,
+    ModuleSpec,
+    ShareAsset,
+    ShareRoute,
+    ShareSpec,
+    UiActionSpec,
+)
 
 MODULE = ModuleSpec(
     id="music",
@@ -23,6 +31,25 @@ MODULE = ModuleSpec(
     storage_namespaces=("music",),
     package_prefixes=("song_", "playlist_"),
     package_resolver="app.modules.music.capabilities:resolve_package_resources",
+    share=ShareSpec(
+        provider="app.modules.music.share:PROVIDER",
+        selector_key="song_ids",
+        dashboard_template="music.html",
+        api_prefix="/api/music",
+        routes=(
+            ShareRoute(name="songs", path="songs"),
+            ShareRoute(name="playlists", path="playlists", source="relations"),
+            ShareRoute(
+                name="playlist_songs",
+                path="playlists/{playlist_id}/songs",
+                source="relations",
+            ),
+        ),
+        assets=(
+            ShareAsset(name="audio", path="audio/{song_id}"),
+            ShareAsset(name="cover", path="cover/{song_id}"),
+        ),
+    ),
     integrations=(
         IntegrationSpec(
             id="media.audio.import.v1",

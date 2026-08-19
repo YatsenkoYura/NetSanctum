@@ -1,8 +1,11 @@
-{% extends "base.html" %}
+{% extends module_base|default("base.html") %}
+{% set alllib_library_url = "/api/alllib/library" if shared_mode else "/alllib/ui/library" %}
+{% set alllib_library_tab_url = "/api/alllib/library-tab" if shared_mode else "/alllib/ui/library_tab" %}
 
 {% block title %}{{ _('alllib', 'module_title') }}{% endblock %}
 
 {% block content %}
+{% if shared_mode %}<script src="/static/htmx.min.js"></script>{% endif %}
 <div class="space-y-6">
     <!-- Header / Branding -->
     <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-row items-center justify-between gap-4">
@@ -32,6 +35,7 @@
                 </svg>
                 <span>[{{ _('alllib', 'tab_library') }}]</span>
             </button>
+            {% if not shared_mode %}
             <button onclick="alllibSwitchTab('find')" id="btn-tab-find"
                     class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
                 <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -61,6 +65,7 @@
                 </svg>
                 <span>Settings</span>
             </button>
+            {% endif %}
         </div>
     </div>
 
@@ -89,7 +94,7 @@
 
         <!-- Grid Container -->
         <div id="library-items"
-             hx-get="/alllib/ui/library"
+             hx-get="{{ alllib_library_url }}"
              hx-trigger="load, reloadLibrary from:body"
              hx-include="#library-search, #library-format"
              hx-swap="innerHTML"
@@ -98,6 +103,7 @@
         </div>
     </div>
 
+    {% if not shared_mode %}
     <!-- ── Tab: Find ── -->
     <div id="tab-content-find" class="hidden space-y-6">
         <div class="bg-zinc-950 border border-zinc-800 p-6 space-y-5">
@@ -627,6 +633,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 
 <script>
@@ -680,6 +687,7 @@
         }
     };
 
+    {% if not shared_mode %}
     window.alllibChangeFindSource = function() {
         const select = document.getElementById('find-source-select');
         const iframe = document.getElementById('find-iframe');
@@ -713,10 +721,11 @@
         // Switch to download tab
         alllibSwitchTab('download');
     };
+    {% endif %}
 
     window.alllibReloadLibraryTab = function() {
         if (!document.getElementById('library-search')) {
-            htmx.ajax('GET', '/alllib/ui/library_tab', {target: '#tab-content-library', swap: 'innerHTML'});
+            htmx.ajax('GET', '{{ alllib_library_tab_url }}', {target: '#tab-content-library', swap: 'innerHTML'});
         } else {
             alllibRefreshLibrary();
         }
@@ -781,6 +790,7 @@
         }
     };
 
+    {% if not shared_mode %}
     window.alllibSubmitDownloadTask = async function(e) {
         e.preventDefault();
         const url = document.getElementById('dl-url').value;
@@ -935,6 +945,7 @@
             });
         }
     });
+    {% endif %}
 </script>
 {% endblock %}
 

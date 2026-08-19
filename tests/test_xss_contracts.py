@@ -17,7 +17,7 @@ class XssContractTests(unittest.TestCase):
         self.assertIn("{{ media.description }}", detail)
         self.assertIn("media.source_url.startswith('https://')", detail)
         self.assertIn('rel="noopener noreferrer"', detail)
-        self.assertIn('href="/alllib/reader/{{ media.id }}', detail)
+        self.assertIn('href="{{ reader_url }}', detail)
         self.assertIn("safe_title = html_lib.escape(m.title, quote=True)", router)
         self.assertIn("sanitize_chapter_html(chapter.content_html)", router)
         self.assertIn('status_text = html_lib.escape(str(t.get("status") or ""))', router)

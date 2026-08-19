@@ -1,4 +1,6 @@
-{% extends "base.html" %}
+{% extends module_base|default("base.html") %}
+{% set alllib_home_url = alllib_home_url|default('/alllib/dashboard') %}
+{% set chapter_url_prefix = chapter_url_prefix|default('/alllib/ui/chapter') %}
 {% block title %}{{ novel.title }} — {{ _('alllib', 'type_anime') }}{% endblock %}
 
 {% block content %}
@@ -7,7 +9,7 @@
   <!-- TOP BAR: title + episode switcher + exit -->
   <div class="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-zinc-950 border-b border-zinc-900 z-50">
     <div class="flex items-center gap-3 min-w-0">
-      <a href="/alllib/dashboard" class="text-zinc-500 hover:text-teal-400 transition-colors flex-shrink-0">
+      <a href="{{ alllib_home_url }}" class="text-zinc-500 hover:text-teal-400 transition-colors flex-shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
       </a>
       <span id="anime-title" class="text-xs font-mono text-zinc-400 truncate max-w-xs">{{ novel.title }}</span>
@@ -48,7 +50,7 @@
     </div>
 
     <!-- Exit button: semi-transparent, red on hover -->
-    <a href="/alllib/dashboard"
+    <a href="{{ alllib_home_url }}"
        class="flex items-center gap-1.5 px-3 py-1.5 border border-zinc-800/80 bg-zinc-900 text-zinc-500 hover:text-red-500 hover:border-red-500/50 hover:bg-red-950/20 rounded font-mono text-[10px] uppercase tracking-wider transition-all duration-300 opacity-60 hover:opacity-100 select-none">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
@@ -172,9 +174,6 @@
     }
   }
 </style>
-{% endblock %}
-
-{% block scripts_extra %}
 <script>
   const EPISODES = [{% for ch in chapters %}{ id: '{{ ch.id }}', num: '{{ ch.number }}', label: '{% if ch.name %}{{ ch.name }}{% else %}{{ _('alllib', 'episode') }} {{ ch.number }}{% endif %}', vol: '{{ ch.volume }}' },{% endfor %}];
   let currentEpId = null;
@@ -540,7 +539,7 @@
     target.innerHTML = '<div class="text-center text-zinc-500 font-mono text-xs">{{ _('alllib', 'loading_player') }}</div>';
 
     // fetch chapter info
-    const resp = await fetch(`/alllib/ui/chapter/${epId}`);
+    const resp = await fetch(`{{ chapter_url_prefix }}/${epId}`);
     if (!resp.ok) {
         target.innerHTML = '<div class="text-center text-red-500 font-mono text-xs">{{ _('alllib', 'failed_load_player') }}</div>';
         return;
