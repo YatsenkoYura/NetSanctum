@@ -331,14 +331,14 @@ class AllLibShareProvider:
             type_name = html.escape(self._media_type_name(media, lang))
             cards.append(
                 f"""
-                <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-row sm:flex-col justify-between p-3 sm:p-4 transition-all duration-300 min-w-0"
+                <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-row gap-4 justify-between p-3 transition-all duration-300 min-w-0"
                      data-title="{title}" data-eng-name="{eng_name}" data-rus-name="{rus_name}"
                      data-site-id="{media.site_id}" data-format="{self._format_slug(media)}">
                     <button hx-get="{detail_url}" hx-target="#tab-content-library" hx-swap="innerHTML"
-                            class="w-28 sm:w-full flex-shrink-0 aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
+                            class="w-28 flex-shrink-0 aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
                         <img src="{cover_url}" class="w-full h-full object-cover filter brightness-90 group-hover:brightness-100 group-hover:scale-105 transition-all duration-500" loading="lazy">
                     </button>
-                    <div class="flex-1 flex flex-col justify-between min-w-0 ml-3 mt-0 sm:ml-0 sm:mt-4">
+                    <div class="flex-1 flex flex-col justify-between min-w-0">
                         <div class="space-y-1.5">
                             <span class="text-[8px] uppercase tracking-wider font-mono border border-teal-400 text-teal-400 px-1 py-0.5">{type_name}</span>
                             <button hx-get="{detail_url}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
@@ -355,7 +355,7 @@ class AllLibShareProvider:
             )
         empty_class = "hidden" if cards else ""
         body = (
-            '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 w-full">'
+            '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 w-full">'
             f'<div id="library-empty-message" class="{empty_class} col-span-full text-center py-12 font-mono text-xs text-zinc-500">{self._translate("no_novels", lang)}</div>'
             + "".join(cards)
             + "</div>"
@@ -363,26 +363,9 @@ class AllLibShareProvider:
         return HTMLResponse(body)
 
     def _render_library_tab(self, request: Request, share) -> HTMLResponse:
-        lang = self._lang(request)
         prefix = self._api_prefix(share)
         return HTMLResponse(
             f"""
-            <div class="bg-zinc-950 border border-zinc-900 p-3 sm:p-4 flex flex-col md:flex-row gap-3">
-                <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
-                       placeholder="{html.escape(self._translate("search_placeholder", lang), quote=True)}"
-                       class="flex-1 bg-black border border-zinc-800 px-3 py-2 text-xs font-mono text-white">
-                <select id="library-format" name="format_filter" onchange="alllibRefreshLibrary(); alllibApplyFilters();"
-                        class="bg-black border border-zinc-800 px-3 py-2 text-xs font-mono text-zinc-400">
-                    <option value="all">{self._translate("filter_all", lang)}</option>
-                    <option value="all_18plus">{self._translate("filter_all_18plus", lang)}</option>
-                    <option value="novel">{self._translate("type_novel", lang)}</option>
-                    <option value="manga">{self._translate("type_manga", lang)}</option>
-                    <option value="hentai">{self._translate("type_hentai", lang)}</option>
-                    <option value="slash">{self._translate("type_slash", lang)}</option>
-                    <option value="comics">{self._translate("type_comics", lang)}</option>
-                    <option value="anime">{self._translate("type_anime", lang)}</option>
-                </select>
-            </div>
             <div id="library-items" hx-get="{prefix}/library" hx-trigger="load"
                  hx-include="#library-search, #library-format" hx-swap="innerHTML">
                 <div class="text-center py-12 font-mono text-xs text-zinc-600">Loading library...</div>

@@ -415,34 +415,12 @@ async def get_library_tab_ui(
     response: Response,
     lang: str = Depends(_get_lang),
 ):
-    """HTMX partial: render the library tab search bar, formats selector, and grid wrapper."""
+    """HTMX partial: restore the library grid after leaving a detail view."""
     pkg_id = request.query_params.get("package_id")
     _package_media_id(pkg_id)
     pkg_suffix = f"?package_id={pkg_id}" if pkg_id else ""
     include_attrs = "" if pkg_id else 'hx-include="#library-search, #library-format"'
     html = f"""
-    <!-- Search and Filter Bar -->
-    <div class="bg-zinc-950 border border-zinc-900 p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
-        <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
-            <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
-                   placeholder="{_t("search_placeholder", lang)}"
-                   class="flex-1 bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none transition-colors">
-
-            <select id="library-format" name="format_filter" onchange="alllibRefreshLibrary(); alllibApplyFilters();"
-                    class="bg-black border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-zinc-400 focus:outline-none transition-colors">
-                <option value="all">{_t("filter_all", lang)}</option>
-                <option value="all_18plus">{_t("filter_all_18plus", lang)}</option>
-                <option value="novel">{_t("type_novel", lang)}</option>
-                <option value="manga">{_t("type_manga", lang)}</option>
-                <option value="hentai">{_t("type_hentai", lang)}</option>
-                <option value="slash">{_t("type_slash", lang)}</option>
-                <option value="comics">{_t("type_comics", lang)}</option>
-                <option value="anime">{_t("type_anime", lang)}</option>
-            </select>
-        </div>
-    </div>
-
-    <!-- Grid Container -->
     <div id="library-items"
          hx-get="/alllib/ui/library{pkg_suffix}"
          hx-trigger="load"
@@ -552,7 +530,7 @@ async def get_library_ui(
     ch_count_res = await db.execute(ch_count_stmt)
     ch_counts: dict[int, int] = {row.media_id: row.cnt for row in ch_count_res}
 
-    html = '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 w-full">'
+    html = '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 w-full">'
     empty_hidden = "hidden" if media_items else ""
     html += f'<div id="library-empty-message" class="{empty_hidden} col-span-full text-center py-12 font-mono text-xs text-zinc-500">{_t("no_novels", lang)}</div>'
 
@@ -599,19 +577,19 @@ async def get_library_ui(
 
         pkg_suffix = f"?package_id={package_id}" if package_id else ""
         html += f"""
-        <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-row sm:flex-col justify-between p-3 sm:p-4 transition-all duration-300 min-w-0"
+        <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-row gap-4 justify-between p-3 transition-all duration-300 min-w-0"
              data-title="{safe_title}"
              data-eng-name="{safe_eng}"
              data-rus-name="{safe_rus}"
              data-site-id="{m.site_id}"
              data-format="{fmt_slug}">
             <!-- Cover image -->
-            <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-28 sm:w-full flex-shrink-0 aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
+            <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-28 flex-shrink-0 aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
                 <img src="{cover_url}" class="w-full h-full object-cover filter brightness-90 group-hover:brightness-100 group-hover:scale-105 transition-all duration-500" loading="lazy">
             </button>
 
             <!-- Metadata -->
-            <div class="flex-1 flex flex-col justify-between min-w-0 ml-3 mt-0 sm:ml-0 sm:mt-4">
+            <div class="flex-1 flex flex-col justify-between min-w-0">
                 <div class="space-y-1.5">
                     <div class="flex items-center gap-1.5">{type_badge}</div>
                     <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
