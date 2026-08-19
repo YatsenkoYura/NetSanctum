@@ -7,22 +7,22 @@
 <div class="fixed inset-0 bg-black flex flex-col overflow-hidden" style="z-index:50;">
 
   <!-- TOP BAR: chapter title + mode controls -->
-  <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300">
+  <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-2 sm:px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300 overflow-x-auto">
     <div class="flex items-center gap-3">
       <a href="{{ alllib_home_url }}" class="text-zinc-600 hover:text-teal-400 transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
       </a>
-      <span id="top-title" class="text-[11px] font-mono text-zinc-400 truncate max-w-xs">{{ novel.title }}</span>
+      <span id="top-title" class="hidden sm:block text-[11px] font-mono text-zinc-400 truncate max-w-32 lg:max-w-xs">{{ novel.title }}</span>
     </div>
     <!-- Mode switcher -->
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-1.5 sm:gap-3">
       <div class="flex items-center gap-1 bg-black border border-zinc-800 p-0.5">
         <button onclick="setMode('webtoon')" id="btn-webtoon" class="px-2 py-0.5 text-[10px] font-mono uppercase transition-colors">{{ _('alllib', 'mode_webtoon') }}</button>
         <button onclick="setMode('single')" id="btn-single" class="px-2 py-0.5 text-[10px] font-mono uppercase transition-colors">{{ _('alllib', 'mode_single') }}</button>
         <button onclick="setMode('double')" id="btn-double" class="px-2 py-0.5 text-[10px] font-mono uppercase transition-colors">{{ _('alllib', 'mode_double') }}</button>
       </div>
       <!-- Double-page offset toggle (visible only in double mode) -->
-      <div id="offset-controls" class="hidden items-center gap-1">
+      <div id="offset-controls" class="hidden md:items-center gap-1">
         <span class="text-[9px] font-mono text-zinc-600 uppercase">{{ _('alllib', 'offset') }}:</span>
         <button onclick="setOffset(0)" id="btn-off0" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors">3|4</button>
         <button onclick="setOffset(1)" id="btn-off1" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors">4|3</button>
@@ -31,7 +31,7 @@
       <button onclick="setZenMode(true)"
               class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 hover:border-teal-400/50 hover:text-teal-400 transition-colors uppercase bg-black text-zinc-400 flex items-center gap-1 rounded cursor-pointer">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-        {{ _('alllib', 'zen_mode') }}
+        <span class="hidden sm:inline">{{ _('alllib', 'zen_mode') }}</span>
       </button>
     </div>
   </div>
@@ -82,19 +82,19 @@
   </div>
 
   <!-- BOTTOM BAR: chapter nav + page indicator -->
-  <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
+  <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-2 sm:px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
     <!-- Exit button: subtle, red on hover -->
     <a href="{{ alllib_home_url }}"
        class="group flex items-center gap-1.5 px-3 py-1.5 border border-zinc-800/60 text-zinc-500 hover:text-red-500 hover:border-red-500/50 transition-all duration-200 text-[10px] font-mono uppercase bg-zinc-900 rounded select-none">
       <svg class="w-3 h-3 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
-      {{ _('alllib', 'exit') }}
+      <span class="hidden sm:inline">{{ _('alllib', 'exit') }}</span>
     </a>
 
     <!-- Chapter navigation -->
     <div class="flex items-center gap-2">
-      <button onclick="navigateChapter(-1)" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900">← {{ _('alllib', 'prev') }}</button>
+      <button onclick="navigateChapter(-1)" class="px-2 sm:px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900">← <span class="hidden sm:inline">{{ _('alllib', 'prev') }}</span></button>
       <div class="relative">
-        <button onclick="toggleChapterList()" id="chapter-label" class="px-3 py-1.5 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:border-teal-400/60 transition-colors cursor-pointer min-w-32 text-center bg-zinc-900">—</button>
+        <button onclick="toggleChapterList()" id="chapter-label" class="px-2 sm:px-3 py-1.5 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:border-teal-400/60 transition-colors cursor-pointer w-32 sm:min-w-32 sm:w-auto truncate text-center bg-zinc-900">—</button>
         <!-- Chapter dropdown -->
         <div id="chapter-dropdown" class="hidden absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-zinc-950 border border-zinc-800 shadow-2xl z-50 w-64 max-h-64 overflow-y-auto
             [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-zinc-950 [&::-webkit-scrollbar-thumb]:bg-zinc-700">
@@ -107,11 +107,11 @@
           {% endfor %}
         </div>
       </div>
-      <button onclick="navigateChapter(1)" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900">{{ _('alllib', 'next') }} →</button>
+      <button onclick="navigateChapter(1)" class="px-2 sm:px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900"><span class="hidden sm:inline">{{ _('alllib', 'next') }}</span> →</button>
     </div>
 
     <!-- Page counter -->
-    <span id="page-counter" class="text-[10px] font-mono text-zinc-600 min-w-20 text-right">— / —</span>
+    <span id="page-counter" class="hidden sm:block text-[10px] font-mono text-zinc-600 min-w-20 text-right">— / —</span>
   </div>
 
 </div>
@@ -207,7 +207,7 @@
     } else {
       webtoon.classList.add('hidden'); webtoon.classList.remove('flex');
       paged.classList.remove('hidden');
-      if (mode === 'double') {
+      if (mode === 'double' && window.matchMedia('(min-width: 768px)').matches) {
         offsetCtrl.classList.remove('hidden'); offsetCtrl.classList.add('flex');
       } else {
         offsetCtrl.classList.add('hidden'); offsetCtrl.classList.remove('flex');
@@ -238,7 +238,7 @@
     });
 
     // fetch chapter content to get pages list
-    const resp = await fetch(`{{ chapter_url_prefix }}/${chId}`);
+    const resp = await fetch(`{{ chapter_url_prefix }}/${chId}{{ package_suffix|default('') }}`);
     if (!resp.ok) return;
     const html = await resp.text();
     const tmp = document.createElement('div');

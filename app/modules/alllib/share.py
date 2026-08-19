@@ -326,19 +326,19 @@ class AllLibShareProvider:
             eng_name = html.escape(media.eng_name or "", quote=True)
             rus_name = html.escape(media.rus_name or "", quote=True)
             display_name = html.escape(media.eng_name or media.rus_name or "")
-            cover_url = f"{prefix}/media/{media.id}/cover" if media.cover_path else "/static/placeholder.jpg"
+            cover_url = f"{prefix}/media/{media.id}/cover" if media.cover_path else "/static/placeholder.svg"
             detail_url = f"{prefix}/media/{media.id}/detail"
             type_name = html.escape(self._media_type_name(media, lang))
             cards.append(
                 f"""
-                <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-col justify-between p-4 transition-all duration-300"
+                <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-row sm:flex-col justify-between p-3 sm:p-4 transition-all duration-300 min-w-0"
                      data-title="{title}" data-eng-name="{eng_name}" data-rus-name="{rus_name}"
                      data-site-id="{media.site_id}" data-format="{self._format_slug(media)}">
                     <button hx-get="{detail_url}" hx-target="#tab-content-library" hx-swap="innerHTML"
-                            class="w-full aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
+                            class="w-28 sm:w-full flex-shrink-0 aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
                         <img src="{cover_url}" class="w-full h-full object-cover filter brightness-90 group-hover:brightness-100 group-hover:scale-105 transition-all duration-500" loading="lazy">
                     </button>
-                    <div class="flex-1 flex flex-col justify-between min-w-0 mt-4">
+                    <div class="flex-1 flex flex-col justify-between min-w-0 ml-3 mt-0 sm:ml-0 sm:mt-4">
                         <div class="space-y-1.5">
                             <span class="text-[8px] uppercase tracking-wider font-mono border border-teal-400 text-teal-400 px-1 py-0.5">{type_name}</span>
                             <button hx-get="{detail_url}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
@@ -355,7 +355,7 @@ class AllLibShareProvider:
             )
         empty_class = "hidden" if cards else ""
         body = (
-            '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 w-full">'
+            '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 w-full">'
             f'<div id="library-empty-message" class="{empty_class} col-span-full text-center py-12 font-mono text-xs text-zinc-500">{self._translate("no_novels", lang)}</div>'
             + "".join(cards)
             + "</div>"
@@ -367,7 +367,7 @@ class AllLibShareProvider:
         prefix = self._api_prefix(share)
         return HTMLResponse(
             f"""
-            <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row gap-3">
+            <div class="bg-zinc-950 border border-zinc-900 p-3 sm:p-4 flex flex-col md:flex-row gap-3">
                 <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
                        placeholder="{html.escape(self._translate("search_placeholder", lang), quote=True)}"
                        class="flex-1 bg-black border border-zinc-800 px-3 py-2 text-xs font-mono text-white">

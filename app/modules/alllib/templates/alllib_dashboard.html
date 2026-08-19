@@ -1,69 +1,72 @@
 {% extends module_base|default("base.html") %}
-{% set alllib_library_url = "/api/alllib/library" if shared_mode else "/alllib/ui/library" %}
-{% set alllib_library_tab_url = "/api/alllib/library-tab" if shared_mode else "/alllib/ui/library_tab" %}
+{% set alllib_package_suffix = "?package_id=" ~ package_id if package_id else "" %}
+{% set alllib_library_url = "/api/alllib/library" if shared_mode else "/alllib/ui/library" ~ alllib_package_suffix %}
+{% set alllib_library_tab_url = "/api/alllib/library-tab" if shared_mode else "/alllib/ui/library_tab" ~ alllib_package_suffix %}
+{% set alllib_active_downloads_url = "/alllib/ui/active_downloads" ~ alllib_package_suffix %}
+{% set alllib_settings_url = "/alllib/ui/settings" ~ alllib_package_suffix %}
 
 {% block title %}{{ _('alllib', 'module_title') }}{% endblock %}
 
 {% block content %}
 {% if shared_mode %}<script src="/static/htmx.min.js"></script>{% endif %}
-<div class="space-y-6">
+<div class="space-y-4 sm:space-y-6">
     <!-- Header / Branding -->
-    <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-row items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-            <div class="p-2.5 bg-teal-950/20 border border-teal-900/40 text-teal-400">
+    <div class="bg-zinc-950 border border-zinc-800 p-4 sm:p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div class="flex items-center gap-3 min-w-0">
+            <div class="p-2.5 bg-teal-950/20 border border-teal-900/40 text-teal-400 flex-shrink-0">
                 <!-- Book/Library icon -->
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
             </div>
             <div>
-                <h1 class="text-2xl font-black text-white tracking-tight uppercase font-mono">
+                <h1 class="text-xl sm:text-2xl font-black text-white tracking-tight uppercase font-mono">
                     {{ _('alllib', 'module_title') }}
                 </h1>
-                <p class="text-xs text-zinc-500 font-mono mt-1">
+                <p class="hidden sm:block text-xs text-zinc-500 font-mono mt-1">
                     {{ _('alllib', 'module_subtitle') }}
                 </p>
             </div>
         </div>
 
         <!-- Tab Buttons -->
-        <div class="flex flex-wrap gap-1 bg-black p-1 border border-zinc-800">
+        <div class="grid {% if shared_mode %}grid-cols-1{% else %}grid-cols-5{% endif %} gap-1 bg-black p-1 border border-zinc-800 w-full xl:w-auto">
             <button onclick="alllibSwitchTab('library')" id="btn-tab-library"
-                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center">
-                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    class="alllib-tab-button min-w-0 px-1.5 sm:px-3 py-2 text-[9px] sm:text-xs font-mono font-bold uppercase transition-all border border-zinc-800 bg-zinc-900 text-teal-400 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z" />
                 </svg>
-                <span>[{{ _('alllib', 'tab_library') }}]</span>
+                <span class="truncate">{{ _('alllib', 'tab_library') }}</span>
             </button>
-            {% if not shared_mode %}
+            {% if not shared_mode and not package_mode %}
             <button onclick="alllibSwitchTab('find')" id="btn-tab-find"
-                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
-                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    class="alllib-tab-button min-w-0 px-1.5 sm:px-3 py-2 text-[9px] sm:text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
-                <span>{{ _('alllib', 'tab_find') }}</span>
+                <span class="truncate">{{ _('alllib', 'tab_find') }}</span>
             </button>
             <button onclick="alllibSwitchTab('download')" id="btn-tab-download"
-                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
-                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    class="alllib-tab-button min-w-0 px-1.5 sm:px-3 py-2 text-[9px] sm:text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                <span>{{ _('alllib', 'tab_download') }}</span>
+                <span class="truncate">{{ _('alllib', 'tab_download') }}</span>
             </button>
             <button onclick="alllibSwitchTab('faq')" id="btn-tab-faq"
-                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
-                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    class="alllib-tab-button min-w-0 px-1.5 sm:px-3 py-2 text-[9px] sm:text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>{{ _('alllib', 'tab_faq') }}</span>
+                <span class="truncate">{{ _('alllib', 'tab_faq') }}</span>
             </button>
             <button onclick="alllibSwitchTab('settings')" id="btn-tab-settings"
-                    class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center">
-                <svg class="w-3.5 h-3.5 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    class="alllib-tab-button min-w-0 px-1.5 sm:px-3 py-2 text-[9px] sm:text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                <span>Settings</span>
+                <span class="truncate">Settings</span>
             </button>
             {% endif %}
         </div>
@@ -72,7 +75,7 @@
     <!-- ── Tab: Library ── -->
     <div id="tab-content-library" class="space-y-6">
         <!-- Search & Filters -->
-        <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="bg-zinc-950 border border-zinc-900 p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
             <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
                 <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
                        placeholder="{{ _('alllib', 'search_placeholder') }}"
@@ -96,14 +99,14 @@
         <div id="library-items"
              hx-get="{{ alllib_library_url }}"
              hx-trigger="load, reloadLibrary from:body"
-             hx-include="#library-search, #library-format"
+             {% if not package_id %}hx-include="#library-search, #library-format"{% endif %}
              hx-swap="innerHTML"
              hx-on::after-settle="alllibApplyFilters()">
             <div class="text-center py-12 font-mono text-xs text-zinc-600">Loading library...</div>
         </div>
     </div>
 
-    {% if not shared_mode %}
+    {% if not shared_mode and not package_mode %}
     <!-- ── Tab: Find ── -->
     <div id="tab-content-find" class="hidden space-y-6">
         <div class="bg-zinc-950 border border-zinc-800 p-6 space-y-5">
@@ -441,7 +444,7 @@
     <div id="tab-content-download" class="hidden space-y-6">
         <div class="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-6 items-start">
             <!-- Left Column: Download Form -->
-            <div class="bg-zinc-950 border-2 border-zinc-800 p-6 space-y-5">
+            <div class="bg-zinc-950 border border-zinc-800 p-4 sm:p-6 space-y-5">
                 <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider border-b-2 border-zinc-800 pb-3 flex items-center">
                     <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -508,7 +511,7 @@
             </div>
 
             <!-- Right Column: Active Downloads -->
-            <div class="bg-zinc-950 border-2 border-zinc-800 p-6 space-y-4">
+            <div class="bg-zinc-950 border border-zinc-800 p-4 sm:p-6 space-y-4">
                 <div class="flex justify-between items-center border-b-2 border-zinc-800 pb-3">
                     <h3 class="text-sm font-black text-white font-mono uppercase tracking-wider flex items-center">
                         <svg class="w-4 h-4 text-teal-400 mr-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -523,7 +526,7 @@
                 </div>
 
                 <!-- Auto-polling active downloads list -->
-                <div id="active-tasks-list" hx-get="/alllib/ui/active_downloads" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
+                <div id="active-tasks-list" hx-get="{{ alllib_active_downloads_url }}" hx-trigger="load, every 3s, reloadActiveTasks from:body" hx-swap="innerHTML">
                     <div class="text-center py-6 text-zinc-600 font-mono text-xs">No active downloads</div>
                 </div>
             </div>
@@ -626,7 +629,7 @@
     <div id="tab-content-settings" class="hidden space-y-6">
         <div class="bg-zinc-950 border-2 border-zinc-800 p-6 max-w-2xl mx-auto">
             <div id="alllib-settings-container"
-                 hx-get="/alllib/ui/settings"
+                 hx-get="{{ alllib_settings_url }}"
                  hx-trigger="load"
                  hx-swap="innerHTML">
                 <div class="text-center py-6 text-zinc-600 font-mono text-xs">Loading settings...</div>
@@ -638,6 +641,7 @@
 
 <script>
     var alllibActiveTab = 'library';
+    const alllibPackageMode = {{ 'true' if package_id else 'false' }};
 
     window.alllibSwitchTab = function(tab) {
         // Hide active
@@ -646,14 +650,12 @@
             activeContent.classList.add('hidden');
         }
 
-        // Remove active class and brackets from old tab
+        // Remove active state from old tab without replacing responsive layout classes.
         const oldBtn = document.getElementById(`btn-tab-${alllibActiveTab}`);
         if (oldBtn) {
-            oldBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent hover:text-white text-zinc-400 flex items-center";
-            const oldSpan = oldBtn.querySelector('span');
-            if (oldSpan) {
-                oldSpan.innerText = oldSpan.innerText.replace(/^\[|\]$/g, '');
-            }
+            oldBtn.classList.remove('bg-zinc-900', 'text-teal-400', 'border-zinc-800');
+            oldBtn.classList.add('text-zinc-400', 'border-transparent');
+            oldBtn.setAttribute('aria-selected', 'false');
         }
 
         // Show new active and add brackets
@@ -663,11 +665,9 @@
         }
         const newBtn = document.getElementById(`btn-tab-${tab}`);
         if (newBtn) {
-            newBtn.className = "px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-transparent bg-zinc-900 text-teal-400 flex items-center";
-            const newSpan = newBtn.querySelector('span');
-            if (newSpan && !newSpan.innerText.startsWith('[')) {
-                newSpan.innerText = `[${newSpan.innerText}]`;
-            }
+            newBtn.classList.remove('text-zinc-400', 'border-transparent');
+            newBtn.classList.add('bg-zinc-900', 'text-teal-400', 'border-zinc-800');
+            newBtn.setAttribute('aria-selected', 'true');
         }
 
         alllibActiveTab = tab;
@@ -687,7 +687,7 @@
         }
     };
 
-    {% if not shared_mode %}
+    {% if not shared_mode and not package_mode %}
     window.alllibChangeFindSource = function() {
         const select = document.getElementById('find-source-select');
         const iframe = document.getElementById('find-iframe');
@@ -769,7 +769,7 @@
 
             // 3. 18+ filter
             let matches18 = true;
-            if (fmt !== 'all_18plus' && fmt !== 'hentai' && fmt !== 'slash') {
+            if (!alllibPackageMode && fmt !== 'all_18plus' && fmt !== 'hentai' && fmt !== 'slash') {
                 // Hide 18+ sites (SlashLib = 2, HentaiLib = 4)
                 if (siteId === 2 || siteId === 4) {
                     matches18 = false;
@@ -790,7 +790,7 @@
         }
     };
 
-    {% if not shared_mode %}
+    {% if not shared_mode and not package_mode %}
     window.alllibSubmitDownloadTask = async function(e) {
         e.preventDefault();
         const url = document.getElementById('dl-url').value;

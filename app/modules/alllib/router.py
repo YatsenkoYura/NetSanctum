@@ -98,6 +98,31 @@ def _t(key: str, lang: str = "en") -> str:
     return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, TRANSLATIONS["en"].get(key, key))
 
 
+def _package_media_id(package_id: str | None) -> int | None:
+    if not package_id:
+        return None
+    try:
+        prefix, media_id = package_id.split("_", 1)
+        if prefix not in {"anime", "manga", "novel"}:
+            raise ValueError
+        parsed_id = int(media_id)
+        if parsed_id <= 0:
+            raise ValueError
+        return parsed_id
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid AllLib package id") from exc
+
+
+def _validate_package_media(package_id: str | None, media: LibMedia) -> None:
+    package_media_id = _package_media_id(package_id)
+    if package_media_id is None:
+        return
+    assert package_id is not None
+    prefix = package_id.split("_", 1)[0]
+    if package_media_id != media.id or prefix != media.media_type:
+        raise HTTPException(status_code=404, detail="Media is not available in this package")
+
+
 @router.get("/helper.user.js", include_in_schema=False)
 async def get_helper_userscript(request: Request, user=Depends(get_current_user)):
     """Return the Tampermonkey helper userscript for direct installation."""
@@ -312,11 +337,20 @@ async def alllib_dashboard(
 ):
     """Render the primary Lib Network dashboard."""
     base_url = settings.PUBLIC_BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
-    pairing_code = await _create_pairing_code()
+    package_id = request.query_params.get("package_id")
+    _package_media_id(package_id)
+    pairing_code = "" if package_id else await _create_pairing_code()
     return templates.TemplateResponse(
         request,
         "alllib_dashboard.html",
-        {"user": user, "lang": lang, "base_url": base_url, "pairing_code": pairing_code},
+        {
+            "user": user,
+            "lang": lang,
+            "base_url": base_url,
+            "pairing_code": pairing_code,
+            "package_id": package_id,
+            "package_mode": bool(package_id),
+        },
     )
 
 
@@ -329,9 +363,11 @@ async def alllib_reader(
     lang: str = Depends(_get_lang),
 ):
     """Render the unified premium reader interface (renders text or image mode based on media format)."""
+    package_id = request.query_params.get("package_id")
     media = await db.get(LibMedia, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    _validate_package_media(package_id, media)
 
     # Fetch chapters ordered by volume and chapter number
     stmt = (
@@ -361,6 +397,11 @@ async def alllib_reader(
             "media": media,
             "chapters": chapters,
             "first_chapter_id": first_chapter_id,
+            "package_id": package_id,
+            "package_suffix": f"?package_id={package_id}" if package_id else "",
+            "alllib_home_url": f"/alllib/dashboard?package_id={package_id}"
+            if package_id
+            else "/alllib/dashboard",
         },
     )
 
@@ -376,10 +417,12 @@ async def get_library_tab_ui(
 ):
     """HTMX partial: render the library tab search bar, formats selector, and grid wrapper."""
     pkg_id = request.query_params.get("package_id")
+    _package_media_id(pkg_id)
     pkg_suffix = f"?package_id={pkg_id}" if pkg_id else ""
+    include_attrs = "" if pkg_id else 'hx-include="#library-search, #library-format"'
     html = f"""
     <!-- Search and Filter Bar -->
-    <div class="bg-zinc-950 border border-zinc-900 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div class="bg-zinc-950 border border-zinc-900 p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
         <div class="flex flex-1 flex-col md:flex-row items-stretch md:items-center gap-3">
             <input type="text" id="library-search" name="search" oninput="alllibApplyFilters()"
                    placeholder="{_t("search_placeholder", lang)}"
@@ -403,7 +446,7 @@ async def get_library_tab_ui(
     <div id="library-items"
          hx-get="/alllib/ui/library{pkg_suffix}"
          hx-trigger="load"
-         hx-include="#library-search, #library-format"
+         {include_attrs}
          hx-swap="innerHTML">
         <div class="text-center py-12 font-mono text-xs text-zinc-600">Loading library...</div>
     </div>
@@ -420,9 +463,17 @@ async def get_novel_detail_ui(
     lang: str = Depends(_get_lang),
 ):
     """HTMX partial: render details for a single media item."""
+    package_id = request.query_params.get("package_id")
     media = await db.get(LibMedia, media_id)
     if not media:
         return HTMLResponse('<div class="text-red-500 font-mono text-xs p-4">Media item not found.</div>')
+    try:
+        _validate_package_media(package_id, media)
+    except HTTPException:
+        return HTMLResponse(
+            '<div class="text-red-500 font-mono text-xs p-4">Media is not available in this package.</div>',
+            status_code=404,
+        )
 
     # Fetch chapter count
     ch_count_stmt = select(LibChapter).where(LibChapter.media_id == media_id)
@@ -452,6 +503,10 @@ async def get_novel_detail_ui(
             "format_name": format_name,
             "lang": lang,
             "_t": _t,
+            "cover_url": (f"/alllib/api/cover/{media_id}" if media.cover_path else "/static/placeholder.svg"),
+            "detail_back_url": (
+                f"/alllib/ui/library_tab?package_id={package_id}" if package_id else "/alllib/ui/library_tab"
+            ),
         },
     )
 
@@ -467,7 +522,13 @@ async def get_library_ui(
 ):
     """HTMX partial: render downloaded novels/manga library grid."""
     stmt = select(LibMedia)
-    if format_filter == "all" or not format_filter:
+    package_id = request.query_params.get("package_id")
+    package_media_id = _package_media_id(package_id)
+    if package_media_id is not None:
+        stmt = stmt.where(LibMedia.id == package_media_id)
+    if package_media_id is not None and format_filter in {None, "all", "all_18plus"}:
+        pass
+    elif format_filter == "all" or not format_filter:
         # Default: hide 18+ (SlashLib=2, HentaiLib=4)
         stmt = stmt.where(LibMedia.site_id != 2, LibMedia.site_id != 4)
     elif format_filter == "all_18plus":
@@ -479,6 +540,8 @@ async def get_library_ui(
 
     res = await db.execute(stmt)
     media_items = res.scalars().all()
+    if package_id and media_items:
+        _validate_package_media(package_id, media_items[0])
 
     # Batch-fetch chapter counts with a single GROUP BY query (eliminates N+1)
     from sqlalchemy import func as sql_func
@@ -489,14 +552,14 @@ async def get_library_ui(
     ch_count_res = await db.execute(ch_count_stmt)
     ch_counts: dict[int, int] = {row.media_id: row.cnt for row in ch_count_res}
 
-    html = '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6 w-full">'
+    html = '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-5 w-full">'
     empty_hidden = "hidden" if media_items else ""
     html += f'<div id="library-empty-message" class="{empty_hidden} col-span-full text-center py-12 font-mono text-xs text-zinc-500">{_t("no_novels", lang)}</div>'
 
     for m in media_items:
         ch_count = ch_counts.get(m.id, 0)
 
-        cover_url = f"/alllib/api/cover/{m.id}" if m.cover_path else "/static/placeholder.jpg"
+        cover_url = f"/alllib/api/cover/{m.id}" if m.cover_path else "/static/placeholder.svg"
 
         # Determine type badge color and name
         badge_cls = "border-teal-400 text-teal-400"
@@ -534,22 +597,21 @@ async def get_library_ui(
         safe_rus = html_lib.escape(m.rus_name or "", quote=True)
         display_name = html_lib.escape(m.eng_name or m.rus_name or "")
 
-        pkg_id = f"{m.media_type}_{m.id}"
-        pkg_suffix = f"?package_id={pkg_id}"
+        pkg_suffix = f"?package_id={package_id}" if package_id else ""
         html += f"""
-        <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-col justify-between p-4 transition-all duration-300"
+        <div class="library-card group relative bg-zinc-950/60 border border-zinc-900/80 hover:border-zinc-800 flex flex-row sm:flex-col justify-between p-3 sm:p-4 transition-all duration-300 min-w-0"
              data-title="{safe_title}"
              data-eng-name="{safe_eng}"
              data-rus-name="{safe_rus}"
              data-site-id="{m.site_id}"
              data-format="{fmt_slug}">
             <!-- Cover image -->
-            <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-full aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
+            <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="w-28 sm:w-full flex-shrink-0 aspect-[2/3] bg-zinc-950 border border-zinc-800 overflow-hidden relative block hover:border-teal-400/60 transition-colors cursor-pointer text-left">
                 <img src="{cover_url}" class="w-full h-full object-cover filter brightness-90 group-hover:brightness-100 group-hover:scale-105 transition-all duration-500" loading="lazy">
             </button>
 
             <!-- Metadata -->
-            <div class="flex-1 flex flex-col justify-between min-w-0 mt-4">
+            <div class="flex-1 flex flex-col justify-between min-w-0 ml-3 mt-0 sm:ml-0 sm:mt-4">
                 <div class="space-y-1.5">
                     <div class="flex items-center gap-1.5">{type_badge}</div>
                     <button hx-get="/alllib/ui/novel/{m.id}{pkg_suffix}" hx-target="#tab-content-library" hx-swap="innerHTML" class="text-left cursor-pointer block w-full">
@@ -558,7 +620,7 @@ async def get_library_ui(
                     <p class="text-[9px] text-zinc-500 font-mono mt-0.5 truncate">{display_name}</p>
                 </div>
 
-                <div class="mt-4">
+                <div class="mt-3 sm:mt-4">
                     <div class="flex items-center justify-between border-t border-zinc-900/80 pt-2 mb-2">
                         <span class="text-[9px] font-mono text-zinc-500">{ch_count} {_t("chapters_count", lang)}</span>
                     </div>
@@ -578,6 +640,7 @@ async def get_library_ui(
 @router.get("/ui/chapter/{chapter_id}", response_class=HTMLResponse, include_in_schema=False)
 async def get_chapter_ui(
     chapter_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -589,6 +652,13 @@ async def get_chapter_ui(
     media = await db.get(LibMedia, chapter.media_id)
     if not media:
         return HTMLResponse('<div class="text-red-500 font-mono text-xs p-4">Media not found.</div>')
+    try:
+        _validate_package_media(request.query_params.get("package_id"), media)
+    except HTTPException:
+        return HTMLResponse(
+            '<div class="text-red-500 font-mono text-xs p-4">Chapter is not available in this package.</div>',
+            status_code=404,
+        )
 
     title = f"Vol. {chapter.volume} Chapter {chapter.number}"
     if chapter.name:
@@ -1124,14 +1194,14 @@ async def get_cover(
     """Serve cover image from storage backend (auto-decrypts encrypted covers)."""
     media = await db.get(LibMedia, media_id)
     if not media or not media.cover_path:
-        return RedirectResponse(url="/static/placeholder.jpg")
+        return RedirectResponse(url="/static/placeholder.svg")
 
     from app.core.responses import serve_storage_file_chunked
 
     try:
         return serve_storage_file_chunked(media.cover_path)
     except Exception:
-        return RedirectResponse(url="/static/placeholder.jpg")
+        return RedirectResponse(url="/static/placeholder.svg")
 
 
 @router.get("/api/page", include_in_schema=False)
@@ -1219,11 +1289,21 @@ async def cancel_task(
 
 
 @router.get("/api/novels")
-async def get_all_media(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def get_all_media(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
     """API endpoint: list all downloaded media items (novels, manga, etc.) in JSON."""
     stmt = select(LibMedia).order_by(LibMedia.title.asc())
+    package_media_id = _package_media_id(request.query_params.get("package_id"))
+    if package_media_id is not None:
+        stmt = stmt.where(LibMedia.id == package_media_id)
     res = await db.execute(stmt)
     items = res.scalars().all()
+    package_id = request.query_params.get("package_id")
+    if package_id and items:
+        _validate_package_media(package_id, items[0])
     return [
         {
             "id": m.id,
@@ -1238,11 +1318,17 @@ async def get_all_media(db: AsyncSession = Depends(get_db), user=Depends(get_cur
 
 
 @router.get("/api/novel/{media_id}")
-async def get_media_json(media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def get_media_json(
+    media_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
     """API endpoint: get detailed metadata JSON for a single media item."""
     media = await db.get(LibMedia, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    _validate_package_media(request.query_params.get("package_id"), media)
 
     stmt = (
         select(LibChapter)
@@ -1288,20 +1374,18 @@ async def get_media_sync_manifest(
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/alllib/dashboard", "type": "html"},
+        {"url": "/static/placeholder.svg", "type": "image"},
         {"url": f"/alllib/dashboard?package_id={pkg_id}", "type": "html"},
         {"url": f"/alllib/ui/library?package_id={pkg_id}", "type": "html"},
         {"url": f"/alllib/ui/library_tab?package_id={pkg_id}", "type": "html"},
-        {"url": f"/alllib/ui/active_downloads?package_id={pkg_id}", "type": "html"},
-        {"url": f"/alllib/reader/{media_id}", "type": "html"},
         {"url": f"/alllib/reader/{media_id}?package_id={pkg_id}", "type": "html"},
         {"url": f"/alllib/ui/novel/{media_id}?package_id={pkg_id}", "type": "html"},
         {"url": f"/alllib/api/novels?package_id={pkg_id}", "type": "json"},
         {"url": f"/alllib/api/novel/{media_id}?package_id={pkg_id}", "type": "json"},
     ]
 
-    # Export endpoint is only valid for novels
-    if media.media_type == "novel":
+    # Text and image titles can be exported as EPUB/CBZ; anime is streamed separately.
+    if media.media_type != "anime":
         resources.append({"url": f"/alllib/api/novel/{media_id}/export", "type": "binary"})
 
     if media.cover_path:
@@ -1312,7 +1396,7 @@ async def get_media_sync_manifest(
     chapters = res.scalars().all()
 
     for ch in chapters:
-        resources.append({"url": f"/alllib/ui/chapter/{ch.id}", "type": "html"})
+        resources.append({"url": f"/alllib/ui/chapter/{ch.id}?package_id={pkg_id}", "type": "html"})
         if media.media_type == "novel" and ch.content_html:
             found_urls = re.findall(r'["\'](/alllib/api/proxy-image\?url=[^"\']+)["\']', ch.content_html)
             for url_path in found_urls:

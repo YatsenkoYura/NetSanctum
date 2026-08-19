@@ -539,7 +539,7 @@
     target.innerHTML = '<div class="text-center text-zinc-500 font-mono text-xs">{{ _('alllib', 'loading_player') }}</div>';
 
     // fetch chapter info
-    const resp = await fetch(`{{ chapter_url_prefix }}/${epId}`);
+    const resp = await fetch(`{{ chapter_url_prefix }}/${epId}{{ package_suffix|default('') }}`);
     if (!resp.ok) {
         target.innerHTML = '<div class="text-center text-red-500 font-mono text-xs">{{ _('alllib', 'failed_load_player') }}</div>';
         return;

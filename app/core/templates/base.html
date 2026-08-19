@@ -686,7 +686,15 @@
             // HTMX request interceptor to append package_id to parameters
             document.addEventListener('htmx:configRequest', function (evt) {
                 const activePkgId = sessionStorage.getItem('active_package_id');
-                if (activePkgId && !evt.detail.parameters['package_id']) {
+                const requestPath = evt.detail.path || evt.detail.requestConfig?.path || '';
+                const configuredPath = evt.detail.elt?.getAttribute('hx-get') ||
+                    evt.detail.elt?.getAttribute('hx-post') || requestPath;
+                let pathHasPackage = false;
+                try {
+                    pathHasPackage = new URL(requestPath, window.location.origin).searchParams.has('package_id') ||
+                        new URL(configuredPath, window.location.origin).searchParams.has('package_id');
+                } catch (e) { }
+                if (activePkgId && !pathHasPackage && !evt.detail.parameters['package_id']) {
                     evt.detail.parameters['package_id'] = activePkgId;
                 }
             });

@@ -4,7 +4,7 @@
 {% set export_url = export_url|default('/alllib/api/novel/' ~ media.id ~ '/export') %}
 <div class="space-y-0">
     <!-- Hero Banner with Blurred Cover -->
-    <div class="relative h-48 overflow-hidden border border-zinc-800 bg-zinc-950">
+    <div class="relative h-40 sm:h-48 overflow-hidden border border-zinc-800 bg-zinc-950">
         <img src="{{ cover_url }}" class="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-20" loading="lazy">
         <div class="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/80 to-transparent"></div>
         <!-- Back button inside hero -->
@@ -35,7 +35,7 @@
         </div>
         <!-- Title in hero -->
         <div class="absolute bottom-4 left-4 right-4">
-            <h2 class="text-2xl font-black text-white uppercase tracking-tight font-mono leading-tight line-clamp-1">{{ media.title }}</h2>
+            <h2 class="text-xl sm:text-2xl font-black text-white uppercase tracking-tight font-mono leading-tight line-clamp-2 sm:line-clamp-1">{{ media.title }}</h2>
             {% if media.eng_name or media.rus_name %}
             <p class="text-xs text-teal-400/80 font-mono mt-0.5 truncate">
                 {{ media.eng_name }}{% if media.eng_name and media.rus_name %} · {% endif %}{{ media.rus_name }}
@@ -48,16 +48,16 @@
     <div class="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-0 border-x border-b border-zinc-800">
 
         <!-- Left Column: Cover + Stats -->
-        <div class="border-r border-zinc-800 bg-zinc-950/60">
+        <div class="lg:border-r border-zinc-800 bg-zinc-950/60 grid grid-cols-[112px_1fr] sm:grid-cols-[180px_1fr] lg:block">
             <!-- Cover -->
-            <div class="p-4">
+            <div class="p-3 sm:p-4">
                 <div class="aspect-[2/3] bg-zinc-900 border border-zinc-800 overflow-hidden shadow-xl">
                     <img src="{{ cover_url }}" class="w-full h-full object-cover" loading="lazy">
                 </div>
             </div>
 
             <!-- Stats Grid -->
-            <div class="border-t border-zinc-800 divide-y divide-zinc-900">
+            <div class="border-l lg:border-l-0 border-t border-zinc-800 divide-y divide-zinc-900 min-w-0">
                 <div class="px-4 py-2.5 flex justify-between items-center">
                     <span class="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">
                         {% if media.media_type == 'anime' %}Episodes{% else %}Chapters{% endif %}
@@ -91,7 +91,7 @@
             </div>
 
             <!-- Action Buttons -->
-            <div class="p-4 space-y-2 border-t border-zinc-800">
+            <div class="col-span-2 lg:col-span-1 p-3 sm:p-4 space-y-2 border-t border-zinc-800">
                 <a href="{{ reader_url }}{% if not shared_mode and request.query_params.get('package_id') %}?package_id={{ request.query_params.get('package_id') }}{% endif %}"
                    class="w-full bg-teal-400 text-black font-mono font-black text-xs uppercase tracking-widest py-3 px-4 hover:bg-teal-300 transition-all cursor-pointer flex items-center justify-center gap-2">
                     {% if media.media_type == 'anime' %}
@@ -103,7 +103,7 @@
                     {% endif %}
                 </a>
 
-                {% if not shared_mode %}
+                {% if not shared_mode and not request.query_params.get('package_id') %}
                 <button hx-post="/alllib/api/novel/{{ media.id }}/sync"
                         hx-swap="none"
                         onclick="alllibOnSyncTriggered()"
@@ -121,7 +121,7 @@
                 </a>
                 {% endif %}
 
-                {% if not shared_mode %}
+                {% if not shared_mode and not request.query_params.get('package_id') %}
                 <button onclick="sendToOutpost('/alllib/api/novel/{{ media.id }}/sync-manifest')"
                         class="outpost-only w-full border border-zinc-700 text-zinc-400 font-mono font-bold text-xs uppercase tracking-wide py-2.5 px-4 hover:border-zinc-500 hover:text-zinc-300 transition-all cursor-pointer flex items-center justify-center gap-2">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -145,14 +145,14 @@
 
             <!-- Source URL -->
             {% if media.source_url and (media.source_url.startswith('https://') or media.source_url.startswith('http://')) %}
-            <div class="px-6 py-3 flex items-center gap-2 text-[11px] font-mono">
+            <div class="px-4 sm:px-6 py-3 flex items-center gap-2 text-[11px] font-mono">
                 <span class="text-zinc-600 uppercase tracking-wider flex-shrink-0">Source:</span>
                 <a href="{{ media.source_url }}" target="_blank" rel="noopener noreferrer" class="text-teal-400/70 hover:text-teal-400 underline underline-offset-2 transition-colors truncate">{{ media.source_url }}</a>
             </div>
             {% endif %}
 
             <!-- Description -->
-            <div class="px-6 py-5">
+            <div class="px-4 sm:px-6 py-5">
                 <h4 class="text-[10px] font-mono font-black text-zinc-500 uppercase tracking-widest mb-3 flex items-center gap-2">
                     <span class="w-3 h-px bg-zinc-700 inline-block"></span>
                     Description / Описание

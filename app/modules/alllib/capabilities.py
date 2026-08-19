@@ -8,6 +8,8 @@ async def resolve_package_resources(package_id: str, db: AsyncSession) -> list:
 
     media_id = int(package_id.split("_", 1)[1])
     manifest = await get_media_sync_manifest(media_id, db=db, hybrid=False)
+    if manifest.get("package_id") != package_id:
+        raise ValueError("Package id does not match the stored AllLib media type")
     return manifest.get("resources", [])
 
 

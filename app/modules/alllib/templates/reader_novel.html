@@ -7,15 +7,15 @@
 <div class="fixed inset-0 flex flex-col overflow-hidden bg-black" id="novel-reader-root" style="z-index:50;">
 
   <!-- TOP BAR: title + typography controls -->
-  <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300">
+  <div id="top-bar" class="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-2 sm:px-4 py-2 bg-zinc-950/95 border-b border-zinc-800 transition-all duration-300 overflow-x-auto">
     <div class="flex items-center gap-3 min-w-0">
       <a href="{{ alllib_home_url }}" class="text-zinc-600 hover:text-teal-400 transition-colors flex-shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
       </a>
-      <span id="top-title" class="text-[11px] font-mono text-zinc-400 truncate">{{ novel.title }}</span>
+      <span id="top-title" class="hidden sm:block text-[11px] font-mono text-zinc-400 truncate max-w-40 lg:max-w-xs">{{ novel.title }}</span>
     </div>
     <!-- Controls -->
-    <div class="flex items-center gap-3 flex-shrink-0">
+    <div class="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
       <!-- Font -->
       <div class="flex items-center gap-1.5">
         <button onclick="setFont('serif')" id="btn-serif" class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 transition-colors bg-zinc-900 text-teal-400 cursor-pointer">{{ _('alllib', 'font_serif') }}</button>
@@ -28,7 +28,7 @@
         <button onclick="adjSize(1)" class="px-2 py-0.5 text-[10px] font-mono text-zinc-500 hover:text-white transition-colors cursor-pointer">A+</button>
       </div>
       <!-- Width -->
-      <div class="flex border border-zinc-800">
+      <div class="hidden md:flex border border-zinc-800">
         <button onclick="setWidth('compact')" id="btn-compact" class="px-2 py-0.5 text-[10px] font-mono transition-colors cursor-pointer">{{ _('alllib', 'size_compact') }}</button>
         <button onclick="setWidth('normal')" id="btn-normal" class="px-2 py-0.5 text-[10px] font-mono transition-colors cursor-pointer">{{ _('alllib', 'size_normal') }}</button>
         <button onclick="setWidth('wide')" id="btn-wide" class="px-2 py-0.5 text-[10px] font-mono transition-colors cursor-pointer">{{ _('alllib', 'size_wide') }}</button>
@@ -43,7 +43,7 @@
       <button onclick="setZenMode(true)"
               class="px-2 py-0.5 text-[10px] font-mono border border-zinc-800 hover:border-teal-400/50 hover:text-teal-400 transition-colors uppercase bg-black text-zinc-400 flex items-center gap-1 rounded cursor-pointer">
         <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-        {{ _('alllib', 'zen_mode') }}
+        <span class="hidden sm:inline">{{ _('alllib', 'zen_mode') }}</span>
       </button>
     </div>
   </div>
@@ -68,20 +68,20 @@
   </div>
 
   <!-- BOTTOM BAR -->
-  <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
+  <div id="bottom-bar" class="fixed bottom-0 left-0 right-0 z-40 flex-shrink-0 flex items-center justify-between px-2 sm:px-4 py-2 bg-zinc-950/95 border-t border-zinc-800 transition-all duration-300">
     <!-- Exit button: subtle, red on hover -->
     <a href="{{ alllib_home_url }}"
        class="group flex items-center gap-1.5 px-3 py-1.5 border border-zinc-800/60 text-zinc-500 hover:text-red-500 hover:border-red-500/50 transition-all duration-200 text-[10px] font-mono uppercase bg-zinc-900 rounded select-none">
       <svg class="w-3 h-3 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
-      {{ _('alllib', 'exit') }}
+      <span class="hidden sm:inline">{{ _('alllib', 'exit') }}</span>
     </a>
 
     <!-- Chapter nav -->
     <div class="flex items-center gap-2">
-      <button onclick="navigateChapter(-1); event.stopPropagation();" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900 rounded">← {{ _('alllib', 'prev') }}</button>
+      <button onclick="navigateChapter(-1); event.stopPropagation();" class="px-2 sm:px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900 rounded">← <span class="hidden sm:inline">{{ _('alllib', 'prev') }}</span></button>
       <div class="relative">
         <button onclick="toggleChapterList(); event.stopPropagation();" id="chapter-label"
-          class="px-3 py-1.5 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:border-teal-400/60 transition-colors cursor-pointer min-w-40 text-center bg-zinc-900 rounded">—</button>
+          class="px-2 sm:px-3 py-1.5 border border-zinc-700 text-[10px] font-mono text-zinc-300 hover:border-teal-400/60 transition-colors cursor-pointer w-36 sm:min-w-40 sm:w-auto truncate text-center bg-zinc-900 rounded">—</button>
         <div id="chapter-dropdown" class="hidden absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-zinc-950 border border-zinc-800 shadow-2xl z-50 w-72 max-h-64 overflow-y-auto
             [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-zinc-950 [&::-webkit-scrollbar-thumb]:bg-zinc-700">
           {% for ch in chapters %}
@@ -93,10 +93,10 @@
           {% endfor %}
         </div>
       </div>
-      <button onclick="navigateChapter(1); event.stopPropagation();" class="px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900 rounded">{{ _('alllib', 'next') }} →</button>
+      <button onclick="navigateChapter(1); event.stopPropagation();" class="px-2 sm:px-3 py-1.5 border border-zinc-800 text-[10px] font-mono text-zinc-500 hover:text-teal-400 hover:border-teal-400/50 transition-colors cursor-pointer bg-zinc-900 rounded"><span class="hidden sm:inline">{{ _('alllib', 'next') }}</span> →</button>
     </div>
 
-    <span class="text-[10px] font-mono text-zinc-700 min-w-20 text-right select-none">{{ _('alllib', 'type_novel') }}</span>
+    <span class="hidden md:block text-[10px] font-mono text-zinc-700 min-w-20 text-right select-none">{{ _('alllib', 'type_novel') }}</span>
   </div>
 
 </div>
@@ -227,7 +227,7 @@
     const content = document.getElementById('chapter-content');
     content.innerHTML = '<div class="text-center py-24 text-zinc-500 font-mono text-xs">{{ _('alllib', 'loading') }}</div>';
 
-    const resp = await fetch(`{{ chapter_url_prefix }}/${chId}`);
+    const resp = await fetch(`{{ chapter_url_prefix }}/${chId}{{ package_suffix|default('') }}`);
     if (!resp.ok) { content.innerHTML = '<div class="text-red-500 text-xs font-mono py-12 text-center">{{ _('alllib', 'failed_load') }}</div>'; return; }
     const html = await resp.text();
     const tmp = document.createElement('div');

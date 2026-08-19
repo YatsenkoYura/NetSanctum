@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" role="img" aria-label="No cover available">
+  <rect width="600" height="900" fill="#09090b"/>
+  <rect x="36" y="36" width="528" height="828" fill="#111113" stroke="#27272a" stroke-width="4"/>
+  <path d="M180 310c50-28 91-25 120 8v276c-29-33-70-36-120-8V310Zm240 0c-50-28-91-25-120 8v276c29-33 70-36 120-8V310Z" fill="none" stroke="#2dd4bf" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M300 318v276" stroke="#2dd4bf" stroke-width="8"/>
+  <text x="300" y="680" fill="#71717a" font-family="monospace" font-size="24" text-anchor="middle" letter-spacing="4">NO COVER</text>
+</svg>
