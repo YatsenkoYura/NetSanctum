@@ -33,7 +33,7 @@ from app.modules.alllib.epub_builder import EPUBBuilder
 from app.modules.alllib.i18n import TRANSLATIONS
 from app.modules.alllib.models import LibChapter, LibMedia
 from app.modules.alllib.schemas import DownloadRequest
-from app.modules.alllib.tasks import download_lib_task
+from app.modules.alllib.tasks import download_lib_task, get_branch_options
 
 router = APIRouter(prefix="/alllib", tags=["alllib"])
 settings = get_settings()
@@ -65,6 +65,10 @@ class ExternalTokenRequest(BaseModel):
 class AnimeOptionsRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
     token: str | None = Field(default=None, max_length=8192)
+
+
+class DownloadOptionsRequest(AnimeOptionsRequest):
+    language: str | None = Field(default=None, min_length=2, max_length=16, pattern=r"^[a-z-]+$")
 
 
 def _is_allowed_lib_url(url: str) -> bool:
@@ -930,6 +934,42 @@ async def get_active_downloads_ui(
 # ── API Endpoints ────────────────────────────────────────
 
 
+@router.post("/api/download-options")
+async def get_download_options(payload: DownloadOptionsRequest, user=Depends(get_current_user)):
+    """Return the content selector supported by the supplied source."""
+    if not _is_allowed_lib_url(payload.url):
+        raise HTTPException(status_code=400, detail="Unsupported source URL")
+
+    from app.modules.alllib.mangadex import MANGADEX_LANGUAGE_NAMES, MangaDexAPI
+    from app.modules.alllib.ranobehub import get_source_api
+
+    api = get_source_api(payload.url, auth_token=payload.token, language=payload.language)
+    site_id, domain = api.get_site_info_from_url(payload.url)
+    if site_id == 6:
+        return {"selector": None, "options": []}
+    slug = api.extract_slug_from_url(payload.url)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Invalid title URL format")
+
+    if isinstance(api, MangaDexAPI):
+        info = await asyncio.to_thread(api.get_novel_info, slug, site_id, domain)
+        languages = info.get("available_languages") or []
+        options = [
+            {
+                "value": language,
+                "label": f"{MANGADEX_LANGUAGE_NAMES.get(language, language.upper())} ({language})",
+            }
+            for language in languages
+        ]
+        return {"selector": "language", "options": options, "selected": payload.language or "en"}
+
+    chapters = await asyncio.to_thread(api.get_novel_chapters, slug, site_id, domain)
+    options = get_branch_options(chapters)
+    if len(options) == 1 and options[0]["value"] in {"0", "main"}:
+        options = []
+    return {"selector": "translator" if options else None, "options": options}
+
+
 @router.post("/api/anime-options")
 async def get_anime_options(payload: AnimeOptionsRequest, user=Depends(get_current_user)):
     """Fetch available seasons, episode count, and translation teams for an AnimeLib URL."""
@@ -1001,6 +1041,8 @@ async def trigger_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Trigger background download task."""
+    if not _is_allowed_lib_url(req.url):
+        raise HTTPException(status_code=400, detail="Unsupported source URL")
     if req.token:
         from app.modules.settings import service as settings_service
 
@@ -1026,6 +1068,8 @@ async def trigger_download(
             "seasons": req.seasons,
             "episodes_range": req.episodes_range,
             "translation_team": req.translation_team,
+            "content_language": req.content_language,
+            "branch_id": req.branch_id,
         },
     )
 
@@ -1088,7 +1132,12 @@ async def sync_media(media_id: int, db: AsyncSession = Depends(get_db), user=Dep
         redis_client,
         "alllib_dl",
         {"url": media.source_url, "title": media.title, "status": "Queued sync", "progress": "0%"},
-        kwargs={"url": media.source_url, "sync_only": True},
+        kwargs={
+            "url": media.source_url,
+            "content_language": (media.metadata_json or {}).get("content_language"),
+            "branch_id": (media.metadata_json or {}).get("translation_branch"),
+            "sync_only": True,
+        },
     )
     return {"task_id": task.id, "status": "Queued"}
 

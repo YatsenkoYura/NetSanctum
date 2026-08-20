@@ -38,6 +38,7 @@ ALLLIB_COVER_HOSTS = frozenset(
         "novel-bin.net",
         "novel-bin.com",
         "mangadex.org",
+        "mangadex.network",
     }
 )
 ALLLIB_AUTH_HOSTS = frozenset(
@@ -96,7 +97,7 @@ def parse_int(val: str) -> int:
 
 def select_best_branch(chapters_data: list) -> str:
     """Find translation branch with maximum chapter count."""
-    branch_counts = {}
+    branch_counts: dict[str, int] = {}
     for ch in chapters_data:
         for branch in ch.get("branches", []):
             if isinstance(branch, dict):
@@ -110,7 +111,32 @@ def select_best_branch(chapters_data: list) -> str:
 
     if not branch_counts:
         return "0"
-    return max(branch_counts, key=branch_counts.get)
+    return max(branch_counts, key=lambda branch_id: branch_counts[branch_id])
+
+
+def get_branch_options(chapters_data: list) -> list[dict[str, str | int]]:
+    """Return translation branches with stable labels and chapter coverage."""
+    options: dict[str, dict[str, str | int]] = {}
+    for chapter in chapters_data:
+        for branch in chapter.get("branches", []):
+            if not isinstance(branch, dict):
+                continue
+            value = branch.get("branch_id")
+            branch_id = str(value if value is not None else "0")
+            teams = branch.get("teams") or []
+            team_names = [
+                str(team.get("name")) for team in teams if isinstance(team, dict) and team.get("name")
+            ]
+            label = branch.get("name") or ", ".join(team_names)
+            if not label:
+                user = branch.get("user") or {}
+                label = user.get("username") if isinstance(user, dict) else None
+            option = options.setdefault(
+                branch_id,
+                {"value": branch_id, "label": str(label or f"Branch {branch_id}"), "count": 0},
+            )
+            option["count"] = int(option["count"]) + 1
+    return sorted(options.values(), key=lambda option: (-int(option["count"]), str(option["label"])))
 
 
 def parse_range_string(range_str: str) -> set[float]:
@@ -261,6 +287,8 @@ def download_lib_task(
     seasons: list[str] | None = None,
     episodes_range: str | None = None,
     translation_team: str | None = None,
+    content_language: str | None = None,
+    branch_id: str | None = None,
     sync_only: bool = False,
 ) -> str:
     """Download chapters for any Lib Network title (Novel, Manga, Hentai, etc.)."""
@@ -278,7 +306,7 @@ def download_lib_task(
 
     update_redis("Initializing Lib Network Client...", "5%")
 
-    api = get_source_api(url, auth_token=auth_token)
+    api = get_source_api(url, auth_token=auth_token, language=content_language)
     site_id, domain = api.get_site_info_from_url(url)
 
     # Auto-detect media type
@@ -370,7 +398,10 @@ def download_lib_task(
                 "No chapters found. This title may require account authentication (18+ content on HentaiLib/SlashLib requires login)."
             )
 
-        branch_id = select_best_branch(chapters_data)
+        selected_branch_id = branch_id or select_best_branch(chapters_data)
+        if content_language:
+            meta["content_language"] = content_language
+        meta["translation_branch"] = selected_branch_id
 
         # Download Cover
         cover_storage_path = None
@@ -439,7 +470,7 @@ def download_lib_task(
                 elif branch is not None:
                     branch_id_str = str(branch)
 
-                if branch_id_str == branch_id:
+                if branch_id_str == selected_branch_id:
                     ch_vol = str(ch.get("volume", "0"))
                     ch_num = str(ch.get("number", "0"))
                     if not sync_only or (ch_vol, ch_num) not in existing_keys:
@@ -474,6 +505,7 @@ def download_lib_task(
             db_media = session.execute(stmt).scalar_one_or_none()
 
             if not db_media:
+                selection_changed = False
                 db_media = LibMedia(
                     title=media_title,
                     rus_name=rus_name,
@@ -489,6 +521,11 @@ def download_lib_task(
                 session.add(db_media)
                 session.flush()
             else:
+                previous_meta = db_media.metadata_json or {}
+                selection_changed = (
+                    previous_meta.get("content_language") != content_language
+                    or str(previous_meta.get("translation_branch") or "") != selected_branch_id
+                )
                 db_media.title = media_title
                 db_media.rus_name = rus_name
                 db_media.eng_name = eng_name
@@ -523,7 +560,11 @@ def download_lib_task(
                         media_title=task_display_title,
                     )
 
-                    if (vol, num) in existing_chapters and existing_chapters[(vol, num)].content_html:
+                    if (
+                        not selection_changed
+                        and (vol, num) in existing_chapters
+                        and existing_chapters[(vol, num)].content_html
+                    ):
                         continue
 
                     try:
@@ -581,6 +622,7 @@ def download_lib_task(
 
             elif media_type == "manga":
                 image_servers = api.get_image_servers(site_id=site_id, domain=domain)
+                failed_chapters = []
                 for idx, (ch_info, b_id) in enumerate(filtered_chapters):
                     # Check for cancellation
                     if not redis_client.exists(f"alllib_dl:{task_id}"):
@@ -598,15 +640,18 @@ def download_lib_task(
                         media_title=task_display_title,
                     )
 
-                    if (vol, num) in existing_chapters and existing_chapters[(vol, num)].pages_list:
+                    if (
+                        not selection_changed
+                        and (vol, num) in existing_chapters
+                        and existing_chapters[(vol, num)].pages_list
+                    ):
                         continue
 
                     try:
                         chapter_data = api.get_chapter_content(slug, vol, num, b_id, site_id, domain)
                         pages = chapter_data.get("pages", [])
                         if not pages:
-                            logger.warning(f"No pages found for Vol {vol} Chapter {num}")
-                            continue
+                            raise RuntimeError(f"No pages found for Vol {vol} Chapter {num}")
 
                         downloaded_pages_paths = []
                         for page_idx, page in enumerate(pages):
@@ -721,7 +766,12 @@ def download_lib_task(
                         session.commit()
                     except Exception as ch_err:
                         logger.error(f"Failed to download chapter {num} (Vol {vol}): {ch_err}")
+                        failed_chapters.append(f"{vol}/{num}")
                         continue
+                if failed_chapters:
+                    raise RuntimeError(
+                        f"Failed to download {len(failed_chapters)} chapter(s): {', '.join(failed_chapters[:5])}"
+                    )
 
             elif media_type == "anime":
                 import subprocess

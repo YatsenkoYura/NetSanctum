@@ -446,6 +446,14 @@
                         <p class="text-[9px] text-zinc-500 font-mono">If left blank, the global token from Settings will be used.</p>
                     </div>
 
+                    <div id="source-options-container" class="hidden border border-zinc-800 bg-black p-4 space-y-2">
+                        <label id="source-options-label" for="dl-source-option" class="block text-[9px] font-mono font-bold text-zinc-500 uppercase"></label>
+                        <select id="dl-source-option"
+                                class="w-full bg-zinc-950 border border-zinc-800 focus:border-teal-400 px-3 py-2 text-xs font-mono text-white focus:outline-none">
+                        </select>
+                        <p id="source-options-hint" class="text-[9px] text-zinc-600 font-mono"></p>
+                    </div>
+
                     <div id="anime-options-container" class="hidden border border-zinc-800 bg-black p-4 space-y-4">
                         <div class="text-xs font-mono font-bold text-teal-400 uppercase border-b border-zinc-900 pb-2">Anime Download Options</div>
 
@@ -780,6 +788,16 @@
         const token = tokenVal ? tokenVal : null;
         let payload = { url, token };
 
+        const sourceOptions = document.getElementById('source-options-container');
+        const sourceOption = document.getElementById('dl-source-option');
+        if (sourceOptions && sourceOption && !sourceOptions.classList.contains('hidden')) {
+            if (sourceOptions.dataset.selector === 'language') {
+                payload.content_language = sourceOption.value;
+            } else if (sourceOptions.dataset.selector === 'translator') {
+                payload.branch_id = sourceOption.value;
+            }
+        }
+
         if (url.includes('anilib')) {
             const seasonBoxes = document.querySelectorAll('input[name="anime-season"]:checked');
             const seasons = Array.from(seasonBoxes).map(box => box.value);
@@ -801,6 +819,7 @@
             e.target.reset();
             const container = document.getElementById('anime-options-container');
             if (container) container.classList.add('hidden');
+            if (sourceOptions) sourceOptions.classList.add('hidden');
 
             // Switch to download tab
             alllibSwitchTab('download');
@@ -855,11 +874,15 @@
     document.addEventListener('DOMContentLoaded', () => {
         const dlUrlInput = document.getElementById('dl-url');
         if (dlUrlInput) {
+            let optionsTimer = null;
             dlUrlInput.addEventListener('input', async (e) => {
                 const url = e.target.value.trim();
                 const container = document.getElementById('anime-options-container');
                 const loading = document.getElementById('anime-options-loading');
                 const fields = document.getElementById('anime-options-fields');
+                const sourceContainer = document.getElementById('source-options-container');
+                sourceContainer.classList.add('hidden');
+                clearTimeout(optionsTimer);
 
                 if (url.includes('anilib')) {
                     container.classList.remove('hidden');
@@ -923,6 +946,42 @@
                     }
                 } else {
                     container.classList.add('hidden');
+                    if (!url.startsWith('https://')) return;
+                    optionsTimer = setTimeout(async () => {
+                        try {
+                            const tokenVal = document.getElementById('dl-token').value.trim();
+                            const resp = await fetch('/alllib/api/download-options', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({url, token: tokenVal || null}),
+                            });
+                            if (!resp.ok || url !== dlUrlInput.value.trim()) return;
+                            const data = await resp.json();
+                            if (!data.selector || !data.options || data.options.length === 0) return;
+
+                            const select = document.getElementById('dl-source-option');
+                            const label = document.getElementById('source-options-label');
+                            const hint = document.getElementById('source-options-hint');
+                            select.innerHTML = '';
+                            data.options.forEach(item => {
+                                const option = document.createElement('option');
+                                option.value = String(item.value);
+                                option.textContent = item.count ? `${item.label} (${item.count} chapters)` : item.label;
+                                option.selected = item.value === data.selected;
+                                select.append(option);
+                            });
+                            sourceContainer.dataset.selector = data.selector;
+                            label.textContent = data.selector === 'language'
+                                ? 'Chapter language / Язык глав'
+                                : 'Translator / Переводчик';
+                            hint.textContent = data.selector === 'language'
+                                ? 'MangaDex downloads only chapters in the selected language.'
+                                : 'Only chapters from the selected translation branch will be downloaded.';
+                            sourceContainer.classList.remove('hidden');
+                        } catch (err) {
+                            console.error(err);
+                        }
+                    }, 500);
                 }
             });
         }

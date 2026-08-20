@@ -14,6 +14,30 @@ logger = logging.getLogger(__name__)
 MANGADEX_SITE_ID = 8
 MANGADEX_API_BASE = "https://api.mangadex.org"
 MANGADEX_HOSTS = {"mangadex.org"}
+MANGADEX_LANGUAGE_NAMES = {
+    "ar": "Arabic",
+    "de": "German",
+    "en": "English",
+    "es": "Spanish",
+    "es-la": "Spanish (Latin America)",
+    "fr": "French",
+    "id": "Indonesian",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ja-ro": "Japanese (Romanized)",
+    "ko": "Korean",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "pt-br": "Portuguese (Brazil)",
+    "ro": "Romanian",
+    "ru": "Russian",
+    "th": "Thai",
+    "tr": "Turkish",
+    "uk": "Ukrainian",
+    "vi": "Vietnamese",
+    "zh": "Chinese (Simplified)",
+    "zh-hk": "Chinese (Traditional)",
+}
 
 
 def is_mangadex_url(url: str) -> bool:
@@ -162,13 +186,16 @@ class MangaDexAPI:
             "artists": artists,
             "tags": tags,
             "cover": {"default": cover_url} if cover_url else None,
+            "available_languages": [
+                str(language) for language in attributes.get("availableTranslatedLanguages") or [] if language
+            ],
         }
 
     def get_novel_chapters(
         self, slug: str, site_id: int = MANGADEX_SITE_ID, domain: str = "mangadex.org"
     ) -> list[dict[str, Any]]:
         chapters: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str, str]] = set()
         offset = 0
 
         while True:
@@ -200,18 +227,23 @@ class MangaDexAPI:
                     continue
                 volume = str(attributes.get("volume") or "0")
                 number = str(attributes.get("chapter") or f"0.{offset + len(chapters) + 1}")
-                key = (volume, number)
+                groups = [
+                    relationship
+                    for relationship in item.get("relationships") or []
+                    if isinstance(relationship, dict) and relationship.get("type") == "scanlation_group"
+                ]
+                group_ids = sorted(str(group["id"]) for group in groups if group.get("id"))
+                branch_id = "+".join(group_ids) or "no-group"
+                key = (volume, number, branch_id)
                 if key in seen:
                     continue
                 seen.add(key)
-                self._chapter_ids[(volume, number, "0")] = str(item["id"])
+                self._chapter_ids[key] = str(item["id"])
 
                 group_names = [
-                    str((rel.get("attributes") or {}).get("name"))
-                    for rel in item.get("relationships") or []
-                    if isinstance(rel, dict)
-                    and rel.get("type") == "scanlation_group"
-                    and (rel.get("attributes") or {}).get("name")
+                    str((group.get("attributes") or {}).get("name"))
+                    for group in groups
+                    if (group.get("attributes") or {}).get("name")
                 ]
                 chapter_title = attributes.get("title") or f"Chapter {number}"
                 if group_names:
@@ -222,7 +254,12 @@ class MangaDexAPI:
                         "name": chapter_title,
                         "number": number,
                         "volume": volume,
-                        "branches": [{"branch_id": "0"}],
+                        "branches": [
+                            {
+                                "branch_id": branch_id,
+                                "name": ", ".join(group_names) or "No group",
+                            }
+                        ],
                     }
                 )
 
@@ -245,7 +282,7 @@ class MangaDexAPI:
         site_id: int = MANGADEX_SITE_ID,
         domain: str = "mangadex.org",
     ) -> dict[str, Any]:
-        key = (str(volume), str(number), str(branch_id or "0"))
+        key = (str(volume), str(number), str(branch_id or "no-group"))
         chapter_id = self._chapter_ids.get(key)
         if chapter_id is None:
             self.get_novel_chapters(slug, site_id, domain)

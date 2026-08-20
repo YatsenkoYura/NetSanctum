@@ -412,14 +412,14 @@ class RanobeHubAPI:
         }
 
 
-def get_source_api(url: str, auth_token: str | None = None) -> Any:
+def get_source_api(url: str, auth_token: str | None = None, language: str | None = None) -> Any:
     if is_ranobehub_url(url):
         return RanobeHubAPI(auth_token=auth_token)
 
     from app.modules.alllib.mangadex import MangaDexAPI, is_mangadex_url
 
     if is_mangadex_url(url):
-        return MangaDexAPI(auth_token=auth_token)
+        return MangaDexAPI(auth_token=auth_token, language=language or "en")
 
     from app.modules.alllib.novelbin import NovelBinAPI, is_novelbin_url
 
