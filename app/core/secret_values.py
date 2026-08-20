@@ -1,34 +1,19 @@
 import base64
-import hashlib
 import os
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from app.core.config import get_settings
+from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_key
 
 SECRET_PREFIX = "enc:v1:"
 
 
 def _key() -> bytes:
-    settings = get_settings()
-    configured = settings.FILE_ENCRYPTION_KEY
-    value = (
-        settings.MASTER_API_KEY
-        if not configured or configured == "dev-file-encryption-key-change-me"
-        else configured
-    )
-    return hashlib.sha256(value.encode("utf-8")).digest()
+    return primary_encryption_key(purpose="settings")
 
 
 def _decryption_keys() -> tuple[bytes, ...]:
-    settings = get_settings()
-    candidates = (
-        _key(),
-        hashlib.sha256(settings.MASTER_API_KEY.encode("utf-8")).digest(),
-        hashlib.sha256(b"dev-file-encryption-key-change-me").digest(),
-        hashlib.sha256(b"dev-api-key-change-me").digest(),
-    )
-    return tuple(dict.fromkeys(candidates))
+    return (_key(), *legacy_encryption_keys(purpose="settings"))
 
 
 def encrypt_secret_value(value: str) -> str:

@@ -1,13 +1,14 @@
 """
-Security layer: JWT authentication and API-key validation.
+Security layer: session authentication and API-key validation.
 
 Exposes two FastAPI dependencies:
-- `get_current_user`  — validates a Bearer JWT, returns the authenticated User.
+- `get_current_user`  — validates a browser or API session, returns the authenticated User.
 - `verify_api_key`    — validates an X-API-Key header for external integrations.
 """
 
 import hashlib
 import hmac
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import Header, HTTPException, Request, status
@@ -39,6 +40,26 @@ TOKEN_FILE_PATH = Path(settings.ACCESS_TOKEN_HASH_PATH)
 import redis.asyncio as aioredis
 
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+API_SESSION_TTL_SECONDS = 86400
+
+
+def _api_session_key(token: str) -> str:
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return f"api-session:{digest}"
+
+
+async def create_api_session() -> str:
+    token = secrets.token_urlsafe(32)
+    await redis_client.setex(_api_session_key(token), API_SESSION_TTL_SECONDS, "1")
+    return token
+
+
+async def delete_bootstrap_plaintext() -> None:
+    path = Path(settings.ACCESS_TOKEN_PLAINTEXT_PATH)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def verify_access_token(token: str) -> bool:
@@ -87,7 +108,7 @@ async def get_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.removeprefix("Bearer ").strip()
-        if verify_access_token(token):
+        if await redis_client.get(_api_session_key(token)) == "1":
             return OwnerUser()
 
     # 2. Check Session Cookie (UI)
@@ -116,7 +137,7 @@ async def verify_api_key(
 
     Returns the key on success so downstream handlers can log it.
     """
-    if x_api_key != settings.MASTER_API_KEY:
+    if not hmac.compare_digest(x_api_key, settings.MASTER_API_KEY):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid API key",

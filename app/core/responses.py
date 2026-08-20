@@ -1,5 +1,4 @@
 import mimetypes
-import os
 import urllib.parse
 from collections.abc import AsyncGenerator
 
@@ -100,12 +99,10 @@ def serve_media_stream(request: Request, file_path: str, media_type: str | None 
 
     # Resolve file size
     is_enc = file_path.endswith(".enc")
-    if hasattr(storage, "_full_path") and not is_enc:
-        file_size = os.path.getsize(storage._full_path(file_path))
+    if is_enc:
+        file_size = storage.get_encrypted_plaintext_size(file_path)
     else:
-        with storage.get_file_stream(file_path) as f:
-            f.seek(0, 2)
-            file_size = f.tell()
+        file_size = storage.get_file_size(file_path)
 
     range_header = request.headers.get("range")
     if range_header and range_header.startswith("bytes="):

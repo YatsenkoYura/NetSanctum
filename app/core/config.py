@@ -7,6 +7,7 @@ Modules MUST NOT define their own config — they read from this single source.
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     # ── Application ──────────────────────────────────────
     APP_NAME: str = "NetSanctum"
     APP_VERSION: str = "0.1.0"
+    NETSANCTUM_ENVIRONMENT: str = "development"
     DEBUG: bool = False
     ENABLED_MODULES: str = ""
     ENABLED_MODULES_FILE: str = "/app/storage/config/enabled-modules.json"
@@ -64,7 +66,13 @@ class Settings(BaseSettings):
     MASTER_API_KEY: str = "dev-api-key-change-me"
 
     # ── Encryption ───────────────────────────────────────
+    FILE_ENCRYPTION_KEY_PATH: str = ""
+    LEGACY_FILE_ENCRYPTION_KEYS_PATH: str = ""
+    # Legacy migration key. Production encryption uses FILE_ENCRYPTION_KEY_PATH.
     FILE_ENCRYPTION_KEY: str = "dev-file-encryption-key-change-me"
+    ENCRYPTION_MIGRATION_BATCH_SIZE: int = 1
+    ENCRYPTION_MIGRATION_INTERVAL_SECONDS: float = 5.0
+    ENCRYPTION_MIGRATION_IDLE_SECONDS: float = 300.0
 
     # ── Storage ──────────────────────────────────────────
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
@@ -82,3 +90,28 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached singleton of application settings."""
     return Settings()
+
+
+def validate_runtime_security(settings: Settings | None = None) -> None:
+    """Fail closed when a production process has unsafe secret configuration."""
+    settings = settings or get_settings()
+    if settings.NETSANCTUM_ENVIRONMENT.lower() != "production":
+        return
+
+    errors = []
+    if len(settings.MASTER_API_KEY) < 32 or settings.MASTER_API_KEY == "dev-api-key-change-me":
+        errors.append("MASTER_API_KEY must be a unique random value of at least 32 characters")
+    if not settings.FILE_ENCRYPTION_KEY_PATH.strip():
+        errors.append("FILE_ENCRYPTION_KEY_PATH must point to the generated runtime key")
+    else:
+        try:
+            if len(Path(settings.FILE_ENCRYPTION_KEY_PATH).read_bytes().strip()) < 32:
+                errors.append("runtime file-encryption key must contain at least 32 bytes")
+        except OSError:
+            errors.append("FILE_ENCRYPTION_KEY_PATH is not readable")
+    if "change_me" in settings.DATABASE_URL or "change_me" in settings.DATABASE_URL_SYNC:
+        errors.append("database credentials still contain a known placeholder")
+    if settings.PUBLIC_BASE_URL.startswith("https://") and not settings.SECURE_COOKIES:
+        errors.append("SECURE_COOKIES must be enabled for an HTTPS PUBLIC_BASE_URL")
+    if errors:
+        raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))

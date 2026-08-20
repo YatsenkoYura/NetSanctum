@@ -232,7 +232,19 @@ Open `http://localhost:8000` by default.
 The default Compose port is bound to `127.0.0.1`. For remote sharing, place NetSanctum behind an
 HTTPS reverse proxy or VPN, set `TRUSTED_HOSTS` and `PUBLIC_BASE_URL`, and enable `SECURE_COOKIES`.
 
-On the first start, NetSanctum creates `storage/config/access_token.txt`. Use the token to sign in, store it safely, and remove the plaintext file afterward. Owner credentials are accepted only through the login form, session cookie, or `Authorization: Bearer`; query-string credentials are intentionally rejected.
+On the first start, NetSanctum creates `storage/config/access_token.txt`. Store the token safely and use it to sign in; the plaintext file is deleted after the first successful login. API clients exchange the owner token at `POST /auth/login` for a 24-hour bearer session. The owner token itself is not accepted as a bearer credential, and query-string credentials are rejected.
+
+For production, treat host access as a security boundary:
+
+- Run NetSanctum under a dedicated Unix account. Do not share that account or Docker access with developers.
+- Keep `.env` mode `0600` and `storage/` mode `0700`; reading `.env` can expose service credentials, while decrypting current protected content additionally requires access to the separate key volume.
+- Compose generates the primary encryption key once in the `encryption_key` Docker volume. `FILE_ENCRYPTION_KEY` in `.env` is accepted only to migrate legacy ciphertext and is not used for new encryption.
+- Back up the `encryption_key` volume separately and restrict it to the service account. NetSanctum refuses to generate a replacement when the storage key fingerprint already exists; losing this volume makes encrypted files and secret settings unrecoverable.
+- Legacy `.enc` objects migrate in the background to the authenticated `NSENC v2` envelope, one object every five seconds by default. Progress is available to the owner at `GET /api/encryption-migration`; unreadable objects are reported and never overwritten.
+- Recovered historical keys can be added one per line to `legacy.keys` inside the `encryption_key` volume. The migrator detects the changed key set, retries unreadable objects, and never exposes those keys through `.env` or the diagnostics API.
+- Deploy reviewed commits through CI or a controlled build. The containers run code from the built image, not from a mutable repository bind mount.
+- Put the loopback-bound service behind HTTPS or a VPN. Set `PUBLIC_BASE_URL`, a strict `TRUSTED_HOSTS` list, and `SECURE_COOKIES=true`; terminate HSTS at the reverse proxy as well.
+- Back up PostgreSQL and `storage/` separately, encrypt backups, and test restoration. Never commit `.env`, token files, storage, database dumps, or logs.
 
 Management commands:
 

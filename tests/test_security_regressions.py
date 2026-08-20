@@ -1,3 +1,4 @@
+import hashlib
 import os
 import subprocess
 import sys
@@ -8,17 +9,22 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import yaml
-from fastapi import Request
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi import HTTPException, Request
 
+from app.core.config import Settings, validate_runtime_security
+from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_key
 from app.core.http_security import is_cross_site_request
 from app.core.remote_fetch import RemoteFetchError, host_in_allowlist, validate_remote_url
+from app.core.responses import serve_media_stream
 from app.core.secret_values import (
     SECRET_PREFIX,
     decrypt_secret_value,
     encrypt_secret_value,
     rotate_secret_value,
 )
-from app.core.storage import LocalStorage
+from app.core.security import create_api_session, get_current_user
+from app.core.storage import ENCRYPTED_FILE_MAGIC, LocalStorage
 from app.modules.alllib.api import LibParser
 from app.modules.alllib.router import _create_pairing_code, _is_allowed_lib_url, _verify_pairing_code
 from app.modules.music.security import validate_music_url
@@ -226,6 +232,18 @@ class CoreBoundarySecurityTests(unittest.TestCase):
         self.assertEqual("sh", worker_command[0])
         self.assertIn("worker --loglevel=info --concurrency=2", worker_command[2])
         self.assertEqual("0", parsed["services"]["worker"]["environment"]["NETSANCTUM_LOAD_DOTENV"])
+        self.assertEqual(
+            "production",
+            parsed["services"]["worker"]["environment"]["NETSANCTUM_ENVIRONMENT"],
+        )
+        self.assertNotIn(".:/app:ro", parsed["services"]["web"]["volumes"])
+        self.assertNotIn(".:/app:ro", parsed["services"]["worker"]["volumes"])
+        self.assertIn("encryption_key:/run/netsanctum-key:ro", parsed["services"]["web"]["volumes"])
+        self.assertIn(
+            "encryption_key:/run/netsanctum-key:ro",
+            parsed["services"]["worker"]["volumes"],
+        )
+        self.assertIn("Encryption key volume is missing", parsed["services"]["storage-init"]["command"][2])
         storage_init = parsed["services"]["storage-init"]
         self.assertEqual("0:0", storage_init["user"])
         self.assertIn("chown -R", storage_init["command"][2])
@@ -261,6 +279,205 @@ class CoreBoundarySecurityTests(unittest.TestCase):
             )
 
         self.assertEqual("injected-environment-value", result.stdout.strip())
+
+    def test_production_rejects_known_or_shared_secrets(self):
+        unsafe = Settings(
+            NETSANCTUM_ENVIRONMENT="production",
+            MASTER_API_KEY="dev-api-key-change-me",
+            FILE_ENCRYPTION_KEY="dev-api-key-change-me",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Unsafe production configuration"):
+            validate_runtime_security(unsafe)
+
+    def test_https_production_requires_secure_cookies(self):
+        unsafe = Settings(
+            NETSANCTUM_ENVIRONMENT="production",
+            MASTER_API_KEY="a" * 32,
+            FILE_ENCRYPTION_KEY="b" * 32,
+            DATABASE_URL="postgresql+asyncpg://app:secret@postgres/app",
+            DATABASE_URL_SYNC="postgresql+psycopg2://app:secret@postgres/app",
+            PUBLIC_BASE_URL="https://sanctum.example",
+            SECURE_COOKIES=False,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "SECURE_COOKIES"):
+            validate_runtime_security(unsafe)
+
+    def test_generated_key_file_is_primary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            first = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                FILE_ENCRYPTION_KEY="legacy-a" * 8,
+            )
+            second = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                FILE_ENCRYPTION_KEY="legacy-b" * 8,
+            )
+
+            self.assertEqual(primary_encryption_key(first), primary_encryption_key(second))
+            self.assertNotEqual(
+                primary_encryption_key(first, purpose="files"),
+                primary_encryption_key(first, purpose="settings"),
+            )
+            self.assertIn(
+                hashlib.sha256(first.FILE_ENCRYPTION_KEY.encode()).digest(),
+                legacy_encryption_keys(first),
+            )
+
+    def test_recovered_legacy_keys_are_loaded_from_protected_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            legacy_path = Path(directory) / "legacy.keys"
+            legacy_path.write_text("recovered-old-key\n")
+            settings = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                LEGACY_FILE_ENCRYPTION_KEYS_PATH=str(legacy_path),
+            )
+
+            self.assertIn(
+                hashlib.sha256(b"recovered-old-key").digest(),
+                legacy_encryption_keys(settings),
+            )
+
+    def test_unreadable_migration_retries_when_recovery_key_appears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "storage"
+            root.mkdir()
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            legacy_path = Path(directory) / "legacy.keys"
+            settings = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                LEGACY_FILE_ENCRYPTION_KEYS_PATH=str(legacy_path),
+            )
+            recovered_value = "recovered-old-key"
+            recovered_key = hashlib.sha256(recovered_value.encode()).digest()
+            nonce = os.urandom(12)
+            (root / "recovered.enc").write_bytes(
+                nonce + AESGCM(recovered_key).encrypt(nonce, b"recovered-content", None)
+            )
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(root))
+                first = storage.migrate_legacy_encryption_batch(limit=1)
+                legacy_path.write_text(recovered_value + "\n")
+                second = storage.migrate_legacy_encryption_batch(limit=1)
+
+            self.assertEqual(1, first.unreadable)
+            self.assertEqual(1, second.migrated)
+            self.assertEqual(0, second.unreadable)
+
+    def test_legacy_file_is_rotated_to_generated_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "storage"
+            root.mkdir()
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                FILE_ENCRYPTION_KEY="legacy-file-key-material" * 2,
+            )
+            nonce = os.urandom(12)
+            legacy_key = hashlib.sha256(settings.FILE_ENCRYPTION_KEY.encode()).digest()
+            (root / "sample.enc").write_bytes(
+                nonce + AESGCM(legacy_key).encrypt(nonce, b"protected-content", None)
+            )
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(root))
+                self.assertEqual(1, storage.migrate_legacy_encryption())
+                self.assertTrue((root / "sample.enc").read_bytes().startswith(ENCRYPTED_FILE_MAGIC))
+                self.assertEqual(b"protected-content", storage.get_file_decrypted("sample.enc"))
+                self.assertEqual(0, storage.migrate_legacy_encryption())
+
+    def test_legacy_migration_is_bounded_and_preserves_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "storage"
+            root.mkdir()
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                FILE_ENCRYPTION_KEY="legacy-file-key-material" * 2,
+            )
+            legacy_key = hashlib.sha256(settings.FILE_ENCRYPTION_KEY.encode()).digest()
+            for index in range(2):
+                nonce = os.urandom(12)
+                (root / f"legacy-{index}.enc").write_bytes(
+                    nonce + AESGCM(legacy_key).encrypt(nonce, f"content-{index}".encode(), None)
+                )
+            unreadable = root / "unreadable.enc"
+            unreadable.write_bytes(os.urandom(64))
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(root))
+                first = storage.migrate_legacy_encryption_batch(limit=1)
+                second = storage.migrate_legacy_encryption_batch(limit=1)
+                final = storage.migrate_legacy_encryption_batch(limit=1)
+
+            self.assertEqual(1, first.migrated)
+            self.assertEqual(1, second.migrated)
+            self.assertEqual(0, final.migrated)
+            self.assertEqual(1, final.unreadable)
+            self.assertEqual(2, final.current)
+            self.assertEqual(64, unreadable.stat().st_size)
+
+    def test_v2_ciphertext_is_bound_to_its_storage_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(FILE_ENCRYPTION_KEY_PATH=str(key_path))
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(Path(directory) / "storage"))
+                storage.save_file_encrypted(b"path-bound", "first.enc")
+                self.assertEqual(10, storage.get_encrypted_plaintext_size("first.enc"))
+                (storage._full_path("second.enc")).write_bytes(storage._full_path("first.enc").read_bytes())
+                with self.assertRaises(ValueError):
+                    storage.get_file_decrypted("second.enc")
+
+    def test_encrypted_media_ranges_use_plaintext_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(FILE_ENCRYPTION_KEY_PATH=str(key_path))
+            request = self.request("GET", "sanctum.example")
+            request.scope["headers"].append((b"range", b"bytes=2-5"))
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(Path(directory) / "storage"))
+                storage.save_file_encrypted(b"0123456789", "media.enc")
+                with patch("app.core.responses.get_storage", return_value=storage):
+                    response = serve_media_stream(request, "media.enc")
+
+            self.assertEqual(206, response.status_code)
+            self.assertEqual("bytes 2-5/10", response.headers["content-range"])
+            self.assertEqual("4", response.headers["content-length"])
+
+
+class SessionSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_raw_owner_token_is_not_accepted_as_bearer(self):
+        request = CoreBoundarySecurityTests.request("GET", "sanctum.example")
+        request.scope["headers"].append((b"authorization", b"Bearer raw-owner-token"))
+
+        with (
+            patch("app.core.security.verify_access_token", return_value=True),
+            patch("app.core.security.redis_client.get", new=AsyncMock(return_value=None)),
+            self.assertRaises(HTTPException),
+        ):
+            await get_current_user(request)
+
+    async def test_api_session_is_stored_by_hash(self):
+        with patch("app.core.security.redis_client.setex", new=AsyncMock()) as setex:
+            token = await create_api_session()
+
+        key = setex.await_args.args[0]
+        self.assertNotIn(token, key)
+        self.assertTrue(key.startswith("api-session:"))
 
 
 class LocalStorageSecurityTests(unittest.TestCase):

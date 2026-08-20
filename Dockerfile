@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e
 ARG NETSANCTUM_MODULES=default
 ARG NETSANCTUM_EXTERNAL_MODULES=""
 
@@ -11,7 +11,7 @@ FROM ${PYTHON_IMAGE} AS dependencies
 ARG NETSANCTUM_MODULES
 ARG NETSANCTUM_EXTERNAL_MODULES
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03 /uv /uvx /bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

@@ -5,46 +5,41 @@ Modules MUST NOT write to disk or S3 directly.
 They use the `get_storage()` singleton which returns the active backend.
 """
 
-import hashlib
 import io
 import os
+import secrets
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import get_settings
+from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_key
+
+ENCRYPTED_FILE_MAGIC = b"NSENC\x02\x00\x00"
+NONCE_SIZE = 12
+
+
+@dataclass(frozen=True, slots=True)
+class EncryptionMigrationResult:
+    migrated: int = 0
+    current: int = 0
+    unreadable: int = 0
+    pending: int = 0
+    examined: int = 0
 
 
 class StorageInterface(ABC):
     """Abstract contract for all storage backends."""
 
     def _get_encryption_key(self) -> bytes:
-        """Derive the primary key; known development values fall back to the private API key."""
-        settings = get_settings()
-        configured = getattr(settings, "FILE_ENCRYPTION_KEY", None)
-        raw_key = (
-            settings.MASTER_API_KEY
-            if not configured or configured == "dev-file-encryption-key-change-me"
-            else configured
-        )
-        return hashlib.sha256(raw_key.encode("utf-8")).digest()
+        """Load the primary key from the protected runtime key file."""
+        return primary_encryption_key()
 
     def _get_legacy_encryption_keys(self) -> tuple[bytes, ...]:
-        settings = get_settings()
-        candidates = tuple(
-            hashlib.sha256(value.encode("utf-8")).digest()
-            for value in (
-                settings.MASTER_API_KEY,
-                settings.FILE_ENCRYPTION_KEY,
-                "dev-api-key-change-me",
-                "dev-file-encryption-key-change-me",
-            )
-            if value
-        )
-        primary = self._get_encryption_key()
-        return tuple(key for key in dict.fromkeys(candidates) if key != primary)
+        return legacy_encryption_keys(purpose="files")
 
     @abstractmethod
     def save_file(self, data: bytes, path: str) -> str:
@@ -59,13 +54,37 @@ class StorageInterface(ABC):
         Encrypt binary data using AES-256-GCM and persist it at the given logical path.
         Returns the canonical path/key where the file was stored.
         """
-        key = self._get_encryption_key()
-        aesgcm = AESGCM(key)
-        nonce = os.urandom(12)
-        encrypted_data = aesgcm.encrypt(nonce, data, None)
-        # Prepend the 12-byte nonce to the ciphertext
-        payload = nonce + encrypted_data
-        return self.save_file(payload, path)
+        return self.save_file(self._encrypt_payload(data, path), path)
+
+    @staticmethod
+    def _associated_data(path: str) -> bytes:
+        return ENCRYPTED_FILE_MAGIC + b"\x00" + path.encode("utf-8")
+
+    def _encrypt_payload(self, data: bytes, path: str) -> bytes:
+        nonce = os.urandom(NONCE_SIZE)
+        ciphertext = AESGCM(self._get_encryption_key()).encrypt(
+            nonce,
+            data,
+            self._associated_data(path),
+        )
+        return ENCRYPTED_FILE_MAGIC + nonce + ciphertext
+
+    def _decrypt_payload(self, payload: bytes, path: str) -> bytes:
+        is_current = payload.startswith(ENCRYPTED_FILE_MAGIC)
+        offset = len(ENCRYPTED_FILE_MAGIC) if is_current else 0
+        if len(payload) < offset + NONCE_SIZE + 16:
+            raise ValueError(f"Invalid encrypted file '{path}': payload is too short.")
+
+        nonce = payload[offset : offset + NONCE_SIZE]
+        ciphertext = payload[offset + NONCE_SIZE :]
+        associated_data = self._associated_data(path) if is_current else None
+        last_error = None
+        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+            try:
+                return AESGCM(key).decrypt(nonce, ciphertext, associated_data)
+            except Exception as error:
+                last_error = error
+        raise ValueError(f"Failed to decrypt file '{path}': {last_error}")
 
     @abstractmethod
     def get_file_stream(self, path: str) -> BinaryIO:
@@ -85,22 +104,7 @@ class StorageInterface(ABC):
         finally:
             stream.close()
 
-        if len(payload) < 12:
-            raise ValueError(f"Invalid encrypted file '{path}': payload is too short.")
-
-        nonce = payload[:12]
-        ciphertext = payload[12:]
-        last_error = None
-        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
-            try:
-                decrypted_data = AESGCM(key).decrypt(nonce, ciphertext, None)
-                break
-            except Exception as error:
-                last_error = error
-        else:
-            raise ValueError(f"Failed to decrypt file '{path}': {last_error}")
-
-        return io.BytesIO(decrypted_data)
+        return io.BytesIO(self._decrypt_payload(payload, path))
 
     def get_file_decrypted(self, path: str) -> bytes:
         """
@@ -108,6 +112,19 @@ class StorageInterface(ABC):
         """
         with self.get_file_stream_decrypted(path) as f:
             return f.read()
+
+    def get_encrypted_plaintext_size(self, path: str) -> int:
+        """Return the envelope's plaintext length without decrypting the whole object."""
+        with self.get_file_stream(path) as stream:
+            prefix = stream.read(len(ENCRYPTED_FILE_MAGIC))
+        stored_size = self.get_file_size(path)
+        overhead = NONCE_SIZE + 16
+        if prefix == ENCRYPTED_FILE_MAGIC:
+            overhead += len(ENCRYPTED_FILE_MAGIC)
+        plaintext_size = stored_size - overhead
+        if plaintext_size < 0:
+            raise ValueError(f"Invalid encrypted file '{path}': payload is too short.")
+        return plaintext_size
 
     @abstractmethod
     def delete_file(self, path: str) -> bool:
@@ -118,12 +135,20 @@ class StorageInterface(ABC):
         ...
 
     @abstractmethod
+    def get_file_size(self, path: str) -> int:
+        """Return the stored object size in bytes."""
+        ...
+
+    @abstractmethod
     def file_exists(self, path: str) -> bool:
         """Check whether a file exists at the given path."""
         ...
 
+    def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
+        return EncryptionMigrationResult()
+
     def migrate_legacy_encryption(self) -> int:
-        return 0
+        return self.migrate_legacy_encryption_batch(limit=0).migrated
 
 
 class LocalStorage(StorageInterface):
@@ -132,6 +157,8 @@ class LocalStorage(StorageInterface):
     def __init__(self, root_dir: str) -> None:
         self._root = Path(root_dir).resolve()
         self._root.mkdir(parents=True, exist_ok=True)
+        self._unreadable_encrypted_files: dict[str, tuple[int, int]] = {}
+        self._known_legacy_keys: tuple[bytes, ...] | None = None
 
     def _full_path(self, path: str) -> Path:
         """Resolve and sanitize the path to prevent directory traversal."""
@@ -159,42 +186,66 @@ class LocalStorage(StorageInterface):
             return True
         return False
 
+    def get_file_size(self, path: str) -> int:
+        return self._full_path(path).stat().st_size
+
     def file_exists(self, path: str) -> bool:
         return self._full_path(path).is_file()
 
-    def migrate_legacy_encryption(self) -> int:
-        """Atomically rewrite legacy-key objects with the current primary key."""
+    def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
+        """Atomically rewrite a bounded number of legacy encrypted objects."""
         legacy_keys = self._get_legacy_encryption_keys()
-        if not legacy_keys:
-            return 0
+        if legacy_keys != self._known_legacy_keys:
+            self._unreadable_encrypted_files.clear()
+            self._known_legacy_keys = legacy_keys
         migrated = 0
-        primary = self._get_encryption_key()
-        for full_path in self._root.rglob("*.enc"):
-            payload = full_path.read_bytes()
-            if len(payload) < 12:
-                continue
-            nonce, ciphertext = payload[:12], payload[12:]
-            try:
-                AESGCM(primary).decrypt(nonce, ciphertext, None)
-                continue
-            except Exception:
-                pass
-            plaintext = None
-            for legacy in legacy_keys:
-                try:
-                    plaintext = AESGCM(legacy).decrypt(nonce, ciphertext, None)
-                    break
-                except Exception:
+        current = 0
+        pending = 0
+        examined = 0
+        for full_path in sorted(self._root.rglob("*.enc")):
+            with full_path.open("rb") as stream:
+                prefix = stream.read(len(ENCRYPTED_FILE_MAGIC))
+                if prefix == ENCRYPTED_FILE_MAGIC:
+                    current += 1
                     continue
-            if plaintext is None:
+                stat = os.fstat(stream.fileno())
+                signature = (stat.st_size, stat.st_mtime_ns)
+                cache_key = str(full_path)
+                if self._unreadable_encrypted_files.get(cache_key) == signature:
+                    continue
+                if limit > 0 and examined >= limit:
+                    pending += 1
+                    continue
+                examined += 1
+                payload = prefix + stream.read()
+            try:
+                plaintext = self._decrypt_payload(payload, str(full_path.relative_to(self._root)))
+            except ValueError:
+                self._unreadable_encrypted_files[cache_key] = signature
                 continue
-            new_nonce = os.urandom(12)
-            replacement = new_nonce + AESGCM(primary).encrypt(new_nonce, plaintext, None)
-            temporary = full_path.with_suffix(full_path.suffix + ".rotate")
-            temporary.write_bytes(replacement)
+            relative_path = str(full_path.relative_to(self._root))
+            replacement = self._encrypt_payload(plaintext, relative_path)
+            if not secrets.compare_digest(
+                self._decrypt_payload(replacement, relative_path),
+                plaintext,
+            ):
+                raise RuntimeError(f"Encryption migration verification failed: {cache_key}")
+            temporary = full_path.with_name(f".{full_path.name}.rotate-{secrets.token_hex(8)}")
+            with temporary.open("xb") as stream:
+                stream.write(replacement)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.chmod(0o600)
             os.replace(temporary, full_path)
+            self._unreadable_encrypted_files.pop(cache_key, None)
             migrated += 1
-        return migrated
+        return EncryptionMigrationResult(
+            migrated,
+            current,
+            len(self._unreadable_encrypted_files),
+            pending,
+            examined,
+        )
 
 
 class S3Storage(StorageInterface):
@@ -229,6 +280,8 @@ class S3Storage(StorageInterface):
 
         self._client = session.client("s3", **client_kwargs)
         self._bucket = bucket
+        self._unreadable_encrypted_files: dict[str, tuple[int, str]] = {}
+        self._known_legacy_keys: tuple[bytes, ...] | None = None
 
     def save_file(self, data: bytes, path: str) -> str:
         self._client.put_object(Bucket=self._bucket, Key=path, Body=data)
@@ -248,6 +301,10 @@ class S3Storage(StorageInterface):
         except Exception:
             return False
 
+    def get_file_size(self, path: str) -> int:
+        response = self._client.head_object(Bucket=self._bucket, Key=path)
+        return int(response["ContentLength"])
+
     def file_exists(self, path: str) -> bool:
         try:
             self._client.head_object(Bucket=self._bucket, Key=path)
@@ -255,42 +312,51 @@ class S3Storage(StorageInterface):
         except Exception:
             return False
 
-    def migrate_legacy_encryption(self) -> int:
+    def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
         legacy_keys = self._get_legacy_encryption_keys()
-        if not legacy_keys:
-            return 0
-        primary = self._get_encryption_key()
+        if legacy_keys != self._known_legacy_keys:
+            self._unreadable_encrypted_files.clear()
+            self._known_legacy_keys = legacy_keys
         migrated = 0
+        current = 0
+        pending = 0
+        examined = 0
         paginator = self._client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self._bucket):
             for item in page.get("Contents", []):
                 key = item.get("Key", "")
                 if not key.endswith(".enc"):
                     continue
+                signature = (int(item.get("Size", 0)), str(item.get("ETag", "")))
+                if self._unreadable_encrypted_files.get(key) == signature:
+                    continue
+                if limit > 0 and examined >= limit:
+                    pending += 1
+                    continue
+                examined += 1
                 with self.get_file_stream(key) as stream:
                     payload = stream.read()
-                if len(payload) < 12:
+                if payload.startswith(ENCRYPTED_FILE_MAGIC):
+                    current += 1
                     continue
-                nonce, ciphertext = payload[:12], payload[12:]
                 try:
-                    AESGCM(primary).decrypt(nonce, ciphertext, None)
+                    plaintext = self._decrypt_payload(payload, key)
+                except ValueError:
+                    self._unreadable_encrypted_files[key] = signature
                     continue
-                except Exception:
-                    pass
-                plaintext = None
-                for legacy in legacy_keys:
-                    try:
-                        plaintext = AESGCM(legacy).decrypt(nonce, ciphertext, None)
-                        break
-                    except Exception:
-                        continue
-                if plaintext is None:
-                    continue
-                new_nonce = os.urandom(12)
-                replacement = new_nonce + AESGCM(primary).encrypt(new_nonce, plaintext, None)
+                replacement = self._encrypt_payload(plaintext, key)
+                if not secrets.compare_digest(self._decrypt_payload(replacement, key), plaintext):
+                    raise RuntimeError(f"Encryption migration verification failed: {key}")
                 self._client.put_object(Bucket=self._bucket, Key=key, Body=replacement)
+                self._unreadable_encrypted_files.pop(key, None)
                 migrated += 1
-        return migrated
+        return EncryptionMigrationResult(
+            migrated,
+            current,
+            len(self._unreadable_encrypted_files),
+            pending,
+            examined,
+        )
 
 
 # ── Factory ──────────────────────────────────────────────

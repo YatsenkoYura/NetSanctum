@@ -6,20 +6,19 @@ Ensures physical filesystem access token exists at startup.
 Seeds default settings.
 """
 
-import asyncio
 import logging
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_runtime_security
 from app.core.database import AsyncSessionLocal, async_engine
 from app.core.http_security import security_headers_middleware
 from app.core.modules import module_registry
@@ -38,6 +37,8 @@ TOKEN_FILE = Path(settings.ACCESS_TOKEN_HASH_PATH)
 async def lifespan(application: FastAPI):
     """Startup: ensure token exists, create tables. Shutdown: dispose engine."""
 
+    validate_runtime_security(settings)
+
     # 1. Physical Access Token Generation
     if not TOKEN_FILE.is_file():
         import hashlib
@@ -45,11 +46,6 @@ async def lifespan(application: FastAPI):
         # Generate dynamic secure key
         token = secrets.token_urlsafe(32)
         try:
-            TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-            TOKEN_FILE.write_text(token_hash)
-            TOKEN_FILE.chmod(0o600)
-
             # Write plain text to a file so it's not lost in noisy docker logs
             plain_token_file = Path(settings.ACCESS_TOKEN_PLAINTEXT_PATH)
             plain_token_file.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +55,12 @@ async def lifespan(application: FastAPI):
             )
             plain_token_file.chmod(0o600)
 
+            # Persist the verifier last so a partial bootstrap cannot lock out the owner.
+            TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            TOKEN_FILE.write_text(token_hash)
+            TOKEN_FILE.chmod(0o600)
+
             # Print prominent Neo-brutalist alert to stdout for easy user discovery in logs
             print("\n" + "=" * 60)
             print("  [!] NETSANCTUM INITIALIZATION SUCCESSFUL")
@@ -66,8 +68,8 @@ async def lifespan(application: FastAPI):
             print("  [!] IT HAS BEEN SAVED TO access_token.txt IN YOUR FOLDER.")
             print("  [!] SAVE IT AND DELETE access_token.txt IMMEDIATELY.")
             print("=" * 60 + "\n")
-        except Exception as e:
-            logger.error(f"Failed to generate physical token file: {e}")
+        except Exception as error:
+            raise RuntimeError("Failed to generate owner bootstrap token") from error
     else:
         print("\n" + "=" * 60)
         print("  [!] NETSANCTUM ONLINE")
@@ -77,14 +79,6 @@ async def lifespan(application: FastAPI):
     # 2. Register active module models. Schema changes remain managed by Alembic.
     module_registry.import_models()
     logger.info("Database schemas verified (managed by Alembic)")
-
-    if process_role("web") == "web":
-        from app.core.storage import get_storage
-
-        storage = get_storage()
-        migrated_files = await asyncio.to_thread(storage.migrate_legacy_encryption)
-        if migrated_files:
-            logger.info("Rotated %s legacy encrypted storage objects", migrated_files)
 
     # Encrypt secret settings created by older versions before serving requests.
     try:
@@ -105,6 +99,7 @@ async def lifespan(application: FastAPI):
 
     # 3. Seed default Settings if empty
     try:
+        from app.core.secret_values import encrypt_secret_value
         from app.modules.settings.models import Setting
 
         async with AsyncSessionLocal() as session:
@@ -131,7 +126,7 @@ async def lifespan(application: FastAPI):
                     Setting(
                         scope="global",
                         key="openai_api_key",
-                        value="",
+                        value=encrypt_secret_value(""),
                         description="OpenAI / Gemini API Key",
                         value_type="string",
                         is_secret=True,
@@ -163,7 +158,7 @@ async def lifespan(application: FastAPI):
                     Setting(
                         scope="global",
                         key="external_sync_key",
-                        value="sk-netsanctum-prod-998877",
+                        value=encrypt_secret_value(secrets.token_urlsafe(32)),
                         description="Symmetric replication key for remote vaults",
                         value_type="string",
                         is_secret=True,
@@ -175,9 +170,17 @@ async def lifespan(application: FastAPI):
         logger.info("Settings module not installed; skipping default settings seed.")
 
     try:
+        if process_role("web") == "web":
+            from app.core.encryption_migration import start_encryption_migration
+
+            start_encryption_migration()
         await module_registry.run_startup_hooks()
         yield
     finally:
+        if process_role("web") == "web":
+            from app.core.encryption_migration import stop_encryption_migration
+
+            await stop_encryption_migration()
         await module_registry.run_shutdown_hooks()
         await async_engine.dispose()
         logger.info("Database engine disposed")
@@ -294,11 +297,14 @@ async def dashboard(request: Request):
     return templates.TemplateResponse(request, "dashboard.html", {"user": user, "lang": lang})
 
 
-@app.get("/set-language", include_in_schema=False)
-async def set_language(request: Request, lang: str = "en"):
-    """Set the lang cookie and redirect back to the referrer or home."""
-    referrer = request.headers.get("referer") or "/dashboard"
-    response = RedirectResponse(url=referrer, status_code=302)
+@app.post("/set-language", include_in_schema=False)
+async def set_language(lang: str = Form("en"), next_url: str = Form("/dashboard")):
+    """Set a supported language and redirect only to a local path."""
+    if lang not in {"en", "ru"}:
+        lang = "en"
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = "/dashboard"
+    response = RedirectResponse(url=next_url, status_code=303)
     response.set_cookie(
         key="lang",
         value=lang,
@@ -319,3 +325,11 @@ async def health():
 async def module_diagnostics(user=Depends(get_current_user)):
     """Return installed module versions, activation states, and load failures."""
     return module_registry.diagnostics()
+
+
+@app.get("/api/encryption-migration", tags=["System"])
+async def encryption_migration_diagnostics(user=Depends(get_current_user)):
+    """Return progress without exposing key material or encrypted paths."""
+    from app.core.encryption_migration import encryption_migration_status
+
+    return encryption_migration_status()

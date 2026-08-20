@@ -2,11 +2,11 @@
 Auth module — HTTP router for self-hosted single-user configuration.
 
 Endpoints:
-    POST /auth/login          — authenticate via JSON API using dynamic access token
+    POST /auth/login          — exchange the bootstrap token for a temporary API session
     GET  /auth/me             — return static profile of the system owner
     GET  /auth/login-page     — render the single-field brutalist access terminal
     POST /auth/ui/login       — HTMX form handler for single access token login
-    GET  /auth/logout-page    — clear session and redirect to login page
+    POST /auth/logout-page    — clear session and redirect to login page
 """
 
 import uuid
@@ -17,6 +17,8 @@ from pydantic import BaseModel
 
 from app.core.security import (
     OwnerUser,
+    create_api_session,
+    delete_bootstrap_plaintext,
     get_current_user,
     redis_client,
     use_secure_cookies,
@@ -34,6 +36,7 @@ class TokenLoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    expires_in: int = 86400
 
 
 class OwnerResponse(BaseModel):
@@ -48,7 +51,7 @@ class OwnerResponse(BaseModel):
 @router.post(
     "/login",
     response_model=TokenResponse,
-    summary="Authenticate using the access token and get JWT",
+    summary="Exchange the bootstrap token for a temporary bearer session",
 )
 async def login(body: TokenLoginRequest):
     """API-based token verification."""
@@ -58,7 +61,9 @@ async def login(body: TokenLoginRequest):
             detail="Invalid access token",
         )
 
-    return TokenResponse(access_token=body.token)
+    access_token = await create_api_session()
+    await delete_bootstrap_plaintext()
+    return TokenResponse(access_token=access_token)
 
 
 @router.get(
@@ -103,6 +108,7 @@ async def ui_login(
             {"error": err_msg, "lang": lang},
         )
 
+    await delete_bootstrap_plaintext()
     # Success: Generate session ID and store in Redis
     session_id = str(uuid.uuid4())
     await redis_client.setex(f"session:{session_id}", 86400 * 7, "1")
@@ -118,7 +124,7 @@ async def ui_login(
     return response
 
 
-@router.get("/logout-page", include_in_schema=False)
+@router.post("/logout-page", include_in_schema=False)
 async def logout_page(request: Request):
     """Clear session cookie, remove from Redis, and redirect to login terminal."""
     session_id = request.cookies.get("access_token")

@@ -36,10 +36,13 @@ fi
 if [ "$CREATED_ENV" = "1" ]; then
     DB_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
     API_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-    FILE_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
     sed -i "s/change_me_in_production/$DB_SECRET/g" "$ENV_FILE"
     sed -i "s/dev-api-key-change-me/$API_SECRET/g" "$ENV_FILE"
-    sed -i "s/dev-file-encryption-key-change-me/$FILE_SECRET/g" "$ENV_FILE"
+fi
+
+if grep -q 'change_me_in_production' "$ENV_FILE"; then
+    DB_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    sed -i "s/change_me_in_production/$DB_SECRET/g" "$ENV_FILE"
 fi
 
 if grep -q '^MASTER_API_KEY=dev-api-key-change-me$' "$ENV_FILE"; then
@@ -53,11 +56,6 @@ if ! grep -q '^PUID=' "$ENV_FILE"; then
 fi
 if ! grep -q '^PGID=' "$ENV_FILE"; then
     echo "PGID=$(id -g)" >> "$ENV_FILE"
-fi
-
-if grep -q '^FILE_ENCRYPTION_KEY=dev-file-encryption-key-change-me$' "$ENV_FILE"; then
-    echo "NOTICE: the known development file key is ignored; the private MASTER_API_KEY is used instead."
-    echo "Existing .enc files will be rotated automatically on web startup."
 fi
 
 # Parse CLI arguments

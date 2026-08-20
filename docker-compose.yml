@@ -1,7 +1,7 @@
 services:
   # ── PostgreSQL ─────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     restart: unless-stopped
     env_file: .env
     environment:
@@ -18,7 +18,7 @@ services:
 
   # ── Redis ──────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -50,15 +50,15 @@ services:
 
   # ── One-time storage ownership migration ───────────────
   storage-init:
-    image: alpine:3.20
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
     user: "0:0"
     restart: "no"
     environment:
       TARGET_UID: ${PUID:-1000}
       TARGET_GID: ${PGID:-1000}
     volumes:
-      - .:/repo:ro
       - ./storage:/app/storage
+      - encryption_key:/run/netsanctum-key
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -67,15 +67,39 @@ services:
       - -ec
       - |
         mkdir -p /app/storage/config
-        for name in access_token.hash access_token.txt; do
-          if [ -f "/repo/$$name" ] && [ ! -f "/app/storage/config/$$name" ]; then
-            cp "/repo/$$name" "/app/storage/config/$$name"
+        key_file=/run/netsanctum-key/file.key
+        key_marker=/app/storage/config/encryption-key.sha256
+        if [ ! -s "$$key_file" ]; then
+          if [ -s "$$key_marker" ]; then
+            echo "Encryption key volume is missing; restore it from backup." >&2
+            exit 1
           fi
-        done
-        marker="/app/storage/config/.owner-$${TARGET_UID}-$${TARGET_GID}"
+          umask 077
+          head -c 48 /dev/urandom | base64 > "$$key_file"
+        fi
+        chown "$${TARGET_UID}:$${TARGET_GID}" "$$key_file"
+        chmod 400 "$$key_file"
+        if [ -f /run/netsanctum-key/legacy.keys ]; then
+          chown "$${TARGET_UID}:$${TARGET_GID}" /run/netsanctum-key/legacy.keys
+          chmod 400 /run/netsanctum-key/legacy.keys
+        fi
+        fingerprint="$$(sha256sum "$$key_file" | cut -d ' ' -f1)"
+        if [ -s "$$key_marker" ]; then
+          read -r stored_fingerprint < "$$key_marker"
+          if [ "$$stored_fingerprint" != "$$fingerprint" ]; then
+            echo "Encryption key does not match this storage." >&2
+            exit 1
+          fi
+        else
+          printf '%s\n' "$$fingerprint" > "$$key_marker"
+        fi
+        chown "$${TARGET_UID}:$${TARGET_GID}" "$$key_marker"
+        chmod 600 "$$key_marker"
+        marker="/app/storage/config/.owner-v2-$${TARGET_UID}-$${TARGET_GID}"
         if [ ! -f "$$marker" ]; then
           chown -R "$${TARGET_UID}:$${TARGET_GID}" /app/storage
           rm -f /app/storage/config/.owner-*
+          chmod -R go-rwx /app/storage
           touch "$$marker"
           chown "$${TARGET_UID}:$${TARGET_GID}" "$$marker"
         fi
@@ -100,11 +124,14 @@ services:
     environment:
       NETSANCTUM_PROCESS_ROLE: web
       NETSANCTUM_LOAD_DOTENV: "0"
+      NETSANCTUM_ENVIRONMENT: production
+      FILE_ENCRYPTION_KEY_PATH: /run/netsanctum-key/file.key
+      LEGACY_FILE_ENCRYPTION_KEYS_PATH: /run/netsanctum-key/legacy.keys
     ports:
       - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
-      - .:/app:ro
       - ./storage:/app/storage
+      - encryption_key:/run/netsanctum-key:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -122,7 +149,7 @@ services:
     command:
       - sh
       - -c
-      - python -m app.core.migrations upgrade && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && python -m app.core.migrations upgrade && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   # ── Celery Worker ──────────────────────────────────────
   worker:
@@ -138,10 +165,13 @@ services:
     environment:
       NETSANCTUM_PROCESS_ROLE: worker
       NETSANCTUM_LOAD_DOTENV: "0"
+      NETSANCTUM_ENVIRONMENT: production
+      FILE_ENCRYPTION_KEY_PATH: /run/netsanctum-key/file.key
+      LEGACY_FILE_ENCRYPTION_KEYS_PATH: /run/netsanctum-key/legacy.keys
       YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
     volumes:
-      - .:/app:ro
       - ./storage:/app/storage
+      - encryption_key:/run/netsanctum-key:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -161,7 +191,8 @@ services:
     command:
       - sh
       - -c
-      - python -m app.core.migrations upgrade && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2
+      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && python -m app.core.migrations upgrade && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2
 
 volumes:
   pg_data:
+  encryption_key:

@@ -87,6 +87,18 @@ class ModuleRegistry:
             if is_package
         )
         for package in discovered_packages:
+            package_id = package.rsplit(".", 1)[-1]
+            if (
+                installed_modules is not None
+                and package_id not in installed_modules
+                and package_id not in REQUIRED_MODULE_IDS
+            ):
+                registry._records[package_id] = ModuleRecord(
+                    package=package,
+                    spec=None,
+                    status=ModuleStatus.UNAVAILABLE,
+                )
+                continue
             registry._discover_package(package)
         registry._discover_entry_points()
 
