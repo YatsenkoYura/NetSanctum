@@ -1,10 +1,11 @@
 import json
 import subprocess
 import urllib.parse
+from typing import Literal
 
 import anyio
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,12 @@ from app.modules.video_archiver.tasks import (
     sync_all_videos_task,
     sync_video_metadata_task,
     youtube_oauth2_task,
+)
+from app.modules.video_archiver.terminal_frames import (
+    CC_PALETTE,
+    FRAME_MEDIA_TYPES,
+    extract_video_frame,
+    validate_frame_dimensions,
 )
 
 router = APIRouter()
@@ -429,6 +436,87 @@ async def stream_video(
     from app.core.responses import serve_media_stream
 
     return serve_media_stream(request, video.file_path)
+
+
+@router.get(
+    "/api/video-archiver/videos/{video_id}/frame",
+    responses={
+        200: {
+            "content": {
+                "application/json": {},
+                "text/plain": {},
+                "image/png": {},
+                "image/jpeg": {},
+                "image/webp": {},
+            },
+            "description": "Frame encoded in the format selected by the format query parameter.",
+        }
+    },
+)
+async def get_video_frame(
+    video_id: str,
+    response: Response,
+    time: float = Query(0, ge=0),
+    width: int = Query(32, ge=1, le=2048),
+    height: int = Query(18, ge=1, le=2048),
+    frame_format: Literal["cc-palette", "nfp", "png", "jpeg", "webp"] = Query("cc-palette", alias="format"),
+    fit: Literal["contain", "cover", "stretch"] = "contain",
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Return one frame at the requested resolution in an image or terminal format."""
+    video = await VideoService.get_video(db, video_id)
+    if not video.file_path:
+        raise HTTPException(status_code=404, detail="Video file missing")
+
+    storage = get_storage()
+    if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
+        raise HTTPException(status_code=404, detail="Video file missing from storage")
+
+    duration = max(0, video.duration or 0)
+    timestamp = min(time, max(0, duration - 0.05)) if duration else time
+    try:
+        validate_frame_dimensions(width, height, frame_format)
+        frame = await anyio.to_thread.run_sync(
+            extract_video_frame,
+            storage,
+            video.file_path,
+            timestamp,
+            width,
+            height,
+            frame_format,
+            fit,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="Video frame extraction timed out") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Frame-Format": frame_format,
+        "X-Frame-Size": f"{width}x{height}",
+        "X-Frame-Time": f"{timestamp:.3f}",
+    }
+    if frame_format == "cc-palette":
+        response.headers.update(headers)
+        return {
+            "format": frame_format,
+            "fit": fit,
+            "width": width,
+            "height": height,
+            "time": round(timestamp, 3),
+            "duration": duration,
+            "palette": {code: f"#{red:02x}{green:02x}{blue:02x}" for code, red, green, blue in CC_PALETTE},
+            "rows": frame,
+        }
+    if frame_format == "nfp":
+        return Response(
+            content="\n".join(frame) + "\n",
+            media_type=FRAME_MEDIA_TYPES[frame_format],
+            headers=headers,
+        )
+    return Response(content=frame, media_type=FRAME_MEDIA_TYPES[frame_format], headers=headers)
 
 
 @router.get("/api/video-archiver/videos/{video_id}/audio", include_in_schema=False)

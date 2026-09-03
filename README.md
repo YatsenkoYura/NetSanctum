@@ -137,6 +137,10 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
+The Video Archiver also exposes an authenticated frame API with caller-selected size, fit mode, and
+`png`, `jpeg`, `webp`, `nfp`, or CC:Tweaked palette output. A basic CC:Tweaked video client and setup
+instructions live in [`clients/computercraft`](clients/computercraft/README.md).
+
 ### Module sharing
 
 Modules opt into isolated read-only sharing through a declarative manifest contract. Core owns link
