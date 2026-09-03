@@ -57,6 +57,15 @@ MODULE = ModuleSpec(
             request_model="app.modules.music.integrations:ImportEntityAudioRequest",
             result_model="app.modules.music.integrations:ImportEntityAudioResult",
         ),
+        IntegrationSpec(
+            id="music.library.viewer.v1",
+            contract="library.viewer.v1",
+            handler="app.modules.music.integrations:library_viewer",
+            request_model="app.contracts.library_viewer_v1:LibraryRequest",
+            result_model="app.contracts.library_viewer_v1:LibraryResult",
+            resource_handler="app.modules.music.integrations:resolve_library_resource",
+            resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
+        ),
     ),
     ui_actions=(
         UiActionSpec(

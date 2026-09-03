@@ -17,6 +17,7 @@ from app.core.module_config import load_enabled_module_ids
 from app.core.module_types import (
     MODULE_API_VERSION,
     IntegrationContext,
+    IntegrationResource,
     IntegrationSpec,
     IntegrationUnavailableError,
     ModuleSpec,
@@ -148,6 +149,7 @@ class ModuleRegistry:
         package_prefixes: dict[str, ModuleRecord] = {}
         entity_types: dict[str, ModuleRecord] = {}
         integrations: dict[str, ModuleRecord] = {}
+        integration_contracts: dict[str, tuple[ModuleRecord, str, str]] = {}
         ui_actions: dict[str, ModuleRecord] = {}
         for record in self.installed_records():
             spec = record.spec
@@ -174,6 +176,22 @@ class ModuleRegistry:
                     self._fail(record, "manifest", error)
                     continue
                 seen[value] = record
+            for integration in spec.integrations:
+                if not integration.contract:
+                    continue
+                contract = integration_contracts.get(integration.contract)
+                signature = (integration.request_model, integration.result_model)
+                if contract and signature != (contract[1], contract[2]):
+                    error = ValueError(
+                        f"Integration contract {integration.contract!r} schema differs from provider {contract[0].id!r}"
+                    )
+                    self._fail(record, "manifest", error)
+                    continue
+                integration_contracts[integration.contract] = (
+                    record,
+                    integration.request_model,
+                    integration.result_model,
+                )
 
     def _validate_required_manifests(self) -> None:
         for module_id in REQUIRED_MODULE_IDS:
@@ -466,6 +484,34 @@ class ModuleRegistry:
     def has_integration(self, integration_id: str) -> bool:
         return self.integration_provider(integration_id) is not None
 
+    def integration_providers(self, contract: str) -> list[tuple[ModuleRecord, IntegrationSpec]]:
+        """Return every active provider implementing a versioned contract."""
+        return [
+            (record, integration)
+            for record in self.active_records()
+            if record.spec
+            for integration in record.spec.integrations
+            if integration.contract == contract
+        ]
+
+    def _validate_integration_consumer(
+        self,
+        integration: IntegrationSpec,
+        context: IntegrationContext,
+    ) -> None:
+        if not context.consumer_id:
+            return
+        consumer = self._records.get(context.consumer_id)
+        if not consumer or consumer.status != ModuleStatus.ACTIVE or not consumer.spec:
+            raise IntegrationUnavailableError(f"Integration consumer {context.consumer_id!r} is not active")
+        if (
+            integration.id not in consumer.spec.uses_integrations
+            and integration.contract not in consumer.spec.uses_integration_contracts
+        ):
+            raise IntegrationUnavailableError(
+                f"Module {context.consumer_id!r} does not declare integration {integration.id!r}"
+            )
+
     def integration_catalog(self) -> list[dict[str, Any]]:
         """Describe active integrations for API clients and diagnostics."""
         catalog = []
@@ -476,22 +522,60 @@ class ModuleRegistry:
                 try:
                     request_model = self._load_object(integration.request_model)
                     result_model = self._load_object(integration.result_model)
+                    resource_schema = None
+                    if integration.resource_request_model:
+                        resource_schema = self._load_object(
+                            integration.resource_request_model
+                        ).model_json_schema()
                     catalog.append(
                         {
                             "id": integration.id,
+                            "contract": integration.contract,
                             "module_id": record.id,
                             "request_schema": request_model.model_json_schema(),
                             "result_schema": result_model.model_json_schema(),
+                            "resource_schema": resource_schema,
                             "used_by": sorted(
                                 consumer.id
                                 for consumer in self.active_records()
-                                if consumer.spec and integration.id in consumer.spec.uses_integrations
+                                if consumer.spec
+                                and (
+                                    integration.id in consumer.spec.uses_integrations
+                                    or integration.contract in consumer.spec.uses_integration_contracts
+                                )
                             ),
                         }
                     )
                 except Exception as exc:
                     self._component_error(record, f"integration:{integration.id}", exc)
         return sorted(catalog, key=lambda item: item["id"])
+
+    def integration_contract_catalog(self) -> list[dict[str, Any]]:
+        """Group active providers by shared versioned contract."""
+        contracts: dict[str, dict[str, Any]] = {}
+        for integration in self.integration_catalog():
+            contract_id = integration["contract"]
+            if not contract_id:
+                continue
+            contract = contracts.setdefault(
+                contract_id,
+                {
+                    "id": contract_id,
+                    "request_schema": integration["request_schema"],
+                    "result_schema": integration["result_schema"],
+                    "resource_schema": integration["resource_schema"],
+                    "providers": [],
+                },
+            )
+            contract["providers"].append(
+                {
+                    "id": integration["id"],
+                    "module_id": integration["module_id"],
+                    "used_by": integration["used_by"],
+                    "has_resources": integration["resource_schema"] is not None,
+                }
+            )
+        return [contracts[contract_id] for contract_id in sorted(contracts)]
 
     async def invoke_integration(
         self,
@@ -505,6 +589,7 @@ class ModuleRegistry:
             raise IntegrationUnavailableError(f"No active provider for integration {integration_id!r}")
 
         record, integration = provider
+        self._validate_integration_consumer(integration, context)
         try:
             request_model = self._load_object(integration.request_model)
             result_model = self._load_object(integration.result_model)
@@ -522,6 +607,38 @@ class ModuleRegistry:
         except ValidationError as exc:
             raise RuntimeError(f"Integration {integration_id!r} returned an invalid result") from exc
         return validated_result.model_dump(mode="json")
+
+    async def resolve_integration_resource(
+        self,
+        integration_id: str,
+        payload: dict[str, Any],
+        context: IntegrationContext,
+    ) -> IntegrationResource:
+        """Resolve an internal provider resource without serializing its storage path."""
+        provider = self.integration_provider(integration_id)
+        if not provider:
+            raise IntegrationUnavailableError(f"No active provider for integration {integration_id!r}")
+        if not context.consumer_id:
+            raise IntegrationUnavailableError("Internal integration resources require a declared consumer")
+        record, integration = provider
+        self._validate_integration_consumer(integration, context)
+        if not integration.resource_handler or not integration.resource_request_model:
+            raise IntegrationUnavailableError(f"Integration {integration_id!r} has no resource resolver")
+        try:
+            request_model = self._load_object(integration.resource_request_model)
+            handler = self._load_object(integration.resource_handler)
+        except Exception as exc:
+            self._component_error(record, f"integration-resource:{integration_id}", exc)
+            raise IntegrationUnavailableError(
+                f"Integration resource resolver {integration_id!r} could not be loaded"
+            ) from exc
+        request = request_model.model_validate(payload)
+        resource = handler(request, context)
+        if inspect.isawaitable(resource):
+            resource = await resource
+        if not isinstance(resource, IntegrationResource):
+            raise RuntimeError(f"Integration {integration_id!r} returned an invalid internal resource")
+        return resource
 
     def ui_actions(self, slot: str, context: dict[str, str], lang: str = "en") -> list[dict[str, Any]]:
         """Return safe, structured actions contributed by active modules."""

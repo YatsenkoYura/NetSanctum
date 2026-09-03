@@ -28,6 +28,9 @@ class IntegrationSpec:
     handler: str
     request_model: str
     result_model: str
+    contract: str | None = None
+    resource_handler: str | None = None
+    resource_request_model: str | None = None
 
     def __post_init__(self) -> None:
         if not INTEGRATION_ID_PATTERN.fullmatch(self.id):
@@ -35,6 +38,14 @@ class IntegrationSpec:
         _validate_object_path(self.handler, "Integration handler")
         _validate_object_path(self.request_model, "Integration request model")
         _validate_object_path(self.result_model, "Integration result model")
+        if self.contract and not INTEGRATION_ID_PATTERN.fullmatch(self.contract):
+            raise ValueError(f"Invalid versioned integration contract: {self.contract!r}")
+        if bool(self.resource_handler) != bool(self.resource_request_model):
+            raise ValueError("Integration resource handler and request model must be declared together")
+        if self.resource_handler:
+            assert self.resource_request_model is not None
+            _validate_object_path(self.resource_handler, "Integration resource handler")
+            _validate_object_path(self.resource_request_model, "Integration resource request model")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +78,31 @@ class IntegrationContext:
     session: Any
     user: Any
     registry: Any
+    consumer_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationResource:
+    """Internal resource resolved by a provider without exposing its storage path over JSON."""
+
+    kind: str
+    title: str
+    storage_path: str | None = None
+    text: str | None = None
+    subtitle: str | None = None
+    duration: float = 0
+    page: int | None = None
+    pages_count: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"audio", "video", "image", "text"}:
+            raise ValueError(f"Unsupported integration resource kind: {self.kind!r}")
+        if self.kind == "text" and self.text is None:
+            raise ValueError("Text integration resource must provide text")
+        if self.kind != "text" and not self.storage_path:
+            raise ValueError("Media integration resource must provide a storage path")
+        if self.duration < 0:
+            raise ValueError("Integration resource duration cannot be negative")
 
 
 class IntegrationUnavailableError(LookupError):
@@ -75,6 +111,10 @@ class IntegrationUnavailableError(LookupError):
 
 class IntegrationRejectedError(ValueError):
     """Raised when an integration cannot handle the supplied context."""
+
+
+class IntegrationNotFoundError(LookupError):
+    """Raised when an integration target does not exist."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +280,7 @@ class ModuleSpec:
     migrations: MigrationSpec | None = None
     integrations: tuple[IntegrationSpec, ...] = ()
     uses_integrations: tuple[str, ...] = ()
+    uses_integration_contracts: tuple[str, ...] = ()
     ui_actions: tuple[UiActionSpec, ...] = ()
     progress_key_patterns: tuple[str, ...] = ()
     dependency_extra: str | None = None
@@ -278,6 +319,11 @@ class ModuleSpec:
                 raise ValueError(f"Invalid used integration id: {integration_id!r}")
         if len(self.uses_integrations) != len(set(self.uses_integrations)):
             raise ValueError(f"Module {self.id!r} declares duplicate integration uses")
+        for contract in self.uses_integration_contracts:
+            if not INTEGRATION_ID_PATTERN.fullmatch(contract):
+                raise ValueError(f"Invalid used integration contract: {contract!r}")
+        if len(self.uses_integration_contracts) != len(set(self.uses_integration_contracts)):
+            raise ValueError(f"Module {self.id!r} declares duplicate integration contract uses")
         action_ids = [action.id for action in self.ui_actions]
         if len(action_ids) != len(set(action_ids)):
             raise ValueError(f"Module {self.id!r} declares duplicate UI actions")

@@ -1,4 +1,11 @@
-from app.core.module_types import MigrationSpec, ModuleSpec, ShareAsset, ShareRoute, ShareSpec
+from app.core.module_types import (
+    IntegrationSpec,
+    MigrationSpec,
+    ModuleSpec,
+    ShareAsset,
+    ShareRoute,
+    ShareSpec,
+)
 
 MODULE = ModuleSpec(
     id="alllib",
@@ -51,6 +58,17 @@ MODULE = ModuleSpec(
     ),
     entity_types=("manga", "ranobe", "anime"),
     entity_resolver="app.modules.alllib.capabilities:resolve_entity",
+    integrations=(
+        IntegrationSpec(
+            id="alllib.library.viewer.v1",
+            contract="library.viewer.v1",
+            handler="app.modules.alllib.integrations:library_viewer",
+            request_model="app.contracts.library_viewer_v1:LibraryRequest",
+            result_model="app.contracts.library_viewer_v1:LibraryResult",
+            resource_handler="app.modules.alllib.integrations:resolve_library_resource",
+            resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
+        ),
+    ),
     progress_key_patterns=("alllib_dl:*",),
     dependency_extra="alllib",
     system_packages=("ffmpeg",),

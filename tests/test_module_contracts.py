@@ -23,6 +23,7 @@ from app.core.modules import (
 PUBLIC_MODULES = {
     "alllib",
     "auth",
+    "computercraft",
     "music",
     "settings",
     "sharing",
@@ -397,7 +398,7 @@ class ModuleManifestTests(unittest.TestCase):
 
     def test_product_modules_do_not_import_other_product_modules(self):
         modules_root = Path("app/modules")
-        product_modules = {"alllib", "music", "vault", "video_archiver"}
+        product_modules = {"alllib", "computercraft", "music", "vault", "video_archiver"}
 
         for source_module in product_modules:
             for path in (modules_root / source_module).glob("*.py"):

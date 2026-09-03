@@ -132,14 +132,16 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **Video Archiver** downloads and streams videos, subtitles, metadata, and comments.
 - **Vault** stores notes, bookmarks, collections, ratings, and media progress.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
+- **ComputerCraft** runs the NetSanctumOS controller, monitor viewers, and speaker playback.
 - **Auth and Settings** provide internal platform services used by the other modules.
 - **Sharing** publishes an isolated, read-only module view with optional content selection, password, and expiry.
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
-The Video Archiver also exposes an authenticated frame API with caller-selected size, fit mode, and
-`png`, `jpeg`, `webp`, `nfp`, or CC:Tweaked palette output. A basic CC:Tweaked video client and setup
-instructions live in [`clients/computercraft`](clients/computercraft/README.md).
+The optional ComputerCraft module discovers every provider of the versioned `library.viewer.v1`
+contract. Its NetSanctumOS client uses the computer as a control panel and attached monitors and
+speakers for viewing and playback. Setup instructions live in
+[`clients/computercraft`](clients/computercraft/README.md).
 
 ### Module sharing
 
@@ -219,6 +221,15 @@ declared result model. `GET /api/integrations` exposes active contracts and JSON
 `<netsanctum-actions>` slots, and the framework renders only actions whose provider is active and whose
 contract the entity-owning module declared in `uses_integrations`. UI contributions contain structured
 metadata only, never arbitrary HTML or JavaScript.
+
+Multiple modules can implement one interface by assigning the same versioned `contract` to unique
+integration IDs. Contract providers must reference the same request and result models, consumers
+declare `uses_integration_contracts`, and the registry exposes all active implementations through
+`integration_providers(contract)`. Module-originated calls include `consumer_id` and are rejected
+unless that exact integration or contract was declared. Optional `resource_handler` declarations
+resolve internal `IntegrationResource` objects for binary or text adapters without serializing
+storage paths through the public integration API. `GET /api/integrations/contracts` exposes grouped
+provider and schema metadata for diagnostics and generic clients.
 
 ## Quick Start
 

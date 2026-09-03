@@ -5,6 +5,7 @@
     "video_archiver",
     "vault",
     "alllib",
+    "computercraft",
     "storage"
   ],
   "modules": {
@@ -19,6 +20,13 @@
       "required": true,
       "extra": null,
       "system_packages": []
+    },
+    "computercraft": {
+      "required": false,
+      "extra": null,
+      "system_packages": [
+        "ffmpeg"
+      ]
     },
     "music": {
       "required": false,

@@ -1,72 +1,69 @@
-# NetSanctum Video for CC:Tweaked
+# NetSanctumOS for CC:Tweaked
 
-`netsanctum_video.lua` is a terminal client for the NetSanctum Video Archiver API. It lists completed
-videos and asks the server for frames matching the current terminal or multiblock monitor size. It
-does not use the web dashboard or HTMX.
+NetSanctum's optional `computercraft` module exposes active product modules through versioned
+integration contracts and serves the NetSanctumOS Lua client. The computer terminal is always the
+control panel. An attached monitor or monitor wall is display-only, and all attached speakers are
+used as audio outputs.
 
-## Requirements
+## Server
 
-- NetSanctum built with the `video_archiver` module and this version of the server code.
-- A CC:Tweaked advanced computer or monitor with the HTTP API enabled.
-- An optional speaker peripheral for synchronized audio.
-- Network access from Minecraft to the NetSanctum node. Add the node host to CC:Tweaked's HTTP
-  allowlist when the server configuration blocks private or plain-HTTP addresses.
-- The persistent NetSanctum owner token. The client exchanges it for a 24-hour bearer session.
+The default Docker build includes `computercraft`. Rebuild the node after updating:
 
-## Install and run
-
-Put `netsanctum_video.lua` on the computer as `netsanctum_video`, then run:
-
-```text
-netsanctum_video
+```bash
+./start.sh --restart
 ```
 
-On first run, enter the node base URL, for example `https://netsanctum.example.net`, and the owner
-token. The token is masked while typing and stored in `.netsanctum-video.cfg` on that computer.
-Treat the computer and its disk as trusted. To remove the saved settings:
+The module discovers every active provider of the shared `library.viewer.v1` contract. Current
+provider IDs are:
+
+- `music.library.viewer.v1`
+- `video_archiver.library.viewer.v1`
+- `alllib.library.viewer.v1`
+
+Disabled or uninstalled providers disappear from NetSanctumOS automatically. A future module only
+needs to implement the shared contract; ComputerCraft does not maintain a module allowlist. The
+common API is under `/api/computercraft`; media conversion, CC palette rendering, and DFPWM encoding
+belong only to this module. Provider storage paths are resolved through an internal resource handler
+and are never included in the public integration JSON.
+
+## Install
+
+The node serves the client without authentication so a fresh computer can install it directly:
 
 ```text
-netsanctum_video reset
+wget https://netsanctum.example.net/computercraft/client.lua netsanctum
+netsanctum
 ```
 
-The client automatically uses the first attached monitor and sets its text scale to `0.5`. A joined
-monitor wall is exposed by CC:Tweaked as one peripheral and uses its full dimensions. To select a
-specific local side or wired peripheral name, pass it as the first argument:
+Alternatively, download the repository file
+`app/modules/computercraft/netsanctum_os.lua`. On first launch, enter the node base URL and owner
+token. NetSanctumOS stores them in `.netsanctum-os.cfg` and migrates the previous
+`.netsanctum-video.cfg` automatically.
+
+Use a specific monitor or force the internal terminal with:
 
 ```text
-netsanctum_video left
-netsanctum_video monitor_12
+netsanctum left
+netsanctum monitor_12
+netsanctum terminal
+netsanctum reset
 ```
 
-Use `netsanctum_video terminal` to keep output on the computer even when a monitor is attached.
-The first attached speaker is detected automatically.
+## Runtime
 
-Controls in the catalog are Up, Down, Enter, R, and Q. On an advanced monitor, touch a video to play
-it or touch `[X]` to exit. During playback use Space to pause, Left/Right to seek 10 seconds, N/P to
-change video, and Q to return. The monitor's bottom row provides Back, Previous, seek, pause, and
-Next touch controls. Playback is intentionally limited to about two frames per second.
+Boot initialization reports the controller, monitors, selected display, speakers, authentication,
+and active modules. The computer uses keyboard and mouse events for all navigation. The monitor is
+reserved for previews, video, manga pages, and novel text.
 
-## Frame API
+Current viewers:
 
-The client uses the general authenticated frame endpoint:
+- Music: catalog and DFPWM speaker playback.
+- Video Archive: catalog, terminal frames, DFPWM audio, pause, and seek.
+- Lib Network: catalog, chapter selection, novel reader, manga viewer, and anime playback.
 
-```text
-GET /api/video-archiver/videos/{id}/frame
-    ?time=12.5
-    &width=120
-    &height=60
-    &format=cc-palette
-    &fit=contain
-```
+Video and image requests select their terminal resolution dynamically. DFPWM is mono at 48 kHz and
+is broadcast to every attached speaker.
 
-Supported formats are `cc-palette`, `nfp`, `png`, `jpeg`, and `webp`. Supported fit modes are
-`contain`, `cover`, and `stretch`. `cc-palette` returns JSON with one string of CC blit color digits
-per row; `nfp` returns the same pixels as a paintutils-compatible text image. Other formats return
-the encoded image directly.
-
-Dimensions are selected per request. Image formats allow up to 2,073,600 pixels per frame;
-CC palette formats allow up to 262,144 cells, so joined monitor walls such as `5x5` are supported.
-
-For audio, the client requests the existing video audio endpoint with `format=dfpwm&time=<seconds>`.
-The default remains `format=mp3` for browser clients. DFPWM is mono at 48 kHz, as required by
-CC:Tweaked's `speaker.playAudio` API.
+Remote or encrypted media is materialized once into a private seekable cache under `/tmp` so frame
+requests do not download the object repeatedly. Individual cached media is limited to 512 MiB and
+the process cache is limited to 1 GiB.

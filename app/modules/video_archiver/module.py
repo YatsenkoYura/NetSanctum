@@ -1,4 +1,11 @@
-from app.core.module_types import MigrationSpec, ModuleSpec, ShareAsset, ShareRoute, ShareSpec
+from app.core.module_types import (
+    IntegrationSpec,
+    MigrationSpec,
+    ModuleSpec,
+    ShareAsset,
+    ShareRoute,
+    ShareSpec,
+)
 
 MODULE = ModuleSpec(
     id="video_archiver",
@@ -70,6 +77,17 @@ MODULE = ModuleSpec(
     ),
     entity_types=("video",),
     entity_resolver="app.modules.video_archiver.capabilities:resolve_entity",
+    integrations=(
+        IntegrationSpec(
+            id="video_archiver.library.viewer.v1",
+            contract="library.viewer.v1",
+            handler="app.modules.video_archiver.integrations:library_viewer",
+            request_model="app.contracts.library_viewer_v1:LibraryRequest",
+            result_model="app.contracts.library_viewer_v1:LibraryResult",
+            resource_handler="app.modules.video_archiver.integrations:resolve_library_resource",
+            resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
+        ),
+    ),
     uses_integrations=("media.audio.import.v1",),
     progress_key_patterns=("video_dl:*", "video_oauth:*"),
     dependency_extra="video_archiver",

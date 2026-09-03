@@ -1,12 +1,11 @@
 import json
 import subprocess
 import urllib.parse
-from typing import Literal
 
 import anyio
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +17,6 @@ from app.core.storage import LocalStorage, get_storage
 from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 from app.modules.settings.models import Setting
-from app.modules.video_archiver.audio_streams import build_audio_command
 from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
 from app.modules.video_archiver.providers import PlatformRegistry
 from app.modules.video_archiver.schemas import DownloadRequest, PlaylistCreate, SyncAllRequest
@@ -32,12 +30,6 @@ from app.modules.video_archiver.tasks import (
     sync_all_videos_task,
     sync_video_metadata_task,
     youtube_oauth2_task,
-)
-from app.modules.video_archiver.terminal_frames import (
-    CC_PALETTE,
-    FRAME_MEDIA_TYPES,
-    extract_video_frame,
-    validate_frame_dimensions,
 )
 
 router = APIRouter()
@@ -439,104 +431,32 @@ async def stream_video(
     return serve_media_stream(request, video.file_path)
 
 
-@router.get(
-    "/api/video-archiver/videos/{video_id}/frame",
-    responses={
-        200: {
-            "content": {
-                "application/json": {},
-                "text/plain": {},
-                "image/png": {},
-                "image/jpeg": {},
-                "image/webp": {},
-            },
-            "description": "Frame encoded in the format selected by the format query parameter.",
-        }
-    },
-)
-async def get_video_frame(
+@router.get("/api/video-archiver/videos/{video_id}/frame", include_in_schema=False)
+async def legacy_computercraft_frame(
+    request: Request,
     video_id: str,
-    response: Response,
-    time: float = Query(0, ge=0),
-    width: int = Query(32, ge=1, le=2048),
-    height: int = Query(18, ge=1, le=2048),
-    frame_format: Literal["cc-palette", "nfp", "png", "jpeg", "webp"] = Query("cc-palette", alias="format"),
-    fit: Literal["contain", "cover", "stretch"] = "contain",
-    db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Return one frame at the requested resolution in an image or terminal format."""
-    video = await VideoService.get_video(db, video_id)
-    if not video.file_path:
-        raise HTTPException(status_code=404, detail="Video file missing")
-
-    storage = get_storage()
-    if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
-        raise HTTPException(status_code=404, detail="Video file missing from storage")
-
-    duration = max(0, video.duration or 0)
-    timestamp = min(time, max(0, duration - 0.05)) if duration else time
-    try:
-        validate_frame_dimensions(width, height, frame_format)
-        frame = await anyio.to_thread.run_sync(
-            extract_video_frame,
-            storage,
-            video.file_path,
-            timestamp,
-            width,
-            height,
-            frame_format,
-            fit,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="Video frame extraction timed out") from exc
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    headers = {
-        "Cache-Control": "no-store",
-        "X-Frame-Format": frame_format,
-        "X-Frame-Size": f"{width}x{height}",
-        "X-Frame-Time": f"{timestamp:.3f}",
-    }
-    if frame_format == "cc-palette":
-        response.headers.update(headers)
-        return {
-            "format": frame_format,
-            "fit": fit,
-            "width": width,
-            "height": height,
-            "time": round(timestamp, 3),
-            "duration": duration,
-            "palette": {code: f"#{red:02x}{green:02x}{blue:02x}" for code, red, green, blue in CC_PALETTE},
-            "rows": frame,
-        }
-    if frame_format == "nfp":
-        return Response(
-            content="\n".join(frame) + "\n",
-            media_type=FRAME_MEDIA_TYPES[frame_format],
-            headers=headers,
-        )
-    return Response(content=frame, media_type=FRAME_MEDIA_TYPES[frame_format], headers=headers)
+    """Redirect the shipped legacy CC client to the ComputerCraft module."""
+    target = f"/api/computercraft/modules/video_archiver/items/{urllib.parse.quote(video_id, safe='')}/frame"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(target, status_code=307)
 
 
-@router.get(
-    "/api/video-archiver/videos/{video_id}/audio",
-    responses={
-        200: {
-            "content": {"audio/mpeg": {}, "audio/x-dfpwm": {}},
-            "description": "Audio stream encoded in the format query parameter.",
-        }
-    },
-)
+@router.get("/api/video-archiver/videos/{video_id}/audio", include_in_schema=False)
 async def stream_audio(
+    request: Request,
     video_id: str,
-    time: float = Query(0, ge=0),
-    audio_format: Literal["mp3", "dfpwm"] = Query("mp3", alias="format"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Stream archived-video audio as browser MP3 or CC:Tweaked DFPWM."""
+    """Pipes extracted audio (MP3) on-the-fly using FFmpeg without taking storage."""
+    if request.query_params.get("format") or "time" in request.query_params:
+        target = (
+            f"/api/computercraft/modules/video_archiver/items/{urllib.parse.quote(video_id, safe='')}/audio"
+        )
+        return RedirectResponse(f"{target}?{request.url.query}", status_code=307)
     video = await VideoService.get_video(db, video_id)
     if not video.file_path:
         raise HTTPException(status_code=404, detail="Video file missing")
@@ -545,60 +465,56 @@ async def stream_audio(
     if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
         raise HTTPException(status_code=404, detail="Video file missing from storage")
 
-    import threading
+    if isinstance(storage, LocalStorage):
+        abs_path = storage._full_path(video.file_path)
+        cmd = ["ffmpeg", "-i", str(abs_path), "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-    duration = max(0, video.duration or 0)
-    timestamp = min(time, max(0, duration - 0.05)) if duration else time
-    local = isinstance(storage, LocalStorage)
-    video_input = str(storage._full_path(video.file_path)) if local else "pipe:0"
-    command = build_audio_command(video_input, timestamp, audio_format, seekable=local)
-    process = subprocess.Popen(
-        command,
-        stdin=None if local else subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    feeder = None
-    if not local:
-        assert process.stdin is not None
-        process_stdin = process.stdin
+        async def iter_audio():
+            try:
+                while True:
+                    chunk = await anyio.to_thread.run_sync(proc.stdout.read, 16384)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                await anyio.to_thread.run_sync(proc.terminate)
+                await anyio.to_thread.run_sync(proc.wait)
+
+        return StreamingResponse(iter_audio(), media_type="audio/mpeg")
+    else:
+        import threading
+
+        cmd = ["ffmpeg", "-i", "pipe:0", "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
         def feed_stdin():
             try:
-                with storage.get_file_stream(video.file_path) as stream:
-                    while chunk := stream.read(65536):
-                        process_stdin.write(chunk)
-            except (BrokenPipeError, OSError):
+                with storage.get_file_stream(video.file_path) as s3_stream:
+                    while chunk := s3_stream.read(65536):
+                        proc.stdin.write(chunk)
+            except Exception:
                 pass
             finally:
-                process_stdin.close()
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
 
-        feeder = threading.Thread(target=feed_stdin, daemon=True)
-        feeder.start()
+        async def iter_audio_s3():
+            feeder = threading.Thread(target=feed_stdin, daemon=True)
+            feeder.start()
+            try:
+                while True:
+                    chunk = await anyio.to_thread.run_sync(proc.stdout.read, 16384)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                await anyio.to_thread.run_sync(proc.terminate)
+                await anyio.to_thread.run_sync(proc.wait)
 
-    assert process.stdout is not None
-    process_stdout = process.stdout
-
-    async def iter_audio():
-        try:
-            while chunk := await anyio.to_thread.run_sync(process_stdout.read, 16384):
-                yield chunk
-        finally:
-            process.terminate()
-            await anyio.to_thread.run_sync(process.wait)
-            if feeder:
-                await anyio.to_thread.run_sync(feeder.join, 1)
-
-    media_type = "audio/x-dfpwm" if audio_format == "dfpwm" else "audio/mpeg"
-    return StreamingResponse(
-        iter_audio(),
-        media_type=media_type,
-        headers={
-            "Cache-Control": "no-store",
-            "X-Audio-Format": audio_format,
-            "X-Audio-Time": f"{timestamp:.3f}",
-        },
-    )
+        return StreamingResponse(iter_audio_s3(), media_type="audio/mpeg")
 
 
 @router.get("/api/video-archiver/videos/{video_id}/thumbnail", include_in_schema=False)

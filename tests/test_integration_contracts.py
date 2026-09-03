@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.core.module_types import (
     IntegrationContext,
+    IntegrationResource,
     IntegrationSpec,
     IntegrationUnavailableError,
     ModuleSpec,
@@ -22,8 +23,19 @@ class ExampleResult(BaseModel):
     echoed: str
 
 
+class ExampleResourceRequest(BaseModel):
+    resource_id: str
+
+
 async def example_handler(request: ExampleRequest, context: IntegrationContext) -> ExampleResult:
     return ExampleResult(echoed=request.value)
+
+
+async def example_resource_handler(
+    request: ExampleResourceRequest,
+    context: IntegrationContext,
+) -> IntegrationResource:
+    return IntegrationResource(kind="text", title=request.resource_id, text="content")
 
 
 async def example_entity_resolver(session, entity_type: str, entity_id: str) -> dict:
@@ -45,9 +57,13 @@ def make_registry(status: ModuleStatus = ModuleStatus.ACTIVE) -> ModuleRegistry:
                 handler="test_integration_contracts:example_handler",
                 request_model="test_integration_contracts:ExampleRequest",
                 result_model="test_integration_contracts:ExampleResult",
+                contract="example.contract.v1",
+                resource_handler="test_integration_contracts:example_resource_handler",
+                resource_request_model="test_integration_contracts:ExampleResourceRequest",
             ),
         ),
         uses_integrations=("example.echo.v1",),
+        uses_integration_contracts=("example.contract.v1",),
         ui_actions=(
             UiActionSpec(
                 id="example.echo",
@@ -114,8 +130,84 @@ class IntegrationContractTests(unittest.TestCase):
         catalog = registry.integration_catalog()
 
         self.assertEqual("example.echo.v1", catalog[0]["id"])
+        self.assertEqual("example.contract.v1", catalog[0]["contract"])
         self.assertEqual(["example"], catalog[0]["used_by"])
         self.assertEqual("object", catalog[0]["request_schema"]["type"])
+        self.assertEqual("object", catalog[0]["resource_schema"]["type"])
+
+        contracts = registry.integration_contract_catalog()
+        self.assertEqual("example.contract.v1", contracts[0]["id"])
+        self.assertEqual("example", contracts[0]["providers"][0]["module_id"])
+        self.assertTrue(contracts[0]["providers"][0]["has_resources"])
+
+    def test_registry_resolves_internal_resource_for_declared_consumer(self):
+        registry = make_registry()
+        context = IntegrationContext(session=None, user=None, registry=registry, consumer_id="example")
+
+        resource = asyncio.run(
+            registry.resolve_integration_resource(
+                "example.echo.v1",
+                {"resource_id": "chapter"},
+                context,
+            )
+        )
+
+        self.assertEqual("content", resource.text)
+
+        owner_context = IntegrationContext(session=None, user=None, registry=registry)
+        with self.assertRaises(IntegrationUnavailableError):
+            asyncio.run(
+                registry.resolve_integration_resource(
+                    "example.echo.v1",
+                    {"resource_id": "chapter"},
+                    owner_context,
+                )
+            )
+
+    def test_registry_rejects_undeclared_module_consumer(self):
+        registry = make_registry()
+        consumer_spec = ModuleSpec(
+            id="consumer",
+            version="1.0.0",
+            title_en="Consumer",
+            title_ru="Consumer",
+        )
+        registry._records[consumer_spec.id] = ModuleRecord(
+            package="consumer",
+            spec=consumer_spec,
+            status=ModuleStatus.ACTIVE,
+        )
+        context = IntegrationContext(session=None, user=None, registry=registry, consumer_id="consumer")
+
+        with self.assertRaises(IntegrationUnavailableError):
+            asyncio.run(registry.invoke_integration("example.echo.v1", {"value": "blocked"}, context))
+
+    def test_registry_discovers_multiple_providers_for_one_contract(self):
+        registry = make_registry()
+        second_spec = ModuleSpec(
+            id="second",
+            version="1.0.0",
+            title_en="Second",
+            title_ru="Second",
+            integrations=(
+                IntegrationSpec(
+                    id="second.echo.v1",
+                    contract="example.contract.v1",
+                    handler="test_integration_contracts:example_handler",
+                    request_model="test_integration_contracts:ExampleRequest",
+                    result_model="test_integration_contracts:ExampleResult",
+                ),
+            ),
+        )
+        registry._records[second_spec.id] = ModuleRecord(
+            package="second",
+            spec=second_spec,
+            status=ModuleStatus.ACTIVE,
+        )
+
+        providers = registry.integration_providers("example.contract.v1")
+
+        self.assertEqual({"example", "second"}, {record.id for record, _ in providers})
 
     def test_music_action_follows_module_activation(self):
         enabled = ModuleRegistry.discover({"music", "video_archiver"})

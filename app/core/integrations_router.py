@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.module_types import (
     IntegrationContext,
+    IntegrationNotFoundError,
     IntegrationRejectedError,
     IntegrationUnavailableError,
 )
@@ -22,6 +23,12 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 async def list_integrations(user=Depends(get_current_user)):
     """Expose active integration contracts and their JSON schemas."""
     return module_registry.integration_catalog()
+
+
+@router.get("/contracts")
+async def list_integration_contracts(user=Depends(get_current_user)):
+    """Expose shared contracts and every active provider implementing them."""
+    return module_registry.integration_contract_catalog()
 
 
 @router.get("/ui-actions")
@@ -56,6 +63,8 @@ async def invoke_integration(
             IntegrationContext(session=db, user=user, registry=module_registry),
         )
     except IntegrationUnavailableError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
