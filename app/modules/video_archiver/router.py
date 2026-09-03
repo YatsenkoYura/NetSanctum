@@ -18,6 +18,7 @@ from app.core.storage import LocalStorage, get_storage
 from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 from app.modules.settings.models import Setting
+from app.modules.video_archiver.audio_streams import build_audio_command
 from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
 from app.modules.video_archiver.providers import PlatformRegistry
 from app.modules.video_archiver.schemas import DownloadRequest, PlaylistCreate, SyncAllRequest
@@ -519,9 +520,23 @@ async def get_video_frame(
     return Response(content=frame, media_type=FRAME_MEDIA_TYPES[frame_format], headers=headers)
 
 
-@router.get("/api/video-archiver/videos/{video_id}/audio", include_in_schema=False)
-async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    """Pipes extracted audio (MP3) on-the-fly using FFmpeg without taking storage."""
+@router.get(
+    "/api/video-archiver/videos/{video_id}/audio",
+    responses={
+        200: {
+            "content": {"audio/mpeg": {}, "audio/x-dfpwm": {}},
+            "description": "Audio stream encoded in the format query parameter.",
+        }
+    },
+)
+async def stream_audio(
+    video_id: str,
+    time: float = Query(0, ge=0),
+    audio_format: Literal["mp3", "dfpwm"] = Query("mp3", alias="format"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Stream archived-video audio as browser MP3 or CC:Tweaked DFPWM."""
     video = await VideoService.get_video(db, video_id)
     if not video.file_path:
         raise HTTPException(status_code=404, detail="Video file missing")
@@ -530,56 +545,60 @@ async def stream_audio(video_id: str, db: AsyncSession = Depends(get_db), user=D
     if not await anyio.to_thread.run_sync(storage.file_exists, video.file_path):
         raise HTTPException(status_code=404, detail="Video file missing from storage")
 
-    if isinstance(storage, LocalStorage):
-        abs_path = storage._full_path(video.file_path)
-        cmd = ["ffmpeg", "-i", str(abs_path), "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    import threading
 
-        async def iter_audio():
-            try:
-                while True:
-                    chunk = await anyio.to_thread.run_sync(proc.stdout.read, 16384)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                await anyio.to_thread.run_sync(proc.terminate)
-                await anyio.to_thread.run_sync(proc.wait)
-
-        return StreamingResponse(iter_audio(), media_type="audio/mpeg")
-    else:
-        import threading
-
-        cmd = ["ffmpeg", "-i", "pipe:0", "-vn", "-acodec", "libmp3lame", "-f", "mp3", "pipe:1"]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    duration = max(0, video.duration or 0)
+    timestamp = min(time, max(0, duration - 0.05)) if duration else time
+    local = isinstance(storage, LocalStorage)
+    video_input = str(storage._full_path(video.file_path)) if local else "pipe:0"
+    command = build_audio_command(video_input, timestamp, audio_format, seekable=local)
+    process = subprocess.Popen(
+        command,
+        stdin=None if local else subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    feeder = None
+    if not local:
+        assert process.stdin is not None
+        process_stdin = process.stdin
 
         def feed_stdin():
             try:
-                with storage.get_file_stream(video.file_path) as s3_stream:
-                    while chunk := s3_stream.read(65536):
-                        proc.stdin.write(chunk)
-            except Exception:
+                with storage.get_file_stream(video.file_path) as stream:
+                    while chunk := stream.read(65536):
+                        process_stdin.write(chunk)
+            except (BrokenPipeError, OSError):
                 pass
             finally:
-                try:
-                    proc.stdin.close()
-                except Exception:
-                    pass
+                process_stdin.close()
 
-        async def iter_audio_s3():
-            feeder = threading.Thread(target=feed_stdin, daemon=True)
-            feeder.start()
-            try:
-                while True:
-                    chunk = await anyio.to_thread.run_sync(proc.stdout.read, 16384)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                await anyio.to_thread.run_sync(proc.terminate)
-                await anyio.to_thread.run_sync(proc.wait)
+        feeder = threading.Thread(target=feed_stdin, daemon=True)
+        feeder.start()
 
-        return StreamingResponse(iter_audio_s3(), media_type="audio/mpeg")
+    assert process.stdout is not None
+    process_stdout = process.stdout
+
+    async def iter_audio():
+        try:
+            while chunk := await anyio.to_thread.run_sync(process_stdout.read, 16384):
+                yield chunk
+        finally:
+            process.terminate()
+            await anyio.to_thread.run_sync(process.wait)
+            if feeder:
+                await anyio.to_thread.run_sync(feeder.join, 1)
+
+    media_type = "audio/x-dfpwm" if audio_format == "dfpwm" else "audio/mpeg"
+    return StreamingResponse(
+        iter_audio(),
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Audio-Format": audio_format,
+            "X-Audio-Time": f"{timestamp:.3f}",
+        },
+    )
 
 
 @router.get("/api/video-archiver/videos/{video_id}/thumbnail", include_in_schema=False)
