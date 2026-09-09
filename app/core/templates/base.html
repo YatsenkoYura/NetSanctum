@@ -147,7 +147,7 @@
                 <!-- Stark Dropdown Language Selector -->
                 <form method="post" action="/set-language">
                     <input type="hidden" name="next_url" value="{{ request.url.path }}">
-                    <select name="lang" onchange="this.form.submit();"
+                    <select name="lang" onchange="this.form.requestSubmit();"
                         class="bg-black border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 transition-colors cursor-pointer select-none">
                         <option value="en" {% if lang=='en' or not lang %}selected{% endif %}>EN</option>
                         <option value="ru" {% if lang=='ru' %}selected{% endif %}>RU</option>
@@ -561,6 +561,8 @@
 
                 const payload = JSON.stringify({
                     action: "DOWNLOAD_PACKAGE",
+                    contract_version: 1,
+                    manifest_url: manifestUrl,
                     manifest: manifest
                 });
 
@@ -570,6 +572,8 @@
                 } else if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
                     window.flutter_inappwebview.callHandler('NetOutpostBridge', {
                         action: "DOWNLOAD_PACKAGE",
+                        contract_version: 1,
+                        manifest_url: manifestUrl,
                         manifest: manifest
                     });
                     alert("Package sync requested.");
@@ -686,6 +690,8 @@
             const pkgId = urlParams.get('package_id');
             if (pkgId) {
                 sessionStorage.setItem('active_package_id', pkgId);
+            } else {
+                sessionStorage.removeItem('active_package_id');
             }
 
             // HTMX request interceptor to append package_id to parameters
@@ -704,16 +710,37 @@
                 }
             });
 
+            document.addEventListener('htmx:beforeRequest', function (evt) {
+                const method = (evt.detail.requestConfig?.verb || 'GET').toUpperCase();
+                if (sessionStorage.getItem('active_package_id') && !['GET', 'HEAD'].includes(method)) {
+                    evt.preventDefault();
+                    alert('Offline packages are read-only.');
+                }
+            });
+
+            document.addEventListener('submit', function (evt) {
+                const method = (evt.target?.method || 'GET').toUpperCase();
+                if (sessionStorage.getItem('active_package_id') && !['GET', 'HEAD'].includes(method)) {
+                    evt.preventDefault();
+                    alert('Offline packages are read-only.');
+                }
+            }, true);
+
             // Native fetch interceptor to append package_id to outgoing URLs
             const originalFetch = window.fetch;
             window.fetch = function (input, init) {
                 const activePkgId = sessionStorage.getItem('active_package_id');
-                if (activePkgId && typeof input === 'string') {
+                const request = input instanceof Request ? input : null;
+                const method = (init?.method || request?.method || 'GET').toUpperCase();
+                if (activePkgId && !['GET', 'HEAD'].includes(method)) {
+                    return Promise.reject(new Error('Offline packages are read-only.'));
+                }
+                if (activePkgId && (typeof input === 'string' || input instanceof Request)) {
                     try {
-                        const url = new URL(input, window.location.origin);
+                        const url = new URL(request ? request.url : input, window.location.origin);
                         if (!url.searchParams.has('package_id') && url.origin === window.location.origin) {
                             url.searchParams.set('package_id', activePkgId);
-                            input = url.pathname + url.search;
+                            input = request ? new Request(url, request) : url.pathname + url.search;
                         }
                     } catch (e) { }
                 }

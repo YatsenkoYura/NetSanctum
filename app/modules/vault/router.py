@@ -1,11 +1,13 @@
+import asyncio
 import random
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.security import get_current_user
 from app.core.templates import templates
 from app.modules.vault.schemas import (
@@ -87,6 +89,7 @@ async def get_items(
     sort_order: str = Query("desc"),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
+    package_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -108,7 +111,18 @@ async def get_items(
         limit=limit,
         offset=offset,
     )
-    return items
+    if package_id and package_id != "vault_all":
+        raise HTTPException(status_code=400, detail="Invalid Vault package ID")
+    if not package_id:
+        return items
+
+    result = []
+    for item in items:
+        serialized = VaultItemResponse.model_validate(item).model_dump()
+        if item.og_image and item.og_image.startswith(("http://", "https://")):
+            serialized["og_image"] = f"/api/vault/items/{item.id}/preview?package_id={package_id}"
+        result.append(serialized)
+    return result
 
 
 @router.post("/api/vault/items", response_model=VaultItemResponse)
@@ -133,6 +147,37 @@ async def get_item_by_id(
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
     return item
+
+
+@router.get("/api/vault/items/{item_id}/preview", include_in_schema=False)
+async def get_item_preview(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Proxy a remote bookmark image so an offline package remains self-contained."""
+    item = await get_vault_item(db, item_id)
+    if not item or not item.og_image or not item.og_image.startswith(("http://", "https://")):
+        raise HTTPException(status_code=404, detail="Vault preview not found")
+    try:
+        content, content_type, _ = await asyncio.to_thread(
+            fetch_bytes_checked,
+            item.og_image,
+            max_redirects=4,
+            max_bytes=8 * 1024 * 1024,
+            allowed_content_prefixes=("image/",),
+            https_only=False,
+        )
+    except (RemoteFetchError, OSError) as exc:
+        raise HTTPException(status_code=502, detail="Could not fetch Vault preview") from exc
+    return Response(
+        content=content,
+        media_type="application/octet-stream" if content_type == "image/svg+xml" else content_type,
+        headers={
+            "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.patch("/api/vault/items/{item_id}", response_model=VaultItemResponse)
@@ -306,21 +351,36 @@ async def get_vault_sync_manifest(
     Allows offline access to all Vault bookmarks, ratings and notes via NSP container.
     """
     pkg_id = "vault_all"
+    package_query = f"package_id={pkg_id}"
 
     resources = [
-        {"url": "/vault/dashboard", "type": "html"},
-        {"url": "/api/vault/items?limit=500&is_archived=false", "type": "json"},
-        {"url": "/api/vault/stats", "type": "json"},
-        {"url": "/api/vault/collections", "type": "json"},
+        {"url": f"/vault/dashboard?{package_query}", "type": "html"},
+        {"url": f"/api/vault/stats?{package_query}", "type": "json"},
+        {"url": f"/api/vault/collections?{package_query}", "type": "json"},
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
     ]
 
-    # Include OG images for bookmarks that have them
-    items = await list_vault_items(session=db, is_archived=False, limit=500)
+    # Include every page, including an empty terminal page when the count is a multiple of 500.
+    items = []
+    offset = 0
+    while True:
+        resources.append(
+            {
+                "url": (f"/api/vault/items?limit=500&offset={offset}&is_archived=false&{package_query}"),
+                "type": "json",
+            }
+        )
+        page = await list_vault_items(session=db, is_archived=False, limit=500, offset=offset)
+        items.extend(page)
+        if len(page) < 500:
+            break
+        offset += 500
+
+    # Remote bookmark images are fetched through a local, SSRF-protected endpoint.
     for item in items:
-        if item.og_image:
-            resources.append({"url": item.og_image, "type": "image"})
+        if item.og_image and item.og_image.startswith(("http://", "https://")):
+            resources.append({"url": f"/api/vault/items/{item.id}/preview?{package_query}", "type": "image"})
 
     from app.core.packages_router import make_package_manifest
 
@@ -328,7 +388,7 @@ async def get_vault_sync_manifest(
         module_id="vault",
         package_id=pkg_id,
         package_title="Vault — Личный архив",
-        root_url="/vault/dashboard",
+        root_url=f"/vault/dashboard?{package_query}",
         resources=resources,
     )
 

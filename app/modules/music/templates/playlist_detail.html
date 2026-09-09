@@ -12,16 +12,16 @@
         </div>
 
         <!-- Sync to Outpost Button -->
-        <button onclick="sendToOutpost('/music/api/playlists/{{ playlist.id }}/sync-manifest')"
+        {% if not package_mode %}<button onclick="sendToOutpost('/music/api/playlists/{{ playlist.id }}/sync-manifest')"
                 class="outpost-only h-[34px] text-[10px] font-mono font-bold text-teal-400 border border-teal-500/40 bg-teal-950/40 px-2.5 hover:bg-teal-500 hover:text-black transition-colors uppercase shrink-0 rounded-none">
             {{ _('music', 'save_to_device') }}
-        </button>
+        </button>{% endif %}
 
         <!-- Edit Button -->
-        <button onclick="togglePlaylistEditMode({{ playlist.id }})"
+        {% if not package_mode %}<button onclick="togglePlaylistEditMode({{ playlist.id }})"
                 class="h-[34px] text-[10px] font-mono font-bold text-zinc-300 hover:text-emerald-400 border border-zinc-800 bg-zinc-900/90 px-2.5 transition-colors uppercase shrink-0 rounded-none">
             {{ _('music', 'edit') }}
-        </button>
+        </button>{% endif %}
 
         <!-- Grid/List Switcher -->
         <div class="flex border border-zinc-800 bg-zinc-950 font-mono text-[9px] uppercase h-[34px] items-center p-0.5 shrink-0 rounded-none">
@@ -39,13 +39,13 @@
         </button>
 
         <!-- Download Green Plus Button -->
-        <button onclick="toggleDownloadDrawer()"
+        {% if not package_mode %}<button onclick="toggleDownloadDrawer()"
                 title="{{ _('music', 'download') }}"
                 class="h-[34px] w-[34px] shrink-0 text-emerald-400 hover:text-emerald-300 font-bold transition-all border border-emerald-500/40 bg-emerald-950/40 hover:bg-emerald-900/70 flex items-center justify-center shadow-sm cursor-pointer rounded-none">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"></path>
             </svg>
-        </button>
+        </button>{% endif %}
     </div>
 
     <!-- Edit Mode Panel & Tracklist inside a Grid -->

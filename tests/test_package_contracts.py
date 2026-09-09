@@ -7,7 +7,12 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from app.core.packages_router import generate_nsp, make_hybrid_manifest, make_package_manifest
+from app.core.packages_router import (
+    PackageResourceError,
+    generate_nsp,
+    make_hybrid_manifest,
+    make_package_manifest,
+)
 from app.modules.alllib.capabilities import resolve_package_resources
 from app.modules.alllib.router import _package_media_id, get_media_sync_manifest
 from app.modules.video_archiver.module import MODULE as VIDEO_MODULE
@@ -57,6 +62,33 @@ class PackageContractTests(unittest.TestCase):
         self.assertIn("__NETSANCTUM_DESKTOP__?.requestDownload", base)
         self.assertIn("requestDownload(manifestUrl)", base)
         self.assertIn("pathHasPackage", base)
+        self.assertIn("manifest_url: manifestUrl", base)
+        self.assertIn("sessionStorage.removeItem('active_package_id')", base)
+        self.assertIn("input instanceof Request", base)
+        self.assertIn("Offline packages are read-only.", base)
+        self.assertIn("this.form.requestSubmit()", base)
+
+    def test_manifest_rejects_external_resources_and_deduplicates_urls(self):
+        manifest = make_package_manifest(
+            module_id="music",
+            package_id="song_1",
+            package_title="Song: Example",
+            root_url="/music/dashboard?package_id=song_1",
+            resources=[
+                {"url": "/static/tailwind.css", "type": "css"},
+                {"url": "/static/tailwind.css", "type": "css"},
+            ],
+        )
+        self.assertEqual(1, len(manifest["resources"]))
+
+        with self.assertRaises(ValueError):
+            make_package_manifest(
+                module_id="music",
+                package_id="song_1",
+                package_title="Song: Example",
+                root_url="/music/dashboard?package_id=song_1",
+                resources=[{"url": "https://example.com/cover.jpg", "type": "image"}],
+            )
 
     def test_video_module_declares_package_provider(self):
         self.assertEqual(("video_playlist_", "video_"), VIDEO_MODULE.package_prefixes)
@@ -148,8 +180,47 @@ class PackageContractTests(unittest.TestCase):
         index = json.loads(payload[index_offset:-12])
 
         self.assertEqual(b"NSPK", magic)
+        self.assertTrue(payload.startswith(b"/static/tailwind.css/alllib/ui/chapter/11?package_id=novel_7"))
         self.assertIn("/alllib/ui/chapter/11?package_id=novel_7", index)
         self.assertNotIn("/alllib/api/novel/7/export", index)
+        self.assertEqual(64, len(index["/static/tailwind.css"]["sha256"]))
+
+    def test_nsp_compiler_rejects_partial_packages(self):
+        class Response:
+            status_code = 404
+            content = b""
+
+            def __init__(self):
+                self.headers = {}
+
+        class Client:
+            async def get(self, url, headers, cookies):
+                return Response()
+
+        async def compile_package():
+            return b"".join(
+                [
+                    chunk
+                    async for chunk in generate_nsp(
+                        [{"url": "/missing", "type": "json"}],
+                        Client(),
+                        {},
+                        {},
+                    )
+                ]
+            )
+
+        with self.assertRaises(PackageResourceError):
+            asyncio.run(compile_package())
+
+    def test_offline_templates_only_request_packaged_vault_and_video_urls(self):
+        vault = (ROOT / "app/modules/vault/templates/vault_dashboard.html").read_text()
+        video = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
+
+        self.assertIn("for (let offset = 0; ; offset += 500)", vault)
+        self.assertIn("{% if not package_mode %}loadManagement();{% endif %}", video)
+        self.assertIn("{% if package_scope != 'video' %}", video)
+        self.assertIn("video.dataset.mediaId", video)
 
     def test_alllib_package_resolver_rejects_type_aliases(self):
         media = SimpleNamespace(id=7, media_type="novel", title="Example", cover_path=None)

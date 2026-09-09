@@ -323,8 +323,10 @@
 
 <script>
 const sharedMode = {{ is_shared|tojson }};
+const packageMode = new URLSearchParams(window.location.search).has('package_id');
 let currentCollectionId = null;
 let currentItems = [];
+let packageItemsPromise = null;
 let autoSaveTimer = null;
 let sheetSaveTimer = null;
 let wbSaveTimer = null;
@@ -1374,12 +1376,34 @@ async function loadSharedSummary() {
 async function loadWorkspace() {
   const search = document.getElementById('vault-search').value.trim();
   let url = `/api/vault/items?limit=200&is_archived=false`;
-  if (currentCollectionId) url += `&collection_id=${currentCollectionId}`;
-  if (search) url += `&q=${encodeURIComponent(search)}`;
+  if (!packageMode && currentCollectionId) url += `&collection_id=${currentCollectionId}`;
+  if (!packageMode && search) url += `&q=${encodeURIComponent(search)}`;
 
   try {
-    const resp = await fetch(url);
-    currentItems = await resp.json();
+    if (packageMode) {
+      packageItemsPromise ||= (async () => {
+        const items = [];
+        for (let offset = 0; ; offset += 500) {
+          const resp = await fetch(`/api/vault/items?limit=500&offset=${offset}&is_archived=false`);
+          if (!resp.ok) throw new Error('Could not load offline Vault package');
+          const page = await resp.json();
+          items.push(...page);
+          if (page.length < 500) return items;
+        }
+      })();
+      const packagedItems = await packageItemsPromise;
+      const normalizedSearch = search.toLowerCase();
+      currentItems = packagedItems.filter(item => {
+        if (currentCollectionId && item.collection_id !== currentCollectionId) return false;
+        if (!normalizedSearch) return true;
+        return [item.title, item.content, item.url, item.og_title, ...(item.tags || [])]
+          .some(value => String(value || '').toLowerCase().includes(normalizedSearch));
+      });
+    } else {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('Could not load Vault workspace');
+      currentItems = await resp.json();
+    }
     currentItems.forEach(i => window._vaultCache[i.id] = i);
 
     document.getElementById('vault-empty').classList.toggle('hidden', currentItems.length > 0);
@@ -1521,8 +1545,14 @@ async function togglePin(id) { await fetch(`/api/vault/items/${pathSegment(id)}/
 async function deleteItem(id) { if (!confirm('Удалить?')) return; await fetch(`/api/vault/items/${pathSegment(id)}`, {method:'DELETE'}); loadWorkspace(); }
 
 async function exportItems() {
-  const resp = await fetch('/api/vault/items?limit=500&is_archived=false');
-  const items = await resp.json();
+  let items;
+  if (packageMode) {
+    if (!packageItemsPromise) await loadWorkspace();
+    items = await packageItemsPromise;
+  } else {
+    const resp = await fetch('/api/vault/items?limit=500&is_archived=false');
+    items = await resp.json();
+  }
   const blob = new Blob([JSON.stringify(items, null, 2)], {type: 'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = `vault-export.json`; a.click();

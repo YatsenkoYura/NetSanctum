@@ -1,7 +1,12 @@
+import asyncio
+import hashlib
 import json
 import logging
+import re
 import struct
+import tempfile
 from collections.abc import AsyncGenerator
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,6 +20,38 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/packages", tags=["packages"])
 
+PACKAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+RESOURCE_TYPES = {"binary", "container", "css", "html", "image", "js", "json", "text"}
+
+
+class PackageResourceError(RuntimeError):
+    pass
+
+
+def _validate_local_url(url: str, field: str) -> None:
+    parsed = urlsplit(url)
+    if not url.startswith("/") or parsed.scheme or parsed.netloc or parsed.fragment:
+        raise ValueError(f"{field} must be a local absolute URL without a fragment: {url!r}")
+
+
+def normalize_package_resources(resources: list[dict]) -> list[dict]:
+    """Validate and de-duplicate resources while preserving manifest order."""
+    normalized = []
+    seen = set()
+    for resource in resources:
+        url = resource.get("url")
+        resource_type = resource.get("type")
+        if not isinstance(url, str) or not url:
+            raise ValueError("Package resource URL must be a non-empty string")
+        _validate_local_url(url, "Package resource URL")
+        if resource_type not in RESOURCE_TYPES:
+            raise ValueError(f"Unsupported package resource type: {resource_type!r}")
+        if url in seen:
+            continue
+        seen.add(url)
+        normalized.append({**resource, "url": url, "type": resource_type})
+    return normalized
+
 
 def make_package_manifest(
     *,
@@ -25,6 +62,10 @@ def make_package_manifest(
     resources: list[dict],
 ) -> dict:
     """Build the versioned, module-agnostic offline package contract."""
+    if not PACKAGE_ID_PATTERN.fullmatch(package_id):
+        raise ValueError(f"Invalid package ID: {package_id!r}")
+    _validate_local_url(root_url, "Package root URL")
+    resources = normalize_package_resources(resources)
     record = next(
         (record for record in module_registry.active_records() if record.id == module_id and record.spec),
         None,
@@ -57,72 +98,86 @@ async def get_resources_for_package(pkg_id: str) -> list:
         raise HTTPException(status_code=400, detail=f"No active package provider for: {pkg_id}")
 
     async with AsyncSessionLocal() as db:
-        return await resolver(pkg_id, db)
-
-
-import asyncio
+        return normalize_package_resources(await resolver(pkg_id, db))
 
 
 async def fetch_nsp_resource(
     res: dict, client: httpx.AsyncClient, headers: dict, cookies: dict, semaphore: asyncio.Semaphore
-) -> dict | None:
+) -> dict:
     """Fetch single resource internally with semaphore locking."""
     url = res["url"]
     async with semaphore:
         try:
             response = await client.get(url, headers=headers, cookies=cookies)
-            if response.status_code == 200:
-                return {
-                    "url": url,
-                    "content": response.content,
-                    "mime": response.headers.get("content-type", "application/octet-stream"),
-                }
-            else:
-                logger.warning(f"NSP pack failed for {url} with code {response.status_code}")
-        except Exception as e:
-            logger.error(f"NSP pack exception for {url}: {e}")
-    return None
+        except Exception as exc:
+            logger.error("NSP pack exception for %s: %s", url, exc)
+            raise PackageResourceError(f"Could not fetch package resource {url}") from exc
+        if response.status_code != 200:
+            logger.warning("NSP pack failed for %s with code %s", url, response.status_code)
+            raise PackageResourceError(f"Package resource {url} returned HTTP {response.status_code}")
+        return {
+            "url": url,
+            "content": response.content,
+            "mime": response.headers.get("content-type", "application/octet-stream"),
+        }
+
+
+async def build_nsp_file(
+    resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict
+) -> tempfile.SpooledTemporaryFile[bytes]:
+    """Build a complete container in bounded temporary storage before it is served."""
+    packable_resources = [res for res in resources if res.get("type") != "binary"]
+    package_file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    index = {}
+    offset = 0
+    semaphore = asyncio.Semaphore(1)
+    try:
+        for resource_spec in packable_resources:
+            resource = await fetch_nsp_resource(resource_spec, client, headers, cookies, semaphore)
+            content = resource["content"]
+            length = len(content)
+            index[resource["url"]] = {
+                "offset": offset,
+                "length": length,
+                "mime": resource["mime"],
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            package_file.write(content)
+            offset += length
+
+        package_file.write(json.dumps(index, separators=(",", ":")).encode("utf-8"))
+        package_file.write(struct.pack(">Q4s", offset, b"NSPK"))
+        package_file.seek(0)
+        return package_file
+    except Exception:
+        package_file.close()
+        raise
+
+
+async def stream_nsp_file(
+    package_file: tempfile.SpooledTemporaryFile[bytes],
+) -> AsyncGenerator[bytes, None]:
+    try:
+        while chunk := package_file.read(64 * 1024):
+            yield chunk
+    finally:
+        package_file.close()
 
 
 async def generate_nsp(
     resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict
 ) -> AsyncGenerator[bytes, None]:
     """Asynchronously stream NSP container payload chunk by chunk on the fly."""
-    # Exclude large binary streams (videos, audio, epub exports) from being packed inside NSP
-    packable_resources = [res for res in resources if res.get("type") != "binary"]
-
-    # Use a Semaphore to prevent excessive resource allocation/concurrency spikes (max 20 parallel requests)
-    semaphore = asyncio.Semaphore(20)
-    tasks = [fetch_nsp_resource(res, client, headers, cookies, semaphore) for res in packable_resources]
-
-    index = {}
-    offset = 0
-
-    # Run requests and yield content chunks as soon as they complete
-    for future in asyncio.as_completed(tasks):
-        res_data = await future
-        if not res_data:
-            continue
-        content = res_data["content"]
-        length = len(content)
-
-        index[res_data["url"]] = {"offset": offset, "length": length, "mime": res_data["mime"]}
-
-        yield content
-        offset += length
-
-    # Write index dictionary as JSON
-    index_bytes = json.dumps(index).encode("utf-8")
-    yield index_bytes
-
-    # Write Footer: Offset of index (8 bytes uint64) + Magic bytes 'NSPK' (4 bytes)
-    footer = struct.pack(">Q4s", offset, b"NSPK")
-    yield footer
+    package_file = await build_nsp_file(resources, client, headers, cookies)
+    async for chunk in stream_nsp_file(package_file):
+        yield chunk
 
 
 @router.get("/{package_id}/nsp", include_in_schema=False)
 async def download_package_nsp(package_id: str, request: Request, user=Depends(get_current_user)):
     """Serve the complete NetSanctum Package container (.nsp) on-the-fly for the requested package_id."""
+    if not PACKAGE_ID_PATTERN.fullmatch(package_id):
+        raise HTTPException(status_code=400, detail="Invalid package ID")
     # Resolve all resources to be packed
     resources = await get_resources_for_package(package_id)
     if not resources:
@@ -149,22 +204,30 @@ async def download_package_nsp(package_id: str, request: Request, user=Depends(g
         # Fallback for older httpx versions
         client = httpx.AsyncClient(app=app, base_url="http://netsanctum.internal")
 
-    # Return streamed response with clean cleanup of the client
-    async def nsp_stream():
+    # Fetch before response headers are sent, so an incomplete package is never reported as successful.
+    try:
         async with client:
-            async for chunk in generate_nsp(resources, client, headers, cookies):
-                yield chunk
+            package_file = await build_nsp_file(resources, client, headers, cookies)
+    except PackageResourceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    package_size = package_file.seek(0, 2)
+    package_file.seek(0)
     filename = f"{package_id}.nsp"
     return StreamingResponse(
-        nsp_stream(),
+        stream_nsp_file(package_file),
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Length": str(package_size),
+        },
     )
 
 
 def make_hybrid_manifest(pkg_id: str, original_manifest: dict) -> dict:
     """Transform a standard manifest with a list of resources into a hybrid manifest that includes the .nsp container."""
+    if not PACKAGE_ID_PATTERN.fullmatch(pkg_id):
+        raise ValueError(f"Invalid package ID: {pkg_id!r}")
     original_resources = original_manifest.get("resources", [])
 
     # Keep only binary files as standalone resources

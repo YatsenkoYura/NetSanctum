@@ -37,6 +37,20 @@ settings = get_settings()
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+def _video_package_scope(package_id: str | None) -> tuple[str | None, str | int | None]:
+    if not package_id:
+        return None, None
+    if package_id.startswith("video_playlist_"):
+        raw_id = package_id.removeprefix("video_playlist_")
+        if raw_id.isdigit() and int(raw_id) > 0:
+            return "playlist", int(raw_id)
+    elif package_id.startswith("video_"):
+        video_id = package_id.removeprefix("video_")
+        if video_id:
+            return "video", video_id
+    raise HTTPException(status_code=400, detail="Invalid video package ID")
+
+
 async def _get_lang(request: Request) -> str:
     """Resolve active language cookie or fall back to DB config/default."""
     return request.cookies.get("lang", "en")
@@ -52,7 +66,18 @@ async def video_dashboard(
     lang: str = Depends(_get_lang),
 ):
     """Render the main Video Archiver Dashboard."""
-    return templates.TemplateResponse(request, "video_dashboard.html", {"user": user, "lang": lang})
+    package_id = request.query_params.get("package_id")
+    package_scope, _ = _video_package_scope(package_id)
+    return templates.TemplateResponse(
+        request,
+        "video_dashboard.html",
+        {
+            "user": user,
+            "lang": lang,
+            "package_mode": bool(package_id),
+            "package_scope": package_scope,
+        },
+    )
 
 
 # ── API Endpoints ────────────────────────────────────────
@@ -123,14 +148,13 @@ async def list_videos(
     user=Depends(get_current_user),
 ):
     """API: Lists archived videos with optional filtering by platform, channel, or search query."""
-    if package_id and package_id.startswith("video_playlist_"):
-        try:
-            playlist_id = int(package_id.removeprefix("video_playlist_"))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid package ID")
-        return await PlaylistService.get_playlist_videos(db, playlist_id)
-    if package_id and package_id.startswith("video_"):
-        return [await VideoService.get_video(db, package_id.removeprefix("video_"))]
+    package_scope, item_id = _video_package_scope(package_id)
+    if package_scope == "playlist":
+        assert isinstance(item_id, int)
+        return await PlaylistService.get_playlist_videos(db, item_id)
+    if package_scope == "video":
+        assert isinstance(item_id, str)
+        return [await VideoService.get_video(db, item_id)]
     return await VideoService.list_videos(
         db,
         search=search,
@@ -164,7 +188,7 @@ def _video_resources(video: ArchivedVideo, package_id: str) -> list[dict]:
             {
                 "url": (
                     f"/api/video-archiver/videos/{video.id}/subtitles/"
-                    f"{urllib.parse.quote(str(language), safe='')}"
+                    f"{urllib.parse.quote(str(language), safe='')}?{query}"
                 ),
                 "type": "text",
             }
@@ -188,7 +212,6 @@ async def get_video_sync_manifest(
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/video-archiver/dashboard", "type": "html"},
         {"url": f"/video-archiver/dashboard?{query}", "type": "html"},
         {"url": f"/api/video-archiver/videos?{list_query}", "type": "json"},
         *_video_resources(video, package_id),
@@ -638,16 +661,34 @@ async def create_playlist(
 
 
 @router.get("/api/video-archiver/playlists")
-async def list_playlists(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def list_playlists(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    package_id: str | None = None,
+):
     """List all custom video playlists."""
-    return await PlaylistService.list_playlists(db)
+    package_scope, item_id = _video_package_scope(package_id)
+    if package_scope == "video":
+        return []
+    playlists = await PlaylistService.list_playlists(db)
+    if package_scope == "playlist":
+        return [playlist for playlist in playlists if playlist.id == item_id]
+    return playlists
 
 
 @router.get("/api/video-archiver/playlists/{playlist_id}")
 async def get_playlist_detail(
-    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    playlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    package_id: str | None = None,
 ):
     """Get playlist details and its videos."""
+    package_scope, item_id = _video_package_scope(package_id)
+    if (package_scope != "playlist" and package_scope is not None) or (
+        package_scope == "playlist" and item_id != playlist_id
+    ):
+        raise HTTPException(status_code=404, detail="Playlist is not part of this package")
     playlist = await db.get(VideoPlaylist, playlist_id)
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
@@ -680,9 +721,9 @@ async def get_playlist_sync_manifest(
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/video-archiver/dashboard", "type": "html"},
         {"url": f"/video-archiver/dashboard?{query}", "type": "html"},
         {"url": f"/api/video-archiver/videos?{list_query}", "type": "json"},
+        {"url": f"/api/video-archiver/playlists?{query}", "type": "json"},
         {"url": f"/api/video-archiver/playlists/{playlist.id}?{query}", "type": "json"},
     ]
     for video in videos:

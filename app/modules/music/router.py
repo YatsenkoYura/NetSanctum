@@ -38,14 +38,33 @@ def _t(key: str, lang: str = "en") -> str:
 router = APIRouter(prefix="/music", tags=["music"])
 
 
+def _music_package_scope(package_id: str | None) -> tuple[str | None, int | None]:
+    if not package_id:
+        return None, None
+    for scope in ("song", "playlist"):
+        prefix = f"{scope}_"
+        if package_id.startswith(prefix):
+            raw_id = package_id.removeprefix(prefix)
+            if raw_id.isdigit() and int(raw_id) > 0:
+                return scope, int(raw_id)
+    raise HTTPException(status_code=400, detail="Invalid music package ID")
+
+
 @router.get("/api/playlists")
-async def api_list_playlists(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def api_list_playlists(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    package_id: str | None = None,
+):
     """API: Return a list of all playlists with computed cover URLs."""
     from sqlalchemy.orm import selectinload
 
     from app.modules.music.models import PlaylistSong
 
-    result = await db.execute(
+    scope, item_id = _music_package_scope(package_id)
+    if scope == "song":
+        return []
+    query = (
         select(Playlist)
         .options(
             selectinload(Playlist.cover_song),
@@ -53,6 +72,9 @@ async def api_list_playlists(db: AsyncSession = Depends(get_db), user=Depends(ge
         )
         .order_by(Playlist.created_at.desc())
     )
+    if scope == "playlist":
+        query = query.where(Playlist.id == item_id)
+    result = await db.execute(query)
     playlists = result.scalars().all()
 
     out = []
@@ -103,11 +125,17 @@ async def set_playlist_cover(
 
 @router.get("/api/playlists/{playlist_id}/songs")
 async def api_list_playlist_songs(
-    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    playlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    package_id: str | None = None,
 ):
     """API: Return all songs in a specific playlist."""
     from app.modules.music.models import PlaylistSong
 
+    scope, item_id = _music_package_scope(package_id)
+    if (scope != "playlist" and scope is not None) or (scope == "playlist" and item_id != playlist_id):
+        raise HTTPException(status_code=404, detail="Playlist is not part of this package")
     result = await db.execute(
         select(Song)
         .join(PlaylistSong)
@@ -133,12 +161,22 @@ async def api_list_playlist_songs(
 
 @router.get("/api/songs")
 async def api_list_songs(
-    search: str | None = None, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+    search: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    package_id: str | None = None,
 ):
     """API: Return a list of all downloaded songs, optionally filtered by search."""
     from sqlalchemy import or_
 
+    scope, item_id = _music_package_scope(package_id)
     query = select(Song).order_by(Song.created_at.desc())
+    if scope == "song":
+        query = query.where(Song.id == item_id)
+    elif scope == "playlist":
+        from app.modules.music.models import PlaylistSong
+
+        query = query.join(PlaylistSong).where(PlaylistSong.playlist_id == item_id)
     if search:
         search_term = f"%{search}%"
         query = query.where(
@@ -276,7 +314,19 @@ async def music_dashboard(
     lang: str = Depends(_get_lang),
 ):
     """Render the full Music dashboard with tabs."""
-    return templates.TemplateResponse(request, "music.html", {"user": user, "lang": lang})
+    package_id = request.query_params.get("package_id")
+    package_scope, _ = _music_package_scope(package_id)
+    return templates.TemplateResponse(
+        request,
+        "music.html",
+        {
+            "user": user,
+            "lang": lang,
+            "package_id": package_id,
+            "package_mode": bool(package_id),
+            "package_scope": package_scope,
+        },
+    )
 
 
 @router.get("/ui/player", response_class=HTMLResponse, include_in_schema=False)
@@ -289,9 +339,19 @@ async def music_player_ui(
 ):
     """HTMX partial: list of all downloaded songs."""
     # Template uses only what is in the API!
-    songs = await api_list_songs(search=search, db=db, user=user)
+    package_id = request.query_params.get("package_id")
+    package_scope, _ = _music_package_scope(package_id)
+    songs = await api_list_songs(search=search, db=db, user=user, package_id=package_id)
     return templates.TemplateResponse(
-        request, "player.html", {"songs": songs, "lang": lang, "search": search or ""}
+        request,
+        "player.html",
+        {
+            "songs": songs,
+            "lang": lang,
+            "search": search or "",
+            "package_mode": bool(package_id),
+            "package_scope": package_scope,
+        },
     )
 
 
@@ -363,8 +423,14 @@ async def music_playlists_ui(
 ):
     """HTMX partial: playlists management and download form."""
     # Template uses only what is in the API!
-    playlists = await api_list_playlists(db, user)
-    return templates.TemplateResponse(request, "playlists.html", {"playlists": playlists, "lang": lang})
+    package_id = request.query_params.get("package_id")
+    _music_package_scope(package_id)
+    playlists = await api_list_playlists(db, user, package_id)
+    return templates.TemplateResponse(
+        request,
+        "playlists.html",
+        {"playlists": playlists, "lang": lang, "package_mode": bool(package_id)},
+    )
 
 
 @router.get("/ui/playlists/{playlist_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -379,9 +445,12 @@ async def music_playlist_detail_ui(
     playlist = await db.get(Playlist, playlist_id)
     if not playlist:
         raise HTTPException(status_code=404)
-    songs = await api_list_playlist_songs(playlist_id, db, user)
+    package_id = request.query_params.get("package_id")
+    songs = await api_list_playlist_songs(playlist_id, db, user, package_id)
     return templates.TemplateResponse(
-        request, "playlist_detail.html", {"playlist": playlist, "songs": songs, "lang": lang}
+        request,
+        "playlist_detail.html",
+        {"playlist": playlist, "songs": songs, "lang": lang, "package_mode": bool(package_id)},
     )
 
 
@@ -638,7 +707,6 @@ async def get_song_sync_manifest(
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/music/dashboard", "type": "html"},
         {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},
         {"url": f"/music/ui/player?package_id={pkg_id}", "type": "html"},
         {"url": f"/music/api/songs?package_id={pkg_id}", "type": "json"},
@@ -687,7 +755,6 @@ async def get_playlist_sync_manifest(
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
-        {"url": "/music/dashboard", "type": "html"},
         {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},
         {"url": f"/music/ui/player?package_id={pkg_id}", "type": "html"},
         {"url": f"/music/ui/playlists/{playlist_id}?package_id={pkg_id}", "type": "html"},

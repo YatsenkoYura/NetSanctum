@@ -12,10 +12,12 @@
                    hx-trigger="keyup changed delay:300ms, search"
                    hx-target="#content-songs"
                    hx-push-url="false"
-                   class="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-teal-400 focus:outline-none transition-all shadow-sm rounded-none">
+                   {% if package_mode %}disabled{% endif %}
+                   class="w-full bg-zinc-950 border border-zinc-800 pl-9 pr-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:border-teal-400 focus:outline-none transition-all shadow-sm rounded-none disabled:opacity-60">
         </div>
 
         <!-- Combined Single Tab Switcher Icon Button (Shows target view) -->
+        {% if package_scope != 'song' %}
         <button onclick="switchMusicTab('playlists')"
                 title="Плейлисты"
                 class="music-tab-toggle h-[34px] w-[34px] shrink-0 bg-zinc-900/90 border border-zinc-800 hover:border-teal-500/50 hover:bg-zinc-800/80 transition-all flex items-center justify-center cursor-pointer rounded-none group">
@@ -23,15 +25,16 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
             </svg>
         </button>
+        {% endif %}
 
         <!-- Download Green Plus Button -->
-        <button onclick="toggleDownloadDrawer()"
+        {% if not package_mode %}<button onclick="toggleDownloadDrawer()"
                 title="{{ _('music', 'download') }}"
                 class="h-[34px] w-[34px] shrink-0 text-emerald-400 hover:text-emerald-300 font-bold transition-all border border-emerald-500/40 bg-emerald-950/40 hover:bg-emerald-900/70 flex items-center justify-center shadow-sm cursor-pointer rounded-none">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"></path>
             </svg>
-        </button>
+        </button>{% endif %}
     </div>
 
     <!-- Slide-out Download Drawer inside Songs Tab (Responsive) -->
@@ -141,7 +144,7 @@
                     </div>
                 </div>
 
-                {% if song.cover_url %}
+                {% if song.cover_url and not package_mode %}
                 <!-- Cover Reposition Button (top-right, appears on hover) -->
                 <button onclick="event.stopPropagation(); openCoverEditor(this.closest('.song-card'), {{ song.id }})"
                         class="reposition-btn" title="Adjust cover position">
@@ -150,6 +153,7 @@
                 {% endif %}
 
                 <!-- Action buttons (bottom-right, appears on hover) -->
+                {% if not package_mode %}
                 <div class="card-actions">
                     <button onclick="event.stopPropagation(); openEditSongModal(this.closest('.song-card'), {{ song.id }})"
                             class="action-btn" title="Edit title and artist">
@@ -167,12 +171,13 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                 </div>
+                {% endif %}
             </div>
 
             <!-- Song Info -->
             <div class="song-info flex justify-between items-start">
                 <div class="min-w-0 flex-1">
-                    <p class="song-title cursor-pointer hover:text-teal-400 transition-colors" onclick="event.stopPropagation(); openEditSongModal(this.closest('.song-card'), {{ song.id }})" title="Click to edit: {{ song.title }}">{{ song.title }}</p>
+                    <p class="song-title{% if not package_mode %} cursor-pointer hover:text-teal-400 transition-colors{% endif %}"{% if not package_mode %} onclick="event.stopPropagation(); openEditSongModal(this.closest('.song-card'), {{ song.id }})" title="Click to edit: {{ song.title }}"{% endif %}>{{ song.title }}</p>
                     <p class="song-artist hover:text-teal-400 hover:underline cursor-pointer transition-colors inline-block"
                        onclick="event.stopPropagation(); filterByArtist('{{ song.author | escape }}');"
                        title="Show all by {{ song.author }}">{{ song.author or 'Unknown' }}</p>

@@ -177,7 +177,7 @@
     <div class="w-full">
         <!-- Songs Tab Container -->
         <div id="content-songs"
-             hx-get="/music/ui/player"
+             hx-get="/music/ui/player{% if package_id %}?package_id={{ package_id }}{% endif %}"
              hx-trigger="load"
              hx-swap="innerHTML"
              class="block">
@@ -185,8 +185,9 @@
         </div>
 
         <!-- Playlists Tab Container -->
+        {% if package_scope != 'song' %}
         <div id="content-playlists"
-             hx-get="/music/ui/playlists"
+             hx-get="/music/ui/playlists{% if package_id %}?package_id={{ package_id }}{% endif %}"
              hx-trigger="load, reloadPlaylists from:body"
              hx-swap="innerHTML"
              class="hidden">
@@ -194,6 +195,7 @@
         </div>
         <!-- Playlist Detail Container -->
         <div id="content-playlist-detail" class="hidden"></div>
+        {% endif %}
     </div>
 </div>
 {% endif %}
