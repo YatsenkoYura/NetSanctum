@@ -24,6 +24,7 @@ NetSanctum core
     ├── Music
     ├── Vault
     ├── Video Archiver
+    ├── YouTube
     └── future independent modules
 ```
 
@@ -130,6 +131,7 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **AllLib** downloads and reads novels, manga, and anime from supported Lib-network sources.
 - **Music** archives audio, organizes playlists, and serves a local player.
 - **Video Archiver** downloads and streams videos, subtitles, metadata, and comments.
+- **YouTube** provides keyless server-side browsing, optional isolated account login, streaming, and Video Archiver actions.
 - **Vault** stores notes, bookmarks, collections, ratings, and media progress.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
 - **ComputerCraft** runs the NetSanctumOS controller, monitor viewers, and speaker playback.
@@ -137,6 +139,31 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **Sharing** publishes an isolated, read-only module view with optional content selection, password, and expiry.
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
+
+### Core browser runtime
+
+Modules that need a real JavaScript browser declare a `BrowserPolicySpec` in their manifest. The
+policy fixes the HTTPS start URL, host allowlist, permitted modes, idle timeout, and whether an
+encrypted snapshot may survive restarts. Core exposes the shared `/api/browser-runtime` boundary
+plus the `<netsanctum-browser>` control window. Chromium/Xvfb run in an isolated sidecar with no
+database environment, encryption key, storage mount, or published port. The sidecar has no direct
+Internet route: HTTPS tunnels pass through a separate domain-restricted egress proxy, while the
+per-session policy applies a narrower request/WebSocket allowlist inside Playwright.
+
+- `interactive` starts Xvfb and Chromium for owner-controlled login flows.
+- `headless` starts Chromium without a display for module DOM extraction.
+- live sessions exist only in memory and are terminated after their policy's idle timeout;
+- persisted Playwright storage state is AES-GCM encrypted under
+  `storage/config/browser-snapshots/` and contains cookies plus origin local storage;
+- restored state is rebound to the current module and policy and filtered through the current host
+  allowlist;
+- modules can navigate within policy, query bounded DOM fragments, or use the generic frame/input
+  endpoints without owning browser lifecycle code.
+
+No Chromium or Xvfb process runs while there are no live browser sessions.
+The browser sidecars are enabled by `start.sh` by default and can be omitted entirely with
+`./start.sh --no-browser-runtime`; the rest of NetSanctum continues to run and browser APIs report
+that the runtime is unavailable.
 
 The optional ComputerCraft module discovers every provider of the versioned `library.viewer.v1`
 contract. Its NetSanctumOS client uses the computer as a control panel and attached monitors and

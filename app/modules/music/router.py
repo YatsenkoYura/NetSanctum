@@ -11,6 +11,7 @@ from markupsafe import escape
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.browser_client import revoke_browser_credentials
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -273,9 +274,11 @@ async def api_download(
         )
     if req.youtube_cookies:
         if req.youtube_cookies.strip().upper() == "CLEAR":
+            await revoke_browser_credentials("youtube")
             setting = await settings_service.resolve_setting(db, key="youtube_cookies")
             if setting:
                 await settings_service.delete_setting(db, setting.id)
+                await db.commit()
             return {"status": "cleared", "url": req.url, "use_ai": req.use_ai}
         else:
             if (
@@ -284,6 +287,7 @@ async def api_download(
             ):
                 raise HTTPException(status_code=400, detail="Invalid Cookie Format. Must be Netscape format.")
 
+            await revoke_browser_credentials("youtube")
             await settings_service.upsert_setting(
                 db,
                 key="youtube_cookies",

@@ -317,6 +317,7 @@ def extract_info(
     download: bool = False,
     cookies_text: str | None = None,
     platform: str = "youtube",
+    require_authentication: bool = False,
 ) -> dict[str, Any]:
     operation_options = options or {}
     if platform != "youtube" and not is_youtube_url(url):
@@ -327,6 +328,22 @@ def extract_info(
             download=download,
             cookies_text=cookies_text,
             youtube=False,
+        )
+
+    if require_authentication:
+        if not cookies_text:
+            raise YtDlpPipelineError(
+                YtDlpErrorKind.AUTH_REQUIRED,
+                "Authenticated YouTube session is required",
+                authenticated=False,
+            )
+        return _invoke(
+            redis_client,
+            url,
+            options=operation_options,
+            download=download,
+            cookies_text=cookies_text,
+            youtube=True,
         )
 
     try:

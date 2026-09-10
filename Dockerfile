@@ -3,6 +3,7 @@
 ARG PYTHON_IMAGE=python:3.12-slim@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e
 ARG NETSANCTUM_MODULES=default
 ARG NETSANCTUM_EXTERNAL_MODULES=""
+ARG INSTALL_BROWSER_RUNTIME=0
 
 FROM denoland/deno:bin-2.9.5@sha256:0d1262facd139e815217c001945eb822c7a78584cf660142c34a6b53effec1aa AS deno-bin
 
@@ -10,6 +11,7 @@ FROM ${PYTHON_IMAGE} AS dependencies
 
 ARG NETSANCTUM_MODULES
 ARG NETSANCTUM_EXTERNAL_MODULES
+ARG INSTALL_BROWSER_RUNTIME
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.18@sha256:78bc42400d77b0678ba95765305c826652ed5431f399257271dda681d0318f03 /uv /uvx /bin/
 
@@ -30,6 +32,9 @@ RUN python scripts/module_build.py sync \
       --project /build \
       --environment /opt/venv \
       --marker /opt/netsanctum/installed-modules && \
+    if [ "${INSTALL_BROWSER_RUNTIME}" = "1" ]; then \
+      UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --locked --no-dev --no-install-project --extra browser_runtime --inexact; \
+    fi && \
     system_packages="$(python scripts/module_build.py system \
       --catalog module-build.json \
       --modules "${NETSANCTUM_MODULES}")" && \
@@ -45,6 +50,7 @@ ARG NETSANCTUM_MODULES
 ARG NETSANCTUM_EXTERNAL_MODULES
 ARG APP_UID=1000
 ARG APP_GID=1000
+ARG INSTALL_BROWSER_RUNTIME
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -63,7 +69,10 @@ RUN set -eu; \
       --modules "${NETSANCTUM_MODULES}")"; \
     apt_packages=""; \
     case " ${system_packages} " in *" ffmpeg "*) apt_packages="${apt_packages} ffmpeg" ;; esac; \
+    case " ${system_packages} " in *" chromium "*) apt_packages="${apt_packages} chromium" ;; esac; \
     case " ${system_packages} " in *" nodejs "*) apt_packages="${apt_packages} nodejs" ;; esac; \
+    case " ${system_packages} " in *" xvfb "*) apt_packages="${apt_packages} xvfb" ;; esac; \
+    if [ "${INSTALL_BROWSER_RUNTIME}" = "1" ]; then apt_packages="${apt_packages} chromium chromium-sandbox xvfb"; fi; \
     if [ -n "${apt_packages}" ]; then \
       apt-get update; \
       apt-get install -y --no-install-recommends ${apt_packages}; \

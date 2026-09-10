@@ -48,6 +48,90 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Isolated on-demand Chromium runtime ────────────────
+  browser-runtime:
+    profiles: ["browser"]
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: core
+        NETSANCTUM_EXTERNAL_MODULES: ""
+        INSTALL_BROWSER_RUNTIME: "1"
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
+    restart: unless-stopped
+    init: true
+    environment:
+      NETSANCTUM_LOAD_DOTENV: "0"
+      HOME: /tmp
+      BROWSER_PROXY_URL: http://browser-proxy:8888
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - seccomp=./docker/browser-seccomp.json
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    networks:
+      - browser-control
+      - browser-proxy
+    depends_on:
+      browser-proxy:
+        condition: service_healthy
+    command:
+      - uvicorn
+      - app.core.browser_worker:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Domain-restricted browser egress ───────────────────
+  browser-proxy:
+    profiles: ["browser"]
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: core
+        NETSANCTUM_EXTERNAL_MODULES: ""
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
+    restart: unless-stopped
+    init: true
+    environment:
+      NETSANCTUM_LOAD_DOTENV: "0"
+      BROWSER_EGRESS_HOSTS: ${BROWSER_EGRESS_HOSTS:-google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,youtube.com,ytimg.com}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    cpus: 0.5
+    pids_limit: 32
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - browser-proxy
+      - browser-egress
+    command:
+      - python
+      - -m
+      - app.core.browser_egress_proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8888),2); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── One-time storage ownership migration ───────────────
   storage-init:
     image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
@@ -120,6 +204,7 @@ services:
         APP_UID: ${PUID:-1000}
         APP_GID: ${PGID:-1000}
     restart: unless-stopped
+    init: true
     env_file: .env
     environment:
       NETSANCTUM_PROCESS_ROLE: web
@@ -127,11 +212,17 @@ services:
       NETSANCTUM_ENVIRONMENT: production
       FILE_ENCRYPTION_KEY_PATH: /run/netsanctum-key/file.key
       LEGACY_FILE_ENCRYPTION_KEYS_PATH: /run/netsanctum-key/legacy.keys
+      YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
+      BROWSER_RUNTIME_URL: http://browser-runtime:8765
+      BROWSER_RUNTIME_ENABLED: ${BROWSER_RUNTIME_ENABLED:-1}
     ports:
       - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
       - ./storage:/app/storage
       - encryption_key:/run/netsanctum-key:ro
+    networks:
+      - default
+      - browser-control
     read_only: true
     tmpfs:
       - /tmp
@@ -146,6 +237,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      browser-runtime:
+        condition: service_healthy
+        required: false
     command:
       - sh
       - -c
@@ -196,3 +290,10 @@ services:
 volumes:
   pg_data:
   encryption_key:
+
+networks:
+  browser-control:
+    internal: true
+  browser-proxy:
+    internal: true
+  browser-egress:

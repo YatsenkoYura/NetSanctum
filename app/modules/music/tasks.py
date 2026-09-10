@@ -14,6 +14,7 @@ import requests
 from openai import OpenAI
 from sqlalchemy import select
 
+from app.core.browser_snapshots import browser_snapshot_store
 from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
@@ -48,6 +49,9 @@ def _get_api_keys() -> tuple[str, str]:
 
 def _get_youtube_cookies() -> str | None:
     """Retrieve the encrypted global YouTube cookie jar without writing it to the task payload."""
+    browser_cookies = browser_snapshot_store.cookies_for_scope_sync("youtube")
+    if browser_cookies:
+        return browser_cookies
     with SyncSessionLocal() as session:
         cookies = session.scalar(
             select(Setting.value).where(Setting.key == "youtube_cookies", Setting.scope == "global")

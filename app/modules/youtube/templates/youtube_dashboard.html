@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}NetSanctum — YouTube{% endblock %}
+
+{% block content %}
+<div id="youtube-browser" class="mx-auto max-w-[1500px] space-y-6">
+    <header class="border-b-2 border-red-600 pb-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+                <div class="mb-2 flex items-center gap-3">
+                    <span class="inline-block h-3 w-3 bg-red-600"></span>
+                    <span class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-red-400">Server catalog</span>
+                </div>
+                <h1 class="text-3xl font-black tracking-tight text-white sm:text-5xl">YOUTUBE<span class="text-red-500">//</span>FEED</h1>
+                <p class="mt-2 max-w-2xl text-sm text-zinc-500">{{ _('youtube', 'tagline') }}</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="youtube-account-badge" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">Anonymous</span>
+                <button id="youtube-account-open" type="button" class="border border-zinc-700 bg-zinc-950 px-4 py-2 font-mono text-xs uppercase text-zinc-300 transition hover:border-red-500 hover:text-white">{{ _('youtube', 'account_mode') }}</button>
+            </div>
+        </div>
+    </header>
+
+    <section id="youtube-account-panel" class="hidden space-y-4 border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <h2 class="font-mono text-sm font-bold uppercase text-white">{{ _('youtube', 'account_mode') }}</h2>
+                <p class="mt-1 max-w-3xl text-xs text-zinc-500">{{ _('youtube', 'login_help') }}</p>
+            </div>
+            <button id="youtube-account-disconnect" type="button" class="hidden border border-zinc-700 px-4 py-2 font-mono text-[10px] uppercase text-zinc-400 hover:border-red-600 hover:text-red-400">{{ _('youtube', 'disconnect') }}</button>
+        </div>
+        <netsanctum-browser id="youtube-account-browser"
+                            data-policy-id="youtube.account"
+                            data-locale="{{ 'ru-RU' if lang == 'ru' else 'en-US' }}"
+                            data-help="{{ _('youtube', 'login_help') }}"
+                            data-start-label="{{ _('youtube', 'start_login') }}"
+                            data-save-label="{{ _('youtube', 'save_session') }}"
+                            data-close-label="{{ _('youtube', 'close') }}"
+                            data-send-label="{{ _('youtube', 'send_text') }}">
+        </netsanctum-browser>
+    </section>
+
+    <section class="grid gap-3 lg:grid-cols-[auto_1fr]">
+        <div class="flex gap-2">
+            <button id="youtube-popular" type="button" class="border border-red-600 bg-red-950/30 px-5 py-3 font-mono text-xs font-bold uppercase text-red-300 transition hover:bg-red-600 hover:text-white">
+                {{ _('youtube', 'popular') }}
+            </button>
+            <button id="youtube-subscriptions" type="button" class="hidden border border-zinc-700 px-5 py-3 font-mono text-xs font-bold uppercase text-zinc-300 transition hover:border-red-600 hover:text-white">
+                {{ _('youtube', 'subscriptions') }}
+            </button>
+        </div>
+        <form id="youtube-search-form" class="flex min-w-0">
+            <input id="youtube-search-input" type="search" required maxlength="200" placeholder="{{ _('youtube', 'search_placeholder') }}"
+                   class="min-w-0 flex-1 border border-r-0 border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none focus:border-red-600">
+            <button type="submit" class="border border-red-600 px-5 py-3 font-mono text-xs font-bold uppercase text-red-400 transition hover:bg-red-600 hover:text-white">
+                {{ _('youtube', 'search') }}
+            </button>
+        </form>
+    </section>
+
+    <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+        <h2 id="youtube-result-title" class="font-mono text-sm font-bold uppercase tracking-wider text-zinc-200">{{ _('youtube', 'popular') }}</h2>
+        <span id="youtube-result-count" class="font-mono text-[10px] text-zinc-600"></span>
+    </div>
+
+    <div id="youtube-status" class="hidden border border-zinc-800 bg-zinc-950 px-4 py-10 text-center font-mono text-xs text-zinc-500"></div>
+    <div id="youtube-grid" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+
+    <div class="flex justify-center">
+        <button id="youtube-load-more" type="button" class="hidden border border-zinc-700 px-6 py-2 font-mono text-xs uppercase text-zinc-400 transition hover:border-red-500 hover:text-white">
+            {{ _('youtube', 'load_more') }}
+        </button>
+    </div>
+</div>
+
+<div id="youtube-player-modal" class="fixed inset-0 z-[80] hidden items-center justify-center bg-black/90 p-3 sm:p-8">
+    <div class="w-full max-w-6xl border border-zinc-700 bg-zinc-950">
+        <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+            <h2 id="youtube-player-title" class="truncate pr-4 text-sm font-bold text-white">YouTube</h2>
+            <button id="youtube-player-close" type="button" class="font-mono text-xs uppercase text-zinc-400 hover:text-white">{{ _('youtube', 'close') }}</button>
+        </div>
+        <video id="youtube-player" class="aspect-video w-full bg-black" controls playsinline></video>
+    </div>
+</div>
+
+<script>
+(() => {
+    const grid = document.getElementById('youtube-grid');
+    const status = document.getElementById('youtube-status');
+    const title = document.getElementById('youtube-result-title');
+    const count = document.getElementById('youtube-result-count');
+    const loadMore = document.getElementById('youtube-load-more');
+    const openYouTubeLabel = {{ _('youtube', 'open_youtube')|tojson }};
+    const playLabel = {{ _('youtube', 'play')|tojson }};
+    let currentRequest = {kind: 'popular', value: ''};
+    let nextPageToken = null;
+    let renderedCount = 0;
+    let requestSerial = 0;
+    let catalogController = null;
+
+    function setStatus(message, error = false, hideGrid = true) {
+        status.textContent = message;
+        status.classList.toggle('hidden', !message);
+        status.classList.toggle('text-red-400', error);
+        grid.classList.toggle('hidden', Boolean(message) && hideGrid);
+    }
+
+    function formatDuration(seconds) {
+        if (!Number.isFinite(seconds)) return '';
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const rest = seconds % 60;
+        return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}` : `${minutes}:${String(rest).padStart(2, '0')}`;
+    }
+
+    function metric(value) {
+        if (!Number.isFinite(value)) return '';
+        return new Intl.NumberFormat(undefined, {notation: 'compact', maximumFractionDigits: 1}).format(value);
+    }
+
+    function makeCard(item) {
+        const card = document.createElement('article');
+        card.className = 'group flex min-w-0 flex-col border border-zinc-800 bg-zinc-950 transition hover:border-red-700';
+
+        const media = document.createElement('div');
+        media.className = 'relative aspect-video overflow-hidden bg-zinc-900';
+        if (item.thumbnail_url) {
+            const image = document.createElement('img');
+            image.src = item.thumbnail_url;
+            image.alt = '';
+            image.loading = 'lazy';
+            image.className = 'h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]';
+            media.append(image);
+        }
+        const badge = document.createElement('span');
+        badge.className = 'absolute left-2 top-2 border border-black/70 bg-black/85 px-2 py-1 font-mono text-[9px] font-bold uppercase text-red-300';
+        badge.textContent = item.kind;
+        media.append(badge);
+        if (item.duration) {
+            const duration = document.createElement('span');
+            duration.className = 'absolute bottom-2 right-2 bg-black/90 px-2 py-1 font-mono text-[10px] text-white';
+            duration.textContent = formatDuration(item.duration);
+            media.append(duration);
+        }
+        if (item.kind === 'video') {
+            const play = document.createElement('button');
+            play.type = 'button';
+            play.className = 'absolute inset-0 flex items-center justify-center bg-black/0 font-mono text-xs font-bold uppercase text-transparent transition hover:bg-black/50 hover:text-white';
+            play.textContent = playLabel;
+            play.addEventListener('click', () => playVideo(item));
+            media.append(play);
+        }
+
+        const body = document.createElement('div');
+        body.className = 'flex flex-1 flex-col gap-3 p-4';
+        const heading = document.createElement('h3');
+        heading.className = 'line-clamp-2 text-sm font-bold leading-snug text-zinc-100';
+        heading.textContent = item.title;
+        const meta = document.createElement('div');
+        meta.className = 'flex min-h-4 items-center justify-between gap-2 font-mono text-[10px] text-zinc-500';
+        const channel = document.createElement('button');
+        channel.type = 'button';
+        channel.className = 'truncate text-left hover:text-red-400 disabled:pointer-events-none';
+        channel.textContent = item.channel_title || (item.kind === 'channel' ? 'Channel' : 'YouTube');
+        channel.disabled = !item.channel_id;
+        if (item.channel_id) channel.addEventListener('click', () => loadCatalog('channel', item.channel_id));
+        const views = document.createElement('span');
+        views.className = 'shrink-0';
+        views.textContent = item.view_count ? `${metric(item.view_count)} views` : '';
+        meta.append(channel, views);
+
+        const actions = document.createElement('div');
+        actions.className = 'mt-auto flex flex-wrap items-center gap-2 border-t border-zinc-900 pt-3';
+        if (item.kind === 'video') {
+            const integrations = document.createElement('netsanctum-actions');
+            integrations.dataset.slot = 'entity.actions';
+            integrations.dataset.entityType = item.entity_type;
+            integrations.dataset.entityId = item.entity_id;
+            integrations.className = 'flex items-center gap-2';
+            actions.append(integrations);
+        }
+        if (item.kind === 'channel' || item.kind === 'playlist') {
+            const browse = document.createElement('button');
+            browse.type = 'button';
+            browse.className = 'border border-zinc-700 px-3 py-1.5 font-mono text-[10px] uppercase text-zinc-300 hover:border-red-500 hover:text-white';
+            browse.textContent = item.kind === 'channel' ? 'Videos' : 'Open playlist';
+            browse.addEventListener('click', () => loadCatalog(item.kind, item.entity_id));
+            actions.append(browse);
+        }
+        const external = document.createElement('a');
+        external.href = item.source_url;
+        external.target = '_blank';
+        external.rel = 'noopener noreferrer';
+        external.className = 'ml-auto font-mono text-[10px] uppercase text-zinc-600 hover:text-red-400';
+        external.textContent = openYouTubeLabel;
+        actions.append(external);
+        body.append(heading, meta, actions);
+        card.append(media, body);
+        return card;
+    }
+
+    function requestUrl(kind, value, pageToken) {
+        const query = new URLSearchParams();
+        if (pageToken) query.set('page_token', pageToken);
+        if (kind === 'search') {
+            query.set('q', value);
+            return `/api/youtube/search?${query}`;
+        }
+        if (kind === 'subscriptions') return `/api/youtube/subscriptions?${query}`;
+        if (kind === 'channel') return `/api/youtube/channels/${encodeURIComponent(value)}/videos?${query}`;
+        if (kind === 'playlist') return `/api/youtube/playlists/${encodeURIComponent(value)}/items?${query}`;
+        return `/api/youtube/popular?${query}`;
+    }
+
+    async function loadCatalog(kind, value = '', append = false) {
+        const requestId = ++requestSerial;
+        if (!append && catalogController) catalogController.abort();
+        const controller = new AbortController();
+        catalogController = controller;
+        if (!append) {
+            currentRequest = {kind, value};
+            nextPageToken = null;
+            renderedCount = 0;
+            grid.replaceChildren();
+        }
+        setStatus('Loading YouTube catalog...', false, !append);
+        loadMore.disabled = true;
+        try {
+            const response = await fetch(requestUrl(kind, value, append ? nextPageToken : null), {signal: controller.signal});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || `YouTube request failed (${response.status})`);
+            if (requestId !== requestSerial) return;
+            const cards = payload.items.map(makeCard);
+            if (append) grid.append(...cards); else grid.replaceChildren(...cards);
+            renderedCount += payload.items.length;
+            nextPageToken = payload.next_page_token;
+            title.textContent = payload.title;
+            count.textContent = `${renderedCount} items`;
+            setStatus(payload.items.length || append ? '' : 'Nothing found.');
+            loadMore.classList.toggle('hidden', !nextPageToken);
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            if (requestId !== requestSerial) return;
+            setStatus(error.message, true, !append);
+        } finally {
+            if (requestId === requestSerial) loadMore.disabled = false;
+        }
+    }
+
+    async function playVideo(item) {
+        setStatus('Preparing server stream...');
+        try {
+            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(item.entity_id)}/stream`, {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not prepare stream');
+            const modal = document.getElementById('youtube-player-modal');
+            const player = document.getElementById('youtube-player');
+            document.getElementById('youtube-player-title').textContent = payload.title;
+            player.src = payload.stream_url;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setStatus('');
+            player.play().catch(() => {});
+        } catch (error) {
+            setStatus(error.message, true);
+        }
+    }
+
+    async function accountStatus() {
+        const response = await fetch('/api/youtube/account');
+        const payload = await response.json();
+        const badge = document.getElementById('youtube-account-badge');
+        badge.textContent = payload.authenticated ? 'Account connected' : 'Anonymous';
+        badge.classList.toggle('text-emerald-400', payload.authenticated);
+        document.getElementById('youtube-subscriptions').classList.toggle('hidden', !payload.authenticated);
+        document.getElementById('youtube-account-disconnect').classList.toggle('hidden', !payload.authenticated);
+    }
+
+    document.getElementById('youtube-popular').addEventListener('click', () => loadCatalog('popular'));
+    document.getElementById('youtube-subscriptions').addEventListener('click', () => loadCatalog('subscriptions'));
+    document.getElementById('youtube-search-form').addEventListener('submit', event => {
+        event.preventDefault();
+        loadCatalog('search', document.getElementById('youtube-search-input').value.trim());
+    });
+    loadMore.addEventListener('click', () => loadCatalog(currentRequest.kind, currentRequest.value, true));
+    document.getElementById('youtube-player-close').addEventListener('click', () => {
+        const player = document.getElementById('youtube-player');
+        player.pause();
+        player.removeAttribute('src');
+        player.load();
+        document.getElementById('youtube-player-modal').classList.add('hidden');
+        document.getElementById('youtube-player-modal').classList.remove('flex');
+    });
+    document.getElementById('youtube-account-open').addEventListener('click', () => {
+        document.getElementById('youtube-account-panel').classList.toggle('hidden');
+    });
+    document.getElementById('youtube-account-browser').addEventListener('netsanctum:browser-snapshot-saved', async () => {
+        await accountStatus();
+        await loadCatalog('popular');
+    });
+    document.getElementById('youtube-account-disconnect').addEventListener('click', async () => {
+        await fetch('/api/youtube/account', {method: 'DELETE'});
+        await accountStatus();
+        await loadCatalog('popular');
+    });
+    accountStatus().catch(() => {});
+    loadCatalog('popular');
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,66 @@
+from app.core.module_types import BrowserPolicySpec, IntegrationSpec, ModuleSpec
+
+MODULE = ModuleSpec(
+    id="youtube",
+    version="0.1.0",
+    title_en="YouTube",
+    title_ru="YouTube",
+    dashboard_url="/youtube/dashboard",
+    order=25,
+    router="app.modules.youtube.router:router",
+    templates="templates",
+    i18n="app.modules.youtube.i18n",
+    browser_policies=(
+        BrowserPolicySpec(
+            id="youtube.account",
+            start_url=(
+                "https://accounts.google.com/ServiceLogin?service=youtube&"
+                "continue=https%3A%2F%2Fwww.youtube.com%2F"
+            ),
+            allowed_hosts=(
+                "google.com",
+                "googleapis.com",
+                "googleusercontent.com",
+                "ggpht.com",
+                "gstatic.com",
+                "youtube.com",
+                "ytimg.com",
+            ),
+            persist_snapshot=True,
+            credential_scope="youtube",
+            required_cookie_names=("SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"),
+            persisted_cookie_names=(
+                "SID",
+                "HSID",
+                "SSID",
+                "APISID",
+                "SAPISID",
+                "__Secure-1PSID",
+                "__Secure-3PSID",
+                "__Secure-1PAPISID",
+                "__Secure-3PAPISID",
+                "LOGIN_INFO",
+                "PREF",
+                "YSC",
+                "VISITOR_INFO1_LIVE",
+                "__Secure-ROLLOUT_TOKEN",
+            ),
+            persisted_origins=("https://www.youtube.com",),
+            idle_timeout_seconds=600,
+        ),
+    ),
+    entity_types=("youtube_video", "youtube_playlist", "youtube_channel"),
+    entity_resolver="app.modules.youtube.capabilities:resolve_entity",
+    integrations=(
+        IntegrationSpec(
+            id="youtube.video_source.v1",
+            contract="video.source.catalog.v1",
+            handler="app.modules.youtube.integrations:video_source_catalog",
+            request_model="app.contracts.video_source_catalog_v1:VideoSourceRequest",
+            result_model="app.contracts.video_source_catalog_v1:VideoSourceResult",
+        ),
+    ),
+    uses_integrations=("media.video.archive.v1",),
+    dependency_extra="youtube",
+    system_packages=("deno",),
+)

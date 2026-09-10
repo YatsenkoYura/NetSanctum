@@ -11,6 +11,7 @@ from app.core.module_types import (
     IntegrationContext,
     IntegrationNotFoundError,
     IntegrationRejectedError,
+    IntegrationServiceError,
     IntegrationUnavailableError,
 )
 from app.core.modules import module_registry
@@ -70,3 +71,5 @@ async def invoke_integration(
         raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
     except IntegrationRejectedError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntegrationServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

@@ -3,6 +3,7 @@
   "default_modules": [
     "music",
     "video_archiver",
+    "youtube",
     "vault",
     "alllib",
     "computercraft",
@@ -62,6 +63,13 @@
       "system_packages": [
         "deno",
         "ffmpeg"
+      ]
+    },
+    "youtube": {
+      "required": false,
+      "extra": "youtube",
+      "system_packages": [
+        "deno"
       ]
     }
   }
