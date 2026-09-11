@@ -8,6 +8,7 @@ from app.contracts.video_source_catalog_v1 import VideoSourceRequest
 from app.core.browser_runtime import BrowserRuntime
 from app.core.module_types import IntegrationContext, IntegrationRejectedError, IntegrationServiceError
 from app.modules.video_archiver.integrations import archive_source_video
+from app.modules.video_archiver.tasks import download_video_task
 from app.modules.youtube.capabilities import resolve_entity
 from app.modules.youtube.integrations import video_source_catalog
 from app.modules.youtube.module import MODULE as YOUTUBE_MODULE
@@ -146,6 +147,7 @@ class YouTubeModuleTests(unittest.TestCase):
 
         self.assertEqual("task-1", result.task_id)
         self.assertEqual("youtube", result.platform)
+        self.assertIs(download_video_task, dispatch.call_args.args[0])
         self.assertEqual("video_dl", dispatch.call_args.args[2])
 
     def test_archive_integration_rejects_playlist_fanout(self):

@@ -51,6 +51,16 @@ if grep -q '^MASTER_API_KEY=dev-api-key-change-me$' "$ENV_FILE"; then
     sed -i "s/^MASTER_API_KEY=.*/MASTER_API_KEY=$API_SECRET/" "$ENV_FILE"
 fi
 
+if ! grep -q '^REDIS_PASSWORD=' "$ENV_FILE" || grep -q '^REDIS_PASSWORD=change_me_redis_password$' "$ENV_FILE"; then
+    REDIS_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    if grep -q '^REDIS_PASSWORD=' "$ENV_FILE"; then
+        sed -i "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=$REDIS_SECRET/" "$ENV_FILE"
+    else
+        printf '\nREDIS_PASSWORD=%s\n' "$REDIS_SECRET" >> "$ENV_FILE"
+    fi
+    sed -i "s/change_me_redis_password/$REDIS_SECRET/g" "$ENV_FILE"
+fi
+
 chmod 600 "$ENV_FILE"
 if ! grep -q '^PUID=' "$ENV_FILE"; then
     echo "PUID=$(id -u)" >> "$ENV_FILE"
@@ -63,6 +73,7 @@ fi
 PORT_ARG=""
 ACTION="up"
 BROWSER_RUNTIME=1
+RECREATE_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -142,29 +153,29 @@ else
 fi
 echo "========================================================"
 
-# Clean up stale/orphaned containers first to prevent DNS/network conflicts
 if [ "$ACTION" = "restart" ]; then
-    echo "Recreating containers..."
-    docker compose --profile browser down --remove-orphans
+    echo "Recreating application containers after a successful build..."
+    RECREATE_ARGS=(--force-recreate)
 fi
 
 # Check if port is already bound on host before launching
 if command -v lsof >/dev/null 2>&1; then
     if lsof -i :"$HOST_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
         echo "WARNING: Host port $HOST_PORT appears to be in use."
-        echo "Cleaning up existing containers..."
-        docker compose --profile browser down --remove-orphans
+        echo "Docker Compose will reuse or replace the existing NetSanctum service."
     fi
 fi
 
 # Launch containers
 echo "Building and launching Docker services..."
 if [ "$BROWSER_RUNTIME" = "1" ]; then
-    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser up -d --build --remove-orphans
+    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser build
+    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser up -d --remove-orphans "${RECREATE_ARGS[@]}"
 else
     docker compose --profile browser stop browser-runtime browser-proxy >/dev/null 2>&1 || true
     docker compose --profile browser rm -f browser-runtime browser-proxy >/dev/null 2>&1 || true
-    BROWSER_RUNTIME_ENABLED=0 docker compose up -d --build --remove-orphans
+    BROWSER_RUNTIME_ENABLED=0 docker compose build
+    BROWSER_RUNTIME_ENABLED=0 docker compose up -d --remove-orphans "${RECREATE_ARGS[@]}"
 fi
 
 echo ""

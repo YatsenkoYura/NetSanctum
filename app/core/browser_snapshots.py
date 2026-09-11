@@ -20,6 +20,9 @@ class BrowserSnapshotStore:
         self.root = root or configured_root / "config" / "browser-snapshots"
 
     def _path(self, policy_id: str) -> Path:
+        return self.root / f"{policy_id}.snapshot"
+
+    def _legacy_path(self, policy_id: str) -> Path:
         return self.root / f"{policy_id}.json.enc"
 
     def _save_sync(
@@ -92,6 +95,10 @@ class BrowserSnapshotStore:
         policy: BrowserPolicySpec | None = None,
     ) -> dict | None:
         path = self._path(policy_id)
+        legacy = False
+        if not path.is_file() and self._legacy_path(policy_id).is_file():
+            path = self._legacy_path(policy_id)
+            legacy = True
         if not path.is_file():
             return None
         payload = json.loads(decrypt_secret_value(path.read_text(encoding="utf-8")))
@@ -102,6 +109,8 @@ class BrowserSnapshotStore:
         storage_state = payload.get("storage_state")
         if not isinstance(storage_state, dict):
             raise ValueError("Browser snapshot has no storage state")
+        if legacy:
+            os.replace(path, self._path(policy_id))
         return self._filter_state(storage_state, policy) if policy else storage_state
 
     async def load(
@@ -113,11 +122,13 @@ class BrowserSnapshotStore:
         return await asyncio.to_thread(self._load_sync, policy_id, module_id, policy)
 
     async def delete(self, policy_id: str) -> None:
-        path = self._path(policy_id)
-        await asyncio.to_thread(path.unlink, missing_ok=True)
+        await asyncio.to_thread(self._path(policy_id).unlink, missing_ok=True)
+        await asyncio.to_thread(self._legacy_path(policy_id).unlink, missing_ok=True)
 
     async def exists(self, policy_id: str) -> bool:
-        return await asyncio.to_thread(self._path(policy_id).is_file)
+        return await asyncio.to_thread(
+            lambda: self._path(policy_id).is_file() or self._legacy_path(policy_id).is_file()
+        )
 
     @staticmethod
     def _cookies_netscape(storage_state: dict | None) -> str | None:

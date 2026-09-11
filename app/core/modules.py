@@ -174,26 +174,44 @@ class ModuleRegistry:
                     if item.credential_scope
                 ),
             )
-            for declaration in declarations:
-                if declaration is None:
-                    continue
-                value, seen, label = declaration
-                owner = seen.get(value)
-                if owner:
-                    error = ValueError(f"Duplicate {label} {value!r} also declared by {owner.id!r}")
-                    self._fail(record, "manifest", error)
-                    continue
+            declarations = tuple(declaration for declaration in declarations if declaration is not None)
+            conflict = next(
+                ((value, seen[value], label) for value, seen, label in declarations if value in seen),
+                None,
+            )
+            if conflict:
+                value, owner, label = conflict
+                self._fail(
+                    record,
+                    "manifest",
+                    ValueError(f"Duplicate {label} {value!r} also declared by {owner.id!r}"),
+                )
+                continue
+            contract_conflict = next(
+                (
+                    (integration, registered)
+                    for integration in spec.integrations
+                    if integration.contract
+                    and (registered := integration_contracts.get(integration.contract))
+                    and (integration.request_model, integration.result_model)
+                    != (registered[1], registered[2])
+                ),
+                None,
+            )
+            if contract_conflict:
+                integration, registered = contract_conflict
+                self._fail(
+                    record,
+                    "manifest",
+                    ValueError(
+                        f"Integration contract {integration.contract!r} schema differs from provider {registered[0].id!r}"
+                    ),
+                )
+                continue
+            for value, seen, _label in declarations:
                 seen[value] = record
             for integration in spec.integrations:
                 if not integration.contract:
-                    continue
-                contract = integration_contracts.get(integration.contract)
-                signature = (integration.request_model, integration.result_model)
-                if contract and signature != (contract[1], contract[2]):
-                    error = ValueError(
-                        f"Integration contract {integration.contract!r} schema differs from provider {contract[0].id!r}"
-                    )
-                    self._fail(record, "manifest", error)
                     continue
                 integration_contracts[integration.contract] = (
                     record,

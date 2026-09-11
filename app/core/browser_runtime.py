@@ -126,8 +126,13 @@ class BrowserRuntime:
                     viewport=VIEWPORT,
                     locale=locale,
                     storage_state=storage_state if restore_snapshot else None,
-                    service_workers="block",
+                    service_workers="allow",
                 )
+                await context.add_init_script("""
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+    });
+""")
 
                 async def route_request(route):
                     if self._allowed_url(policy, route.request.url):
@@ -193,19 +198,35 @@ class BrowserRuntime:
     async def status(self, session_id: str) -> dict:
         session = self._require(session_id, touch=False)
         async with session.operation_lock:
-            cookies = await session.context.cookies()
+            try:
+                cookies = await session.context.cookies()
+            except Exception:
+                cookies = []
+
             present_cookie_names = {cookie.get("name") for cookie in cookies}
             can_snapshot = not session.policy.required_cookie_names or bool(
                 present_cookie_names & set(session.policy.required_cookie_names)
             )
+
+            # Безопасное получение title во время смены страницы:
+            try:
+                title = await session.page.title()
+            except Exception:
+                title = "Loading..."
+
+            try:
+                url = session.page.url
+            except Exception:
+                url = ""
+
             return {
                 "session_id": session.id,
                 "module_id": session.module_id,
                 "policy_id": session.policy.id,
                 "policy_fingerprint": browser_policy_fingerprint(session.policy),
                 "active": True,
-                "title": await session.page.title(),
-                "url": session.page.url,
+                "title": title,
+                "url": url,
                 "viewport": VIEWPORT,
                 "can_snapshot": can_snapshot,
                 "mode": session.mode,
@@ -214,7 +235,11 @@ class BrowserRuntime:
     async def screenshot(self, session_id: str) -> bytes:
         session = self._require(session_id, touch=False)
         async with session.operation_lock:
-            return await session.page.screenshot(type="jpeg", quality=72)
+            try:
+                return await session.page.screenshot(type="jpeg", quality=72)
+            except Exception:
+                await asyncio.sleep(0.2)
+                return await session.page.screenshot(type="jpeg", quality=72)
 
     async def click(self, session_id: str, x: float, y: float) -> None:
         session = self._require(session_id)

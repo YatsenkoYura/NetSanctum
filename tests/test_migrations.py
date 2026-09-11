@@ -8,6 +8,7 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from alembic import command
 from app.core.database import Base
@@ -72,6 +73,21 @@ class ModuleMigrationTests(unittest.TestCase):
         self.assertEqual("video_0002", revisions["video_archiver"])
         self.assertEqual("music_0001", revisions["music"])
         self.assertEqual("sharing_0001", revisions["sharing"])
+        self.assertEqual("settings_0002", revisions["settings"])
+
+    def test_settings_scope_indexes_reject_duplicate_nullable_scopes(self):
+        engine = self.make_engine()
+        registry = ModuleRegistry.discover(installed_modules=set())
+        upgrade_database(engine, registry)
+        insert_global = text(
+            "INSERT INTO settings "
+            "(scope, module_name, user_id, key, value, value_type, is_secret, created_at, updated_at) "
+            "VALUES ('global', NULL, NULL, 'duplicate', '1', 'string', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        )
+        with engine.begin() as connection:
+            connection.execute(insert_global)
+        with self.assertRaises(IntegrityError), engine.begin() as connection:
+            connection.execute(insert_global)
 
     def test_disabled_installed_module_is_still_migrated(self):
         engine = self.make_engine()

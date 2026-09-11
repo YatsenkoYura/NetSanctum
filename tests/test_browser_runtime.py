@@ -34,7 +34,10 @@ class BrowserRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("env_file", proxy)
         self.assertNotIn("volumes", proxy)
         self.assertEqual({"browser-proxy", "browser-egress"}, set(proxy["networks"]))
-        self.assertEqual({"default", "browser-control"}, set(compose["services"]["web"]["networks"]))
+        self.assertEqual(
+            {"default", "backend", "media-control", "browser-control"},
+            set(compose["services"]["web"]["networks"]),
+        )
         self.assertTrue(compose["networks"]["browser-control"]["internal"])
         self.assertTrue(compose["networks"]["browser-proxy"]["internal"])
         self.assertEqual("1", browser["build"]["args"]["INSTALL_BROWSER_RUNTIME"])
@@ -55,6 +58,19 @@ class BrowserRuntimeContractTests(unittest.TestCase):
         start_script = Path("start.sh").read_text()
         self.assertIn("--no-browser-runtime", start_script)
         self.assertIn("docker compose --profile browser up", start_script)
+
+    def test_compose_isolates_and_persists_core_services(self):
+        compose = yaml.safe_load(Path("docker-compose.yml").read_text())
+        services = compose["services"]
+
+        self.assertNotIn("env_file", services["postgres"])
+        self.assertEqual(["backend"], services["postgres"]["networks"])
+        self.assertEqual(["backend"], services["redis"]["networks"])
+        self.assertIn("redis_data:/data", services["redis"]["volumes"])
+        self.assertNotIn("backend", services["youtube-pot"]["networks"])
+        self.assertIn("migrate", services)
+        self.assertNotIn("app.core.migrations", " ".join(services["web"]["command"]))
+        self.assertNotIn("app.core.migrations", " ".join(services["worker"]["command"]))
 
     def test_youtube_uses_shared_browser_window(self):
         template = Path("app/modules/youtube/templates/youtube_dashboard.html").read_text()
@@ -136,7 +152,7 @@ class BrowserRuntimeContractTests(unittest.TestCase):
             writer = BrowserSnapshotStore(root)
             asyncio.run(writer.save("youtube.account", "youtube", state))
 
-            raw = (root / "youtube.account.json.enc").read_text()
+            raw = (root / "youtube.account.snapshot").read_text()
             self.assertNotIn("secret-cookie", raw)
             reader = BrowserSnapshotStore(root)
             self.assertEqual(state, asyncio.run(reader.load("youtube.account")))

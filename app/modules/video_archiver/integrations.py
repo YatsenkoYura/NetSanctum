@@ -21,7 +21,7 @@ from app.core.task_dispatch import dispatch_tracked_async
 from app.core.ytdlp_pipeline import is_youtube_playlist_url
 from app.modules.video_archiver.models import ArchivedVideo
 from app.modules.video_archiver.providers import PlatformRegistry
-from app.modules.video_archiver.tasks import process_video_url_task
+from app.modules.video_archiver.tasks import download_video_task
 
 redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
@@ -106,7 +106,7 @@ async def archive_source_video(
     except ValueError as exc:
         raise IntegrationRejectedError(str(exc)) from exc
     task = await dispatch_tracked_async(
-        process_video_url_task,
+        download_video_task,
         redis_client,
         "video_dl",
         {
