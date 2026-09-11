@@ -216,6 +216,11 @@
         const requestId = ++requestSerial;
         if (!append && catalogController) catalogController.abort();
         const controller = new AbortController();
+        let timedOut = false;
+        const timeout = window.setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+        }, 60000);
         catalogController = controller;
         if (!append) {
             currentRequest = {kind, value};
@@ -239,10 +244,16 @@
             setStatus(payload.items.length || append ? '' : 'Nothing found.');
             loadMore.classList.toggle('hidden', !nextPageToken);
         } catch (error) {
-            if (error.name === 'AbortError') return;
+            if (error.name === 'AbortError') {
+                if (timedOut && requestId === requestSerial) {
+                    setStatus('Catalog request timed out. Please try again.', true, !append);
+                }
+                return;
+            }
             if (requestId !== requestSerial) return;
             setStatus(error.message, true, !append);
         } finally {
+            window.clearTimeout(timeout);
             if (requestId === requestSerial) loadMore.disabled = false;
         }
     }

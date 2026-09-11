@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -53,10 +54,19 @@ class YouTubeModuleTests(unittest.TestCase):
     def test_browser_login_network_is_restricted_to_google_and_youtube(self):
         policy = YOUTUBE_MODULE.browser_policies[0]
         self.assertTrue(BrowserRuntime._allowed_url(policy, "https://accounts.google.com/signin"))
+        self.assertTrue(BrowserRuntime._allowed_url(policy, "https://www.recaptcha.net/recaptcha/api.js"))
+        self.assertTrue(BrowserRuntime._allowed_url(policy, "https://www.youtube-nocookie.com/"))
         self.assertTrue(BrowserRuntime._allowed_url(policy, "wss://www.youtube.com/live"))
         self.assertTrue(BrowserRuntime._allowed_url(policy, "https://www.youtube.com/"))
         self.assertFalse(BrowserRuntime._allowed_url(policy, "https://youtube.com.evil.example/"))
         self.assertFalse(BrowserRuntime._allowed_url(policy, "http://accounts.google.com/signin"))
+
+    def test_catalog_request_has_a_deadline(self):
+        dashboard = (Path("app/modules/youtube/templates/youtube_dashboard.html")).read_text()
+
+        self.assertIn("timedOut = true;", dashboard)
+        self.assertIn("}, 60000);", dashboard)
+        self.assertIn("Catalog request timed out. Please try again.", dashboard)
 
     def test_stream_tokens_do_not_expose_signed_remote_url(self):
         info = {

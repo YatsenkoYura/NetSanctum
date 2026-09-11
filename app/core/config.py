@@ -57,7 +57,8 @@ class Settings(BaseSettings):
     # ── YouTube / yt-dlp ─────────────────────────────────
     YTDLP_CACHE_DIR: str = "/app/storage/.cache/yt-dlp"
     BROWSER_EGRESS_HOSTS: str = (
-        "google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,youtube.com,ytimg.com"
+        "google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,recaptcha.net,"
+        "youtube.com,youtube-nocookie.com,ytimg.com,googlevideo.com"
     )
     BROWSER_RUNTIME_ENABLED: bool = True
     YOUTUBE_POT_PROVIDER_URL: str = ""
