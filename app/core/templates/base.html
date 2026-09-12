@@ -8,7 +8,7 @@
     <meta name="description" content="NetSanctum — Modular Monolith Control Panel">
 
     <!-- Precompiled Tailwind CSS (local and offline-safe) -->
-    <link rel="stylesheet" href="/static/tailwind.css">
+    <link rel="stylesheet" href="/static/tailwind.css?v=5b906b1">
 
     <!-- Google Fonts (Asynchronous fallback to prevent offline blocking) -->
     <link rel="stylesheet"
@@ -17,7 +17,7 @@
 
     <!-- HTMX (Local for Offline/Self-Hosted usage) -->
     <script src="/static/htmx.min.js"></script>
-    {% if not request.query_params.get('package_id') %}<script src="/static/browser-runtime.js" defer></script>{% endif %}
+    {% if not request.query_params.get('package_id') %}<script src="/static/browser-runtime.js?v=5b906b1" defer></script>{% endif %}
 
     <style>
         * {

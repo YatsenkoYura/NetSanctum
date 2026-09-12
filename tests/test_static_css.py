@@ -8,7 +8,7 @@ class StaticCssContractTests(unittest.TestCase):
     def test_base_uses_precompiled_tailwind(self):
         base = (ROOT / "app/core/templates/base.html").read_text()
 
-        self.assertIn('href="/static/tailwind.css"', base)
+        self.assertIn('href="/static/tailwind.css?v=', base)
         self.assertNotIn("tailwind.min.js", base)
         self.assertNotIn("tailwind.config", base)
 
