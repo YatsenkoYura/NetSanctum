@@ -17,6 +17,7 @@
 
     <!-- HTMX (Local for Offline/Self-Hosted usage) -->
     <script src="/static/htmx.min.js"></script>
+    {% if not request.query_params.get('package_id') %}<script src="/static/browser-runtime.js" defer></script>{% endif %}
 
     <style>
         * {

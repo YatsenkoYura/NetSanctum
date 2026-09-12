@@ -1,14 +1,18 @@
 """Stable declarative types available to module manifests."""
 
+import hashlib
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 MODULE_API_VERSION = 1
 MODULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 INTEGRATION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
 UI_EXTENSION_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
+HOST_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 MIGRATION_REVISION_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 SHARE_PATH_PARAMETER_PATTERN = re.compile(r"^\{([a-z][a-z0-9_]*)\}$")
@@ -72,6 +76,69 @@ class UiActionSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserPolicySpec:
+    """Module-owned permissions for an isolated core browser session."""
+
+    id: str
+    start_url: str
+    allowed_hosts: tuple[str, ...]
+    persist_snapshot: bool = False
+    credential_scope: str | None = None
+    required_cookie_names: tuple[str, ...] = ()
+    persisted_cookie_names: tuple[str, ...] = ()
+    persisted_origins: tuple[str, ...] = ()
+    allowed_modes: tuple[str, ...] = ("interactive", "headless")
+    idle_timeout_seconds: int = 600
+
+    def __post_init__(self) -> None:
+        if not UI_EXTENSION_ID_PATTERN.fullmatch(self.id):
+            raise ValueError(f"Invalid browser policy id: {self.id!r}")
+        parsed = urlparse(self.start_url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError(f"Browser policy start URL must be public HTTPS: {self.start_url!r}")
+        if not self.allowed_hosts:
+            raise ValueError(f"Browser policy {self.id!r} must declare allowed hosts")
+        normalized_hosts = tuple(host.lower().rstrip(".") for host in self.allowed_hosts)
+        if len(normalized_hosts) != len(set(normalized_hosts)):
+            raise ValueError(f"Browser policy {self.id!r} declares duplicate hosts")
+        if any(not HOST_PATTERN.fullmatch(host) for host in normalized_hosts):
+            raise ValueError(f"Browser policy {self.id!r} declares an invalid host")
+        if self.credential_scope and not UI_EXTENSION_ID_PATTERN.fullmatch(self.credential_scope):
+            raise ValueError(f"Browser policy {self.id!r} declares an invalid credential scope")
+        if self.required_cookie_names and not self.persist_snapshot:
+            raise ValueError("Required browser cookies need snapshot persistence")
+        if self.persist_snapshot and not (self.persisted_cookie_names or self.persisted_origins):
+            raise ValueError("Persistent browser policies must explicitly select cookies or origins")
+        if any(not name or len(name) > 128 for name in self.required_cookie_names):
+            raise ValueError(f"Browser policy {self.id!r} declares an invalid cookie name")
+        if any(not name or len(name) > 128 for name in self.persisted_cookie_names):
+            raise ValueError(f"Browser policy {self.id!r} declares an invalid persisted cookie name")
+        if set(self.required_cookie_names) - set(self.persisted_cookie_names):
+            raise ValueError("Required browser cookies must also be persisted")
+        for origin in self.persisted_origins:
+            origin_host = (urlparse(origin).hostname or "").lower().rstrip(".")
+            if not origin.startswith("https://") or not any(
+                origin_host == host or origin_host.endswith(f".{host}") for host in normalized_hosts
+            ):
+                raise ValueError(f"Browser policy {self.id!r} declares an invalid persisted origin")
+        if not self.allowed_modes or not set(self.allowed_modes) <= {"interactive", "headless"}:
+            raise ValueError(f"Browser policy {self.id!r} declares invalid browser modes")
+        if len(self.allowed_modes) != len(set(self.allowed_modes)):
+            raise ValueError(f"Browser policy {self.id!r} declares duplicate browser modes")
+        start_host = parsed.hostname.lower().rstrip(".")
+        if not any(start_host == host or start_host.endswith(f".{host}") for host in normalized_hosts):
+            raise ValueError(f"Browser policy {self.id!r} does not allow its start host")
+        if not 60 <= self.idle_timeout_seconds <= 3600:
+            raise ValueError("Browser policy idle timeout must be between 60 and 3600 seconds")
+        object.__setattr__(self, "allowed_hosts", normalized_hosts)
+
+
+def browser_policy_fingerprint(policy: BrowserPolicySpec) -> str:
+    payload = json.dumps(asdict(policy), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class IntegrationContext:
     """Request-scoped infrastructure passed to an integration handler."""
 
@@ -115,6 +182,14 @@ class IntegrationRejectedError(ValueError):
 
 class IntegrationNotFoundError(LookupError):
     """Raised when an integration target does not exist."""
+
+
+class IntegrationServiceError(RuntimeError):
+    """Raised when an integration's upstream service is temporarily unavailable."""
+
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = status_code if status_code in {429, 502, 503} else 502
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +357,7 @@ class ModuleSpec:
     uses_integrations: tuple[str, ...] = ()
     uses_integration_contracts: tuple[str, ...] = ()
     ui_actions: tuple[UiActionSpec, ...] = ()
+    browser_policies: tuple[BrowserPolicySpec, ...] = ()
     progress_key_patterns: tuple[str, ...] = ()
     dependency_extra: str | None = None
     system_packages: tuple[str, ...] = ()
@@ -327,3 +403,6 @@ class ModuleSpec:
         action_ids = [action.id for action in self.ui_actions]
         if len(action_ids) != len(set(action_ids)):
             raise ValueError(f"Module {self.id!r} declares duplicate UI actions")
+        policy_ids = [policy.id for policy in self.browser_policies]
+        if len(policy_ids) != len(set(policy_ids)):
+            raise ValueError(f"Module {self.id!r} declares duplicate browser policies")

@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 from sqlalchemy import and_, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.secret_values import encrypt_secret_value
@@ -86,9 +87,58 @@ async def upsert_setting(
         value_type=value_type,
         is_secret=is_secret,
     )
-    db.add(setting)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(setting)
+            await db.flush()
+    except IntegrityError:
+        result = await db.execute(stmt)
+        existing = result.scalar_one()
+        existing.value = stored_value
+        if description is not None:
+            existing.description = description
+        existing.value_type = value_type
+        existing.is_secret = is_secret
+        await db.flush()
+        await db.refresh(existing)
+        return existing
     await db.refresh(setting)
+    return setting
+
+
+async def ensure_setting(
+    db: AsyncSession,
+    *,
+    key: str,
+    value: str,
+    description: str | None = None,
+    value_type: str = "string",
+    is_secret: bool = False,
+) -> Setting:
+    """Create a global default only when the key does not already exist."""
+    stmt = select(Setting).where(
+        Setting.scope == "global",
+        Setting.module_name.is_(None),
+        Setting.user_id.is_(None),
+        Setting.key == key,
+    )
+    existing = (await db.execute(stmt)).scalar_one_or_none()
+    if existing:
+        return existing
+    setting = Setting(
+        scope="global",
+        key=key,
+        value=encrypt_secret_value(value) if is_secret else value,
+        description=description,
+        value_type=value_type,
+        is_secret=is_secret,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(setting)
+            await db.flush()
+    except IntegrityError:
+        return (await db.execute(stmt)).scalar_one()
     return setting
 
 

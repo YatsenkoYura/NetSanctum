@@ -217,6 +217,15 @@ class IntegrationContractTests(unittest.TestCase):
         self.assertEqual(1, len(enabled.ui_actions("entity.actions", context)))
         self.assertEqual([], disabled.ui_actions("entity.actions", context))
 
+    def test_youtube_archive_action_follows_module_activation(self):
+        enabled = ModuleRegistry.discover({"youtube", "video_archiver"})
+        disabled = ModuleRegistry.discover({"youtube"})
+        context = {"entity_type": "youtube_video", "entity_id": "dQw4w9WgXcQ"}
+
+        actions = enabled.ui_actions("entity.actions", context)
+        self.assertEqual(["media.video.archive.v1"], [action["integration"] for action in actions])
+        self.assertEqual([], disabled.ui_actions("entity.actions", context))
+
     def test_video_ui_contains_only_framework_extension_point(self):
         template = Path("app/modules/video_archiver/templates/video_dashboard.html").read_text()
 

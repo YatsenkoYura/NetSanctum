@@ -5,6 +5,7 @@ from app.core.module_types import (
     ShareAsset,
     ShareRoute,
     ShareSpec,
+    UiActionSpec,
 )
 
 MODULE = ModuleSpec(
@@ -87,8 +88,26 @@ MODULE = ModuleSpec(
             resource_handler="app.modules.video_archiver.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
         ),
+        IntegrationSpec(
+            id="media.video.archive.v1",
+            handler="app.modules.video_archiver.integrations:archive_source_video",
+            request_model="app.contracts.video_archive_v1:ArchiveVideoRequest",
+            result_model="app.contracts.video_archive_v1:ArchiveVideoResult",
+        ),
     ),
     uses_integrations=("media.audio.import.v1",),
+    uses_integration_contracts=("video.source.catalog.v1",),
+    ui_actions=(
+        UiActionSpec(
+            id="video_archiver.archive_source",
+            slot="entity.actions",
+            integration="media.video.archive.v1",
+            label_en="Archive video",
+            label_ru="Скачать в архив",
+            entity_types=("youtube_video",),
+            order=10,
+        ),
+    ),
     progress_key_patterns=("video_dl:*", "video_oauth:*"),
     dependency_extra="video_archiver",
     system_packages=("deno", "ffmpeg"),

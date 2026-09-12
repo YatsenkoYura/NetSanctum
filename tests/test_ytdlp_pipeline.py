@@ -150,6 +150,10 @@ class YtDlpPipelineTests(unittest.TestCase):
     def test_error_classification_and_playlist_detection(self):
         self.assertEqual(YtDlpErrorKind.RATE_LIMITED, classify_ytdlp_error("HTTP Error 429"))
         self.assertEqual(YtDlpErrorKind.AUTH_REQUIRED, classify_ytdlp_error("Private video"))
+        self.assertEqual(
+            YtDlpErrorKind.AUTH_REQUIRED,
+            classify_ytdlp_error("Login details are needed to download this content"),
+        )
         self.assertEqual(YtDlpErrorKind.UNAVAILABLE, classify_ytdlp_error("Video has been removed"))
         self.assertTrue(is_youtube_playlist_url("https://youtube.com/playlist?list=PL123"))
         self.assertFalse(is_youtube_playlist_url("https://youtube.com/watch?v=abcdefghijk"))

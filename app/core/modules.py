@@ -151,6 +151,8 @@ class ModuleRegistry:
         integrations: dict[str, ModuleRecord] = {}
         integration_contracts: dict[str, tuple[ModuleRecord, str, str]] = {}
         ui_actions: dict[str, ModuleRecord] = {}
+        browser_policies: dict[str, ModuleRecord] = {}
+        browser_credential_scopes: dict[str, ModuleRecord] = {}
         for record in self.installed_records():
             spec = record.spec
             if not spec:
@@ -165,27 +167,51 @@ class ModuleRegistry:
                 *((entity_type, entity_types, "entity type") for entity_type in spec.entity_types),
                 *((item.id, integrations, "integration") for item in spec.integrations),
                 *((item.id, ui_actions, "UI action") for item in spec.ui_actions),
+                *((item.id, browser_policies, "browser policy") for item in spec.browser_policies),
+                *(
+                    (item.credential_scope, browser_credential_scopes, "browser credential scope")
+                    for item in spec.browser_policies
+                    if item.credential_scope
+                ),
             )
-            for declaration in declarations:
-                if declaration is None:
-                    continue
-                value, seen, label = declaration
-                owner = seen.get(value)
-                if owner:
-                    error = ValueError(f"Duplicate {label} {value!r} also declared by {owner.id!r}")
-                    self._fail(record, "manifest", error)
-                    continue
+            declarations = tuple(declaration for declaration in declarations if declaration is not None)
+            conflict = next(
+                ((value, seen[value], label) for value, seen, label in declarations if value in seen),
+                None,
+            )
+            if conflict:
+                value, owner, label = conflict
+                self._fail(
+                    record,
+                    "manifest",
+                    ValueError(f"Duplicate {label} {value!r} also declared by {owner.id!r}"),
+                )
+                continue
+            contract_conflict = next(
+                (
+                    (integration, registered)
+                    for integration in spec.integrations
+                    if integration.contract
+                    and (registered := integration_contracts.get(integration.contract))
+                    and (integration.request_model, integration.result_model)
+                    != (registered[1], registered[2])
+                ),
+                None,
+            )
+            if contract_conflict:
+                integration, registered = contract_conflict
+                self._fail(
+                    record,
+                    "manifest",
+                    ValueError(
+                        f"Integration contract {integration.contract!r} schema differs from provider {registered[0].id!r}"
+                    ),
+                )
+                continue
+            for value, seen, _label in declarations:
                 seen[value] = record
             for integration in spec.integrations:
                 if not integration.contract:
-                    continue
-                contract = integration_contracts.get(integration.contract)
-                signature = (integration.request_model, integration.result_model)
-                if contract and signature != (contract[1], contract[2]):
-                    error = ValueError(
-                        f"Integration contract {integration.contract!r} schema differs from provider {contract[0].id!r}"
-                    )
-                    self._fail(record, "manifest", error)
                     continue
                 integration_contracts[integration.contract] = (
                     record,
@@ -483,6 +509,41 @@ class ModuleRegistry:
 
     def has_integration(self, integration_id: str) -> bool:
         return self.integration_provider(integration_id) is not None
+
+    def browser_policy(self, policy_id: str):
+        """Return an active module and its declared browser policy."""
+        for record in self.active_records():
+            if not record.spec:
+                continue
+            for policy in record.spec.browser_policies:
+                if policy.id == policy_id:
+                    return record, policy
+        return None
+
+    def browser_policy_catalog(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": policy.id,
+                "module_id": record.id,
+                "allowed_hosts": list(policy.allowed_hosts),
+                "persist_snapshot": policy.persist_snapshot,
+                "credential_scope": policy.credential_scope,
+                "allowed_modes": list(policy.allowed_modes),
+                "idle_timeout_seconds": policy.idle_timeout_seconds,
+            }
+            for record in self.active_records()
+            if record.spec
+            for policy in record.spec.browser_policies
+        ]
+
+    def browser_policy_for_credential_scope(self, credential_scope: str):
+        for record in self.active_records():
+            if not record.spec:
+                continue
+            for policy in record.spec.browser_policies:
+                if policy.credential_scope == credential_scope:
+                    return record, policy
+        return None
 
     def integration_providers(self, contract: str) -> list[tuple[ModuleRecord, IntegrationSpec]]:
         """Return every active provider implementing a versioned contract."""

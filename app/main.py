@@ -97,75 +97,54 @@ async def lifespan(application: FastAPI):
     except ImportError:
         logger.info("Settings module not installed; skipping secret migration.")
 
-    # 3. Seed default Settings if empty
+    # 3. Ensure every default exists without overwriting operator changes.
     try:
-        from app.core.secret_values import encrypt_secret_value
-        from app.modules.settings.models import Setting
+        from app.modules.settings.service import ensure_setting
 
         async with AsyncSessionLocal() as session:
-            setting_check = await session.execute(select(Setting).limit(1))
-            if not setting_check.scalar_one_or_none():
-                logger.info("Seeding system settings configuration...")
-                default_settings = [
-                    Setting(
-                        scope="global",
-                        key="system_theme",
-                        value="neo-brutalist-dark",
-                        description="Visual layout paradigm",
-                        value_type="string",
-                        is_secret=False,
-                    ),
-                    Setting(
-                        scope="global",
-                        key="system_language",
-                        value="en",
-                        description="Default application language interface",
-                        value_type="string",
-                        is_secret=False,
-                    ),
-                    Setting(
-                        scope="global",
-                        key="openai_api_key",
-                        value=encrypt_secret_value(""),
-                        description="OpenAI / Gemini API Key",
-                        value_type="string",
-                        is_secret=True,
-                    ),
-                    Setting(
-                        scope="global",
-                        key="openai_base_url",
-                        value="https://generativelanguage.googleapis.com/v1beta/openai/",
-                        description="OpenAI-compatible Base URL",
-                        value_type="string",
-                        is_secret=False,
-                    ),
-                    Setting(
-                        scope="global",
-                        key="max_upload_size_mb",
-                        value="5000",
-                        description="Maximum raw upload limits in Megabytes",
-                        value_type="integer",
-                        is_secret=False,
-                    ),
-                    Setting(
-                        scope="global",
-                        key="encryption_cipher",
-                        value="AES-256-GCM",
-                        description="Secure filesystem block encryption protocol",
-                        value_type="string",
-                        is_secret=False,
-                    ),
-                    Setting(
-                        scope="global",
-                        key="external_sync_key",
-                        value=encrypt_secret_value(secrets.token_urlsafe(32)),
-                        description="Symmetric replication key for remote vaults",
-                        value_type="string",
-                        is_secret=True,
-                    ),
-                ]
-                session.add_all(default_settings)
-                await session.commit()
+            defaults = (
+                ("system_theme", "neo-brutalist-dark", "Visual layout paradigm", "string", False),
+                ("system_language", "en", "Default application language interface", "string", False),
+                ("openai_api_key", "", "OpenAI / Gemini API Key", "string", True),
+                (
+                    "openai_base_url",
+                    "https://generativelanguage.googleapis.com/v1beta/openai/",
+                    "OpenAI-compatible Base URL",
+                    "string",
+                    False,
+                ),
+                (
+                    "max_upload_size_mb",
+                    "5000",
+                    "Maximum raw upload limits in Megabytes",
+                    "integer",
+                    False,
+                ),
+                (
+                    "encryption_cipher",
+                    "AES-256-GCM",
+                    "Secure filesystem block encryption protocol",
+                    "string",
+                    False,
+                ),
+                (
+                    "external_sync_key",
+                    secrets.token_urlsafe(32),
+                    "Symmetric replication key for remote vaults",
+                    "string",
+                    True,
+                ),
+            )
+            for key, value, description, value_type, is_secret in defaults:
+                await ensure_setting(
+                    session,
+                    key=key,
+                    value=value,
+                    description=description,
+                    value_type=value_type,
+                    is_secret=is_secret,
+                )
+            await session.commit()
     except ImportError:
         logger.info("Settings module not installed; skipping default settings seed.")
 
@@ -234,11 +213,13 @@ def _module_guard(module_id: str):
 for module_id, module_router in module_registry.load_routers():
     app.include_router(module_router, dependencies=[Depends(_module_guard(module_id))])
 
+from app.core.browser_router import router as browser_router
 from app.core.integrations_router import router as integrations_router
 from app.core.packages_router import router as packages_router
 
 app.include_router(packages_router)
 app.include_router(integrations_router)
+app.include_router(browser_router)
 
 templates.env.globals["active_modules"] = module_registry.navigation
 

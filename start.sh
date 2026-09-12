@@ -9,6 +9,7 @@
 #   ./start.sh -p 5000          # Start on port 5000
 #   ./start.sh --down           # Stop all containers cleanly
 #   ./start.sh --logs           # Tail container logs
+#   ./start.sh --no-browser-runtime # Start without Chromium runtime/proxy
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -50,6 +51,16 @@ if grep -q '^MASTER_API_KEY=dev-api-key-change-me$' "$ENV_FILE"; then
     sed -i "s/^MASTER_API_KEY=.*/MASTER_API_KEY=$API_SECRET/" "$ENV_FILE"
 fi
 
+if ! grep -q '^REDIS_PASSWORD=' "$ENV_FILE" || grep -q '^REDIS_PASSWORD=change_me_redis_password$' "$ENV_FILE"; then
+    REDIS_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    if grep -q '^REDIS_PASSWORD=' "$ENV_FILE"; then
+        sed -i "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=$REDIS_SECRET/" "$ENV_FILE"
+    else
+        printf '\nREDIS_PASSWORD=%s\n' "$REDIS_SECRET" >> "$ENV_FILE"
+    fi
+    sed -i "s/change_me_redis_password/$REDIS_SECRET/g" "$ENV_FILE"
+fi
+
 chmod 600 "$ENV_FILE"
 if ! grep -q '^PUID=' "$ENV_FILE"; then
     echo "PUID=$(id -u)" >> "$ENV_FILE"
@@ -61,6 +72,8 @@ fi
 # Parse CLI arguments
 PORT_ARG=""
 ACTION="up"
+BROWSER_RUNTIME=1
+RECREATE_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -80,13 +93,21 @@ while [[ $# -gt 0 ]]; do
             ACTION="restart"
             shift
             ;;
+        --no-browser-runtime)
+            BROWSER_RUNTIME=0
+            shift
+            ;;
+        --browser-runtime)
+            BROWSER_RUNTIME=1
+            shift
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 PORT_ARG="$1"
                 shift
             else
                 echo "Unknown argument: $1"
-                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart]"
+                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime]"
                 exit 1
             fi
             ;;
@@ -95,13 +116,13 @@ done
 
 if [ "$ACTION" = "down" ]; then
     echo "Stopping NetSanctum containers..."
-    docker compose down --remove-orphans
+    docker compose --profile browser down --remove-orphans
     echo "NetSanctum stopped."
     exit 0
 fi
 
 if [ "$ACTION" = "logs" ]; then
-    docker compose logs -f --tail=100
+    docker compose --profile browser logs -f --tail=100
     exit 0
 fi
 
@@ -125,26 +146,37 @@ HOST_PORT="${HOST_PORT:-8000}"
 echo "========================================================"
 echo " Starting NetSanctum on host port: $HOST_PORT"
 echo " Configuration file: $ENV_FILE"
+if [ "$BROWSER_RUNTIME" = "1" ]; then
+    echo " Browser runtime: enabled (on-demand Chromium)"
+else
+    echo " Browser runtime: disabled"
+fi
 echo "========================================================"
 
-# Clean up stale/orphaned containers first to prevent DNS/network conflicts
 if [ "$ACTION" = "restart" ]; then
-    echo "Recreating containers..."
-    docker compose down --remove-orphans
+    echo "Recreating application containers after a successful build..."
+    RECREATE_ARGS=(--force-recreate)
 fi
 
 # Check if port is already bound on host before launching
 if command -v lsof >/dev/null 2>&1; then
     if lsof -i :"$HOST_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
         echo "WARNING: Host port $HOST_PORT appears to be in use."
-        echo "Cleaning up existing containers..."
-        docker compose down --remove-orphans
+        echo "Docker Compose will reuse or replace the existing NetSanctum service."
     fi
 fi
 
 # Launch containers
 echo "Building and launching Docker services..."
-docker compose up -d --build --remove-orphans
+if [ "$BROWSER_RUNTIME" = "1" ]; then
+    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser build
+    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser up -d --remove-orphans "${RECREATE_ARGS[@]}"
+else
+    docker compose --profile browser stop browser-runtime browser-proxy >/dev/null 2>&1 || true
+    docker compose --profile browser rm -f browser-runtime browser-proxy >/dev/null 2>&1 || true
+    BROWSER_RUNTIME_ENABLED=0 docker compose build
+    BROWSER_RUNTIME_ENABLED=0 docker compose up -d --remove-orphans "${RECREATE_ARGS[@]}"
+fi
 
 echo ""
 echo "========================================================"

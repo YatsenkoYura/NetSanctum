@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+
+{% block title %}NetSanctum — YouTube{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <div class="flex items-center justify-between gap-3 border-b-2 border-zinc-800 pb-3">
+        <a href="/youtube/dashboard" class="flex h-10 w-10 items-center justify-center border border-zinc-700 text-zinc-400 transition hover:border-teal-400 hover:text-teal-400" title="{{ _('youtube', 'back_to_catalog') }}">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m15 18-6-6 6-6"/></svg>
+            <span class="sr-only">{{ _('youtube', 'back_to_catalog') }}</span>
+        </a>
+        <div class="flex items-center gap-3">
+            <label class="flex cursor-pointer items-center gap-2 font-mono text-[10px] uppercase text-zinc-500">
+                <input id="youtube-autoplay" type="checkbox" class="h-3.5 w-3.5 accent-teal-400">
+                {{ _('youtube', 'autoplay') }}
+            </label>
+            <a id="youtube-watch-external" href="#" target="_blank" rel="noopener noreferrer" class="flex h-10 w-10 items-center justify-center border border-zinc-700 text-zinc-400 transition hover:border-teal-400 hover:text-teal-400" title="{{ _('youtube', 'open_youtube') }}">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H18v4.5M18 6l-7.5 7.5M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+                <span class="sr-only">{{ _('youtube', 'open_youtube') }}</span>
+            </a>
+            <button id="youtube-player-settings" type="button" class="flex h-10 w-10 items-center justify-center border border-zinc-700 text-zinc-400 hover:border-teal-400 hover:text-teal-400" title="{{ _('youtube', 'player_settings') }}">⚙</button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
+        <main class="space-y-4 lg:col-span-9">
+            <div id="youtube-player-shell" class="group relative aspect-video overflow-hidden border-2 border-zinc-800 bg-black">
+                <div id="youtube-watch-loader" class="absolute inset-0 z-10 flex items-center justify-center bg-black/90 font-mono text-xs uppercase tracking-wider text-teal-400">{{ _('youtube', 'preparing_stream') }}</div>
+                <video id="youtube-watch-player" class="h-full w-full object-contain" playsinline></video>
+                <button id="youtube-center-play" type="button" class="absolute left-1/2 top-1/2 z-20 hidden h-14 w-14 -translate-x-1/2 -translate-y-1/2 border border-teal-400 bg-black/80 text-xl text-teal-400 transition hover:bg-teal-400 hover:text-black">▶</button>
+                <div id="youtube-controls" class="absolute bottom-0 left-0 right-0 z-20 flex translate-y-full flex-col gap-2 border-t border-zinc-800 bg-zinc-950/95 p-3 transition group-hover:translate-y-0">
+                    <input id="youtube-progress" type="range" min="0" max="1000" value="0" class="h-1 w-full accent-teal-400">
+                    <div class="flex items-center gap-3 font-mono text-[10px] text-zinc-300">
+                        <button id="youtube-play-toggle" type="button" class="text-teal-400">▶</button>
+                        <span id="youtube-time">0:00 / 0:00</span>
+                        <input id="youtube-volume" type="range" min="0" max="1" step="0.05" value="1" class="ml-auto w-20 accent-teal-400">
+                        <button id="youtube-controls-pip" type="button" title="{{ _('youtube', 'picture_in_picture') }}" class="text-zinc-400 hover:text-teal-400">▣</button>
+                        <button id="youtube-controls-settings" type="button" title="{{ _('youtube', 'player_settings') }}" class="text-zinc-400 hover:text-teal-400">⚙</button>
+                    </div>
+                </div>
+                <section id="youtube-player-settings-panel" class="absolute inset-x-0 bottom-0 z-30 hidden max-h-[72%] grid grid-cols-1 gap-4 overflow-y-auto border-t-2 border-zinc-800 bg-zinc-950 p-4 shadow-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:w-80 sm:max-h-none sm:border-l-2 sm:border-t-0">
+                    <div class="flex items-center justify-between border-b border-zinc-800 pb-2 sm:col-span-2">
+                        <span class="font-mono text-[10px] font-bold uppercase text-teal-400">{{ _('youtube', 'player_settings') }}</span>
+                        <button id="youtube-settings-close" type="button" class="font-mono text-xs text-zinc-500 hover:text-white">×</button>
+                    </div>
+                    <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'playback_speed') }} <span id="youtube-playback-rate-label" class="text-teal-400">1x</span><input id="youtube-playback-rate" type="range" min="0.25" max="2" step="0.25" value="1" class="mt-3 w-full accent-teal-400"></label>
+                    <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'subtitles') }}<select id="youtube-captions" class="mt-2 h-10 w-full border border-zinc-700 bg-black px-2 text-zinc-300"><option value="">{{ _('youtube', 'off') }}</option></select></label>
+                    <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'available_quality') }}<select id="youtube-quality" class="mt-2 h-10 w-full border border-zinc-700 bg-black px-2 text-zinc-300"><option value="auto">Auto</option></select></label>
+                    <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'audio_tracks') }}<select id="youtube-audio-track" class="mt-2 h-10 w-full border border-zinc-700 bg-black px-2 text-zinc-300"><option value="auto">Auto</option></select></label>
+                    <p class="font-mono text-[9px] leading-relaxed text-zinc-600">{{ _('youtube', 'adaptive_stream_note') }}</p>
+                </section>
+            </div>
+
+            <section class="space-y-4 border-2 border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+                <div class="flex flex-col gap-3 border-b border-zinc-800 pb-4 sm:flex-row sm:items-start sm:justify-between">
+                    <h1 id="youtube-watch-title" class="text-base font-bold leading-tight text-white sm:text-xl">YouTube</h1>
+                    <div class="flex shrink-0 gap-4 font-mono text-[10px] text-zinc-400">
+                        <span><span id="youtube-watch-views">—</span> {{ _('youtube', 'views') }}</span>
+                        <span><span id="youtube-watch-likes">—</span> {{ _('youtube', 'likes') }}</span>
+                    </div>
+                </div>
+                <a id="youtube-watch-channel-link" href="/youtube/dashboard" class="flex w-fit items-center gap-3 group">
+                    <span class="relative flex h-11 w-11 items-center justify-center overflow-hidden border-2 border-zinc-700 bg-black font-mono text-sm font-bold text-teal-400 group-hover:border-teal-400">
+                        <span id="youtube-watch-channel-initial">Y</span>
+                        <img id="youtube-watch-channel-avatar" class="absolute inset-0 hidden h-full w-full object-cover" alt="">
+                    </span>
+                    <span>
+                        <span id="youtube-watch-channel" class="block font-mono text-xs font-bold text-white group-hover:text-teal-400">YouTube</span>
+                        <span id="youtube-watch-date" class="mt-1 block font-mono text-[9px] text-zinc-600"></span>
+                    </span>
+                </a>
+                <div id="youtube-watch-tags" class="hidden flex-wrap gap-1"></div>
+                <p id="youtube-watch-description" class="max-h-72 overflow-y-auto whitespace-pre-wrap border border-zinc-800 bg-black p-4 font-mono text-xs leading-relaxed text-zinc-400"></p>
+            </section>
+
+            <section class="space-y-3 border-2 border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+                <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+                    <h2 class="font-mono text-xs font-bold uppercase text-white">{{ _('youtube', 'comments') }}</h2>
+                    <button id="youtube-load-comments" type="button" class="h-9 border border-zinc-700 px-3 font-mono text-[9px] uppercase text-zinc-400 transition hover:border-teal-400 hover:text-teal-400">{{ _('youtube', 'load_comments') }}</button>
+                </div>
+                <div id="youtube-comments" class="space-y-3 font-mono text-xs text-zinc-500">{{ _('youtube', 'comments_not_loaded') }}</div>
+            </section>
+        </main>
+
+        <aside class="border-2 border-zinc-800 bg-zinc-950 lg:sticky lg:top-4 lg:col-span-3">
+            <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <h2 class="font-mono text-xs font-bold uppercase text-white">{{ _('youtube', 'up_next') }}</h2>
+                <span id="youtube-queue-count" class="font-mono text-[9px] text-zinc-600"></span>
+            </div>
+            <div id="youtube-watch-queue" class="max-h-[70vh] space-y-2 overflow-y-auto p-2">
+                <div class="p-6 text-center font-mono text-xs text-zinc-600">{{ _('youtube', 'loading') }}</div>
+            </div>
+        </aside>
+    </div>
+</div>
+
+<script>
+(() => {
+    const videoId = {{ video_id|tojson }};
+    const playlistId = new URLSearchParams(window.location.search).get('list');
+    const player = document.getElementById('youtube-watch-player');
+    const loader = document.getElementById('youtube-watch-loader');
+    const queue = document.getElementById('youtube-watch-queue');
+    const autoplay = document.getElementById('youtube-autoplay');
+    const captions = document.getElementById('youtube-captions');
+    const playerShell = document.getElementById('youtube-player-shell');
+    let queueItems = [];
+    let stopMse = null;
+    let currentMse = null;
+    let fallbackStreamUrl = null;
+
+    function number(value) {
+        return Number.isFinite(value) ? new Intl.NumberFormat().format(value) : '—';
+    }
+
+    function date(value) {
+        if (!value) return '';
+        const text = String(value);
+        if (/^\d{8}$/.test(text)) return `${text.slice(6, 8)}.${text.slice(4, 6)}.${text.slice(0, 4)}`;
+        const numeric = Number(text);
+        const parsed = new Date(Number.isFinite(numeric) ? numeric * 1000 : text);
+        return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString();
+    }
+
+    function queueUrl(item) {
+        const suffix = playlistId ? `?list=${encodeURIComponent(playlistId)}` : '';
+        return `/youtube/watch/${encodeURIComponent(item.entity_id)}${suffix}`;
+    }
+
+    function renderQueue(items) {
+        queueItems = items.filter(item => item.kind === 'video');
+        document.getElementById('youtube-queue-count').textContent = String(queueItems.length);
+        queue.replaceChildren(...queueItems.map(item => {
+            const link = document.createElement('a');
+            link.href = queueUrl(item);
+            link.className = `flex gap-3 border p-2 transition ${item.entity_id === videoId ? 'border-teal-400 bg-zinc-900' : 'border-zinc-800 bg-black hover:border-zinc-600'}`;
+            const image = document.createElement('img');
+            image.src = item.thumbnail_url || '';
+            image.alt = '';
+            image.loading = 'lazy';
+            image.className = 'aspect-video w-28 shrink-0 object-cover bg-zinc-900';
+            const body = document.createElement('span');
+            body.className = 'min-w-0 py-1';
+            const title = document.createElement('span');
+            title.className = 'line-clamp-2 text-[10px] font-bold leading-snug text-white';
+            title.textContent = item.title;
+            const channel = document.createElement('span');
+            channel.className = 'mt-2 block truncate font-mono text-[9px] text-zinc-500';
+            channel.textContent = item.channel_title || 'YouTube';
+            body.append(title, channel);
+            link.append(image, body);
+            return link;
+        }));
+    }
+
+    async function loadQueue(channelId) {
+        const endpoint = playlistId
+            ? `/api/youtube/playlists/${encodeURIComponent(playlistId)}/items`
+            : `/api/youtube/channels/${encodeURIComponent(channelId)}/videos`;
+        const response = await fetch(endpoint);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Could not load queue');
+        renderQueue(payload.items || []);
+        if (payload.avatar_url) {
+            const avatar = document.getElementById('youtube-watch-channel-avatar');
+            avatar.src = payload.avatar_url;
+            avatar.classList.remove('hidden');
+        }
+    }
+
+    function useFallback(streamUrl) {
+        stopMse?.();
+        stopMse = null;
+        player.src = streamUrl;
+        player.load();
+        return player.play().catch(() => {});
+    }
+
+    async function startMse(mse, fallbackUrl) {
+        const videoTrack = mse?.video_tracks?.find(track => track.id === document.getElementById('youtube-quality').value)
+            || mse?.video_tracks?.[0];
+        const audioTrack = mse?.audio_tracks?.find(track => track.id === document.getElementById('youtube-audio-track').value)
+            || mse?.audio_tracks?.[0];
+        if (!window.MediaSource || !videoTrack || !audioTrack
+            || !MediaSource.isTypeSupported(videoTrack.mime) || !MediaSource.isTypeSupported(audioTrack.mime)) {
+            return useFallback(fallbackUrl);
+        }
+        try {
+            const {createFile} = await import('/static/mp4box.all.mjs');
+            stopMse?.();
+            const mediaSource = new MediaSource();
+            const objectUrl = URL.createObjectURL(mediaSource);
+            let stopped = false;
+            stopMse = () => {
+                stopped = true;
+                URL.revokeObjectURL(objectUrl);
+            };
+            player.removeAttribute('src');
+            player.src = objectUrl;
+            await new Promise((resolve, reject) => {
+                mediaSource.addEventListener('sourceopen', resolve, {once: true});
+                mediaSource.addEventListener('error', reject, {once: true});
+            });
+            const appendTrack = (track) => new Promise((resolve, reject) => {
+                const file = createFile();
+                const source = mediaSource.addSourceBuffer(track.mime);
+                const pending = [];
+                let offset = 0;
+                let ready = false;
+                const append = () => {
+                    if (!stopped && !source.updating && pending.length) source.appendBuffer(pending.shift());
+                };
+                source.addEventListener('updateend', append);
+                file.onReady = info => {
+                    const mp4Track = info.tracks[0];
+                    if (!mp4Track) return reject(new Error('MP4 track is unavailable'));
+                    ready = true;
+                    file.setSegmentOptions(mp4Track.id, null, {nbSamples: 1000});
+                    for (const segment of file.initializeSegmentation()) pending.push(segment.buffer);
+                    file.start();
+                    append();
+                    resolve();
+                };
+                file.onSegment = (id, user, buffer, sampleNumber, isLast) => {
+                    pending.push(buffer);
+                    file.releaseUsedSamples(id, sampleNumber);
+                    append();
+                };
+                const pump = async () => {
+                    try {
+                        while (!stopped) {
+                            const response = await fetch(track.url, {headers: {Range: `bytes=${offset}-${offset + 1048575}`}});
+                            if (!response.ok && response.status !== 206) throw new Error('MSE track is unavailable');
+                            const buffer = await response.arrayBuffer();
+                            if (!buffer.byteLength) break;
+                            buffer.fileStart = offset;
+                            const nextOffset = file.appendBuffer(buffer);
+                            const contentRange = response.headers.get('content-range');
+                            const total = contentRange && Number(contentRange.split('/')[1]);
+                            offset = Number.isFinite(nextOffset) ? nextOffset : offset + buffer.byteLength;
+                            if (response.status === 200 || (total && offset >= total)
+                                || (!contentRange && buffer.byteLength < 1048576)) break;
+                        }
+                        if (!ready) reject(new Error('MSE metadata is unavailable'));
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                pump();
+            });
+            await Promise.all([appendTrack(videoTrack), appendTrack(audioTrack)]);
+            return player.play().catch(() => {});
+        } catch (error) {
+            console.warn('MSE playback failed; using the compatible stream.', error);
+            return useFallback(fallbackUrl);
+        }
+    }
+
+    async function loadVideo() {
+        try {
+            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/stream`, {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not prepare stream');
+            document.title = `${payload.title} — NetSanctum`;
+            document.getElementById('youtube-watch-title').textContent = payload.title;
+            document.getElementById('youtube-watch-channel').textContent = payload.channel_title || 'YouTube';
+            document.getElementById('youtube-watch-channel-initial').textContent = (payload.channel_title || 'Y').charAt(0);
+            document.getElementById('youtube-watch-views').textContent = number(payload.view_count);
+            document.getElementById('youtube-watch-likes').textContent = number(payload.like_count);
+            document.getElementById('youtube-watch-date').textContent = date(payload.published_at);
+            document.getElementById('youtube-watch-description').textContent = payload.description || '';
+            document.getElementById('youtube-watch-external').href = payload.source_url;
+            if (!payload.mse?.video_tracks?.length) for (const value of payload.qualities || []) {
+                const option = document.createElement('option'); option.value = String(value); option.textContent = `${value}p`; document.getElementById('youtube-quality').append(option);
+            }
+            if (!payload.mse?.audio_tracks?.length) for (const value of payload.audio_tracks || []) {
+                const option = document.createElement('option'); option.value = value; option.textContent = value; document.getElementById('youtube-audio-track').append(option);
+            }
+            for (const track of payload.captions || []) {
+                const option = document.createElement('option');
+                option.value = track.url;
+                option.textContent = `${track.language}${track.automatic ? ' (auto)' : ''}`;
+                captions.append(option);
+            }
+            if (payload.channel_id) {
+                document.getElementById('youtube-watch-channel-link').href = `/youtube/dashboard?channel=${encodeURIComponent(payload.channel_id)}`;
+                loadQueue(payload.channel_id).catch(error => {
+                    queue.textContent = error.message;
+                });
+            }
+            const tags = document.getElementById('youtube-watch-tags');
+            if (payload.tags?.length) {
+                tags.classList.remove('hidden');
+                tags.classList.add('flex');
+                tags.replaceChildren(...payload.tags.slice(0, 20).map(value => {
+                    const tag = document.createElement('span');
+                    tag.className = 'border border-zinc-800 bg-black px-2 py-1 font-mono text-[9px] text-zinc-500';
+                    tag.textContent = `#${value}`;
+                    return tag;
+                }));
+            }
+            const quality = document.getElementById('youtube-quality');
+            const audioTrack = document.getElementById('youtube-audio-track');
+            for (const track of payload.mse?.video_tracks || []) quality.querySelector(`option[value="${track.id}"]`)?.remove();
+            for (const track of payload.mse?.audio_tracks || []) audioTrack.querySelector(`option[value="${track.id}"]`)?.remove();
+            for (const track of payload.mse?.video_tracks || []) {
+                const option = document.createElement('option'); option.value = track.id; option.textContent = track.label; quality.append(option);
+            }
+            for (const track of payload.mse?.audio_tracks || []) {
+                const option = document.createElement('option'); option.value = track.id; option.textContent = track.label; audioTrack.append(option);
+            }
+            currentMse = payload.mse;
+            fallbackStreamUrl = payload.stream_url;
+            await startMse(payload.mse, payload.stream_url);
+            loader.classList.add('hidden');
+        } catch (error) {
+            loader.textContent = error.message;
+            loader.classList.add('text-red-400');
+        }
+    }
+
+    async function loadComments() {
+        const button = document.getElementById('youtube-load-comments');
+        const container = document.getElementById('youtube-comments');
+        button.disabled = true;
+        container.textContent = {{ _('youtube', 'loading')|tojson }};
+        try {
+            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/comments`);
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not load comments');
+            if (!payload.items.length) {
+                container.textContent = {{ _('youtube', 'no_comments')|tojson }};
+                return;
+            }
+            container.replaceChildren(...payload.items.map(comment => {
+                const card = document.createElement('article');
+                card.className = 'border border-zinc-800 bg-black p-3';
+                const author = document.createElement('div');
+                author.className = 'text-[10px] font-bold text-teal-400';
+                author.textContent = `${comment.author} · ${number(comment.like_count)}`;
+                const text = document.createElement('p');
+                text.className = 'mt-2 whitespace-pre-wrap leading-relaxed text-zinc-300';
+                text.textContent = comment.text;
+                card.append(author, text);
+                for (const reply of comment.replies || []) {
+                    const replyBlock = document.createElement('div');
+                    replyBlock.className = 'ml-4 mt-3 border-l-2 border-zinc-800 pl-3 text-zinc-400';
+                    replyBlock.textContent = `${reply.author}: ${reply.text}`;
+                    card.append(replyBlock);
+                }
+                return card;
+            }));
+        } catch (error) {
+            container.textContent = error.message;
+            container.classList.add('text-red-400');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    autoplay.checked = localStorage.getItem('youtube-autoplay') === '1';
+    const toggleSettings = () => document.getElementById('youtube-player-settings-panel').classList.toggle('hidden');
+    document.getElementById('youtube-player-settings').addEventListener('click', toggleSettings);
+    document.getElementById('youtube-controls-settings').addEventListener('click', toggleSettings);
+    document.getElementById('youtube-settings-close').addEventListener('click', toggleSettings);
+    const togglePlay = () => (player.paused ? player.play() : player.pause());
+    document.getElementById('youtube-center-play').addEventListener('click', togglePlay);
+    document.getElementById('youtube-play-toggle').addEventListener('click', togglePlay);
+    player.addEventListener('play', () => { document.getElementById('youtube-center-play').classList.add('hidden'); document.getElementById('youtube-play-toggle').textContent = 'Ⅱ'; });
+    player.addEventListener('pause', () => { document.getElementById('youtube-center-play').classList.remove('hidden'); document.getElementById('youtube-play-toggle').textContent = '▶'; });
+    player.addEventListener('timeupdate', () => {
+        const progress = document.getElementById('youtube-progress');
+        progress.value = player.duration ? Math.round(player.currentTime / player.duration * 1000) : 0;
+        const format = value => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+        document.getElementById('youtube-time').textContent = `${format(player.currentTime || 0)} / ${format(player.duration || 0)}`;
+    });
+    document.getElementById('youtube-progress').addEventListener('input', event => { if (player.duration) player.currentTime = player.duration * event.target.value / 1000; });
+    document.getElementById('youtube-volume').addEventListener('input', event => { player.volume = Number(event.target.value); });
+    document.getElementById('youtube-quality').addEventListener('change', () => {
+        if (currentMse) startMse(currentMse, fallbackStreamUrl);
+    });
+    document.getElementById('youtube-audio-track').addEventListener('change', () => {
+        if (currentMse) startMse(currentMse, fallbackStreamUrl);
+    });
+    document.getElementById('youtube-playback-rate').addEventListener('input', event => { player.playbackRate = Number(event.target.value); document.getElementById('youtube-playback-rate-label').textContent = `${event.target.value}x`; });
+    captions.addEventListener('change', () => {
+        player.querySelectorAll('track').forEach(track => track.remove());
+        if (!captions.value) return;
+        const track = document.createElement('track');
+        track.kind = 'subtitles'; track.src = captions.value; track.default = true;
+        player.append(track);
+    });
+    const pip = () => player.requestPictureInPicture?.().catch(() => {});
+    document.getElementById('youtube-controls-pip').addEventListener('click', pip);
+    autoplay.addEventListener('change', () => localStorage.setItem('youtube-autoplay', autoplay.checked ? '1' : '0'));
+    player.addEventListener('ended', () => {
+        if (!autoplay.checked) return;
+        const index = queueItems.findIndex(item => item.entity_id === videoId);
+        const next = queueItems[index + 1];
+        if (next) window.location.assign(queueUrl(next));
+    });
+    document.getElementById('youtube-load-comments').addEventListener('click', loadComments);
+    loadVideo();
+})();
+</script>
+{% endblock %}

@@ -199,10 +199,10 @@ async def download_package_nsp(package_id: str, request: Request, user=Depends(g
 
     try:
         transport = httpx.ASGITransport(app=app)
-        client = httpx.AsyncClient(transport=transport, base_url="http://netsanctum.internal")
+        client = httpx.AsyncClient(transport=transport, base_url=str(request.base_url))
     except AttributeError:
         # Fallback for older httpx versions
-        client = httpx.AsyncClient(app=app, base_url="http://netsanctum.internal")
+        client = httpx.AsyncClient(app=app, base_url=str(request.base_url))
 
     # Fetch before response headers are sent, so an incomplete package is never reported as successful.
     try:

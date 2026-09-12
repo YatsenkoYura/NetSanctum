@@ -14,10 +14,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
+    Index,
     Integer,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,12 +31,28 @@ class Setting(Base):
     __tablename__ = "settings"
 
     __table_args__ = (
-        UniqueConstraint(
-            "scope",
+        Index(
+            "uq_settings_global_key",
+            "key",
+            unique=True,
+            postgresql_where=text("scope = 'global' AND module_name IS NULL AND user_id IS NULL"),
+            sqlite_where=text("scope = 'global' AND module_name IS NULL AND user_id IS NULL"),
+        ),
+        Index(
+            "uq_settings_module_key",
             "module_name",
+            "key",
+            unique=True,
+            postgresql_where=text("scope = 'module' AND module_name IS NOT NULL AND user_id IS NULL"),
+            sqlite_where=text("scope = 'module' AND module_name IS NOT NULL AND user_id IS NULL"),
+        ),
+        Index(
+            "uq_settings_user_key",
             "user_id",
             "key",
-            name="uq_settings_scope_module_user_key",
+            unique=True,
+            postgresql_where=text("scope = 'user' AND user_id IS NOT NULL AND module_name IS NULL"),
+            sqlite_where=text("scope = 'user' AND user_id IS NOT NULL AND module_name IS NULL"),
         ),
     )
 

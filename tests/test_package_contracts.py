@@ -4,11 +4,14 @@ import struct
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.core.packages_router import (
     PackageResourceError,
+    download_package_nsp,
     generate_nsp,
     make_hybrid_manifest,
     make_package_manifest,
@@ -212,6 +215,31 @@ class PackageContractTests(unittest.TestCase):
 
         with self.assertRaises(PackageResourceError):
             asyncio.run(compile_package())
+
+    def test_nsp_endpoint_reuses_the_trusted_request_host(self):
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/packages/song_1/nsp",
+                "query_string": b"",
+                "headers": [(b"host", b"localhost")],
+                "server": ("localhost", 80),
+                "client": ("127.0.0.1", 1234),
+            }
+        )
+
+        async def download():
+            with patch(
+                "app.core.packages_router.get_resources_for_package",
+                AsyncMock(return_value=[{"url": "/static/placeholder.svg", "type": "image"}]),
+            ):
+                response = await download_package_nsp("song_1", request, user=object())
+                return b"".join([chunk async for chunk in response.body_iterator])
+
+        payload = asyncio.run(download())
+        self.assertEqual(b"NSPK", payload[-4:])
 
     def test_offline_templates_only_request_packaged_vault_and_video_urls(self):
         vault = (ROOT / "app/modules/vault/templates/vault_dashboard.html").read_text()

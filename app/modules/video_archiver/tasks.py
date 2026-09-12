@@ -7,6 +7,7 @@ import tempfile
 import redis
 from sqlalchemy import select
 
+from app.core.browser_snapshots import browser_snapshot_store
 from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
@@ -47,7 +48,17 @@ redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 def _get_platform_cookies(platform_id: str) -> str | None:
     """Fetch module cookies for a specific platform from settings DB."""
+    browser_cookies = browser_snapshot_store.cookies_for_scope_sync(platform_id)
+    if browser_cookies:
+        return browser_cookies
     with SyncSessionLocal() as session:
+        setting = (
+            session.query(Setting)
+            .filter_by(key=f"{platform_id}_cookies", scope="global", module_name=None)
+            .first()
+        )
+        if setting and setting.value and setting.value.strip():
+            return decrypt_secret_value(setting.value)
         setting = (
             session.query(Setting)
             .filter_by(

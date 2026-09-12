@@ -6,11 +6,14 @@ import anyio
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.browser_client import revoke_browser_credentials
+from app.core.browser_snapshots import browser_snapshot_store
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.modules import module_registry
 from app.core.secret_values import decrypt_secret_value
 from app.core.security import get_current_user
 from app.core.storage import LocalStorage, get_storage
@@ -68,6 +71,7 @@ async def video_dashboard(
     """Render the main Video Archiver Dashboard."""
     package_id = request.query_params.get("package_id")
     package_scope, _ = _video_package_scope(package_id)
+    youtube_source_available = module_registry.has_integration("youtube.video_source.v1")
     return templates.TemplateResponse(
         request,
         "video_dashboard.html",
@@ -76,6 +80,7 @@ async def video_dashboard(
             "lang": lang,
             "package_mode": bool(package_id),
             "package_scope": package_scope,
+            "youtube_source_available": youtube_source_available,
         },
     )
 
@@ -92,6 +97,7 @@ async def trigger_download(
 
     if req.cookies_text and req.cookie_platform:
         key = f"{req.cookie_platform}_cookies"
+        await revoke_browser_credentials(req.cookie_platform)
         await settings_service.upsert_setting(
             db,
             key=key,
@@ -277,14 +283,20 @@ async def get_sync_dates(db: AsyncSession = Depends(get_db), user=Depends(get_cu
     for p, count in platform_map.items():
         key = f"{p}_cookies"
         res_cookie = await db.execute(
-            select(Setting).where(
+            select(Setting)
+            .where(
                 Setting.key == key,
-                Setting.scope == "module",
-                Setting.module_name == "video_archiver",
+                or_(
+                    Setting.scope == "global",
+                    and_(Setting.scope == "module", Setting.module_name == "video_archiver"),
+                ),
             )
+            .order_by(Setting.scope.asc())
         )
-        c_setting = res_cookie.scalar_one_or_none()
-        cookies_text = decrypt_secret_value(c_setting.value) if c_setting else ""
+        c_setting = res_cookie.scalars().first()
+        cookies_text = await browser_snapshot_store.cookies_for_scope(p)
+        if not cookies_text:
+            cookies_text = decrypt_secret_value(c_setting.value) if c_setting else ""
 
         provider = PlatformRegistry.get_provider_by_id(p)
         val_res = provider.validate_cookies(cookies_text)
@@ -348,17 +360,20 @@ async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=De
     res = await db.execute(
         select(Setting).where(
             Setting.key == key,
-            Setting.scope == "module",
-            Setting.module_name == "video_archiver",
+            or_(
+                Setting.scope == "global",
+                and_(Setting.scope == "module", Setting.module_name == "video_archiver"),
+            ),
         )
     )
-    setting = res.scalar_one_or_none()
+    setting = res.scalars().first()
+    browser_cookies = await browser_snapshot_store.cookies_for_scope(platform)
 
     return {
         "platform": platform,
         "cookies_text": "",
-        "has_cookies": bool(setting and setting.value),
-        "auth_active": bool(setting and setting.value),
+        "has_cookies": bool(browser_cookies or (setting and setting.value)),
+        "auth_active": bool(browser_cookies or (setting and setting.value)),
     }
 
 
@@ -370,17 +385,17 @@ async def clear_cookies(platform: str, db: AsyncSession = Depends(get_db), user=
     from app.modules.settings.models import Setting
 
     key = f"{platform}_cookies"
-    res = await db.execute(
-        select(Setting).where(
+    await revoke_browser_credentials(platform)
+    await db.execute(
+        delete(Setting).where(
             Setting.key == key,
-            Setting.scope == "module",
-            Setting.module_name == "video_archiver",
+            or_(
+                Setting.scope == "global",
+                and_(Setting.scope == "module", Setting.module_name == "video_archiver"),
+            ),
         )
     )
-    setting = res.scalar_one_or_none()
-    if setting:
-        await db.delete(setting)
-        await db.commit()
+    await db.commit()
     # If youtube, also disable OAuth
     if platform == "youtube":
         try:

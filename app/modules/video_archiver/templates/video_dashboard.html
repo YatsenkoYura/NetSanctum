@@ -26,6 +26,14 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
                 </svg>
             </button>{% endif %}
+            {% if youtube_source_available and not package_mode %}
+            <button onclick="window.location.href='/youtube/dashboard'" title="YouTube"
+                    class="p-3 transition-all border border-transparent hover:bg-red-950/40 text-zinc-400 hover:text-red-400 flex items-center justify-center">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z"/>
+                </svg>
+            </button>
+            {% endif %}
         </div>
 
         <!-- Search & Filter Bar -->
@@ -1685,7 +1693,7 @@
                     textarea.value = data.cookies_text || '';
                     textarea.placeholder = "{{ _('video_archiver', 'cookies_placeholder') }}";
                 }
-                if (data.cookies_text) {
+                if (data.has_cookies) {
                     if (clearBtn) clearBtn.classList.remove('hidden');
                 }
             }

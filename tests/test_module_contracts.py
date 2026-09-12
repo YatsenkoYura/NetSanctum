@@ -30,6 +30,7 @@ PUBLIC_MODULES = {
     "storage",
     "vault",
     "video_archiver",
+    "youtube",
 }
 
 SHUTDOWN_EVENTS: list[str] = []
@@ -115,7 +116,7 @@ class ModuleManifestTests(unittest.TestCase):
         project = tomllib.loads((root / "pyproject.toml").read_text())
         catalog = json.loads((root / "module-build.json").read_text())
 
-        for module_id in ("music", "video_archiver"):
+        for module_id in ("music", "video_archiver", "youtube"):
             dependencies = project["project"]["optional-dependencies"][module_id]
             self.assertTrue(
                 any(dependency.startswith("yt-dlp[curl-cffi,default]") for dependency in dependencies)
@@ -398,7 +399,7 @@ class ModuleManifestTests(unittest.TestCase):
 
     def test_product_modules_do_not_import_other_product_modules(self):
         modules_root = Path("app/modules")
-        product_modules = {"alllib", "computercraft", "music", "vault", "video_archiver"}
+        product_modules = {"alllib", "computercraft", "music", "vault", "video_archiver", "youtube"}
 
         for source_module in product_modules:
             for path in (modules_root / source_module).glob("*.py"):

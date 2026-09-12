@@ -1,15 +1,24 @@
+x-app-build: &app-build
+  context: .
+  args:
+    NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
+    NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
+    APP_UID: ${PUID:-1000}
+    APP_GID: ${PGID:-1000}
+
 services:
   # ── PostgreSQL ─────────────────────────────────────────
   postgres:
     image: postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     restart: unless-stopped
-    env_file: .env
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg_data:/var/lib/postgresql/data
+    networks:
+      - backend
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -20,8 +29,15 @@ services:
   redis:
     image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -38,12 +54,98 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    networks:
+      - media-control
     healthcheck:
       test:
         - CMD
         - deno
         - eval
         - const connection = await Deno.connect({hostname:'127.0.0.1',port:4416}); connection.close();
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Isolated on-demand Chromium runtime ────────────────
+  browser-runtime:
+    profiles: ["browser"]
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: core
+        NETSANCTUM_EXTERNAL_MODULES: ""
+        INSTALL_BROWSER_RUNTIME: "1"
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
+    restart: unless-stopped
+    init: true
+    environment:
+      NETSANCTUM_LOAD_DOTENV: "0"
+      HOME: /tmp
+      BROWSER_PROXY_URL: http://browser-proxy:8888
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - seccomp=./docker/browser-seccomp.json
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    networks:
+      - browser-control
+      - browser-proxy
+    depends_on:
+      browser-proxy:
+        condition: service_healthy
+    command:
+      - uvicorn
+      - app.core.browser_worker:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Domain-restricted browser egress ───────────────────
+  browser-proxy:
+    profiles: ["browser"]
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: core
+        NETSANCTUM_EXTERNAL_MODULES: ""
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
+    restart: unless-stopped
+    init: true
+    environment:
+      NETSANCTUM_LOAD_DOTENV: "0"
+      BROWSER_EGRESS_HOSTS: ${BROWSER_EGRESS_HOSTS:-google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,recaptcha.net,youtube.com,youtube-nocookie.com,ytimg.com,googlevideo.com}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    cpus: 0.5
+    pids_limit: 32
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - browser-proxy
+      - browser-egress
+    command:
+      - python
+      - -m
+      - app.core.browser_egress_proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8888),2); s.close()"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -60,6 +162,7 @@ services:
       - ./storage:/app/storage
       - encryption_key:/run/netsanctum-key
     read_only: true
+    network_mode: none
     security_opt:
       - no-new-privileges:true
     command:
@@ -110,31 +213,31 @@ services:
           fi
         done
 
-  # ── FastAPI Web Server ─────────────────────────────────
-  web:
-    build:
-      context: .
-      args:
-        NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
-        NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
-        APP_UID: ${PUID:-1000}
-        APP_GID: ${PGID:-1000}
-    restart: unless-stopped
+  # ── One-shot schema migration ──────────────────────────
+  migrate:
+    image: netsanctum-app
+    build: *app-build
+    restart: "no"
     env_file: .env
     environment:
-      NETSANCTUM_PROCESS_ROLE: web
+      NETSANCTUM_PROCESS_ROLE: migrate
       NETSANCTUM_LOAD_DOTENV: "0"
       NETSANCTUM_ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
       FILE_ENCRYPTION_KEY_PATH: /run/netsanctum-key/file.key
       LEGACY_FILE_ENCRYPTION_KEYS_PATH: /run/netsanctum-key/legacy.keys
-    ports:
-      - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
       - ./storage:/app/storage
       - encryption_key:/run/netsanctum-key:ro
+    networks:
+      - backend
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=128m
     cap_drop:
       - ALL
     security_opt:
@@ -144,22 +247,67 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    command: ["python", "-m", "app.core.migrations", "upgrade"]
+
+  # ── FastAPI Web Server ─────────────────────────────────
+  web:
+    image: netsanctum-app
+    build: *app-build
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NETSANCTUM_PROCESS_ROLE: web
+      NETSANCTUM_LOAD_DOTENV: "0"
+      NETSANCTUM_ENVIRONMENT: production
+      FILE_ENCRYPTION_KEY_PATH: /run/netsanctum-key/file.key
+      LEGACY_FILE_ENCRYPTION_KEYS_PATH: /run/netsanctum-key/legacy.keys
+      YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
+      BROWSER_RUNTIME_URL: http://browser-runtime:8765
+      BROWSER_RUNTIME_ENABLED: ${BROWSER_RUNTIME_ENABLED:-1}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
+    ports:
+      - "127.0.0.1:${HOST_PORT:-8000}:8000"
+    volumes:
+      - ./storage:/app/storage
+      - encryption_key:/run/netsanctum-key:ro
+    networks:
+      - default
+      - backend
+      - media-control
+      - browser-control
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+      youtube-pot:
+        condition: service_healthy
+      browser-runtime:
+        condition: service_healthy
+        required: false
     command:
       - sh
       - -c
-      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && python -m app.core.migrations upgrade && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   # ── Celery Worker ──────────────────────────────────────
   worker:
-    build:
-      context: .
-      args:
-        NETSANCTUM_MODULES: ${NETSANCTUM_MODULES:-default}
-        NETSANCTUM_EXTERNAL_MODULES: ${NETSANCTUM_EXTERNAL_MODULES:-}
-        APP_UID: ${PUID:-1000}
-        APP_GID: ${PGID:-1000}
+    image: netsanctum-app
+    build: *app-build
     restart: unless-stopped
     env_file: .env
     environment:
@@ -169,12 +317,21 @@ services:
       FILE_ENCRYPTION_KEY_PATH: /run/netsanctum-key/file.key
       LEGACY_FILE_ENCRYPTION_KEYS_PATH: /run/netsanctum-key/legacy.keys
       YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
     volumes:
       - ./storage:/app/storage
       - encryption_key:/run/netsanctum-key:ro
+    networks:
+      - default
+      - backend
+      - media-control
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=2g
     cap_drop:
       - ALL
     security_opt:
@@ -182,8 +339,8 @@ services:
     depends_on:
       storage-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       youtube-pot:
@@ -191,8 +348,20 @@ services:
     command:
       - sh
       - -c
-      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && python -m app.core.migrations upgrade && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2
+      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2
+    stop_grace_period: 10m
 
 volumes:
   pg_data:
+  redis_data:
   encryption_key:
+
+networks:
+  backend:
+    internal: true
+  media-control:
+  browser-control:
+    internal: true
+  browser-proxy:
+    internal: true
+  browser-egress:
