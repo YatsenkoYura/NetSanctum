@@ -3,9 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "build:css": "tailwindcss -c tailwind.config.js -i static/tailwind.input.css -o static/tailwind.css --minify"
+    "build:css": "tailwindcss -c tailwind.config.js -i static/tailwind.input.css -o static/tailwind.css --minify",
+    "build:vendor": "cp node_modules/mp4box/dist/*.mjs static/"
   },
   "devDependencies": {
+    "mp4box": "2.4.1",
     "tailwindcss": "3.4.17"
   }
 }

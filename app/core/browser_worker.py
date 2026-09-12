@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -65,9 +66,15 @@ class NavigateRequest(BaseModel):
     url: str = Field(min_length=8, max_length=4000)
 
 
+class QueryField(BaseModel):
+    selector: str = Field(default="", max_length=500)
+    attribute: Literal["href", "src", "data-thumb", "poster", "title", "aria-label"] | None = None
+
+
 class QueryRequest(BaseModel):
     selector: str = Field(min_length=1, max_length=500)
     limit: int = Field(default=20, ge=1, le=100)
+    fields: dict[str, QueryField] = Field(default_factory=dict)
 
 
 def runtime_error(exc: Exception) -> HTTPException:
@@ -171,7 +178,14 @@ async def session_navigate(session_id: str, body: NavigateRequest):
 @app.post("/sessions/{session_id}/query")
 async def session_query(session_id: str, body: QueryRequest):
     try:
-        return {"items": await browser_runtime.query(session_id, body.selector, limit=body.limit)}
+        return {
+            "items": await browser_runtime.query(
+                session_id,
+                body.selector,
+                limit=body.limit,
+                fields={name: field.model_dump() for name, field in body.fields.items()},
+            )
+        }
     except Exception as exc:
         raise runtime_error(exc) from exc
 

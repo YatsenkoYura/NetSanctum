@@ -3,31 +3,14 @@
 {% block title %}NetSanctum — YouTube{% endblock %}
 
 {% block content %}
-<div id="youtube-browser" class="mx-auto max-w-[1500px] space-y-6">
-    <header class="border-b-2 border-red-600 pb-5">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-                <div class="mb-2 flex items-center gap-3">
-                    <span class="inline-block h-3 w-3 bg-red-600"></span>
-                    <span class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-red-400">Server catalog</span>
-                </div>
-                <h1 class="text-3xl font-black tracking-tight text-white sm:text-5xl">YOUTUBE<span class="text-red-500">//</span>FEED</h1>
-                <p class="mt-2 max-w-2xl text-sm text-zinc-500">{{ _('youtube', 'tagline') }}</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <span id="youtube-account-badge" class="border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-zinc-500">Anonymous</span>
-                <button id="youtube-account-open" type="button" class="border border-zinc-700 bg-zinc-950 px-4 py-2 font-mono text-xs uppercase text-zinc-300 transition hover:border-red-500 hover:text-white">{{ _('youtube', 'account_mode') }}</button>
-            </div>
-        </div>
-    </header>
-
-    <section id="youtube-account-panel" class="hidden space-y-4 border border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+<div id="youtube-browser" class="space-y-4 sm:space-y-5">
+    <section id="youtube-account-panel" class="hidden space-y-4 border-2 border-zinc-800 bg-zinc-950 p-3 sm:p-5">
         <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h2 class="font-mono text-sm font-bold uppercase text-white">{{ _('youtube', 'account_mode') }}</h2>
                 <p class="mt-1 max-w-3xl text-xs text-zinc-500">{{ _('youtube', 'login_help') }}</p>
             </div>
-            <button id="youtube-account-disconnect" type="button" class="hidden border border-zinc-700 px-4 py-2 font-mono text-[10px] uppercase text-zinc-400 hover:border-red-600 hover:text-red-400">{{ _('youtube', 'disconnect') }}</button>
+            <button id="youtube-account-disconnect" type="button" class="hidden min-h-10 w-full border border-zinc-700 px-4 py-2 font-mono text-[10px] uppercase text-zinc-400 hover:border-teal-400 hover:text-teal-400 sm:w-auto">{{ _('youtube', 'disconnect') }}</button>
         </div>
         <netsanctum-browser id="youtube-account-browser"
                             data-policy-id="youtube.account"
@@ -40,46 +23,95 @@
         </netsanctum-browser>
     </section>
 
-    <section class="grid gap-3 lg:grid-cols-[auto_1fr]">
-        <div class="flex gap-2">
-            <button id="youtube-popular" type="button" class="border border-red-600 bg-red-950/30 px-5 py-3 font-mono text-xs font-bold uppercase text-red-300 transition hover:bg-red-600 hover:text-white">
-                {{ _('youtube', 'popular') }}
-            </button>
-            <button id="youtube-subscriptions" type="button" class="hidden border border-zinc-700 px-5 py-3 font-mono text-xs font-bold uppercase text-zinc-300 transition hover:border-red-600 hover:text-white">
-                {{ _('youtube', 'subscriptions') }}
+    <section id="youtube-settings-panel" class="hidden border-2 border-zinc-800 bg-zinc-950 p-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label class="flex min-h-11 items-center gap-2 border border-zinc-700 px-3 font-mono text-[10px] uppercase text-zinc-400">
+                <input id="youtube-shorts-enabled" type="checkbox" class="h-3.5 w-3.5 accent-teal-400">
+                {{ _('youtube', 'shorts') }}
+            </label>
+            <button id="youtube-settings-save" type="button" title="{{ _('youtube', 'save_settings') }}" class="flex h-11 w-11 shrink-0 items-center justify-center border border-teal-500 text-teal-400 transition hover:bg-teal-400 hover:text-black">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 4h11l3 3v13H5V4Zm3 0v6h8V4M8 20v-6h8v6"/></svg>
+                <span class="sr-only">{{ _('youtube', 'save_settings') }}</span>
             </button>
         </div>
-        <form id="youtube-search-form" class="flex min-w-0">
-            <input id="youtube-search-input" type="search" required maxlength="200" placeholder="{{ _('youtube', 'search_placeholder') }}"
-                   class="min-w-0 flex-1 border border-r-0 border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none focus:border-red-600">
-            <button type="submit" class="border border-red-600 px-5 py-3 font-mono text-xs font-bold uppercase text-red-400 transition hover:bg-red-600 hover:text-white">
-                {{ _('youtube', 'search') }}
+        <p class="mt-3 font-mono text-[10px] leading-relaxed text-zinc-600">{{ _('youtube', 'catalog_engine_help') }}</p>
+        <p id="youtube-settings-status" class="mt-2 font-mono text-[10px] text-teal-400"></p>
+    </section>
+
+    <section class="flex flex-col gap-3 lg:flex-row">
+        <div class="no-scrollbar flex shrink-0 overflow-x-auto border-2 border-zinc-800 bg-black p-1">
+            <button id="youtube-account-open" type="button" title="{{ _('youtube', 'account_mode') }}" class="relative flex h-11 w-11 shrink-0 items-center justify-center border border-transparent text-zinc-400 transition hover:bg-zinc-900 hover:text-teal-400">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.1a7.5 7.5 0 0 1 15 0A17.9 17.9 0 0 1 12 21.75c-2.68 0-5.22-.58-7.5-1.65Z"/></svg>
+                <span id="youtube-account-indicator" class="absolute right-1.5 top-1.5 h-1.5 w-1.5 bg-zinc-700"></span>
+                <span id="youtube-account-badge" class="sr-only">{{ _('youtube', 'anonymous') }}</span>
             </button>
+            <button id="youtube-settings-open" type="button" title="{{ _('youtube', 'settings') }}" class="flex h-11 w-11 shrink-0 items-center justify-center border border-transparent text-zinc-400 transition hover:bg-zinc-900 hover:text-teal-400">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.38.34.72.6 1 .3.3.68.45 1.1.4h.09v4h-.09a1.7 1.7 0 0 0-1.7.6Z"/></svg>
+                <span class="sr-only">{{ _('youtube', 'settings') }}</span>
+            </button>
+            <button id="youtube-recommendations" type="button" title="{{ _('youtube', 'recommendations') }}" class="flex h-11 w-11 shrink-0 items-center justify-center border border-teal-500 bg-teal-400/10 text-teal-400 transition hover:bg-teal-400 hover:text-black">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm5 5 5 3-5 3V9Z"/></svg>
+                <span class="sr-only">{{ _('youtube', 'recommendations') }}</span>
+            </button>
+            <button id="youtube-subscriptions" type="button" title="{{ _('youtube', 'subscriptions') }}" class="flex h-11 w-11 shrink-0 items-center justify-center border border-transparent text-zinc-400 transition hover:bg-zinc-900 hover:text-teal-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M6 10h12M5 14h14v6H5v-6Z"/></svg>
+                <span class="sr-only">{{ _('youtube', 'subscriptions') }}</span>
+            </button>
+            <button id="youtube-history" type="button" title="{{ _('youtube', 'history') }}" class="flex h-11 w-11 shrink-0 items-center justify-center border border-transparent text-zinc-400 transition hover:bg-zinc-900 hover:text-teal-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5m4-2v6l4 2"/></svg>
+                <span class="sr-only">{{ _('youtube', 'history') }}</span>
+            </button>
+            <button id="youtube-watch-later" type="button" title="{{ _('youtube', 'watch_later') }}" class="flex h-11 w-11 shrink-0 items-center justify-center border border-transparent text-zinc-400 transition hover:bg-zinc-900 hover:text-teal-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+                <span class="sr-only">{{ _('youtube', 'watch_later') }}</span>
+            </button>
+            <button id="youtube-shorts" type="button" title="{{ _('youtube', 'shorts') }}" class="hidden h-11 w-11 shrink-0 items-center justify-center border border-transparent text-zinc-400 transition hover:bg-zinc-900 hover:text-teal-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 3h8l-3 5h4l-7 13 2-9H8l3-5-3-4Z"/></svg>
+                <span class="sr-only">{{ _('youtube', 'shorts') }}</span>
+            </button>
+        </div>
+        <form id="youtube-search-form" class="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row">
+            <div class="flex min-w-0 flex-1">
+                <input id="youtube-search-input" type="search" required maxlength="200" placeholder="{{ _('youtube', 'search_placeholder') }}"
+                       class="min-h-12 min-w-0 flex-1 border-2 border-r-0 border-zinc-800 bg-zinc-950 px-4 font-mono text-sm text-white outline-none transition focus:border-teal-400">
+                <button type="submit" title="{{ _('youtube', 'search') }}" class="flex h-12 w-12 shrink-0 items-center justify-center border-2 border-teal-500 text-teal-400 transition hover:bg-teal-400 hover:text-black">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-4-4"/></svg>
+                    <span class="sr-only">{{ _('youtube', 'search') }}</span>
+                </button>
+            </div>
+            <select id="youtube-sort" class="min-h-12 w-full border-2 border-zinc-800 bg-zinc-950 px-4 font-mono text-xs text-zinc-400 outline-none transition focus:border-teal-400 sm:w-48">
+                <option value="source">{{ _('youtube', 'sort_source') }}</option>
+                <option value="views">{{ _('youtube', 'sort_views') }}</option>
+                <option value="duration">{{ _('youtube', 'sort_duration') }}</option>
+                <option value="title">{{ _('youtube', 'sort_title') }}</option>
+            </select>
         </form>
     </section>
 
     <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
-        <h2 id="youtube-result-title" class="font-mono text-sm font-bold uppercase tracking-wider text-zinc-200">{{ _('youtube', 'popular') }}</h2>
-        <span id="youtube-result-count" class="font-mono text-[10px] text-zinc-600"></span>
+        <h2 id="youtube-result-title" class="truncate font-mono text-xs font-bold uppercase tracking-wider text-zinc-200">{{ _('youtube', 'recommendations') }}</h2>
+        <span id="youtube-result-count" class="shrink-0 font-mono text-[10px] uppercase text-zinc-600"></span>
     </div>
 
-    <div id="youtube-status" class="hidden border border-zinc-800 bg-zinc-950 px-4 py-10 text-center font-mono text-xs text-zinc-500"></div>
-    <div id="youtube-grid" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
+    <section id="youtube-channel-banner" class="relative hidden min-h-40 overflow-hidden border-2 border-zinc-800 bg-zinc-950">
+        <img id="youtube-channel-cover" class="absolute inset-0 h-full w-full object-cover opacity-30" alt="">
+        <div class="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-black/20"></div>
+        <div class="relative flex min-h-40 items-end gap-4 p-4 sm:p-6">
+            <img id="youtube-channel-avatar" class="h-16 w-16 shrink-0 border-2 border-teal-400 bg-black object-cover sm:h-20 sm:w-20" alt="">
+            <div class="min-w-0">
+                <h3 id="youtube-channel-title" class="font-mono text-lg font-black text-white sm:text-2xl"></h3>
+                <p id="youtube-channel-description" class="mt-2 line-clamp-3 max-w-4xl text-xs leading-relaxed text-zinc-400"></p>
+            </div>
+        </div>
+    </section>
+
+    <div id="youtube-status" class="hidden border-2 border-dashed border-zinc-800 bg-zinc-950 px-4 py-12 text-center font-mono text-xs text-zinc-500"></div>
+    <div id="youtube-grid" class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
 
     <div class="flex justify-center">
-        <button id="youtube-load-more" type="button" class="hidden border border-zinc-700 px-6 py-2 font-mono text-xs uppercase text-zinc-400 transition hover:border-red-500 hover:text-white">
+        <button id="youtube-load-more" type="button" class="hidden min-h-11 w-full border border-zinc-700 px-6 py-2 font-mono text-xs uppercase text-zinc-400 transition hover:border-teal-400 hover:text-white sm:w-auto">
             {{ _('youtube', 'load_more') }}
         </button>
-    </div>
-</div>
-
-<div id="youtube-player-modal" class="fixed inset-0 z-[80] hidden items-center justify-center bg-black/90 p-3 sm:p-8">
-    <div class="w-full max-w-6xl border border-zinc-700 bg-zinc-950">
-        <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-            <h2 id="youtube-player-title" class="truncate pr-4 text-sm font-bold text-white">YouTube</h2>
-            <button id="youtube-player-close" type="button" class="font-mono text-xs uppercase text-zinc-400 hover:text-white">{{ _('youtube', 'close') }}</button>
-        </div>
-        <video id="youtube-player" class="aspect-video w-full bg-black" controls playsinline></video>
     </div>
 </div>
 
@@ -90,11 +122,19 @@
     const title = document.getElementById('youtube-result-title');
     const count = document.getElementById('youtube-result-count');
     const loadMore = document.getElementById('youtube-load-more');
+    const sort = document.getElementById('youtube-sort');
+    const recommendationsButton = document.getElementById('youtube-recommendations');
+    const subscriptionsButton = document.getElementById('youtube-subscriptions');
+    const historyButton = document.getElementById('youtube-history');
+    const watchLaterButton = document.getElementById('youtube-watch-later');
+    const shortsButton = document.getElementById('youtube-shorts');
+    const channelBanner = document.getElementById('youtube-channel-banner');
     const openYouTubeLabel = {{ _('youtube', 'open_youtube')|tojson }};
     const playLabel = {{ _('youtube', 'play')|tojson }};
-    let currentRequest = {kind: 'popular', value: ''};
+    let currentRequest = {kind: 'recommendations', value: ''};
     let nextPageToken = null;
     let renderedCount = 0;
+    let renderedItems = [];
     let requestSerial = 0;
     let catalogController = null;
 
@@ -115,53 +155,108 @@
 
     function metric(value) {
         if (!Number.isFinite(value)) return '';
-        return new Intl.NumberFormat(undefined, {notation: 'compact', maximumFractionDigits: 1}).format(value);
+        return new Intl.NumberFormat().format(value);
+    }
+
+    function formatPublished(value) {
+        if (!value) return '';
+        if (/^\d{8}$/.test(value)) return `${value.slice(6, 8)}.${value.slice(4, 6)}.${value.slice(0, 4)}`;
+        const numeric = Number(value);
+        const date = new Date(Number.isFinite(numeric) ? numeric * 1000 : value);
+        return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+    }
+
+    function sortedItems() {
+        const items = [...renderedItems];
+        if (sort.value === 'views') items.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+        if (sort.value === 'duration') items.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+        if (sort.value === 'title') items.sort((a, b) => a.title.localeCompare(b.title));
+        return items;
+    }
+
+    function renderCatalog() {
+        grid.replaceChildren(...sortedItems().map(makeCard));
+    }
+
+    function setActiveMode(kind) {
+        for (const [button, active] of [
+            [recommendationsButton, kind === 'recommendations'],
+            [subscriptionsButton, kind === 'subscriptions'],
+            [historyButton, kind === 'history'],
+            [watchLaterButton, kind === 'watch_later'],
+            [shortsButton, kind === 'shorts'],
+        ]) {
+            button.classList.toggle('border-teal-500', active);
+            button.classList.toggle('bg-teal-400/10', active);
+            button.classList.toggle('text-teal-400', active);
+            button.classList.toggle('border-transparent', !active);
+            button.classList.toggle('text-zinc-400', !active);
+        }
     }
 
     function makeCard(item) {
         const card = document.createElement('article');
-        card.className = 'group flex min-w-0 flex-col border border-zinc-800 bg-zinc-950 transition hover:border-red-700';
+        card.className = 'group flex min-w-0 flex-col border-2 border-zinc-800 bg-zinc-950 transition hover:border-zinc-600';
 
         const media = document.createElement('div');
-        media.className = 'relative aspect-video overflow-hidden bg-zinc-900';
+        media.className = 'relative aspect-video overflow-hidden border-b-2 border-zinc-800 bg-black';
         if (item.thumbnail_url) {
             const image = document.createElement('img');
             image.src = item.thumbnail_url;
             image.alt = '';
             image.loading = 'lazy';
-            image.className = 'h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]';
+            image.className = 'h-full w-full object-cover transition duration-300 group-hover:scale-105';
             media.append(image);
         }
         const badge = document.createElement('span');
-        badge.className = 'absolute left-2 top-2 border border-black/70 bg-black/85 px-2 py-1 font-mono text-[9px] font-bold uppercase text-red-300';
+        badge.className = 'absolute left-2 top-2 border border-zinc-800 bg-black/85 px-2 py-0.5 font-mono text-[9px] font-bold uppercase text-teal-400';
         badge.textContent = item.kind;
         media.append(badge);
         if (item.duration) {
             const duration = document.createElement('span');
-            duration.className = 'absolute bottom-2 right-2 bg-black/90 px-2 py-1 font-mono text-[10px] text-white';
+            duration.className = 'absolute bottom-2 right-2 border border-zinc-800 bg-black/90 px-2 py-0.5 font-mono text-[9px] text-zinc-200';
             duration.textContent = formatDuration(item.duration);
             media.append(duration);
         }
         if (item.kind === 'video') {
             const play = document.createElement('button');
             play.type = 'button';
-            play.className = 'absolute inset-0 flex items-center justify-center bg-black/0 font-mono text-xs font-bold uppercase text-transparent transition hover:bg-black/50 hover:text-white';
-            play.textContent = playLabel;
-            play.addEventListener('click', () => playVideo(item));
+            play.className = 'absolute inset-0 flex items-center justify-center bg-black/0 text-2xl text-white/80 transition hover:bg-black/40 sm:opacity-0 sm:group-hover:opacity-100';
+            play.textContent = '▶';
+            play.title = playLabel;
+            play.setAttribute('aria-label', playLabel);
+            play.addEventListener('click', () => window.location.assign(watchUrl(item)));
             media.append(play);
         }
 
         const body = document.createElement('div');
-        body.className = 'flex flex-1 flex-col gap-3 p-4';
+        body.className = 'flex flex-1 flex-col gap-3 p-3 sm:p-4';
         const heading = document.createElement('h3');
-        heading.className = 'line-clamp-2 text-sm font-bold leading-snug text-zinc-100';
+        heading.className = 'line-clamp-2 min-h-8 cursor-pointer text-xs font-bold leading-snug text-white transition group-hover:text-teal-400';
         heading.textContent = item.title;
+        if (item.kind === 'video') heading.addEventListener('click', () => window.location.assign(watchUrl(item)));
         const meta = document.createElement('div');
-        meta.className = 'flex min-h-4 items-center justify-between gap-2 font-mono text-[10px] text-zinc-500';
+        meta.className = 'flex min-h-5 items-center justify-between gap-2 font-mono text-[10px] text-zinc-500';
         const channel = document.createElement('button');
         channel.type = 'button';
-        channel.className = 'truncate text-left hover:text-red-400 disabled:pointer-events-none';
-        channel.textContent = item.channel_title || (item.kind === 'channel' ? 'Channel' : 'YouTube');
+        channel.className = 'flex min-w-0 items-center gap-2 text-left hover:text-teal-400 disabled:pointer-events-none';
+        const channelAvatar = document.createElement('span');
+        channelAvatar.className = 'relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden border border-zinc-700 bg-black text-[9px] font-bold uppercase text-teal-400';
+        const channelTitle = item.channel_title || (item.kind === 'channel' ? 'Channel' : 'YouTube');
+        channelAvatar.textContent = channelTitle.charAt(0);
+        if (item.channel_avatar_url) {
+            const avatar = document.createElement('img');
+            avatar.src = item.channel_avatar_url;
+            avatar.alt = '';
+            avatar.loading = 'lazy';
+            avatar.className = 'absolute inset-0 h-full w-full object-cover';
+            avatar.addEventListener('error', () => avatar.remove());
+            channelAvatar.append(avatar);
+        }
+        const channelName = document.createElement('span');
+        channelName.className = 'truncate';
+        channelName.textContent = channelTitle;
+        channel.append(channelAvatar, channelName);
         channel.disabled = !item.channel_id;
         if (item.channel_id) channel.addEventListener('click', () => loadCatalog('channel', item.channel_id));
         const views = document.createElement('span');
@@ -169,8 +264,18 @@
         views.textContent = item.view_count ? `${metric(item.view_count)} views` : '';
         meta.append(channel, views);
 
+        const details = document.createElement('div');
+        details.className = 'flex items-center justify-between gap-3 border-t border-zinc-900 pt-2 font-mono text-[8px] uppercase text-zinc-700';
+        const entityId = document.createElement('span');
+        entityId.className = 'truncate';
+        entityId.textContent = `ID: ${item.entity_id}`;
+        const published = document.createElement('span');
+        published.className = 'shrink-0';
+        published.textContent = formatPublished(item.published_at);
+        details.append(entityId, published);
+
         const actions = document.createElement('div');
-        actions.className = 'mt-auto flex flex-wrap items-center gap-2 border-t border-zinc-900 pt-3';
+        actions.className = 'mt-auto flex min-h-8 flex-wrap items-center gap-2';
         if (item.kind === 'video') {
             const integrations = document.createElement('netsanctum-actions');
             integrations.dataset.slot = 'entity.actions';
@@ -179,10 +284,10 @@
             integrations.className = 'flex items-center gap-2';
             actions.append(integrations);
         }
-        if (item.kind === 'channel' || item.kind === 'playlist') {
+        if (item.kind === 'channel' || (item.kind === 'playlist' && !item.entity_id.startsWith('RD'))) {
             const browse = document.createElement('button');
             browse.type = 'button';
-            browse.className = 'border border-zinc-700 px-3 py-1.5 font-mono text-[10px] uppercase text-zinc-300 hover:border-red-500 hover:text-white';
+            browse.className = 'min-h-8 border border-zinc-700 px-3 py-1.5 font-mono text-[10px] uppercase text-zinc-300 hover:border-teal-400 hover:text-white';
             browse.textContent = item.kind === 'channel' ? 'Videos' : 'Open playlist';
             browse.addEventListener('click', () => loadCatalog(item.kind, item.entity_id));
             actions.append(browse);
@@ -191,10 +296,10 @@
         external.href = item.source_url;
         external.target = '_blank';
         external.rel = 'noopener noreferrer';
-        external.className = 'ml-auto font-mono text-[10px] uppercase text-zinc-600 hover:text-red-400';
+        external.className = 'ml-auto py-2 font-mono text-[9px] uppercase text-zinc-600 hover:text-teal-400';
         external.textContent = openYouTubeLabel;
         actions.append(external);
-        body.append(heading, meta, actions);
+        body.append(heading, meta, details, actions);
         card.append(media, body);
         return card;
     }
@@ -206,10 +311,34 @@
             query.set('q', value);
             return `/api/youtube/search?${query}`;
         }
+        if (kind === 'recommendations') return `/api/youtube/recommendations?${query}`;
         if (kind === 'subscriptions') return `/api/youtube/subscriptions?${query}`;
+        if (kind === 'history') return `/api/youtube/history?${query}`;
+        if (kind === 'watch_later') return `/api/youtube/watch-later?${query}`;
+        if (kind === 'shorts') return `/api/youtube/shorts?${query}`;
         if (kind === 'channel') return `/api/youtube/channels/${encodeURIComponent(value)}/videos?${query}`;
         if (kind === 'playlist') return `/api/youtube/playlists/${encodeURIComponent(value)}/items?${query}`;
         return `/api/youtube/popular?${query}`;
+    }
+
+    function watchUrl(item) {
+        const query = new URLSearchParams();
+        if (currentRequest.kind === 'playlist') query.set('list', currentRequest.value);
+        const suffix = query.size ? `?${query}` : '';
+        return `/youtube/watch/${encodeURIComponent(item.entity_id)}${suffix}`;
+    }
+
+    function renderChannelBanner(payload, kind) {
+        channelBanner.classList.toggle('hidden', kind !== 'channel');
+        if (kind !== 'channel') return;
+        document.getElementById('youtube-channel-title').textContent = payload.title || 'YouTube channel';
+        document.getElementById('youtube-channel-description').textContent = payload.description || '';
+        const cover = document.getElementById('youtube-channel-cover');
+        const avatar = document.getElementById('youtube-channel-avatar');
+        cover.src = payload.thumbnail_url || '';
+        avatar.src = payload.avatar_url || payload.thumbnail_url || '';
+        cover.classList.toggle('hidden', !cover.src);
+        avatar.classList.toggle('hidden', !avatar.src);
     }
 
     async function loadCatalog(kind, value = '', append = false) {
@@ -224,8 +353,10 @@
         catalogController = controller;
         if (!append) {
             currentRequest = {kind, value};
+            setActiveMode(kind);
             nextPageToken = null;
             renderedCount = 0;
+            renderedItems = [];
             grid.replaceChildren();
         }
         setStatus('Loading YouTube catalog...', false, !append);
@@ -235,12 +366,13 @@
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || `YouTube request failed (${response.status})`);
             if (requestId !== requestSerial) return;
-            const cards = payload.items.map(makeCard);
-            if (append) grid.append(...cards); else grid.replaceChildren(...cards);
-            renderedCount += payload.items.length;
+            if (append) renderedItems.push(...payload.items); else renderedItems = payload.items;
+            renderCatalog();
+            renderedCount = renderedItems.length;
             nextPageToken = payload.next_page_token;
             title.textContent = payload.title;
             count.textContent = `${renderedCount} items`;
+            if (!append) renderChannelBanner(payload, kind);
             setStatus(payload.items.length || append ? '' : 'Nothing found.');
             loadMore.classList.toggle('hidden', !nextPageToken);
         } catch (error) {
@@ -258,64 +390,81 @@
         }
     }
 
-    async function playVideo(item) {
-        setStatus('Preparing server stream...');
-        try {
-            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(item.entity_id)}/stream`, {method: 'POST'});
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || 'Could not prepare stream');
-            const modal = document.getElementById('youtube-player-modal');
-            const player = document.getElementById('youtube-player');
-            document.getElementById('youtube-player-title').textContent = payload.title;
-            player.src = payload.stream_url;
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-            setStatus('');
-            player.play().catch(() => {});
-        } catch (error) {
-            setStatus(error.message, true);
-        }
-    }
-
     async function accountStatus() {
         const response = await fetch('/api/youtube/account');
         const payload = await response.json();
         const badge = document.getElementById('youtube-account-badge');
-        badge.textContent = payload.authenticated ? 'Account connected' : 'Anonymous';
-        badge.classList.toggle('text-emerald-400', payload.authenticated);
-        document.getElementById('youtube-subscriptions').classList.toggle('hidden', !payload.authenticated);
+        const indicator = document.getElementById('youtube-account-indicator');
+        badge.textContent = payload.authenticated ? {{ _('youtube', 'account_connected')|tojson }} : {{ _('youtube', 'anonymous')|tojson }};
+        indicator.classList.toggle('bg-teal-400', payload.authenticated);
+        indicator.classList.toggle('bg-zinc-700', !payload.authenticated);
         document.getElementById('youtube-account-disconnect').classList.toggle('hidden', !payload.authenticated);
     }
 
-    document.getElementById('youtube-popular').addEventListener('click', () => loadCatalog('popular'));
-    document.getElementById('youtube-subscriptions').addEventListener('click', () => loadCatalog('subscriptions'));
+    async function loadSettings() {
+        const response = await fetch('/api/youtube/settings');
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Could not load settings');
+        document.getElementById('youtube-shorts-enabled').checked = payload.shorts_enabled;
+        shortsButton.classList.toggle('hidden', !payload.shorts_enabled);
+        shortsButton.classList.toggle('flex', payload.shorts_enabled);
+    }
+
+    recommendationsButton.addEventListener('click', () => loadCatalog('recommendations'));
+    subscriptionsButton.addEventListener('click', () => loadCatalog('subscriptions'));
+    historyButton.addEventListener('click', () => loadCatalog('history'));
+    watchLaterButton.addEventListener('click', () => loadCatalog('watch_later'));
+    shortsButton.addEventListener('click', () => loadCatalog('shorts'));
+    sort.addEventListener('change', renderCatalog);
     document.getElementById('youtube-search-form').addEventListener('submit', event => {
         event.preventDefault();
         loadCatalog('search', document.getElementById('youtube-search-input').value.trim());
     });
     loadMore.addEventListener('click', () => loadCatalog(currentRequest.kind, currentRequest.value, true));
-    document.getElementById('youtube-player-close').addEventListener('click', () => {
-        const player = document.getElementById('youtube-player');
-        player.pause();
-        player.removeAttribute('src');
-        player.load();
-        document.getElementById('youtube-player-modal').classList.add('hidden');
-        document.getElementById('youtube-player-modal').classList.remove('flex');
-    });
     document.getElementById('youtube-account-open').addEventListener('click', () => {
+        if (catalogController) catalogController.abort();
+        document.getElementById('youtube-settings-panel').classList.add('hidden');
         document.getElementById('youtube-account-panel').classList.toggle('hidden');
+    });
+    document.getElementById('youtube-settings-open').addEventListener('click', () => {
+        document.getElementById('youtube-account-panel').classList.add('hidden');
+        document.getElementById('youtube-settings-panel').classList.toggle('hidden');
+    });
+    document.getElementById('youtube-settings-save').addEventListener('click', async () => {
+        const status = document.getElementById('youtube-settings-status');
+        try {
+            const response = await fetch('/api/youtube/settings', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    shorts_enabled: document.getElementById('youtube-shorts-enabled').checked,
+                }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not save settings');
+            status.textContent = {{ _('youtube', 'settings_saved')|tojson }};
+            shortsButton.classList.toggle('hidden', !payload.shorts_enabled);
+            shortsButton.classList.toggle('flex', payload.shorts_enabled);
+            await loadCatalog(currentRequest.kind, currentRequest.value);
+        } catch (error) {
+            status.textContent = error.message;
+            status.classList.add('text-red-400');
+        }
     });
     document.getElementById('youtube-account-browser').addEventListener('netsanctum:browser-snapshot-saved', async () => {
         await accountStatus();
-        await loadCatalog('popular');
+        await loadCatalog('recommendations');
     });
     document.getElementById('youtube-account-disconnect').addEventListener('click', async () => {
         await fetch('/api/youtube/account', {method: 'DELETE'});
         await accountStatus();
-        await loadCatalog('popular');
+        await loadCatalog('recommendations');
     });
     accountStatus().catch(() => {});
-    loadCatalog('popular');
+    loadSettings().catch(() => {});
+    const initialChannel = new URLSearchParams(window.location.search).get('channel');
+    if (initialChannel) loadCatalog('channel', initialChannel);
+    else loadCatalog('recommendations');
 })();
 </script>
 {% endblock %}

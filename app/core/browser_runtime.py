@@ -58,7 +58,9 @@ class BrowserRuntime:
             if mode not in policy.allowed_modes:
                 raise ValueError(f"Browser policy does not allow {mode!r} mode")
             for session_id, session in list(self._sessions.items()):
-                if session.policy.id == policy.id:
+                # The UI owns one interactive login window. Headless catalog sessions
+                # are serialized by the caller and must not invalidate each other.
+                if session.policy.id == policy.id and session.mode == "interactive" and mode == "interactive":
                     await self._close_locked(session_id)
             if len(self._sessions) >= MAX_LIVE_SESSIONS:
                 raise RuntimeError("Browser session limit reached")
@@ -283,12 +285,35 @@ class BrowserRuntime:
             await session.page.goto(url, wait_until="domcontentloaded", timeout=60000)
         return await self.status(session_id)
 
-    async def query(self, session_id: str, selector: str, *, limit: int = 20) -> list[dict]:
+    async def query(
+        self,
+        session_id: str,
+        selector: str,
+        *,
+        limit: int = 20,
+        fields: dict[str, dict] | None = None,
+    ) -> list[dict]:
         session = self._require(session_id)
         async with session.operation_lock:
             async with asyncio.timeout(15):
                 locator = session.page.locator(selector)
                 count = min(await locator.count(), limit)
+                if fields:
+                    return await locator.evaluate_all(
+                        """
+                        (elements, query) => elements.slice(0, query.limit).map(root =>
+                            Object.fromEntries(Object.entries(query.fields).map(([name, field]) => {
+                                const target = field.selector ? root.querySelector(field.selector) : root;
+                                if (!target) return [name, null];
+                                const value = field.attribute
+                                    ? target.getAttribute(field.attribute)
+                                    : target.textContent;
+                                return [name, typeof value === 'string' ? value.trim() : value];
+                            }))
+                        )
+                        """,
+                        {"limit": count, "fields": fields},
+                    )
                 result = []
                 for index in range(count):
                     item = locator.nth(index)

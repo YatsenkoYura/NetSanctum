@@ -123,6 +123,7 @@ def classify_ytdlp_error(error: BaseException | str) -> YtDlpErrorKind:
         marker in message
         for marker in (
             "sign in",
+            "login details are needed",
             "login required",
             "authentication required",
             "private video",

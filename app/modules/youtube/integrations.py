@@ -11,8 +11,14 @@ async def video_source_catalog(
         client = YouTubeClient(await load_cookies())
         if request.operation == "search":
             return await client.search(request.query or "", request.page_token)
+        if request.operation == "recommendations":
+            return await client.recommendations(request.page_token)
         if request.operation == "subscriptions":
             return await client.subscriptions(request.page_token)
+        if request.operation == "history":
+            return await client.history(request.page_token)
+        if request.operation == "watch_later":
+            return await client.watch_later(request.page_token)
         if request.operation == "channel":
             return await client.channel_videos(request.entity_id or "", request.page_token)
         if request.operation == "playlist":

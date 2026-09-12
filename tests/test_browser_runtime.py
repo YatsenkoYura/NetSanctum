@@ -10,12 +10,18 @@ import yaml
 
 from app.core import browser_egress_proxy
 from app.core.browser_snapshots import BrowserSnapshotStore
-from app.core.browser_worker import WorkerPolicy
+from app.core.browser_worker import QueryField, WorkerPolicy
 from app.core.module_types import BrowserPolicySpec
 from app.core.modules import ModuleRegistry
 
 
 class BrowserRuntimeContractTests(unittest.TestCase):
+    def test_structured_query_fields_only_allow_safe_attributes(self):
+        self.assertEqual("href", QueryField(attribute="href").attribute)
+        self.assertEqual("poster", QueryField(attribute="poster").attribute)
+        with self.assertRaises(ValueError):
+            QueryField.model_validate({"attribute": "onclick"})
+
     def test_browser_sidecar_has_no_secrets_storage_or_public_port(self):
         compose = yaml.safe_load(Path("docker-compose.yml").read_text())
         browser = compose["services"]["browser-runtime"]

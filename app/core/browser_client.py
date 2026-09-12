@@ -170,12 +170,19 @@ class BrowserRuntimeClient:
         await self._ensure_active(session_id)
         return (await self._request("POST", f"/sessions/{session_id}/navigate", json={"url": url})).json()
 
-    async def query(self, session_id: str, selector: str, *, limit: int = 20) -> list[dict]:
+    async def query(
+        self,
+        session_id: str,
+        selector: str,
+        *,
+        limit: int = 20,
+        fields: dict[str, dict] | None = None,
+    ) -> list[dict]:
         await self._ensure_active(session_id)
         response = await self._request(
             "POST",
             f"/sessions/{session_id}/query",
-            json={"selector": selector, "limit": limit},
+            json={"selector": selector, "limit": limit, "fields": fields or {}},
         )
         return response.json()["items"]
 

@@ -4,7 +4,16 @@ from pydantic import BaseModel, Field
 
 
 class VideoSourceRequest(BaseModel):
-    operation: Literal["popular", "subscriptions", "search", "channel", "playlist"] = "popular"
+    operation: Literal[
+        "recommendations",
+        "popular",
+        "subscriptions",
+        "history",
+        "watch_later",
+        "search",
+        "channel",
+        "playlist",
+    ] = "recommendations"
     query: str | None = Field(default=None, max_length=200)
     entity_id: str | None = Field(default=None, max_length=255)
     page_token: str | None = Field(default=None, max_length=500)
@@ -18,6 +27,7 @@ class VideoSourceItem(BaseModel):
     description: str = ""
     channel_id: str | None = None
     channel_title: str | None = None
+    channel_avatar_url: str | None = None
     published_at: str | None = None
     thumbnail_url: str | None = None
     source_url: str
@@ -29,3 +39,7 @@ class VideoSourceResult(BaseModel):
     title: str
     items: list[VideoSourceItem]
     next_page_token: str | None = None
+    description: str = ""
+    thumbnail_url: str | None = None
+    avatar_url: str | None = None
+    source_url: str | None = None
