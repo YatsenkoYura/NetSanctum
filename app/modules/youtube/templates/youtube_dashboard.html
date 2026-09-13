@@ -330,7 +330,8 @@
 
     function openWatch(item) {
         sessionStorage.setItem(`youtube:catalog:${item.entity_id}`, JSON.stringify(item));
-        window.location.assign(watchUrl(item));
+        const url = watchUrl(item);
+        if (!window.netSanctumNavigate?.(url)) window.location.assign(url);
     }
 
     function renderChannelBanner(payload, kind) {

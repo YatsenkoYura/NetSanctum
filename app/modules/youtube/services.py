@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import secrets
+import threading
 import time
 from typing import Literal
 from urllib.parse import parse_qs, quote, quote_plus, urljoin, urlparse
@@ -36,6 +37,10 @@ HISTORY_TARGET = ":ythistory"
 WATCH_LATER_TARGET = ":ytwatchlater"
 SHORTS_TARGET = ":ytshorts"
 _innertube_bootstrap: dict[str, tuple[float, str, dict]] = {}
+_INNERTUBE_CONTINUATION_TTL_SECONDS = 600
+_INNERTUBE_CONTINUATION_MAX_ENTRIES = 256
+_innertube_continuations: dict[str, tuple[float, str, str, str]] = {}
+_innertube_continuations_lock = threading.Lock()
 
 _CACHE_TTL_SECONDS = 300
 _CACHE_MAX_ENTRIES = 128
@@ -194,6 +199,8 @@ def _playlist_id_from_url(value: str) -> str | None:
 async def clear_cache() -> None:
     async with _cache_lock:
         _cache.clear()
+    with _innertube_continuations_lock:
+        _innertube_continuations.clear()
 
 
 async def load_cookies() -> str | None:
@@ -594,7 +601,41 @@ def _innertube_bootstrap_sync(cookies_text: str | None = None) -> tuple[str, dic
     return key.group(1), context
 
 
-def _innertube_catalog_sync(target: str, title: str, cookies_text: str | None) -> VideoSourceResult:
+def _innertube_continuation_token(target: str, cookies_text: str | None, continuation: str) -> str:
+    now = time.monotonic()
+    cookie_scope = hashlib.sha256((cookies_text or "anonymous").encode()).hexdigest()
+    with _innertube_continuations_lock:
+        expired = [token for token, entry in _innertube_continuations.items() if entry[0] <= now]
+        for token in expired:
+            del _innertube_continuations[token]
+        while len(_innertube_continuations) >= _INNERTUBE_CONTINUATION_MAX_ENTRIES:
+            oldest = min(_innertube_continuations, key=lambda token: _innertube_continuations[token][0])
+            del _innertube_continuations[oldest]
+        token = secrets.token_urlsafe(32)
+        _innertube_continuations[token] = (
+            now + _INNERTUBE_CONTINUATION_TTL_SECONDS,
+            target,
+            cookie_scope,
+            continuation,
+        )
+    return token
+
+
+def _innertube_continuation(target: str, cookies_text: str | None, page_token: str) -> str:
+    cookie_scope = hashlib.sha256((cookies_text or "anonymous").encode()).hexdigest()
+    with _innertube_continuations_lock:
+        entry = _innertube_continuations.get(page_token)
+        if entry:
+            if entry[0] <= time.monotonic():
+                del _innertube_continuations[page_token]
+            elif entry[1:3] == (target, cookie_scope):
+                return entry[3]
+    raise YouTubeAPIError("Invalid or expired catalog page token", status_code=400)
+
+
+def _innertube_catalog_sync(
+    target: str, title: str, cookies_text: str | None, page_token: str | None = None
+) -> VideoSourceResult:
     key, context = _innertube_bootstrap_sync(cookies_text)
     query: dict = {"context": context}
     endpoint = "browse"
@@ -609,6 +650,11 @@ def _innertube_catalog_sync(target: str, title: str, cookies_text: str | None) -
             HISTORY_TARGET: "FEhistory",
             WATCH_LATER_TARGET: "VLWL",
         }.get(target, "FEwhat_to_watch")
+    if page_token:
+        query = {
+            "context": context,
+            "continuation": _innertube_continuation(target, cookies_text, page_token),
+        }
     origin = "https://www.youtube.com"
     headers = {
         "Origin": origin,
@@ -632,8 +678,17 @@ def _innertube_catalog_sync(target: str, title: str, cookies_text: str | None) -
         timeout=30,
     )
     response.raise_for_status()
+    payload = response.json()
     items = []
-    for node in _walk(response.json()):
+    continuation = None
+    for node in _walk(payload):
+        continuation_command = (
+            node.get("continuationItemRenderer", {})
+            .get("continuationEndpoint", {})
+            .get("continuationCommand", {})
+        )
+        if isinstance(continuation_command, dict) and isinstance(continuation_command.get("token"), str):
+            continuation = continuation_command["token"]
         renderer = node.get("videoRenderer")
         if isinstance(renderer, dict):
             video_id = renderer.get("videoId")
@@ -723,7 +778,13 @@ def _innertube_catalog_sync(target: str, title: str, cookies_text: str | None) -
                 view_count=view_count,
             )
         )
-    return VideoSourceResult(title=title, items=items[:PAGE_SIZE])
+    return VideoSourceResult(
+        title=title,
+        items=items[:PAGE_SIZE],
+        next_page_token=(
+            _innertube_continuation_token(target, cookies_text, continuation) if continuation else None
+        ),
+    )
 
 
 class YouTubeClient:
@@ -917,7 +978,9 @@ class YouTubeClient:
             WATCH_LATER_TARGET,
         }
         if innertube_target:
-            return await asyncio.to_thread(_innertube_catalog_sync, target, title, self.cookies_text)
+            return await asyncio.to_thread(
+                _innertube_catalog_sync, target, title, self.cookies_text, page_token
+            )
         if target == SHORTS_TARGET or "list=RD" in target:
             return await self._browser_catalog(
                 target,
@@ -973,9 +1036,8 @@ class YouTubeClient:
             raise
 
     async def popular(self, page_token: str | None = None) -> VideoSourceResult:
-        offset = _page_offset(page_token, MAX_SEARCH_OFFSET)
         return await self._catalog(
-            f"ytsearch{offset + PAGE_SIZE}:{DISCOVERY_QUERY}",
+            f"ytsearch{PAGE_SIZE}:{DISCOVERY_QUERY}",
             "Discover",
             page_token,
             max_offset=MAX_SEARCH_OFFSET,
@@ -1007,8 +1069,7 @@ class YouTubeClient:
                 page_token,
                 include_playlist=bool(_playlist_id_from_url(query)),
             )
-        offset = _page_offset(page_token, MAX_SEARCH_OFFSET)
-        target = f"ytsearch{offset + PAGE_SIZE}:{query}"
+        target = f"ytsearch{PAGE_SIZE}:{query}"
         return await self._catalog(
             target,
             f"Search: {query}",

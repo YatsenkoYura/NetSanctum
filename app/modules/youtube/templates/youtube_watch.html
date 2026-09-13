@@ -26,7 +26,7 @@
         <main class="space-y-4 lg:col-span-9">
             <div id="youtube-player-shell" class="group relative aspect-video overflow-hidden border-2 border-zinc-800 bg-black">
                 <div id="youtube-watch-loader" class="absolute inset-0 z-10 flex items-center justify-center bg-black/90 font-mono text-xs uppercase tracking-wider text-teal-400">{{ _('youtube', 'preparing_stream') }}</div>
-                <video id="youtube-watch-player" class="h-full w-full object-contain" playsinline></video>
+                <div id="youtube-watch-player-slot" class="h-full w-full"><video id="youtube-watch-player" class="h-full w-full object-contain" playsinline></video></div>
                 <button id="youtube-center-play" type="button" class="absolute left-1/2 top-1/2 z-20 hidden flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-teal-400 bg-black/80 text-teal-400 transition hover:bg-teal-400 hover:text-black"><svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg></button>
                 <div id="youtube-controls" class="absolute bottom-0 left-0 right-0 z-20 flex translate-y-full flex-col gap-2 border-t border-zinc-800 bg-zinc-950/95 p-3 transition group-hover:translate-y-0">
                     <input id="youtube-progress" type="range" min="0" max="1000" value="0" class="h-1 w-full accent-teal-400">
@@ -98,14 +98,18 @@
 (() => {
     const videoId = {{ video_id|tojson }};
     const playlistId = new URLSearchParams(window.location.search).get('list');
-    const player = document.getElementById('youtube-watch-player');
+    const playerSlot = document.getElementById('youtube-watch-player-slot');
+    const miniPlayerHost = document.getElementById('youtube-mini-player-host');
+    const retainedPlayer = miniPlayerHost.querySelector('#youtube-watch-player');
+    const player = retainedPlayer || playerSlot.querySelector('#youtube-watch-player');
+    if (retainedPlayer) playerSlot.replaceChildren(player);
     const loader = document.getElementById('youtube-watch-loader');
     const queue = document.getElementById('youtube-watch-queue');
     const autoplay = document.getElementById('youtube-autoplay');
     const captions = document.getElementById('youtube-captions');
     const playerShell = document.getElementById('youtube-player-shell');
     let queueItems = [];
-    let stopMse = null;
+    let stopMse = player._youtubeStopMse || null;
     let currentMse = null;
     let fallbackStreamUrl = null;
 
@@ -188,6 +192,7 @@
     function useFallback(streamUrl) {
         stopMse?.();
         stopMse = null;
+        player._youtubeStopMse = null;
         player.src = streamUrl;
         player.load();
         return player.play().catch(() => {});
@@ -212,6 +217,7 @@
                 stopped = true;
                 URL.revokeObjectURL(objectUrl);
             };
+            player._youtubeStopMse = stopMse;
             player.removeAttribute('src');
             player.src = objectUrl;
             await new Promise((resolve, reject) => {
@@ -332,7 +338,10 @@
             }
             currentMse = payload.mse;
             fallbackStreamUrl = payload.stream_url;
-            await startMse(payload.mse, payload.stream_url);
+            if (player.dataset.youtubeVideoId !== videoId) {
+                await startMse(payload.mse, payload.stream_url);
+                player.dataset.youtubeVideoId = videoId;
+            }
             loader.classList.add('hidden');
         } catch (error) {
             loader.textContent = error.message;
@@ -418,7 +427,10 @@
         if (!autoplay.checked) return;
         const index = queueItems.findIndex(item => item.entity_id === videoId);
         const next = queueItems[index + 1];
-        if (next) window.location.assign(queueUrl(next));
+        if (next) {
+            const url = queueUrl(next);
+            if (!window.netSanctumNavigate?.(url)) window.location.assign(url);
+        }
     });
     document.getElementById('youtube-load-comments').addEventListener('click', loadComments);
     renderCatalogMetadata(catalogItem);

@@ -86,6 +86,29 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
+
+        #youtube-mini-player-host {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 40;
+            width: min(22rem, calc(100vw - 2rem));
+            aspect-ratio: 16 / 9;
+            overflow: hidden;
+            border: 2px solid #27272a;
+            background: #000;
+            box-shadow: 0 20px 40px rgb(0 0 0 / 0.5);
+        }
+
+        #youtube-mini-player-host:empty {
+            display: none;
+        }
+
+        @media (max-width: 639px) {
+            #youtube-mini-player-host {
+                bottom: 5rem;
+            }
+        }
     </style>
 
     {% block head_extra %}{% endblock %}
@@ -171,6 +194,8 @@
     <main id="main-content" class="px-3 sm:px-6 py-2 transition-all duration-500 max-w-full overflow-x-hidden">
         {% block content %}{% endblock %}
     </main>
+
+    <div id="youtube-mini-player-host" aria-label="YouTube mini-player"></div>
 
     <!-- ── Global Music Player (Mobile Responsive Bottom Sheet / Floating Card) ───────────────────────────── -->
     <div id="global-player"
@@ -602,6 +627,65 @@
                 setTimeout(detectBridge, 1000);
                 setTimeout(detectBridge, 2000);
             }
+        })();
+
+        // Keep the YouTube video element outside the HTMX swap target while navigating internally.
+        (function () {
+            const navigationPaths = [
+                '/dashboard',
+                '/youtube/dashboard',
+                '/music/dashboard',
+                '/video-archiver/dashboard',
+                '/shares/dashboard',
+                '/storage/dashboard',
+            ];
+            let navigationRequest = null;
+
+            function isWhitelistedNavigation(url) {
+                return navigationPaths.includes(url.pathname) || /^\/youtube\/watch\/[^/]+$/.test(url.pathname);
+            }
+
+            function preserveYouTubePlayer() {
+                const player = document.getElementById('youtube-watch-player');
+                const host = document.getElementById('youtube-mini-player-host');
+                if (player && host && player.parentElement !== host) host.append(player);
+            }
+
+            function navigate(url, source) {
+                if (navigationRequest || url.origin !== window.location.origin || !isWhitelistedNavigation(url)) return false;
+                navigationRequest = {link: source, url: url};
+                htmx.ajax('GET', url.pathname + url.search, {
+                    source: source,
+                    target: '#main-content',
+                    swap: 'outerHTML',
+                    select: '#main-content',
+                    push: url.pathname + url.search,
+                });
+                return true;
+            }
+
+            window.netSanctumNavigate = function (href) {
+                return navigate(new URL(href, window.location.href), document.body);
+            };
+
+            document.addEventListener('click', function (event) {
+                if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                const link = event.target.closest('a[href]');
+                if (!link || link.target || link.hasAttribute('download')) return;
+
+                if (navigate(new URL(link.href, window.location.href), link)) event.preventDefault();
+            });
+
+            document.addEventListener('htmx:beforeSwap', function (event) {
+                if (navigationRequest && event.detail.target?.id === 'main-content') preserveYouTubePlayer();
+            });
+
+            document.addEventListener('htmx:afterRequest', function (event) {
+                if (!navigationRequest || event.detail.elt !== navigationRequest.link) return;
+                const request = navigationRequest;
+                navigationRequest = null;
+                if (event.detail.failed) window.location.assign(request.url.href);
+            });
         })();
 
         class NetSanctumActions extends HTMLElement {

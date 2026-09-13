@@ -331,6 +331,67 @@ class YouTubeModuleTests(unittest.TestCase):
         self.assertEqual(29_685, result.items[0].view_count)
         self.assertEqual("1", post.call_args.kwargs["headers"]["X-YouTube-Client-Name"])
 
+    def test_innertube_search_uses_an_opaque_continuation_token(self):
+        upstream_continuation = "Egdjb250aW51YXRpb24="
+        first_response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "contents": {
+                    "videoRenderer": {
+                        "videoId": "dQw4w9WgXcQ",
+                        "title": {"simpleText": "First page"},
+                    },
+                    "continuationItemRenderer": {
+                        "continuationEndpoint": {"continuationCommand": {"token": upstream_continuation}}
+                    },
+                }
+            },
+        )
+        second_response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {})
+        bootstrap = ("key", {"client": {"clientVersion": "1.20260101.00.00"}})
+        with (
+            patch("app.modules.youtube.services._innertube_bootstrap_sync", return_value=bootstrap),
+            patch(
+                "app.modules.youtube.services.requests.post",
+                side_effect=[first_response, second_response],
+            ) as post,
+        ):
+            first_page = asyncio.run(YouTubeClient().search("example"))
+            second_page = asyncio.run(YouTubeClient().search("example", first_page.next_page_token))
+
+        self.assertIsNotNone(first_page.next_page_token)
+        self.assertNotEqual(upstream_continuation, first_page.next_page_token)
+        self.assertNotIn(upstream_continuation, first_page.next_page_token or "")
+        self.assertIsNone(second_page.next_page_token)
+        self.assertIn("/search?", post.call_args_list[1].args[0])
+        self.assertEqual(
+            upstream_continuation,
+            post.call_args_list[1].kwargs["json"]["continuation"],
+        )
+
+    def test_innertube_continuation_tokens_are_scoped_to_target_and_cookies(self):
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "continuationItemRenderer": {
+                    "continuationEndpoint": {"continuationCommand": {"token": "upstream-token"}}
+                }
+            },
+        )
+        bootstrap = ("key", {"client": {"clientVersion": "1.20260101.00.00"}})
+        with (
+            patch("app.modules.youtube.services._innertube_bootstrap_sync", return_value=bootstrap),
+            patch("app.modules.youtube.services.requests.post", return_value=response),
+        ):
+            page = asyncio.run(YouTubeClient().search("first"))
+            with self.assertRaises(YouTubeAPIError) as raised:
+                asyncio.run(YouTubeClient().search("second", page.next_page_token))
+            with self.assertRaises(YouTubeAPIError) as cookie_raised:
+                asyncio.run(YouTubeClient("cookies").search("first", page.next_page_token))
+
+        self.assertEqual(400, raised.exception.status_code)
+        self.assertEqual(400, cookie_raised.exception.status_code)
+
     def test_netscape_cookie_parser_scopes_cookies_to_youtube(self):
         jar = _youtube_cookie_jar(
             "# Netscape HTTP Cookie File\n"
