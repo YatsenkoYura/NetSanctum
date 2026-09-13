@@ -106,6 +106,7 @@ def classify_ytdlp_error(error: BaseException | str) -> YtDlpErrorKind:
             "too many requests",
             "http error 429",
             "http error 403",
+            "http error 400",
         )
     ):
         return YtDlpErrorKind.RATE_LIMITED
@@ -116,6 +117,7 @@ def classify_ytdlp_error(error: BaseException | str) -> YtDlpErrorKind:
             "proof of origin",
             "proof-of-origin",
             "requested format is not available",
+            "missing required data sync id",
         )
     ):
         return YtDlpErrorKind.PO_TOKEN_REQUIRED

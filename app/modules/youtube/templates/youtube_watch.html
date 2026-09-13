@@ -109,6 +109,11 @@
     let currentMse = null;
     let fallbackStreamUrl = null;
 
+    const catalogItem = (() => {
+        try { return JSON.parse(sessionStorage.getItem(`youtube:catalog:${videoId}`) || 'null'); }
+        catch { return null; }
+    })();
+
     function number(value) {
         return Number.isFinite(value) ? new Intl.NumberFormat().format(value) : '—';
     }
@@ -120,6 +125,18 @@
         const numeric = Number(text);
         const parsed = new Date(Number.isFinite(numeric) ? numeric * 1000 : text);
         return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString();
+    }
+
+    function renderCatalogMetadata(item) {
+        if (!item) return;
+        document.title = `${item.title} — NetSanctum`;
+        document.getElementById('youtube-watch-title').textContent = item.title || 'YouTube';
+        document.getElementById('youtube-watch-channel').textContent = item.channel_title || 'YouTube';
+        document.getElementById('youtube-watch-channel-initial').textContent = (item.channel_title || 'Y').charAt(0);
+        document.getElementById('youtube-watch-views').textContent = number(item.view_count);
+        document.getElementById('youtube-watch-date').textContent = date(item.published_at);
+        document.getElementById('youtube-watch-external').href = item.source_url || '#';
+        if (item.channel_id) document.getElementById('youtube-watch-channel-link').href = `/youtube/dashboard?channel=${encodeURIComponent(item.channel_id)}`;
     }
 
     function queueUrl(item) {
@@ -176,7 +193,7 @@
         return player.play().catch(() => {});
     }
 
-    async function startMse(mse, fallbackUrl) {
+    async function startMse(mse, fallbackUrl, resumeAt = 0, resumePlaying = false) {
         const videoTrack = mse?.video_tracks?.find(track => track.id === document.getElementById('youtube-quality').value)
             || mse?.video_tracks?.[0];
         const audioTrack = mse?.audio_tracks?.find(track => track.id === document.getElementById('youtube-audio-track').value)
@@ -249,7 +266,11 @@
                 pump();
             });
             await Promise.all([appendTrack(videoTrack), appendTrack(audioTrack)]);
-            return player.play().catch(() => {});
+            if (resumeAt > 0) {
+                await new Promise(resolve => player.addEventListener('loadedmetadata', resolve, {once: true}));
+                player.currentTime = Math.min(resumeAt, player.duration || resumeAt);
+            }
+            if (resumePlaying) return player.play().catch(() => {});
         } catch (error) {
             console.warn('MSE playback failed; using the compatible stream.', error);
             return useFallback(fallbackUrl);
@@ -377,10 +398,10 @@
     document.getElementById('youtube-progress').addEventListener('input', event => { if (player.duration) player.currentTime = player.duration * event.target.value / 1000; });
     document.getElementById('youtube-volume').addEventListener('input', event => { player.volume = Number(event.target.value); });
     document.getElementById('youtube-quality').addEventListener('change', () => {
-        if (currentMse) startMse(currentMse, fallbackStreamUrl);
+        if (currentMse) startMse(currentMse, fallbackStreamUrl, player.currentTime, !player.paused);
     });
     document.getElementById('youtube-audio-track').addEventListener('change', () => {
-        if (currentMse) startMse(currentMse, fallbackStreamUrl);
+        if (currentMse) startMse(currentMse, fallbackStreamUrl, player.currentTime, !player.paused);
     });
     document.getElementById('youtube-playback-rate').addEventListener('input', event => { player.playbackRate = Number(event.target.value); document.getElementById('youtube-playback-rate-label').textContent = `${event.target.value}x`; });
     captions.addEventListener('change', () => {
@@ -400,6 +421,7 @@
         if (next) window.location.assign(queueUrl(next));
     });
     document.getElementById('youtube-load-comments').addEventListener('click', loadComments);
+    renderCatalogMetadata(catalogItem);
     loadVideo();
 })();
 </script>

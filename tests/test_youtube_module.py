@@ -186,6 +186,53 @@ class YouTubeModuleTests(unittest.TestCase):
         self.assertEqual("Example", result["title"])
         self.assertEqual([], result["captions"])
 
+    def test_mse_tracks_are_deduplicated_by_quality_and_audio_language(self):
+        from app.modules.youtube.services import _mse_tracks
+
+        stored, public = _mse_tracks(
+            {
+                "formats": [
+                    {
+                        "url": "https://a.googlevideo.com/v1",
+                        "ext": "mp4",
+                        "vcodec": "avc",
+                        "acodec": "none",
+                        "height": 720,
+                        "tbr": 500,
+                    },
+                    {
+                        "url": "https://a.googlevideo.com/v2",
+                        "ext": "mp4",
+                        "vcodec": "avc",
+                        "acodec": "none",
+                        "height": 720,
+                        "tbr": 1000,
+                    },
+                    {
+                        "url": "https://a.googlevideo.com/a1",
+                        "ext": "m4a",
+                        "vcodec": "none",
+                        "acodec": "mp4a",
+                        "language": "ru",
+                        "abr": 64,
+                    },
+                    {
+                        "url": "https://a.googlevideo.com/a2",
+                        "ext": "m4a",
+                        "vcodec": "none",
+                        "acodec": "mp4a",
+                        "language": "ru",
+                        "abr": 128,
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(1, len(public["video_tracks"]))
+        self.assertEqual(1, len(public["audio_tracks"]))
+        self.assertEqual("https://a.googlevideo.com/v2", stored["v0"]["url"])
+        self.assertEqual("https://a.googlevideo.com/a2", stored["a0"]["url"])
+
     def test_stream_exposes_local_mse_mp4_track_metadata_only(self):
         info = {
             "url": "https://example.googlevideo.com/muxed?signature=secret",

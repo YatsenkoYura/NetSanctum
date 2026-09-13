@@ -16,7 +16,12 @@ from app.core.browser_client import browser_runtime_client
 from app.core.browser_snapshots import browser_snapshot_store
 from app.core.config import get_settings
 from app.core.modules import module_registry
-from app.core.ytdlp_pipeline import YtDlpErrorKind, YtDlpPipelineError, extract_info
+from app.core.ytdlp_pipeline import (
+    YtDlpErrorKind,
+    YtDlpPipelineError,
+    classify_ytdlp_error,
+    extract_info,
+)
 from app.modules.settings import service as settings_service
 
 ENTITY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{2,255}$")
@@ -267,7 +272,7 @@ def _extract_sync(target: str, start: int, end: int, cookies_text: str | None = 
 
 def _stream_info_sync(video_id: str, cookies_text: str | None) -> dict:
     try:
-        return extract_info(
+        info = extract_info(
             _redis,
             video_url(video_id),
             options={
@@ -280,6 +285,25 @@ def _stream_info_sync(video_id: str, cookies_text: str | None) -> dict:
             platform="youtube",
             require_authentication=bool(cookies_text),
         )
+        remote_url = info.get("url")
+        if not isinstance(remote_url, str) or not remote_url.startswith("https://"):
+            raise YtDlpPipelineError(YtDlpErrorKind.UNKNOWN, "YouTube did not return a playable stream")
+        headers = {
+            key: value
+            for key, value in (info.get("http_headers") or {}).items()
+            if key.lower() in {"user-agent", "referer", "origin"}
+        }
+        headers["Range"] = "bytes=0-0"
+        response = requests.get(remote_url, headers=headers, stream=True, timeout=30)
+        try:
+            if response.status_code not in {200, 206}:
+                raise YtDlpPipelineError(
+                    classify_ytdlp_error(f"HTTP Error {response.status_code}"),
+                    f"YouTube stream preflight failed with HTTP {response.status_code}",
+                )
+        finally:
+            response.close()
+        return info
     except YtDlpPipelineError as exc:
         status_code = {
             YtDlpErrorKind.AUTH_REQUIRED: 401,
@@ -351,38 +375,58 @@ def _mse_tracks(info: dict) -> tuple[dict[str, dict], dict[str, list[dict]]]:
     """Keep playable MP4 representations server-side and expose local metadata only."""
     stored: dict[str, dict] = {}
     public = {"video_tracks": [], "audio_tracks": []}
+    best_video: dict[int, dict] = {}
+    best_audio: dict[str, dict] = {}
     for format in info.get("formats") or []:
         if format.get("ext") not in {"mp4", "m4a"} or not isinstance(format.get("url"), str):
             continue
         vcodec = format.get("vcodec")
         acodec = format.get("acodec")
         if vcodec and vcodec != "none" and acodec == "none":
-            track_type = "video"
-            track_id = f"v{len(public['video_tracks'])}"
-            label = f"{format.get('height') or '?'}p"
+            height = format.get("height")
+            if isinstance(height, int) and (
+                height not in best_video or (format.get("tbr") or 0) > (best_video[height].get("tbr") or 0)
+            ):
+                best_video[height] = format
         elif acodec and acodec != "none" and vcodec == "none":
-            track_type = "audio"
-            track_id = f"a{len(public['audio_tracks'])}"
-            label = format.get("language") or format.get("format_note") or "Audio"
-        else:
-            continue
-        codec = vcodec if track_type == "video" else acodec
-        if not isinstance(codec, str) or not codec:
-            continue
+            language = format.get("language") or "und"
+            if language not in best_audio or (format.get("abr") or 0) > (
+                best_audio[language].get("abr") or 0
+            ):
+                best_audio[language] = format
+
+    for index, format in enumerate(
+        sorted(best_video.values(), key=lambda item: item["height"], reverse=True)
+    ):
+        track_id = f"v{index}"
         stored[track_id] = {
             "url": format["url"],
             "headers": {**(info.get("http_headers") or {}), **(format.get("http_headers") or {})},
         }
-        public[f"{track_type}_tracks"].append(
+        public["video_tracks"].append(
             {
                 "id": track_id,
-                "label": label,
-                "height": format.get("height") if track_type == "video" else None,
-                "language": format.get("language") if track_type == "audio" else None,
-                "mime": f'{track_type}/mp4; codecs="{codec}"',
+                "label": f"{format['height']}p",
+                "height": format["height"],
+                "language": None,
+                "mime": f'video/mp4; codecs="{format["vcodec"]}"',
             }
         )
-    public["video_tracks"].sort(key=lambda track: track["height"] or 0, reverse=True)
+    for index, (language, format) in enumerate(sorted(best_audio.items())):
+        track_id = f"a{index}"
+        stored[track_id] = {
+            "url": format["url"],
+            "headers": {**(info.get("http_headers") or {}), **(format.get("http_headers") or {})},
+        }
+        public["audio_tracks"].append(
+            {
+                "id": track_id,
+                "label": language,
+                "height": None,
+                "language": language,
+                "mime": f'audio/mp4; codecs="{format["acodec"]}"',
+            }
+        )
     return stored, public
 
 

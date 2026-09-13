@@ -225,7 +225,7 @@
             play.textContent = '▶';
             play.title = playLabel;
             play.setAttribute('aria-label', playLabel);
-            play.addEventListener('click', () => window.location.assign(watchUrl(item)));
+            play.addEventListener('click', () => openWatch(item));
             media.append(play);
         }
 
@@ -234,7 +234,7 @@
         const heading = document.createElement('h3');
         heading.className = 'line-clamp-2 min-h-8 cursor-pointer text-xs font-bold leading-snug text-white transition group-hover:text-teal-400';
         heading.textContent = item.title;
-        if (item.kind === 'video') heading.addEventListener('click', () => window.location.assign(watchUrl(item)));
+        if (item.kind === 'video') heading.addEventListener('click', () => openWatch(item));
         const meta = document.createElement('div');
         meta.className = 'flex min-h-5 items-center justify-between gap-2 font-mono text-[10px] text-zinc-500';
         const channel = document.createElement('button');
@@ -326,6 +326,11 @@
         if (currentRequest.kind === 'playlist') query.set('list', currentRequest.value);
         const suffix = query.size ? `?${query}` : '';
         return `/youtube/watch/${encodeURIComponent(item.entity_id)}${suffix}`;
+    }
+
+    function openWatch(item) {
+        sessionStorage.setItem(`youtube:catalog:${item.entity_id}`, JSON.stringify(item));
+        window.location.assign(watchUrl(item));
     }
 
     function renderChannelBanner(payload, kind) {
