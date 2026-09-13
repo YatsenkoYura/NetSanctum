@@ -174,7 +174,13 @@ class YouTubeModuleTests(unittest.TestCase):
             "duration": 10,
             "http_headers": {"User-Agent": "test"},
         }
-        with patch("app.modules.youtube.services._stream_info_sync", return_value=info):
+        with (
+            patch("app.modules.youtube.services._stream_info_sync", return_value=info),
+            patch(
+                "app.modules.youtube.services._innertube_bootstrap_sync",
+                return_value=("key", {"client": {"clientVersion": "1"}}, None),
+            ),
+        ):
             result = asyncio.run(YouTubeClient().create_stream("dQw4w9WgXcQ"))
 
         self.assertTrue(result["stream_url"].startswith("/api/youtube/streams/"))
@@ -321,7 +327,7 @@ class YouTubeModuleTests(unittest.TestCase):
         with (
             patch(
                 "app.modules.youtube.services._innertube_bootstrap_sync",
-                return_value=("key", {"client": {"clientVersion": "1.20260101.00.00"}}),
+                return_value=("key", {"client": {"clientVersion": "1.20260101.00.00"}}, None),
             ),
             patch("app.modules.youtube.services.requests.post", return_value=response) as post,
         ):
@@ -348,7 +354,7 @@ class YouTubeModuleTests(unittest.TestCase):
             },
         )
         second_response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {})
-        bootstrap = ("key", {"client": {"clientVersion": "1.20260101.00.00"}})
+        bootstrap = ("key", {"client": {"clientVersion": "1.20260101.00.00"}}, None)
         with (
             patch("app.modules.youtube.services._innertube_bootstrap_sync", return_value=bootstrap),
             patch(
@@ -378,7 +384,7 @@ class YouTubeModuleTests(unittest.TestCase):
                 }
             },
         )
-        bootstrap = ("key", {"client": {"clientVersion": "1.20260101.00.00"}})
+        bootstrap = ("key", {"client": {"clientVersion": "1.20260101.00.00"}}, None)
         with (
             patch("app.modules.youtube.services._innertube_bootstrap_sync", return_value=bootstrap),
             patch("app.modules.youtube.services.requests.post", return_value=response),
@@ -431,6 +437,7 @@ class YouTubeModuleTests(unittest.TestCase):
                 return_value=(
                     "key",
                     {"client": {"clientVersion": "1.20260101.00.00", "visitorData": "visitor"}},
+                    None,
                 ),
             ),
             patch("app.modules.youtube.services.requests.post", return_value=response) as post,

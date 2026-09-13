@@ -652,7 +652,7 @@
             }
 
             function navigate(url, source) {
-                if (navigationRequest || url.origin !== window.location.origin || !isWhitelistedNavigation(url)) return false;
+                if (navigationRequest || url.origin !== window.location.origin || url.pathname.startsWith('/api/') || !isWhitelistedNavigation(url)) return false;
                 navigationRequest = {link: source, url: url};
                 htmx.ajax('GET', url.pathname + url.search, {
                     source: source,

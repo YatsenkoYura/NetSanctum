@@ -113,6 +113,16 @@
     let currentMse = null;
     let fallbackStreamUrl = null;
 
+    async function apiJson(response) {
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+            throw new Error(`YouTube API returned ${response.status} instead of JSON`);
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || `YouTube request failed (${response.status})`);
+        return payload;
+    }
+
     const catalogItem = (() => {
         try { return JSON.parse(sessionStorage.getItem(`youtube:catalog:${videoId}`) || 'null'); }
         catch { return null; }
@@ -179,8 +189,7 @@
             ? `/api/youtube/playlists/${encodeURIComponent(playlistId)}/items`
             : `/api/youtube/channels/${encodeURIComponent(channelId)}/videos`;
         const response = await fetch(endpoint);
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || 'Could not load queue');
+        const payload = await apiJson(response);
         renderQueue(payload.items || []);
         if (payload.avatar_url) {
             const avatar = document.getElementById('youtube-watch-channel-avatar');
@@ -286,8 +295,7 @@
     async function loadVideo() {
         try {
             const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/stream`, {method: 'POST'});
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || 'Could not prepare stream');
+            const payload = await apiJson(response);
             document.title = `${payload.title} — NetSanctum`;
             document.getElementById('youtube-watch-title').textContent = payload.title;
             document.getElementById('youtube-watch-channel').textContent = payload.channel_title || 'YouTube';
@@ -356,8 +364,7 @@
         container.textContent = {{ _('youtube', 'loading')|tojson }};
         try {
             const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/comments`);
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || 'Could not load comments');
+            const payload = await apiJson(response);
             if (!payload.items.length) {
                 container.textContent = {{ _('youtube', 'no_comments')|tojson }};
                 return;

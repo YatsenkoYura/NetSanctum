@@ -138,6 +138,16 @@
     let requestSerial = 0;
     let catalogController = null;
 
+    async function apiJson(response) {
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+            throw new Error(`YouTube API returned ${response.status} instead of JSON`);
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || `YouTube request failed (${response.status})`);
+        return payload;
+    }
+
     function setStatus(message, error = false, hideGrid = true) {
         status.textContent = message;
         status.classList.toggle('hidden', !message);
@@ -369,8 +379,7 @@
         loadMore.disabled = true;
         try {
             const response = await fetch(requestUrl(kind, value, append ? nextPageToken : null), {signal: controller.signal});
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || `YouTube request failed (${response.status})`);
+            const payload = await apiJson(response);
             if (requestId !== requestSerial) return;
             if (append) renderedItems.push(...payload.items); else renderedItems = payload.items;
             renderCatalog();
@@ -398,7 +407,7 @@
 
     async function accountStatus() {
         const response = await fetch('/api/youtube/account');
-        const payload = await response.json();
+        const payload = await apiJson(response);
         const badge = document.getElementById('youtube-account-badge');
         const indicator = document.getElementById('youtube-account-indicator');
         badge.textContent = payload.authenticated ? {{ _('youtube', 'account_connected')|tojson }} : {{ _('youtube', 'anonymous')|tojson }};
@@ -409,8 +418,7 @@
 
     async function loadSettings() {
         const response = await fetch('/api/youtube/settings');
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || 'Could not load settings');
+        const payload = await apiJson(response);
         document.getElementById('youtube-shorts-enabled').checked = payload.shorts_enabled;
         shortsButton.classList.toggle('hidden', !payload.shorts_enabled);
         shortsButton.classList.toggle('flex', payload.shorts_enabled);
@@ -446,8 +454,7 @@
                     shorts_enabled: document.getElementById('youtube-shorts-enabled').checked,
                 }),
             });
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || 'Could not save settings');
+            const payload = await apiJson(response);
             status.textContent = {{ _('youtube', 'settings_saved')|tojson }};
             shortsButton.classList.toggle('hidden', !payload.shorts_enabled);
             shortsButton.classList.toggle('flex', payload.shorts_enabled);

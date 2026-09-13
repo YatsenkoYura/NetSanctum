@@ -36,7 +36,7 @@ SUBSCRIPTIONS_TARGET = ":ytsubs"
 HISTORY_TARGET = ":ythistory"
 WATCH_LATER_TARGET = ":ytwatchlater"
 SHORTS_TARGET = ":ytshorts"
-_innertube_bootstrap: dict[str, tuple[float, str, dict]] = {}
+_innertube_bootstrap: dict[str, tuple[float, str, dict, str | None]] = {}
 _INNERTUBE_CONTINUATION_TTL_SECONDS = 600
 _INNERTUBE_CONTINUATION_MAX_ENTRIES = 256
 _innertube_continuations: dict[str, tuple[float, str, str, str]] = {}
@@ -277,7 +277,7 @@ def _extract_sync(target: str, start: int, end: int, cookies_text: str | None = 
         raise YouTubeAPIError(str(exc), status_code=status_code) from exc
 
 
-def _stream_info_sync(video_id: str, cookies_text: str | None) -> dict:
+def _stream_info_sync(video_id: str, cookies_text: str | None, data_sync_id: str | None = None) -> dict:
     try:
         info = extract_info(
             _redis,
@@ -286,6 +286,7 @@ def _stream_info_sync(video_id: str, cookies_text: str | None) -> dict:
                 "format": "best[protocol=https][vcodec!=none][acodec!=none]",
                 "noplaylist": True,
                 "skip_download": True,
+                "extractor_args": {"youtube": {"data_sync_id": [data_sync_id]}} if data_sync_id else {},
             },
             download=False,
             cookies_text=cookies_text,
@@ -576,7 +577,7 @@ def _sapisid_authorization(
     return " ".join(hashes) or None
 
 
-def _innertube_bootstrap_sync(cookies_text: str | None = None) -> tuple[str, dict]:
+def _innertube_bootstrap_sync(cookies_text: str | None = None) -> tuple[str, dict, str | None]:
     cache_key = hashlib.sha256((cookies_text or "anonymous").encode()).hexdigest()
     cached = _innertube_bootstrap.get(cache_key)
     if cached and cached[0] > time.monotonic():
@@ -597,8 +598,10 @@ def _innertube_bootstrap_sync(cookies_text: str | None = None) -> tuple[str, dic
     visitor = re.search(r'"(?:VISITOR_DATA|INNERTUBE_CONTEXT_CLIENT_VISITOR_DATA)":"([^"]+)"', response.text)
     if visitor:
         context["client"]["visitorData"] = visitor.group(1)
-    _innertube_bootstrap[cache_key] = (time.monotonic() + 900, key.group(1), context)
-    return key.group(1), context
+    data_sync = re.search(r'"DATASYNC_ID":"([^"]+)"', response.text)
+    data_sync_id = data_sync.group(1) if data_sync else None
+    _innertube_bootstrap[cache_key] = (time.monotonic() + 900, key.group(1), context, data_sync_id)
+    return key.group(1), context, data_sync_id
 
 
 def _innertube_continuation_token(target: str, cookies_text: str | None, continuation: str) -> str:
@@ -636,7 +639,7 @@ def _innertube_continuation(target: str, cookies_text: str | None, page_token: s
 def _innertube_catalog_sync(
     target: str, title: str, cookies_text: str | None, page_token: str | None = None
 ) -> VideoSourceResult:
-    key, context = _innertube_bootstrap_sync(cookies_text)
+    key, context, _ = _innertube_bootstrap_sync(cookies_text)
     query: dict = {"context": context}
     endpoint = "browse"
     search = re.fullmatch(r"ytsearch\d*:(.*)", target, flags=re.DOTALL)
@@ -1102,9 +1105,10 @@ class YouTubeClient:
 
     async def create_stream(self, video_id: str) -> dict:
         video_url(video_id)
+        _, _, data_sync_id = await asyncio.to_thread(_innertube_bootstrap_sync, self.cookies_text)
         async with _stream_slots:
             extraction = asyncio.create_task(
-                asyncio.to_thread(_stream_info_sync, video_id, self.cookies_text)
+                asyncio.to_thread(_stream_info_sync, video_id, self.cookies_text, data_sync_id)
             )
             try:
                 info = await asyncio.shield(extraction)
