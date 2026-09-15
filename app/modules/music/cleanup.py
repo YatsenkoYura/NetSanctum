@@ -1,7 +1,7 @@
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.music.models import Song
+from app.modules.music.models import Playlist, Song
 
 
 async def cleanup_file(db: AsyncSession, path: str) -> None:
@@ -9,6 +9,8 @@ async def cleanup_file(db: AsyncSession, path: str) -> None:
         await db.execute(delete(Song).where(Song.audio_file_id == path))
     elif path.startswith("music/covers/"):
         await db.execute(update(Song).where(Song.cover_file_id == path).values(cover_file_id=None))
+    elif path.startswith("music/playlist-covers/"):
+        await db.execute(update(Playlist).where(Playlist.cover_path == path).values(cover_path=None))
 
 
 async def cleanup_module(db: AsyncSession) -> None:

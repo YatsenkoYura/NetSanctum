@@ -4,6 +4,7 @@ Music module router.
 
 import json
 
+import anyio
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -39,6 +40,25 @@ def _t(key: str, lang: str = "en") -> str:
 router = APIRouter(prefix="/music", tags=["music"])
 
 
+async def _regenerate_playlist_cover(db: AsyncSession, playlist: Playlist) -> None:
+    from app.modules.music.covers import regenerate_playlist_cover
+    from app.modules.music.models import PlaylistSong
+
+    paths = (
+        (
+            await db.execute(
+                select(Song.cover_file_id)
+                .join(PlaylistSong)
+                .where(PlaylistSong.playlist_id == playlist.id, Song.cover_file_id.isnot(None))
+                .order_by(PlaylistSong.position)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    playlist.cover_path = await anyio.to_thread.run_sync(regenerate_playlist_cover, playlist, paths)
+
+
 def _music_package_scope(package_id: str | None) -> tuple[str | None, int | None]:
     if not package_id:
         return None, None
@@ -57,7 +77,7 @@ async def api_list_playlists(
     user=Depends(get_current_user),
     package_id: str | None = None,
 ):
-    """API: Return a list of all playlists with computed cover URLs."""
+    """API: Return a list of all playlists with generated cover URLs."""
     from sqlalchemy.orm import selectinload
 
     from app.modules.music.models import PlaylistSong
@@ -68,7 +88,6 @@ async def api_list_playlists(
     query = (
         select(Playlist)
         .options(
-            selectinload(Playlist.cover_song),
             selectinload(Playlist.playlist_songs).selectinload(PlaylistSong.song),
         )
         .order_by(Playlist.created_at.desc())
@@ -80,54 +99,16 @@ async def api_list_playlists(
 
     out = []
     for p in playlists:
-        cover_url = None
-        if p.cover_song and p.cover_song.cover_file_id:
-            cover_url = f"/music/cover/{p.cover_song.id}"
-        elif p.playlist_songs and len(p.playlist_songs) > 0:
-            first_song = p.playlist_songs[0].song
-            if first_song and first_song.cover_file_id:
-                cover_url = f"/music/cover/{first_song.id}"
-
-        len(p.playlist_songs) if p.playlist_songs else 0
         out.append(
             {
                 "id": p.id,
                 "name": p.name,
                 "source_url": p.source_url,
-                "cover_url": cover_url,
-                "cover_urls": [
-                    f"/music/cover/{ps.song.id}"
-                    for ps in p.playlist_songs
-                    if ps.song and ps.song.cover_file_id
-                ][:9],
-                "cover_song_id": p.cover_song_id,
+                "cover_url": f"/music/playlists/{p.id}/cover" if p.cover_path else None,
                 "songs": [ps.song_id for ps in p.playlist_songs] if p.playlist_songs else [],
             }
         )
     return out
-
-
-@router.put("/api/playlists/{playlist_id}/cover")
-async def set_playlist_cover(
-    playlist_id: int, request: Request, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
-):
-    """API: Set a specific song's cover as the official playlist cover."""
-    body = await request.json()
-    song_id = body.get("song_id")
-    playlist = await db.get(Playlist, playlist_id)
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist not found")
-
-    if song_id is not None:
-        song = await db.get(Song, int(song_id))
-        if not song:
-            raise HTTPException(status_code=404, detail="Song not found")
-        playlist.cover_song_id = song.id
-    else:
-        playlist.cover_song_id = None
-
-    await db.commit()
-    return {"status": "ok", "playlist_id": playlist_id, "cover_song_id": playlist.cover_song_id}
 
 
 @router.put("/api/playlists/{playlist_id}/source")
@@ -417,7 +398,19 @@ async def music_player_ui(
 async def delete_song_ui(song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     song = await db.get(Song, song_id)
     if song:
+        from app.modules.music.models import PlaylistSong
+
+        playlist_ids = (
+            (await db.execute(select(PlaylistSong.playlist_id).where(PlaylistSong.song_id == song_id)))
+            .scalars()
+            .all()
+        )
         await db.delete(song)
+        await db.flush()
+        for playlist_id in playlist_ids:
+            playlist = await db.get(Playlist, playlist_id)
+            if playlist:
+                await _regenerate_playlist_cover(db, playlist)
         await db.commit()
     return ""
 
@@ -438,6 +431,10 @@ async def remove_song_from_playlist_ui(
     ps = result.scalar_one_or_none()
     if ps:
         await db.delete(ps)
+        playlist = await db.get(Playlist, playlist_id)
+        if playlist:
+            await db.flush()
+            await _regenerate_playlist_cover(db, playlist)
         await db.commit()
     return ""
 
@@ -448,6 +445,10 @@ async def delete_playlist_ui(
 ):
     playlist = await db.get(Playlist, playlist_id)
     if playlist:
+        from app.core.storage import get_storage
+
+        if playlist.cover_path:
+            await anyio.to_thread.run_sync(get_storage().delete_file, playlist.cover_path)
         await db.delete(playlist)
         await db.commit()
     return ""
@@ -634,6 +635,10 @@ async def add_song_to_playlist_ui(
 
     ps = PlaylistSong(playlist_id=playlist_id, song_id=song_id, position=max_pos + 1)
     db.add(ps)
+    playlist = await db.get(Playlist, playlist_id)
+    if playlist:
+        await db.flush()
+        await _regenerate_playlist_cover(db, playlist)
     await db.commit()
 
     response = HTMLResponse(
@@ -820,6 +825,8 @@ async def get_playlist_sync_manifest(
         {"url": f"/music/api/playlists?package_id={pkg_id}", "type": "json"},
         {"url": f"/music/api/playlists/{playlist_id}/songs?package_id={pkg_id}", "type": "json"},
     ]
+    if playlist.cover_path:
+        resources.append({"url": f"/music/playlists/{playlist_id}/cover", "type": "image"})
     for song in songs:
         resources.append({"url": f"/music/audio/{song.id}", "type": "binary"})
         if song.cover_file_id:
@@ -869,3 +876,17 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
     from app.core.responses import serve_storage_file_chunked
 
     return serve_storage_file_chunked(song.cover_file_id)
+
+
+@router.get("/playlists/{playlist_id}/cover")
+async def get_playlist_cover(
+    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """Serve the generated playlist cover from storage."""
+    playlist = await db.get(Playlist, playlist_id)
+    if not playlist or not playlist.cover_path:
+        raise HTTPException(status_code=404, detail="Playlist cover not found")
+
+    from app.core.responses import serve_storage_file_chunked
+
+    return serve_storage_file_chunked(playlist.cover_path)

@@ -760,18 +760,6 @@ async def list_playlists(
         ).group_by(video_playlist_association.c.playlist_id)
     )
     counts = dict(count_result.all())
-    cover_result = await db.execute(
-        select(video_playlist_association.c.playlist_id, ArchivedVideo.id)
-        .join(ArchivedVideo, ArchivedVideo.id == video_playlist_association.c.video_id)
-        .where(ArchivedVideo.thumbnail_path.isnot(None))
-        .order_by(ArchivedVideo.archived_at.desc())
-    )
-    covers: dict[int, list[str]] = {}
-    for playlist_id, video_id in cover_result.all():
-        if len(covers.setdefault(playlist_id, [])) < 21:
-            covers[playlist_id].append(
-                f"/api/video-archiver/videos/{urllib.parse.quote(video_id, safe='')}/thumbnail"
-            )
     return [
         {
             "id": playlist.id,
@@ -779,7 +767,9 @@ async def list_playlists(
             "description": playlist.description,
             "source_url": playlist.source_url,
             "video_count": counts.get(playlist.id, 0),
-            "cover_urls": covers.get(playlist.id, []),
+            "cover_url": f"/api/video-archiver/playlists/{playlist.id}/cover"
+            if playlist.cover_path
+            else None,
         }
         for playlist in playlists
     ]
@@ -811,6 +801,20 @@ async def get_playlist_detail(
         "created_at": playlist.created_at,
         "videos": videos,
     }
+
+
+@router.get("/api/video-archiver/playlists/{playlist_id}/cover", include_in_schema=False)
+async def get_playlist_cover(
+    playlist_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
+):
+    """Serve the generated playlist cover from storage."""
+    playlist = await db.get(VideoPlaylist, playlist_id)
+    if not playlist or not playlist.cover_path:
+        raise HTTPException(status_code=404, detail="Playlist cover not found")
+
+    from app.core.responses import serve_storage_file_chunked
+
+    return serve_storage_file_chunked(playlist.cover_path)
 
 
 @router.put("/api/video-archiver/playlists/{playlist_id}/source")
@@ -913,6 +917,8 @@ async def get_playlist_sync_manifest(
         {"url": f"/api/video-archiver/playlists?{query}", "type": "json"},
         {"url": f"/api/video-archiver/playlists/{playlist.id}?{query}", "type": "json"},
     ]
+    if playlist.cover_path:
+        resources.append({"url": f"/api/video-archiver/playlists/{playlist.id}/cover", "type": "image"})
     for video in videos:
         resources.extend(_video_resources(video, package_id))
 

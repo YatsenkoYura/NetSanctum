@@ -1,7 +1,7 @@
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.video_archiver.models import ArchivedVideo
+from app.modules.video_archiver.models import ArchivedVideo, VideoPlaylist
 
 
 async def cleanup_file(db: AsyncSession, path: str) -> None:
@@ -10,6 +10,10 @@ async def cleanup_file(db: AsyncSession, path: str) -> None:
     elif path.startswith("video_archiver/thumbnails/"):
         await db.execute(
             update(ArchivedVideo).where(ArchivedVideo.thumbnail_path == path).values(thumbnail_path=None)
+        )
+    elif path.startswith("video_archiver/playlist-covers/"):
+        await db.execute(
+            update(VideoPlaylist).where(VideoPlaylist.cover_path == path).values(cover_path=None)
         )
     elif path.startswith("video_archiver/subtitles/"):
         result = await db.execute(select(ArchivedVideo))

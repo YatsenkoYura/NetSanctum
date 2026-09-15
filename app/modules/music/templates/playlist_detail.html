@@ -116,13 +116,6 @@
                                  <div class="flex justify-between items-start">
                                     <p class="text-xs font-semibold text-zinc-100 truncate group-hover:text-teal-400 transition-colors" title="{{ song.title }}">{{ song.title }}</p>
                                     <div class="flex items-center gap-1.5">
-                                        {% if song.cover_url %}
-                                        <button onclick="event.stopPropagation(); setPlaylistCover({{ playlist.id }}, {{ song.id }})"
-                                                class="text-zinc-600 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none"
-                                                title="Set as Playlist Cover">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                                        </button>
-                                        {% endif %}
                                         <button onclick="event.stopPropagation(); sendToOutpost('/music/api/songs/{{ song.id }}/sync-manifest')"
                                                 class="outpost-only text-zinc-600 hover:text-teal-400 opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none"
                                                 title="Save to Device">
@@ -270,23 +263,6 @@
 
             if (container.classList.contains('edit-mode')) {
                 htmx.ajax('GET', `/music/ui/playlists/${playlistId}/library`, {target: '#playlist-library-sidebar'});
-            }
-        }
-
-        // Set specific song cover as playlist cover
-        async function setPlaylistCover(playlistId, songId) {
-            try {
-                const res = await fetch(`/music/api/playlists/${playlistId}/cover`, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({song_id: songId})
-                });
-                if (res.ok) {
-                    htmx.trigger(document.body, 'reloadPlaylists');
-                    alert('Обложка плейлиста обновлена!');
-                }
-            } catch (err) {
-                console.error(err);
             }
         }
 

@@ -32,6 +32,7 @@ class Playlist(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    cover_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cover_song_id: Mapped[int | None] = mapped_column(
         ForeignKey("songs.id", ondelete="SET NULL"), nullable=True
     )

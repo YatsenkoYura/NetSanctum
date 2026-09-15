@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Sequence
 
+import anyio
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +72,18 @@ class VideoService:
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
 
+        playlist_ids = (
+            (
+                await db.execute(
+                    select(video_playlist_association.c.playlist_id).where(
+                        video_playlist_association.c.video_id == video_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
         storage = get_storage()
         if video.file_path:
             storage.delete_file(video.file_path)
@@ -84,6 +97,11 @@ class VideoService:
                 storage.delete_file(sub_path)
 
         await db.delete(video)
+        await db.flush()
+        for playlist_id in playlist_ids:
+            playlist = await db.get(VideoPlaylist, playlist_id)
+            if playlist:
+                await PlaylistService._regenerate_cover(db, playlist)
         await db.commit()
         return {"status": "success", "message": f"Deleted video {video_id}"}
 
@@ -171,6 +189,8 @@ class PlaylistService:
         playlist = await db.get(VideoPlaylist, playlist_id)
         if not playlist:
             raise HTTPException(status_code=404, detail="Playlist not found")
+        if playlist.cover_path:
+            await anyio.to_thread.run_sync(get_storage().delete_file, playlist.cover_path)
         await db.delete(playlist)
         await db.commit()
         return {"status": "success", "message": f"Deleted playlist {playlist_id}"}
@@ -193,6 +213,8 @@ class PlaylistService:
 
         stmt_ins = video_playlist_association.insert().values(playlist_id=playlist_id, video_id=video_id)
         await db.execute(stmt_ins)
+        await db.flush()
+        await PlaylistService._regenerate_cover(db, playlist)
         await db.commit()
         return {"status": "success"}
 
@@ -203,5 +225,30 @@ class PlaylistService:
             & (video_playlist_association.c.video_id == video_id)
         )
         await db.execute(stmt)
+        playlist = await db.get(VideoPlaylist, playlist_id)
+        if playlist:
+            await db.flush()
+            await PlaylistService._regenerate_cover(db, playlist)
         await db.commit()
         return {"status": "success"}
+
+    @staticmethod
+    async def _regenerate_cover(db: AsyncSession, playlist: VideoPlaylist) -> None:
+        from app.modules.video_archiver.covers import regenerate_playlist_cover
+
+        paths = (
+            (
+                await db.execute(
+                    select(ArchivedVideo.thumbnail_path)
+                    .join(video_playlist_association)
+                    .where(
+                        video_playlist_association.c.playlist_id == playlist.id,
+                        ArchivedVideo.thumbnail_path.isnot(None),
+                    )
+                    .order_by(ArchivedVideo.archived_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        playlist.cover_path = await anyio.to_thread.run_sync(regenerate_playlist_cover, playlist, paths)

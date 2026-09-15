@@ -52,6 +52,24 @@ VIDEO_IMAGE_HOSTS = frozenset(
 redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+def _regenerate_playlist_cover(session, playlist_id: int) -> None:
+    from app.modules.video_archiver.covers import regenerate_playlist_cover
+
+    playlist = session.get(VideoPlaylist, playlist_id)
+    if not playlist:
+        return
+    paths = session.scalars(
+        select(ArchivedVideo.thumbnail_path)
+        .join(video_playlist_association)
+        .where(
+            video_playlist_association.c.playlist_id == playlist_id,
+            ArchivedVideo.thumbnail_path.isnot(None),
+        )
+        .order_by(ArchivedVideo.archived_at.desc())
+    ).all()
+    playlist.cover_path = regenerate_playlist_cover(playlist, paths)
+
+
 def _get_platform_cookies(platform_id: str) -> str | None:
     """Fetch module cookies for a specific platform from settings DB."""
     browser_cookies = browser_snapshot_store.cookies_for_scope_sync(platform_id)
@@ -234,6 +252,9 @@ def process_video_url_task(
                 dispatch_download(video_url, entry.get("title", f"Video {video_id}"), str(video_id))
                 dispatched += 1
             session.commit()
+            if linked and playlist_id is not None:
+                _regenerate_playlist_cover(session, playlist_id)
+                session.commit()
 
         redis_client.delete(f"video_dl:{task_id}")
         return f"Playlist '{playlist_title}': dispatched {dispatched} new videos" + (
@@ -491,6 +512,9 @@ def download_video_task(
                     video.playlists.append(playlist)
 
             session.commit()
+            if playlist_id:
+                _regenerate_playlist_cover(session, playlist_id)
+                session.commit()
 
         if comments_enabled:
             comment_kwargs = {

@@ -42,9 +42,7 @@
              onclick="switchMusicTab('playlist-detail')">
 
             <div class="aspect-square w-full bg-zinc-950 border border-zinc-800 overflow-hidden relative transition-all rounded-none">
-                {% if playlist.cover_urls %}<div class="music-playlist-mosaic">
-                    {% for cover_url in playlist.cover_urls * 9 %}{% if loop.index <= 9 %}<img src="{{ cover_url }}" alt="" class="music-playlist-tile">{% endif %}{% endfor %}
-                </div>{% else %}<div class="music-playlist-fallback"></div>{% endif %}
+                {% if playlist.cover_url %}<img src="{{ playlist.cover_url }}" alt="" class="w-full h-full object-cover">{% else %}<div class="music-playlist-fallback"></div>{% endif %}
                 <div class="absolute inset-0 bg-black/45 group-hover:bg-black/20 transition-colors"></div>
 
                 <!-- Play Overlay Hover -->
@@ -78,7 +76,5 @@
 </div>
 
 <style>
-    .music-playlist-mosaic { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); overflow: hidden; background: #09090b; }
-    .music-playlist-tile { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: cover; opacity: 0.68; filter: blur(0.65px) saturate(0.85); transform: scale(1.07); box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.18); }
     .music-playlist-fallback { position: absolute; inset: 0; background: linear-gradient(135deg, #27272a, #09090b 55%, rgba(19, 78, 74, 0.55)); }
 </style>

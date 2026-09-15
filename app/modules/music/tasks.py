@@ -36,6 +36,22 @@ from app.modules.settings.models import Setting
 
 logger = logging.getLogger(__name__)
 
+
+def _regenerate_playlist_cover(session, playlist_id: int) -> None:
+    from app.modules.music.covers import regenerate_playlist_cover
+
+    playlist = session.get(Playlist, playlist_id)
+    if not playlist:
+        return
+    paths = session.scalars(
+        select(Song.cover_file_id)
+        .join(PlaylistSong)
+        .where(PlaylistSong.playlist_id == playlist_id, Song.cover_file_id.isnot(None))
+        .order_by(PlaylistSong.position)
+    ).all()
+    playlist.cover_path = regenerate_playlist_cover(playlist, paths)
+
+
 redis_client = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
 
@@ -214,6 +230,7 @@ def process_youtube_url_task(
         logger.info(f"Playlist detected: {playlist_title} with {len(entries)} videos.")
 
         with SyncSessionLocal() as session:
+            changed = False
             for i, entry in enumerate(entries):
                 video_url = _youtube_entry_url(entry)
 
@@ -230,6 +247,7 @@ def process_youtube_url_task(
                             PlaylistSong(playlist_id=playlist_id, song_id=existing_song.id, position=i)
                         )
                         session.commit()
+                        changed = True
                         logger.info(f"Deduplication: Linked existing song {video_url} to playlist")
                 else:
                     dispatch_tracked_sync(
@@ -244,6 +262,9 @@ def process_youtube_url_task(
                         },
                         args=(video_url, playlist_id, i, use_ai, openai_api_key, openai_base_url),
                     )
+            if changed and playlist_id is not None:
+                _regenerate_playlist_cover(session, playlist_id)
+                session.commit()
 
         redis_client.delete(f"music_dl:{task_id}")
         return f"Dispatched {len(entries)} songs for playlist '{playlist_title}'"
@@ -262,6 +283,8 @@ def process_youtube_url_task(
                     if not ps:
                         ps = PlaylistSong(playlist_id=playlist_id, song_id=existing_song.id, position=0)
                         session.add(ps)
+                        session.commit()
+                        _regenerate_playlist_cover(session, playlist_id)
                         session.commit()
                         redis_client.delete(f"music_dl:{task_id}")
                         return f"Song already existed. Linked to playlist {playlist_id}."
@@ -455,6 +478,9 @@ def process_song_task(
             session.add(ps)
 
         session.commit()
+        if playlist_id:
+            _regenerate_playlist_cover(session, playlist_id)
+            session.commit()
         logger.info(f"Successfully processed and saved song: {song.title}")
 
         # Clean up redis status

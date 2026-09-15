@@ -78,6 +78,7 @@ class VideoPlaylist(Base):
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     source_url = Column(String(2048), nullable=True)
+    cover_path = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     videos = relationship("ArchivedVideo", secondary=video_playlist_association, back_populates="playlists")
