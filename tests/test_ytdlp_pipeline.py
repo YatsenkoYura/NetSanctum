@@ -171,6 +171,20 @@ class YtDlpPipelineTests(unittest.TestCase):
 
 
 class MediaTaskPipelineTests(unittest.TestCase):
+    def test_youtube_video_id_is_available_before_metadata_extraction(self):
+        self.assertEqual(
+            "abcdefghijk",
+            video_tasks._youtube_video_id("https://www.youtube.com/watch?v=abcdefghijk"),
+        )
+        self.assertEqual(
+            "abcdefghijk",
+            video_tasks._youtube_video_id("https://youtu.be/abcdefghijk"),
+        )
+        self.assertEqual(
+            "abcdefghijk",
+            video_tasks._youtube_video_id("https://www.youtube.com/shorts/abcdefghijk"),
+        )
+
     def test_single_video_dispatch_skips_resolver_extraction(self):
         dispatched = SimpleNamespace(id="download-task")
         with (
@@ -195,3 +209,9 @@ class MediaTaskPipelineTests(unittest.TestCase):
         self.assertEqual(1, music_text.count("extract_info("))
         self.assertNotIn("fetch_video_comments_task", music_source.co_names)
         self.assertIn("fetch_video_comments_task", video_source.co_names)
+
+    def test_queued_video_checks_known_id_before_full_metadata_extraction(self):
+        video_text = inspect.getsource(video_tasks.download_video_task.run)
+
+        self.assertIn("source_video_id", video_text)
+        self.assertLess(video_text.index("if source_video_id:"), video_text.index("extract_info("))

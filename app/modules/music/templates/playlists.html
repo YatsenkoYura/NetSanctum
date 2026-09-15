@@ -41,15 +41,12 @@
              hx-target="#content-playlist-detail"
              onclick="switchMusicTab('playlist-detail')">
 
-            <!-- Cover Artwork / Placeholder -->
-            <div class="aspect-square w-full bg-zinc-950 border border-zinc-800 overflow-hidden relative flex items-center justify-center group-hover:border-teal-500/40 transition-all rounded-none">
-                {% if playlist.cover_url %}
-                    <img src="{{ playlist.cover_url }}" alt="Cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
-                {% else %}
-                    <div class="flex flex-col items-center justify-center text-zinc-700 group-hover:text-teal-400/80 transition-colors">
-                        <svg class="w-10 h-10" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
-                    </div>
-                {% endif %}
+            <div class="aspect-square w-full bg-zinc-950 border border-zinc-800 overflow-hidden relative transition-all rounded-none">
+                {% for cover_url in playlist.cover_urls[:4] %}
+                    <img src="{{ cover_url }}" alt="" class="absolute inset-0 h-full w-full object-cover opacity-55 blur-[1px] transition-transform duration-300 {% if loop.index0 == 1 %}translate-x-4 -translate-y-3 scale-110{% elif loop.index0 == 2 %}-translate-x-4 translate-y-3 scale-110{% elif loop.index0 == 3 %}translate-x-2 translate-y-4 scale-110{% endif %}">
+                {% endfor %}
+                {% if not playlist.cover_urls %}<div class="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-teal-950/40"></div>{% endif %}
+                <div class="absolute inset-0 bg-black/35 group-hover:bg-black/15 transition-colors"></div>
 
                 <!-- Play Overlay Hover -->
                 <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -59,7 +56,7 @@
                 </div>
 
                 <!-- Delete Button Hover -->
-                {% if not package_mode %}<button hx-delete="/music/ui/playlists/{{ playlist.id }}" hx-target="closest .group" hx-swap="outerHTML" onclick="event.stopPropagation();" class="absolute top-2 right-2 p-1.5 rounded-full bg-zinc-950/80 text-zinc-400 hover:text-red-400 hover:bg-black border border-zinc-800 opacity-0 group-hover:opacity-100 transition-all z-20" title="Delete Playlist">
+                {% if not package_mode %}<button hx-delete="/music/ui/playlists/{{ playlist.id }}" hx-target="closest .group" hx-swap="outerHTML" onclick="event.stopPropagation();" class="absolute top-2 right-2 p-1.5 rounded-full bg-zinc-950/80 text-zinc-400 hover:text-red-400 hover:bg-black border border-zinc-800 opacity-0 group-hover:opacity-100 transition-all z-20" title="{{ _('music', 'delete_playlist') }}">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                 </button>{% endif %}
             </div>
@@ -68,7 +65,7 @@
             <div class="min-w-0 flex flex-col">
                 <h4 class="text-xs font-semibold text-zinc-100 truncate group-hover:text-teal-400 transition-colors">{{ playlist.name }}</h4>
                 <p class="text-[10px] font-mono text-zinc-500 truncate mt-0.5">
-                    {% if playlist.songs %}{{ playlist.songs|length }} tracks{% else %}Playlist{% endif %}
+                    {{ playlist.songs|length }} {{ _('music', 'playlist_track_count') }}
                 </p>
             </div>
         </div>

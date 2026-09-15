@@ -1,12 +1,14 @@
 import json
 import subprocess
 import urllib.parse
+import uuid
+from pathlib import Path
 
 import anyio
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.browser_client import revoke_browser_credentials
@@ -20,7 +22,12 @@ from app.core.storage import LocalStorage, get_storage
 from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 from app.modules.settings.models import Setting
-from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
+from app.modules.video_archiver.models import (
+    ArchivedVideo,
+    VideoChannel,
+    VideoPlaylist,
+    video_playlist_association,
+)
 from app.modules.video_archiver.providers import PlatformRegistry
 from app.modules.video_archiver.schemas import (
     DownloadRequest,
@@ -144,6 +151,59 @@ async def trigger_download(
     )
 
     return {"task_id": task.id, "platform": detected_platform, "message": "Download task dispatched."}
+
+
+@router.post("/api/video-archiver/videos/upload")
+async def upload_video(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    description: str | None = Form(None),
+    playlist_id: int | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Store a local video with the minimum metadata required by the archive."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".mp4", ".mkv", ".mov", ".webm", ".m4v"}:
+        raise HTTPException(status_code=400, detail="Upload a supported video file")
+    clean_title = title.strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="Video title is required")
+    playlist = await db.get(VideoPlaylist, playlist_id) if playlist_id else None
+    if playlist_id and not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Video file is empty")
+
+    video_id = f"upload-{uuid.uuid4().hex}"
+    storage_path = f"video_archiver/videos/{video_id}{suffix}"
+    get_storage().save_file(content, storage_path)
+    channel = await db.get(VideoChannel, "local-uploads")
+    if not channel:
+        channel = VideoChannel(id="local-uploads", name="Local uploads", platform="upload")
+        db.add(channel)
+    video = ArchivedVideo(
+        id=video_id,
+        title=clean_title,
+        description=(description or "").strip() or None,
+        platform="upload",
+        channel_id=channel.id,
+        channel_name=channel.name,
+        duration=0,
+        resolution="Original",
+        file_path=storage_path,
+        status="completed",
+        comments=[],
+        subtitles={},
+        auto_update=False,
+        is_deleted_on_youtube=False,
+    )
+    db.add(video)
+    if playlist:
+        video.playlists.append(playlist)
+    await db.commit()
+    return {"id": video.id, "title": video.title, "status": "uploaded"}
 
 
 @router.get("/api/video-archiver/videos")
@@ -692,8 +752,36 @@ async def list_playlists(
         return []
     playlists = await PlaylistService.list_playlists(db)
     if package_scope == "playlist":
-        return [playlist for playlist in playlists if playlist.id == item_id]
-    return playlists
+        playlists = [playlist for playlist in playlists if playlist.id == item_id]
+    count_result = await db.execute(
+        select(
+            video_playlist_association.c.playlist_id, func.count(video_playlist_association.c.video_id)
+        ).group_by(video_playlist_association.c.playlist_id)
+    )
+    counts = dict(count_result.all())
+    cover_result = await db.execute(
+        select(video_playlist_association.c.playlist_id, ArchivedVideo.id)
+        .join(ArchivedVideo, ArchivedVideo.id == video_playlist_association.c.video_id)
+        .where(ArchivedVideo.thumbnail_path.isnot(None))
+        .order_by(ArchivedVideo.archived_at.desc())
+    )
+    covers: dict[int, list[str]] = {}
+    for playlist_id, video_id in cover_result.all():
+        if len(covers.setdefault(playlist_id, [])) < 4:
+            covers[playlist_id].append(
+                f"/api/video-archiver/videos/{urllib.parse.quote(video_id, safe='')}/thumbnail"
+            )
+    return [
+        {
+            "id": playlist.id,
+            "name": playlist.name,
+            "description": playlist.description,
+            "source_url": playlist.source_url,
+            "video_count": counts.get(playlist.id, 0),
+            "cover_urls": covers.get(playlist.id, []),
+        }
+        for playlist in playlists
+    ]
 
 
 @router.get("/api/video-archiver/playlists/{playlist_id}")

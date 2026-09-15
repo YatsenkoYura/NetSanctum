@@ -51,6 +51,11 @@ TRANSLATIONS = {
         "in_list": "In List",
         "add": "+ Add",
         "added": "Added",
+        "playlist_source_url": "Playlist Source URL",
+        "save_link": "Save Link",
+        "update_new_tracks": "Update New Tracks",
+        "playlist_track_count": "tracks",
+        "delete_playlist": "Delete Playlist",
     },
     "ru": {
         "module_title": "Музыкальная Библиотека",
@@ -100,5 +105,10 @@ TRANSLATIONS = {
         "in_list": "В списке",
         "add": "+ Добавить",
         "added": "Добавлено",
+        "playlist_source_url": "Ссылка на плейлист",
+        "save_link": "Сохранить ссылку",
+        "update_new_tracks": "Обновить новые треки",
+        "playlist_track_count": "треков",
+        "delete_playlist": "Удалить плейлист",
     },
 }

@@ -29,6 +29,14 @@ class StaticCssContractTests(unittest.TestCase):
 
         self.assertEqual([], references)
 
+    def test_video_dashboard_avoids_missing_avatar_requests_and_redeclared_globals(self):
+        dashboard = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
+
+        self.assertIn("if (video.channel_avatar_url)", dashboard)
+        self.assertIn("v.channel_avatar_url ? `<img", dashboard)
+        self.assertIn("window._controlsTimers ||= {};", dashboard)
+        self.assertNotIn("const _controlsTimers", dashboard)
+
 
 if __name__ == "__main__":
     unittest.main()

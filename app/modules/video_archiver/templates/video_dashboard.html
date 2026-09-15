@@ -543,10 +543,7 @@
         <div id="playlists-grid-view" class="space-y-6 block">
             <div class="flex justify-between items-center bg-zinc-950 border border-zinc-800 p-4">
                 <h3 class="text-sm font-mono font-bold text-white uppercase">{{ _('video_archiver', 'tab_playlists') }}</h3>
-                <button onclick="openCreatePlaylistModal()"
-                        class="bg-teal-400 hover:bg-teal-300 text-black font-bold font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                    + {{ _('video_archiver', 'create_playlist') }}
-                </button>
+                <div class="flex gap-2"><button onclick="openUploadVideoModal()" class="border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-xs font-bold uppercase text-zinc-200 hover:border-teal-400">{{ _('video_archiver', 'upload_video') }}</button><button onclick="openCreatePlaylistModal()" class="bg-teal-400 hover:bg-teal-300 text-black font-bold font-mono text-xs px-3 py-1.5 uppercase transition-colors">+ {{ _('video_archiver', 'create_playlist') }}</button></div>
             </div>
             <div id="playlists-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 <!-- Dynamic Playlists Grid -->
@@ -561,10 +558,10 @@
                 </button>
                 <div class="flex items-center gap-2">
                     <button onclick="syncVideoPlaylist()" class="bg-emerald-950/50 hover:bg-emerald-500 border border-emerald-500/50 hover:text-black text-emerald-400 font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                        Update new videos
+                        {{ _('video_archiver', 'update_new_videos') }}
                     </button>
                     <button onclick="convertVideoPlaylistToMusic()" class="bg-zinc-900 hover:bg-teal-400 border border-teal-500/50 hover:text-black text-teal-400 font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                        Convert to Music
+                        {{ _('video_archiver', 'convert_to_music') }}
                     </button>
                     <button onclick="sendToOutpost('/api/video-archiver/playlists/' + pathSegment(currentPlaylist.id) + '/sync-manifest')"
                             class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors mr-2">
@@ -578,10 +575,10 @@
 
             <div id="playlist-player-wrapper" class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-4 sm:p-6 bg-zinc-950">
                 <div class="col-span-full border border-zinc-800 bg-black p-3">
-                    <label for="video-playlist-source-url" class="mb-2 block text-[10px] font-mono font-bold uppercase text-zinc-500">Playlist source URL</label>
+                    <label for="video-playlist-source-url" class="mb-2 block text-[10px] font-mono font-bold uppercase text-zinc-500">{{ _('video_archiver', 'playlist_source_url') }}</label>
                     <div class="flex flex-col gap-2 sm:flex-row">
                         <input id="video-playlist-source-url" type="url" placeholder="Supported playlist URL" class="min-w-0 flex-1 border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-teal-400">
-                        <button onclick="saveVideoPlaylistSource()" class="border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-200 hover:border-teal-400 hover:text-teal-400">Save link</button>
+                        <button onclick="saveVideoPlaylistSource()" class="border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-200 hover:border-teal-400 hover:text-teal-400">{{ _('video_archiver', 'save_link') }}</button>
                     </div>
                     <p id="video-playlist-source-feedback" class="mt-2 text-[10px] font-mono text-zinc-500">Updates retain archived videos and download only new entries.</p>
                 </div>
@@ -776,6 +773,16 @@
     </div>
 
 
+</div>
+
+<div id="upload-video-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-4">
+    <form id="upload-video-form" onsubmit="uploadLocalVideo(event)" class="w-full max-w-lg space-y-4 border-2 border-zinc-800 bg-zinc-950 p-6">
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-2"><h3 class="font-mono text-sm font-black uppercase text-white">{{ _('video_archiver', 'upload_video') }}</h3><button type="button" onclick="closeUploadVideoModal()" class="text-zinc-500 hover:text-white">&times;</button></div>
+        <label id="video-drop-zone" for="upload-video-file" class="flex min-h-32 cursor-pointer flex-col items-center justify-center border border-dashed border-zinc-700 bg-black p-4 text-center font-mono text-xs text-zinc-400 hover:border-teal-400 hover:text-teal-400"><span id="video-drop-label">{{ _('video_archiver', 'drop_video') }}</span><input id="upload-video-file" name="file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska" required class="hidden"></label>
+        <input name="title" required placeholder="{{ _('video_archiver', 'video_title') }}" class="w-full border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-white outline-none focus:border-teal-400">
+        <textarea name="description" rows="3" placeholder="{{ _('video_archiver', 'description_label') }}" class="w-full border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-white outline-none focus:border-teal-400"></textarea>
+        <button class="w-full bg-teal-400 px-4 py-2 font-mono text-xs font-black uppercase text-black hover:bg-teal-300">{{ _('video_archiver', 'upload_video') }}</button>
+    </form>
 </div>
 
 <!-- Create Playlist Modal -->
@@ -1043,6 +1050,8 @@
         choose_video: {{ _('video_archiver', 'choose_video')|tojson }},
         btn_delete: {{ _('video_archiver', 'btn_delete')|tojson }},
         btn_open: {{ _('video_archiver', 'btn_open')|tojson }},
+        playlist_video_count: {{ _('video_archiver', 'playlist_video_count')|tojson }},
+        upload_success: {{ _('video_archiver', 'upload_success')|tojson }},
         theater_mode: {{ _('video_archiver', 'theater_mode')|tojson }},
         show_sidebar: {{ _('video_archiver', 'show_sidebar')|tojson }},
         description_label: {{ _('video_archiver', 'description_label')|tojson }}
@@ -1410,11 +1419,13 @@
                 const initial = video.channel_name ? video.channel_name.charAt(0).toUpperCase() : 'C';
                 avatarContainer.textContent = initial;
                 avatarContainer.classList.add('relative');
-                const avatar = document.createElement('img');
-                avatar.src = `/api/video-archiver/videos/${pathSegment(video.id)}/avatar`;
-                avatar.className = 'absolute inset-0 w-full h-full object-cover';
-                avatar.addEventListener('error', () => avatar.remove());
-                avatarContainer.appendChild(avatar);
+                if (video.channel_avatar_url) {
+                    const avatar = document.createElement('img');
+                    avatar.src = `/api/video-archiver/videos/${pathSegment(video.id)}/avatar`;
+                    avatar.className = 'absolute inset-0 w-full h-full object-cover';
+                    avatar.addEventListener('error', () => avatar.remove());
+                    avatarContainer.appendChild(avatar);
+                }
             }
             document.getElementById('player-detail-resolution').textContent = video.resolution || '720p';
             document.getElementById('player-detail-duration').textContent = formatDuration(video.duration);
@@ -1635,7 +1646,7 @@
                         <div class="text-[10px] font-bold text-white truncate leading-snug">${escapeHtml(v.title)}</div>
                         <div class="flex items-center gap-1.5 text-[9px] text-zinc-500 truncate mt-0.5">
                             <div class="relative w-3.5 h-3.5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[7px] text-teal-400 uppercase rounded-none overflow-hidden">
-                                <span>${escapeHtml(initial)}</span><img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">
+                                <span>${escapeHtml(initial)}</span>${v.channel_avatar_url ? `<img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">` : ''}
                             </div>
                             <span class="truncate">${escapeHtml(v.channel_name || 'Channel')} • ${escapeHtml(formatDuration(v.duration))}</span>
                         </div>
@@ -1911,26 +1922,14 @@
                 return;
             }
 
-            container.innerHTML = playlists.map(p => `
-                <div class="bg-zinc-950 border-2 border-zinc-800 p-5 font-mono space-y-4 hover:border-teal-400 transition-colors flex flex-col justify-between">
-                    <div class="space-y-1">
-                        <div class="w-10 h-10 border border-zinc-800 bg-black flex items-center justify-center text-teal-400 mb-2">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
-                            </svg>
-                        </div>
-                        <h4 class="text-sm font-bold text-white uppercase">${escapeHtml(p.name)}</h4>
-                        <p class="text-xs text-zinc-500 line-clamp-2">${escapeHtml(p.description || '')}</p>
-                    </div>
-                    <div class="flex justify-between items-center pt-2 border-t border-zinc-900">
-                        <span class="text-[10px] text-zinc-600">${formatDate(p.created_at)}</span>
-                        <button onclick="openPlaylistDetail(${escapedJsArg(p.id)})"
-                                class="bg-teal-400 text-black font-bold text-[10px] px-3 py-1.5 uppercase hover:bg-teal-300">
-                            ${escapeHtml(i18n.btn_open)}
-                        </button>
-                    </div>
-                </div>
-            `).join('');
+            container.innerHTML = playlists.map(p => {
+                const covers = (p.cover_urls || []).map((url, index) => `<img src="${escapeAttr(url)}" class="absolute inset-0 h-full w-full object-cover opacity-55 blur-[1px] ${index ? 'scale-110 translate-x-3' : ''}">`).join('') || '<div class="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-teal-950/40"></div>';
+                return `<div onclick="openPlaylistDetail(${escapedJsArg(p.id)})" class="group cursor-pointer overflow-hidden border-2 border-zinc-800 bg-zinc-950 p-3 font-mono hover:border-teal-400">
+                    <div class="relative mb-3 aspect-square overflow-hidden border border-zinc-800">${covers}<div class="absolute inset-0 bg-black/35"></div><button onclick="event.stopPropagation(); deletePlaylist(${escapedJsArg(p.id)})" class="absolute right-2 top-2 border border-zinc-700 bg-black/80 px-2 py-1 text-zinc-300 opacity-0 hover:text-red-400 group-hover:opacity-100">&times;</button></div>
+                    <h4 class="truncate text-sm font-bold uppercase text-white group-hover:text-teal-400">${escapeHtml(p.name)}</h4><p class="mt-1 text-[10px] text-zinc-500">${p.video_count} ${escapeHtml(i18n.playlist_video_count)}</p>
+                    ${p.description ? `<p class="mt-2 line-clamp-2 text-xs text-zinc-500">${escapeHtml(p.description)}</p>` : ''}
+                </div>`;
+            }).join('');
         } catch (err) {
             container.innerHTML = `<div class="col-span-full py-12 text-center text-red-500 font-mono text-sm">Failed to load playlists: ${escapeHtml(err)}</div>`;
         }
@@ -2070,7 +2069,7 @@
                         <div class="text-[9px] font-bold text-white truncate leading-snug group-hover:text-teal-400 transition-colors">${escapeHtml(v.title)}</div>
                         <div class="flex items-center gap-1.5 text-[8px] text-zinc-500 truncate mt-0.5">
                             <div class="relative w-3.5 h-3.5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[7px] text-teal-400 uppercase rounded-none overflow-hidden">
-                                <span>${escapeHtml(initial)}</span><img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">
+                                <span>${escapeHtml(initial)}</span>${v.channel_avatar_url ? `<img src="/api/video-archiver/videos/${videoIdPath}/avatar" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">` : ''}
                             </div>
                             <span class="truncate">${escapeHtml(v.channel_name)} • ${escapeHtml(formatDuration(v.duration))}</span>
                         </div>
@@ -2228,6 +2227,24 @@
     window.closeCreatePlaylistModal = function() {
         document.getElementById('playlist-modal').classList.add('hidden');
     };
+
+    window.openUploadVideoModal = function() { document.getElementById('upload-video-modal').classList.replace('hidden', 'flex'); };
+    window.closeUploadVideoModal = function() { document.getElementById('upload-video-modal').classList.replace('flex', 'hidden'); };
+    window.uploadLocalVideo = async function(event) {
+        event.preventDefault();
+        try {
+            const response = await fetch('/api/video-archiver/videos/upload', {method: 'POST', body: new FormData(event.target)});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Upload failed');
+            closeUploadVideoModal(); event.target.reset(); loadLibrary(); showToast(i18n.upload_success);
+        } catch (error) { showToast(error.message, 'error'); }
+    };
+    var videoDropZone = document.getElementById('video-drop-zone');
+    var videoFileInput = document.getElementById('upload-video-file');
+    ['dragenter', 'dragover'].forEach(type => videoDropZone.addEventListener(type, event => { event.preventDefault(); videoDropZone.classList.add('border-teal-400'); }));
+    ['dragleave', 'drop'].forEach(type => videoDropZone.addEventListener(type, event => { event.preventDefault(); videoDropZone.classList.remove('border-teal-400'); }));
+    videoDropZone.addEventListener('drop', event => { if (event.dataTransfer.files[0]) { videoFileInput.files = event.dataTransfer.files; document.getElementById('video-drop-label').textContent = event.dataTransfer.files[0].name; } });
+    videoFileInput.addEventListener('change', () => { if (videoFileInput.files[0]) document.getElementById('video-drop-label').textContent = videoFileInput.files[0].name; });
 
     async function submitCreatePlaylist(e) {
         e.preventDefault();
@@ -2784,16 +2801,16 @@
     }
 
     // ── Controls Auto-Hide (shared between both players) ───────
-    const _controlsTimers = {};
+    window._controlsTimers ||= {};
     function showControlsFor(container, videoId) {
         if (!container) return;
         container.classList.add('controls-visible');
         container.classList.remove('controls-hidden');
-        clearTimeout(_controlsTimers[videoId]);
+        clearTimeout(window._controlsTimers[videoId]);
 
         const v = document.getElementById(videoId);
         if (v && !v.paused) {
-            _controlsTimers[videoId] = setTimeout(() => {
+            window._controlsTimers[videoId] = setTimeout(() => {
                 const activeV = document.getElementById(videoId);
                 if (activeV && !activeV.paused) {
                     container.classList.remove('controls-visible');
@@ -2848,7 +2865,7 @@
             if (v && !v.paused) {
                 container.classList.remove('controls-visible');
                 container.classList.add('controls-hidden');
-                clearTimeout(_controlsTimers[videoId]);
+                clearTimeout(window._controlsTimers[videoId]);
             }
         });
 
@@ -2889,7 +2906,7 @@
             // Single tap: show/hide controls or toggle play
             if (container.classList.contains('controls-visible') && !video.paused) {
                 container.classList.remove('controls-visible');
-                clearTimeout(_controlsTimers[videoId]);
+                clearTimeout(window._controlsTimers[videoId]);
             } else {
                 showControlsFor(container, videoId);
             }

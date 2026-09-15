@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import tempfile
+from urllib.parse import parse_qs, urlparse
 
 import redis
 from sqlalchemy import select
@@ -78,6 +79,20 @@ def _get_platform_cookies(platform_id: str) -> str | None:
     return None
 
 
+def _youtube_video_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    video_id = parse_qs(parsed.query).get("v", [None])[0]
+    if video_id:
+        return video_id
+    path = [part for part in parsed.path.split("/") if part]
+    hostname = (parsed.hostname or "").lower()
+    if hostname.endswith("youtu.be"):
+        return path[0] if path else None
+    if len(path) >= 2 and path[0] in {"embed", "live", "shorts"}:
+        return path[1]
+    return None
+
+
 @celery_app.task(bind=True)
 def process_video_url_task(
     self,
@@ -112,7 +127,7 @@ def process_video_url_task(
         update_status(str(exc), "Error")
         return f"Error: {exc}"
 
-    def dispatch_download(video_url: str, title: str):
+    def dispatch_download(video_url: str, title: str, source_video_id: str | None = None):
         return dispatch_tracked_sync(
             download_video_task,
             redis_client,
@@ -130,11 +145,12 @@ def process_video_url_task(
                 "playlist_id": playlist_id,
                 "compress_video": compress_video,
                 "download_subtitles": download_subtitles,
+                "source_video_id": source_video_id,
             },
         )
 
     if provider.platform_id == "youtube" and is_youtube_single_video_url(url):
-        task = dispatch_download(url, url)
+        task = dispatch_download(url, url, _youtube_video_id(url))
         redis_client.delete(f"video_dl:{task_id}")
         return f"Dispatched single video download task: {task.id}"
 
@@ -215,7 +231,7 @@ def process_video_url_task(
                 video_url = entry.get("webpage_url") or entry.get("url") or provider.build_video_url(video_id)
                 if not str(video_url).startswith(("http://", "https://")):
                     video_url = provider.build_video_url(video_id)
-                dispatch_download(video_url, entry.get("title", f"Video {video_id}"))
+                dispatch_download(video_url, entry.get("title", f"Video {video_id}"), str(video_id))
                 dispatched += 1
             session.commit()
 
@@ -225,7 +241,7 @@ def process_video_url_task(
         )
     else:
         video_id = info_dict.get("id")
-        task = dispatch_download(url, str(video_id or url))
+        task = dispatch_download(url, str(video_id or url), str(video_id) if video_id else None)
         redis_client.delete(f"video_dl:{task_id}")
         return f"Dispatched single video download task: {task.id}"
 
@@ -245,6 +261,7 @@ def download_video_task(
     playlist_id: int | None = None,
     compress_video: bool = False,
     download_subtitles: bool = False,
+    source_video_id: str | None = None,
 ) -> str:
     """Downloads a single video, caches metadata + comments, and saves to database."""
     task_id = self.request.id
@@ -264,8 +281,21 @@ def download_video_task(
         elif d["status"] == "finished":
             update_redis("Processing video format", "99%")
 
-    update_redis("Extracting full metadata...", "5%")
+    # Playlist enumeration already supplies an ID. Avoid a full yt-dlp request when
+    # another task has archived that video before this queued task starts.
+    if source_video_id:
+        with SyncSessionLocal() as session:
+            video = session.get(ArchivedVideo, source_video_id)
+            if video:
+                if playlist_id:
+                    playlist = session.get(VideoPlaylist, playlist_id)
+                    if playlist and playlist not in video.playlists:
+                        video.playlists.append(playlist)
+                        session.commit()
+                redis_client.delete(f"video_dl:{task_id}")
+                return f"Video {source_video_id} already archived"
 
+    update_redis("Extracting full metadata...", "5%")
     temp_dir = tempfile.mkdtemp()
     try:
         provider = PlatformRegistry.require_supported_url(url)
