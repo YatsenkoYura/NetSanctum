@@ -23,7 +23,12 @@ from app.core.ytdlp_pipeline import (
     is_youtube_single_video_url,
 )
 from app.modules.settings.models import Setting
-from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
+from app.modules.video_archiver.models import (
+    ArchivedVideo,
+    VideoChannel,
+    VideoPlaylist,
+    video_playlist_association,
+)
 from app.modules.video_archiver.providers import PlatformRegistry
 
 logger = logging.getLogger(__name__)
@@ -161,27 +166,63 @@ def process_video_url_task(
 
         if playlist_id is None:
             with SyncSessionLocal() as session:
-                playlist = VideoPlaylist(name=playlist_title, description=playlist_description)
+                playlist = VideoPlaylist(
+                    name=playlist_title,
+                    description=playlist_description,
+                    source_url=url,
+                )
                 session.add(playlist)
                 session.commit()
                 session.refresh(playlist)
                 playlist_id = playlist.id
+        else:
+            with SyncSessionLocal() as session:
+                playlist = session.get(VideoPlaylist, playlist_id)
+                if not playlist:
+                    return f"Error: Playlist {playlist_id} was not found"
+                playlist.name = playlist_title
+                playlist.description = playlist_description
+                playlist.source_url = url
+                session.commit()
 
         entries = list(info_dict["entries"])
         logger.info(f"Playlist detected: {playlist_title} with {len(entries)} videos.")
 
-        for _i, entry in enumerate(entries):
-            video_id = entry.get("id")
-            if not video_id:
-                continue
-            video_url = entry.get("webpage_url") or entry.get("url") or provider.build_video_url(video_id)
-            if not str(video_url).startswith(("http://", "https://")):
-                video_url = provider.build_video_url(video_id)
-
-            dispatch_download(video_url, entry.get("title", f"Video {video_id}"))
+        dispatched = 0
+        linked = 0
+        with SyncSessionLocal() as session:
+            existing_video_ids = set(
+                session.scalars(
+                    select(video_playlist_association.c.video_id).where(
+                        video_playlist_association.c.playlist_id == playlist_id
+                    )
+                )
+            )
+            for entry in entries:
+                video_id = entry.get("id")
+                if not video_id:
+                    continue
+                if video_id in existing_video_ids:
+                    continue
+                video = session.get(ArchivedVideo, video_id)
+                if video:
+                    session.execute(
+                        video_playlist_association.insert().values(playlist_id=playlist_id, video_id=video_id)
+                    )
+                    existing_video_ids.add(video_id)
+                    linked += 1
+                    continue
+                video_url = entry.get("webpage_url") or entry.get("url") or provider.build_video_url(video_id)
+                if not str(video_url).startswith(("http://", "https://")):
+                    video_url = provider.build_video_url(video_id)
+                dispatch_download(video_url, entry.get("title", f"Video {video_id}"))
+                dispatched += 1
+            session.commit()
 
         redis_client.delete(f"video_dl:{task_id}")
-        return f"Dispatched {len(entries)} videos for playlist '{playlist_title}'"
+        return f"Playlist '{playlist_title}': dispatched {dispatched} new videos" + (
+            f", linked {linked} existing videos" if linked else ""
+        )
     else:
         video_id = info_dict.get("id")
         task = dispatch_download(url, str(video_id or url))

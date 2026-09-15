@@ -21,6 +21,11 @@ class DownloadRequest(BaseModel):
 class PlaylistCreate(BaseModel):
     name: str
     description: str | None = None
+    source_url: str | None = None
+
+
+class PlaylistSourceRequest(BaseModel):
+    source_url: str
 
 
 class SyncAllRequest(BaseModel):

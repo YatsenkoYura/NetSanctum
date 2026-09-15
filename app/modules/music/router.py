@@ -93,6 +93,7 @@ async def api_list_playlists(
             {
                 "id": p.id,
                 "name": p.name,
+                "source_url": p.source_url,
                 "cover_url": cover_url,
                 "cover_song_id": p.cover_song_id,
                 "songs": [ps.song_id for ps in p.playlist_songs] if p.playlist_songs else [],
@@ -122,6 +123,54 @@ async def set_playlist_cover(
 
     await db.commit()
     return {"status": "ok", "playlist_id": playlist_id, "cover_song_id": playlist.cover_song_id}
+
+
+@router.put("/api/playlists/{playlist_id}/source")
+async def set_playlist_source(
+    playlist_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    body = await request.json()
+    source_url = str(body.get("source_url") or "").strip()
+    try:
+        validate_music_url(source_url, resolve=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    playlist = await db.get(Playlist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    playlist.source_url = source_url
+    await db.commit()
+    return {"status": "saved", "playlist_id": playlist.id, "source_url": playlist.source_url}
+
+
+@router.post("/api/playlists/{playlist_id}/sync")
+async def sync_playlist_source(
+    playlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Refresh a source playlist and queue only tracks absent from this playlist."""
+    playlist = await db.get(Playlist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    if not playlist.source_url:
+        raise HTTPException(status_code=400, detail="Attach a playlist URL before synchronizing")
+    task = await dispatch_tracked_async(
+        process_youtube_url_task,
+        redis_client,
+        "music_dl",
+        {
+            "url": playlist.source_url,
+            "title": playlist.name,
+            "status": "Synchronizing playlist",
+            "progress": "0%",
+        },
+        args=(playlist.source_url, True, None, None, playlist.id),
+    )
+    return {"status": "dispatched", "task_id": task.id, "playlist_id": playlist.id}
 
 
 @router.get("/api/playlists/{playlist_id}/songs")

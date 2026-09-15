@@ -191,11 +191,24 @@ def process_youtube_url_task(
 
         if playlist_id is None:
             with SyncSessionLocal() as session:
-                playlist = Playlist(name=playlist_title, description=playlist_description)
+                playlist = Playlist(
+                    name=playlist_title,
+                    description=playlist_description,
+                    source_url=url,
+                )
                 session.add(playlist)
                 session.commit()
                 session.refresh(playlist)
                 playlist_id = playlist.id
+        else:
+            with SyncSessionLocal() as session:
+                playlist = session.get(Playlist, playlist_id)
+                if not playlist:
+                    return f"Error: Playlist {playlist_id} was not found"
+                playlist.name = playlist_title
+                playlist.description = playlist_description
+                playlist.source_url = url
+                session.commit()
 
         entries = list(info_dict["entries"])
         logger.info(f"Playlist detected: {playlist_title} with {len(entries)} videos.")
@@ -206,10 +219,18 @@ def process_youtube_url_task(
 
                 existing_song = session.scalar(select(Song).where(Song.youtube_url == video_url))
                 if existing_song:
-                    ps = PlaylistSong(playlist_id=playlist_id, song_id=existing_song.id, position=i)
-                    session.add(ps)
-                    session.commit()
-                    logger.info(f"Deduplication: Linked existing song {video_url} to playlist")
+                    existing_link = session.scalar(
+                        select(PlaylistSong).where(
+                            PlaylistSong.playlist_id == playlist_id,
+                            PlaylistSong.song_id == existing_song.id,
+                        )
+                    )
+                    if not existing_link:
+                        session.add(
+                            PlaylistSong(playlist_id=playlist_id, song_id=existing_song.id, position=i)
+                        )
+                        session.commit()
+                        logger.info(f"Deduplication: Linked existing song {video_url} to playlist")
                 else:
                     dispatch_tracked_sync(
                         process_song_task,

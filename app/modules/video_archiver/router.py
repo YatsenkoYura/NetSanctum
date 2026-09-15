@@ -22,7 +22,12 @@ from app.core.templates import templates
 from app.modules.settings.models import Setting
 from app.modules.video_archiver.models import ArchivedVideo, VideoChannel, VideoPlaylist
 from app.modules.video_archiver.providers import PlatformRegistry
-from app.modules.video_archiver.schemas import DownloadRequest, PlaylistCreate, SyncAllRequest
+from app.modules.video_archiver.schemas import (
+    DownloadRequest,
+    PlaylistCreate,
+    PlaylistSourceRequest,
+    SyncAllRequest,
+)
 from app.modules.video_archiver.services import (
     ChannelService,
     PlaylistService,
@@ -672,7 +677,7 @@ async def create_playlist(
     req: PlaylistCreate, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Create a new custom video playlist."""
-    return await PlaylistService.create_playlist(db, req.name, req.description)
+    return await PlaylistService.create_playlist(db, req.name, req.description, req.source_url)
 
 
 @router.get("/api/video-archiver/playlists")
@@ -713,9 +718,97 @@ async def get_playlist_detail(
         "id": playlist.id,
         "name": playlist.name,
         "description": playlist.description,
+        "source_url": playlist.source_url,
         "created_at": playlist.created_at,
         "videos": videos,
     }
+
+
+@router.put("/api/video-archiver/playlists/{playlist_id}/source")
+async def set_playlist_source(
+    playlist_id: int,
+    req: PlaylistSourceRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Attach or replace the external playlist URL used for future syncs."""
+    try:
+        PlatformRegistry.require_supported_url(req.source_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    playlist = await db.get(VideoPlaylist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    playlist.source_url = req.source_url
+    await db.commit()
+    return {"status": "saved", "playlist_id": playlist.id, "source_url": playlist.source_url}
+
+
+@router.post("/api/video-archiver/playlists/{playlist_id}/sync")
+async def sync_playlist_source(
+    playlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Refresh a source playlist and archive only videos not already linked to it."""
+    playlist = await db.get(VideoPlaylist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    if not playlist.source_url:
+        raise HTTPException(status_code=400, detail="Attach a playlist URL before synchronizing")
+    try:
+        provider = PlatformRegistry.require_supported_url(playlist.source_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    task = await dispatch_tracked_async(
+        process_video_url_task,
+        redis_client,
+        "video_dl",
+        {
+            "url": playlist.source_url,
+            "platform": provider.platform_id,
+            "title": playlist.name,
+            "status": "Synchronizing playlist",
+            "progress": "0%",
+        },
+        kwargs={"url": playlist.source_url, "playlist_id": playlist.id},
+    )
+    return {"status": "dispatched", "task_id": task.id, "playlist_id": playlist.id}
+
+
+@router.post("/api/video-archiver/playlists/{playlist_id}/convert-to-music")
+async def convert_playlist_to_music(
+    playlist_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Queue the complete source playlist for audio extraction in the Music library."""
+    playlist = await db.get(VideoPlaylist, playlist_id)
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    if not playlist.source_url:
+        raise HTTPException(status_code=400, detail="Attach a playlist URL before converting it to music")
+    from app.modules.music.security import validate_music_url
+    from app.modules.music.tasks import process_youtube_url_task
+
+    try:
+        validate_music_url(playlist.source_url, resolve=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    music_redis = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+    task = await dispatch_tracked_async(
+        process_youtube_url_task,
+        music_redis,
+        "music_dl",
+        {
+            "url": playlist.source_url,
+            "title": playlist.name,
+            "status": "Converting playlist from Video Archive",
+            "progress": "0%",
+        },
+        args=(playlist.source_url,),
+    )
+    return {"status": "dispatched", "task_id": task.id, "playlist_id": playlist.id}
 
 
 @router.get("/api/video-archiver/playlists/{playlist_id}/sync-manifest")

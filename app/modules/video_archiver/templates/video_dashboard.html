@@ -560,6 +560,12 @@
                     &larr; {{ _('video_archiver', 'back_to_playlists') }}
                 </button>
                 <div class="flex items-center gap-2">
+                    <button onclick="syncVideoPlaylist()" class="bg-emerald-950/50 hover:bg-emerald-500 border border-emerald-500/50 hover:text-black text-emerald-400 font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
+                        Update new videos
+                    </button>
+                    <button onclick="convertVideoPlaylistToMusic()" class="bg-zinc-900 hover:bg-teal-400 border border-teal-500/50 hover:text-black text-teal-400 font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
+                        Convert to Music
+                    </button>
                     <button onclick="sendToOutpost('/api/video-archiver/playlists/' + pathSegment(currentPlaylist.id) + '/sync-manifest')"
                             class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors mr-2">
                         Save to Device
@@ -571,6 +577,14 @@
             </div>
 
             <div id="playlist-player-wrapper" class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-4 sm:p-6 bg-zinc-950">
+                <div class="col-span-full border border-zinc-800 bg-black p-3">
+                    <label for="video-playlist-source-url" class="mb-2 block text-[10px] font-mono font-bold uppercase text-zinc-500">Playlist source URL</label>
+                    <div class="flex flex-col gap-2 sm:flex-row">
+                        <input id="video-playlist-source-url" type="url" placeholder="Supported playlist URL" class="min-w-0 flex-1 border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-teal-400">
+                        <button onclick="saveVideoPlaylistSource()" class="border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-200 hover:border-teal-400 hover:text-teal-400">Save link</button>
+                    </div>
+                    <p id="video-playlist-source-feedback" class="mt-2 text-[10px] font-mono text-zinc-500">Updates retain archived videos and download only new entries.</p>
+                </div>
                 <!-- Left Column: Standardized HTML5 Video Player + Video Details -->
                 <div id="playlist-player-main" class="col-span-1 lg:col-span-8 space-y-6">
                     <div class="relative aspect-video bg-black border-2 border-zinc-800 overflow-hidden flex items-center justify-center">
@@ -1937,6 +1951,7 @@
             const data = await resp.json();
             currentPlaylist = data;
             playlistVideos = data.videos;
+            document.getElementById('video-playlist-source-url').value = data.source_url || '';
 
             // Load playlist sidebar info
             document.getElementById('sidebar-playlist-title').textContent = data.name;
@@ -1965,6 +1980,60 @@
             closePlaylistDetail();
         }
     };
+
+    async function saveVideoPlaylistSource() {
+        const feedback = document.getElementById('video-playlist-source-feedback');
+        const sourceUrl = document.getElementById('video-playlist-source-url').value.trim();
+        try {
+            const response = await fetch(`/api/video-archiver/playlists/${pathSegment(currentPlaylist.id)}/source`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({source_url: sourceUrl}),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not save playlist link');
+            currentPlaylist.source_url = payload.source_url;
+            feedback.textContent = 'Playlist link saved.';
+            feedback.className = 'mt-2 text-[10px] font-mono text-emerald-400';
+            return true;
+        } catch (error) {
+            feedback.textContent = error.message;
+            feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+            return false;
+        }
+    }
+
+    async function syncVideoPlaylist() {
+        if (!currentPlaylist) return;
+        const feedback = document.getElementById('video-playlist-source-feedback');
+        if (!(await saveVideoPlaylistSource())) return;
+        try {
+            const response = await fetch(`/api/video-archiver/playlists/${pathSegment(currentPlaylist.id)}/sync`, {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not start playlist update');
+            feedback.textContent = 'Playlist update queued. Only new videos will download.';
+            feedback.className = 'mt-2 text-[10px] font-mono text-emerald-400';
+        } catch (error) {
+            feedback.textContent = error.message;
+            feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+        }
+    }
+
+    async function convertVideoPlaylistToMusic() {
+        if (!currentPlaylist) return;
+        const feedback = document.getElementById('video-playlist-source-feedback');
+        if (!(await saveVideoPlaylistSource())) return;
+        try {
+            const response = await fetch(`/api/video-archiver/playlists/${pathSegment(currentPlaylist.id)}/convert-to-music`, {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not queue music conversion');
+            feedback.textContent = 'Music conversion queued for the whole playlist.';
+            feedback.className = 'mt-2 text-[10px] font-mono text-emerald-400';
+        } catch (error) {
+            feedback.textContent = error.message;
+            feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+        }
+    }
 
     window.closePlaylistDetail = function() {
         const player = document.getElementById('playlist-video-player');

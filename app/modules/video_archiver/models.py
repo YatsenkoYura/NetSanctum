@@ -77,6 +77,7 @@ class VideoPlaylist(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
+    source_url = Column(String(2048), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     videos = relationship("ArchivedVideo", secondary=video_playlist_association, back_populates="playlists")

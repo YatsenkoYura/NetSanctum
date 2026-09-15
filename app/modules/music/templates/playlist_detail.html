@@ -48,6 +48,19 @@
         </button>{% endif %}
     </div>
 
+    {% if not package_mode %}
+    <div class="mb-4 border border-zinc-800 bg-zinc-950 p-3">
+        <label for="playlist-source-url" class="mb-2 block text-[10px] font-mono font-bold uppercase text-zinc-500">Playlist source URL</label>
+        <div class="flex flex-col gap-2 sm:flex-row">
+            <input id="playlist-source-url" type="url" value="{{ playlist.source_url or '' }}" placeholder="YouTube, SoundCloud or supported playlist URL"
+                   class="min-w-0 flex-1 border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-teal-400">
+            <button onclick="savePlaylistSource({{ playlist.id }})" class="border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-200 hover:border-teal-400 hover:text-teal-400">Save link</button>
+            <button onclick="syncMusicPlaylist({{ playlist.id }})" class="border border-emerald-500/50 bg-emerald-950/30 px-3 py-2 font-mono text-[10px] font-bold uppercase text-emerald-400 hover:bg-emerald-500 hover:text-black">Update new tracks</button>
+        </div>
+        <p id="playlist-source-feedback" class="mt-2 text-[10px] font-mono text-zinc-500">The update retains downloaded tracks and queues only missing ones.</p>
+    </div>
+    {% endif %}
+
     <!-- Edit Mode Panel & Tracklist inside a Grid -->
     <div class="playlist-grid gap-6">
 
@@ -274,6 +287,46 @@
                 }
             } catch (err) {
                 console.error(err);
+            }
+        }
+
+        async function savePlaylistSource(playlistId) {
+            const feedback = document.getElementById('playlist-source-feedback');
+            const sourceUrl = document.getElementById('playlist-source-url').value.trim();
+            try {
+                const response = await fetch(`/music/api/playlists/${playlistId}/source`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({source_url: sourceUrl}),
+                });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.detail || 'Could not save playlist link');
+                feedback.textContent = 'Playlist link saved.';
+                feedback.className = 'mt-2 text-[10px] font-mono text-emerald-400';
+            } catch (error) {
+                feedback.textContent = error.message;
+                feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+            }
+        }
+
+        async function syncMusicPlaylist(playlistId) {
+            const feedback = document.getElementById('playlist-source-feedback');
+            if (!document.getElementById('playlist-source-url').value.trim()) {
+                feedback.textContent = 'Save a playlist link before updating.';
+                feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+                return;
+            }
+            await savePlaylistSource(playlistId);
+            if (feedback.classList.contains('text-red-400')) return;
+            try {
+                const response = await fetch(`/music/api/playlists/${playlistId}/sync`, {method: 'POST'});
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.detail || 'Could not start playlist update');
+                feedback.textContent = 'Playlist update queued. Only new tracks will download.';
+                feedback.className = 'mt-2 text-[10px] font-mono text-emerald-400';
+            } catch (error) {
+                feedback.textContent = error.message;
+                feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
             }
         }
 

@@ -154,8 +154,13 @@ class PlaylistService:
         return res.scalars().all()
 
     @staticmethod
-    async def create_playlist(db: AsyncSession, name: str, description: str | None = None) -> VideoPlaylist:
-        playlist = VideoPlaylist(name=name, description=description)
+    async def create_playlist(
+        db: AsyncSession,
+        name: str,
+        description: str | None = None,
+        source_url: str | None = None,
+    ) -> VideoPlaylist:
+        playlist = VideoPlaylist(name=name, description=description, source_url=source_url)
         db.add(playlist)
         await db.commit()
         await db.refresh(playlist)
