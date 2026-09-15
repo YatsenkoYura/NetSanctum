@@ -32,12 +32,27 @@
         {% if field.type == 'select' %}
         <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">{{ field.label_ru }}</span><select name="{{ field.name }}" class="h-11 w-full border border-zinc-800 bg-black px-3 text-xs text-zinc-300 outline-none focus:border-teal-400">{% for value, label in field.options %}<option value="{{ value }}" {% if value == field.default %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         {% elif field.type == 'boolean' %}
-        <label class="flex min-h-11 cursor-pointer items-center justify-between gap-3 border border-zinc-800 bg-black px-3 py-2"><span class="text-xs text-zinc-300">{{ field.label_ru }}</span><span><input class="toggle-input sr-only" type="checkbox" name="{{ field.name }}" value="true" {% if field.default %}checked{% endif %}><i class="toggle-track block h-5 w-9 border border-zinc-700 bg-zinc-900"></i></span></label>
+        <label class="flex min-h-11 cursor-pointer items-center justify-between gap-3 border border-zinc-800 bg-black px-3 py-2"><span class="text-xs text-zinc-300">{{ field.label_ru }}</span><span><input id="{{ field.name }}" class="toggle-input sr-only" type="checkbox" name="{{ field.name }}" value="true" {% if field.default %}checked{% endif %}><i class="toggle-track block h-5 w-9 border border-zinc-700 bg-zinc-900"></i></span></label>
+        {% elif field.type == 'number' and field.manual_distribution %}
+        <label class="manual-count block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-600">{{ field.label_ru }}</span><input type="number" name="{{ field.name }}" min="{{ field.min }}" max="{{ field.max }}" disabled class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none disabled:cursor-not-allowed disabled:opacity-35 focus:border-teal-400"></label>
+        {% elif field.type == 'text' %}
+        <label class="block md:col-span-2"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">{{ field.label_ru }}</span><input type="text" name="{{ field.name }}" maxlength="{{ field.max_length }}" class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none focus:border-teal-400" placeholder="Например: башня"></label>
         {% endif %}
       {% endfor %}
     </div>
 
+    <p class="mt-3 text-[10px] leading-4 text-zinc-600">Обычный состав рассчитывается по официальной таблице и может меняться свойствами ролей. Ручной состав является вариантом: числа должны дать ровно выбранное число игроков.</p>
+
     <div class="mt-6 flex justify-end"><button class="flex h-11 items-center gap-3 bg-teal-400 px-5 font-mono text-[10px] font-black uppercase tracking-wider text-black hover:bg-teal-300">Создать комнату <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button></div>
   </form>
 </div>
+<script>
+  const manualDistribution = document.getElementById('manual_distribution');
+  const manualCounts = document.querySelectorAll('.manual-count input');
+  function updateManualDistribution() {
+    manualCounts.forEach(input => { input.disabled = !manualDistribution.checked; input.required = manualDistribution.checked; });
+  }
+  manualDistribution.addEventListener('change', updateManualDistribution);
+  updateManualDistribution();
+</script>
 {% endblock %}

@@ -20,3 +20,7 @@ class ParticipantUpdate(BaseModel):
     seat: int | None = Field(default=None, ge=0, le=99)
     reminders: list[str] | None = Field(default=None, max_length=20)
     gm_notes: str | None = Field(default=None, max_length=2000)
+
+
+class ParticipantSwap(BaseModel):
+    target_id: str = Field(min_length=36, max_length=36)

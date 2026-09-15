@@ -73,6 +73,45 @@ class TabletopGameRegistryTests(unittest.TestCase):
         self.assertFalse(config["show_online_status"])
         self.assertFalse(config["reveal_roles_on_end"])
 
+    def test_clocktower_supports_a_manual_team_distribution(self):
+        config = validate_config(
+            {
+                "player_limit": 10,
+                "script": "trouble_brewing",
+                "manual_distribution": True,
+                "townsfolk_count": 6,
+                "outsider_count": 1,
+                "minion_count": 2,
+                "demon_count": 1,
+                "player_information": "roster_only",
+            }
+        )
+
+        roles = assign_roles(10, config)
+        self.assertEqual({"townsfolk": 6, "outsider": 1, "minion": 2, "demon": 1}, config["role_counts"])
+        self.assertEqual(6, sum(role.team == "townsfolk" for role in roles))
+        self.assertEqual(1, sum(role.team == "outsider" for role in roles))
+        self.assertEqual(2, sum(role.team == "minion" for role in roles))
+        self.assertEqual(1, sum(role.team == "demon" for role in roles))
+
+    def test_clocktower_rejects_an_incomplete_manual_distribution(self):
+        with self.assertRaises(ValueError):
+            validate_config({"player_limit": 7, "manual_distribution": True, "townsfolk_count": 5})
+
+    def test_clocktower_keeps_evil_information_options(self):
+        config = validate_config(
+            {
+                "player_limit": 10,
+                "demon_bluff_count": 5,
+                "minion_bluffs": True,
+                "evil_code_word": "  moon   is  red ",
+            }
+        )
+
+        self.assertEqual(5, config["demon_bluff_count"])
+        self.assertTrue(config["minion_bluffs"])
+        self.assertEqual("moon is red", config["evil_code_word"])
+
 
 class TabletopSecurityTests(unittest.TestCase):
     def test_player_token_helpers_do_not_expose_raw_token(self):

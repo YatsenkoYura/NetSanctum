@@ -15,9 +15,10 @@ from app.core.security import get_current_user, redis_client, use_secure_cookies
 from app.core.templates import templates
 from app.modules.tabletop_games.models import TabletopMessage, TabletopParticipant, TabletopRoom
 from app.modules.tabletop_games.registry import game_registry
-from app.modules.tabletop_games.schemas import MessageCreate, ParticipantUpdate
+from app.modules.tabletop_games.schemas import MessageCreate, ParticipantSwap, ParticipantUpdate
 from app.modules.tabletop_games.services import (
     authenticate_player,
+    close_room,
     create_room,
     get_room,
     get_room_by_code,
@@ -29,6 +30,7 @@ from app.modules.tabletop_games.services import (
     room_channel,
     room_payload,
     start_room,
+    swap_participants,
 )
 
 router = APIRouter(tags=["tabletop-games"])
@@ -147,8 +149,18 @@ async def create_game_room(
     script: str = Form("trouble_brewing"),
     player_chat: str = Form("private"),
     evil_info: str = Form("standard"),
+    demon_bluff_count: int = Form(3),
+    minion_bluffs: bool = Form(False),
+    evil_code_word: str = Form(""),
+    player_information: str = Form("full"),
+    manual_distribution: bool = Form(False),
+    townsfolk_count: int | None = Form(None),
+    outsider_count: int | None = Form(None),
+    minion_count: int | None = Form(None),
+    demon_count: int | None = Form(None),
     show_online_status: bool = Form(False),
     reveal_roles_on_end: bool = Form(False),
+    show_storyteller_reference: bool = Form(False),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -165,8 +177,18 @@ async def create_game_room(
                 "script": script,
                 "player_chat": player_chat,
                 "evil_info": evil_info,
+                "demon_bluff_count": demon_bluff_count,
+                "minion_bluffs": minion_bluffs,
+                "evil_code_word": evil_code_word,
+                "player_information": player_information,
+                "manual_distribution": manual_distribution,
+                "townsfolk_count": townsfolk_count,
+                "outsider_count": outsider_count,
+                "minion_count": minion_count,
+                "demon_count": demon_count,
                 "show_online_status": show_online_status,
                 "reveal_roles_on_end": reveal_roles_on_end,
+                "show_storyteller_reference": show_storyteller_reference,
             },
         )
     except ValueError as exc:
@@ -262,6 +284,17 @@ async def end_game(
     return room_payload(room)
 
 
+@router.post("/api/tabletop/rooms/{room_id}/close")
+async def force_close_game(
+    room_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    room = await close_room(db, await require_room(db, room_id))
+    await notify(room.id, "game.closed")
+    return room_payload(room)
+
+
 @router.patch("/api/tabletop/rooms/{room_id}/participants/{participant_id}")
 async def update_participant(
     room_id: str,
@@ -285,6 +318,23 @@ async def update_participant(
         setattr(participant, field, value)
     await db.commit()
     await notify(room.id, "grimoire.updated")
+    return {"status": "ok"}
+
+
+@router.post("/api/tabletop/rooms/{room_id}/participants/{participant_id}/swap")
+async def swap_player_seats(
+    room_id: str,
+    participant_id: str,
+    body: ParticipantSwap,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    room = await require_room(db, room_id)
+    try:
+        await swap_participants(db, room, participant_id, body.target_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    await notify(room.id, "grimoire.reordered")
     return {"status": "ok"}
 
 
@@ -323,6 +373,8 @@ async def owner_message(
 @router.get("/tabletop/join/{code}", response_class=HTMLResponse, include_in_schema=False)
 async def join_page(request: Request, code: str, db: AsyncSession = Depends(get_db)):
     room = await require_public_room(db, code)
+    if room.status == "closed":
+        raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
     participant = await authenticate_player(db, room, request.cookies.get(player_cookie_name(room.code)))
     if participant:
         return RedirectResponse(f"/tabletop/room/{room.code}", status_code=302)
@@ -334,6 +386,7 @@ async def join_page(request: Request, code: str, db: AsyncSession = Depends(get_
             "lang": request.cookies.get("lang", "ru"),
             "room": room,
             "game": game_registry.get(room.game_id),
+            "scenario": room_scenario(room),
             "error": None,
         },
     )
@@ -347,6 +400,8 @@ async def join_game(
     db: AsyncSession = Depends(get_db),
 ):
     room = await require_public_room(db, code)
+    if room.status == "closed":
+        raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
     nickname = " ".join(nickname.strip().split())
     if not nickname:
         raise HTTPException(status_code=422, detail="Введите ник")
@@ -361,6 +416,7 @@ async def join_game(
                 "lang": request.cookies.get("lang", "ru"),
                 "room": room,
                 "game": game_registry.get(room.game_id),
+                "scenario": room_scenario(room),
                 "error": str(exc),
             },
             status_code=409,
@@ -382,6 +438,8 @@ async def join_game(
 @router.get("/tabletop/room/{code}", response_class=HTMLResponse, include_in_schema=False)
 async def player_room(request: Request, code: str, db: AsyncSession = Depends(get_db)):
     room = await require_public_room(db, code)
+    if room.status == "closed":
+        raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
     participant = await require_player(request, db, room)
     return templates.TemplateResponse(
         request,
@@ -400,6 +458,8 @@ async def player_room(request: Request, code: str, db: AsyncSession = Depends(ge
 @router.get("/tabletop/room/{code}/api/state")
 async def get_player_state(request: Request, code: str, db: AsyncSession = Depends(get_db)):
     room = await require_public_room(db, code)
+    if room.status == "closed":
+        raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
     return await player_state(db, room, await require_player(request, db, room))
 
 
@@ -411,6 +471,8 @@ async def player_message(
     db: AsyncSession = Depends(get_db),
 ):
     room = await require_public_room(db, code)
+    if room.status == "closed":
+        raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
     participant = await require_player(request, db, room)
     await reserve_message(request, room.id, participant.id)
     if room.status == "ended":

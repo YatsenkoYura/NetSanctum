@@ -195,14 +195,59 @@ async def start_room(db: AsyncSession, room: TabletopRoom) -> TabletopRoom:
         and item.id not in assigned_ids
     ]
     room.game_state = {
-        "demon_bluffs": [role_payload(item) for item in secrets.SystemRandom().sample(good_bluffs, 3)]
-        if len(good_bluffs) >= 3
+        "demon_bluffs": [
+            role_payload(item)
+            for item in secrets.SystemRandom().sample(
+                good_bluffs, min(int(room.config.get("demon_bluff_count", 3)), len(good_bluffs))
+            )
+        ]
+        if good_bluffs
         else []
     }
     room.status = "playing"
     room.started_at = datetime.now(UTC)
     await db.commit()
     return room
+
+
+async def close_room(db: AsyncSession, room: TabletopRoom) -> TabletopRoom:
+    if room.status == "closed":
+        return room
+    participants = list(
+        (
+            await db.execute(select(TabletopParticipant).where(TabletopParticipant.room_id == room.id))
+        ).scalars()
+    )
+    for participant in participants:
+        participant.token_hash = hash_player_token(f"closed:{room.id}:{participant.id}")
+    room.status = "closed"
+    room.ended_at = datetime.now(UTC)
+    await db.commit()
+    return room
+
+
+async def swap_participants(
+    db: AsyncSession, room: TabletopRoom, participant_id: str, target_id: str
+) -> None:
+    if participant_id == target_id:
+        return
+    participants = list(
+        (
+            await db.execute(
+                select(TabletopParticipant)
+                .where(
+                    TabletopParticipant.room_id == room.id,
+                    TabletopParticipant.id.in_((participant_id, target_id)),
+                )
+                .with_for_update()
+            )
+        ).scalars()
+    )
+    if len(participants) != 2:
+        raise ValueError("Игрок для перестановки не найден")
+    first, second = participants
+    first.seat, second.seat = second.seat, first.seat
+    await db.commit()
 
 
 async def active_participant_ids(room_id: str, participants: list[TabletopParticipant]) -> set[str]:
@@ -313,7 +358,11 @@ async def player_state(
     knowledge: dict[str, Any] = {}
     evil_info = room.config.get("evil_info", "standard")
     reveal_evil = evil_info == "always" or (evil_info == "standard" and len(participants) >= 7)
-    if room.status != "lobby" and participant.role_data:
+    if (
+        room.status != "lobby"
+        and participant.role_data
+        and room.config.get("player_information", "full") != "roster_only"
+    ):
         visible_role = participant.role_data.get("perceived_role", participant.role_data)
         if reveal_evil and participant.role_data.get("team") == "demon":
             knowledge = {
@@ -332,12 +381,21 @@ async def player_state(
                     if item.id != participant.id and item.role_data.get("team") in {"minion", "demon"}
                 ]
             }
+            if room.config.get("minion_bluffs", False):
+                knowledge["bluffs"] = room.game_state.get("demon_bluffs", [])
+        if reveal_evil and participant.role_data.get("team") in {"minion", "demon"}:
+            knowledge["code_word"] = room.config.get("evil_code_word", "")
     return {
         "room": room_payload(room),
         "me": {
             **participant_public(participant, online_ids),
             "role": visible_role,
             "knowledge": knowledge,
+            "reminders": (
+                participant.reminders
+                if room.config.get("player_information", "full") != "roster_only"
+                else []
+            ),
         },
         "participants": [
             {

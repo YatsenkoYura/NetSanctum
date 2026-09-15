@@ -9,8 +9,10 @@ PRIVATE_CAPABILITY_PREFIXES = ("/s/", "/tabletop/join/", "/tabletop/room/")
 
 
 def _is_capability_route(path: str) -> bool:
-    return path in CROSS_SITE_CAPABILITY_PATHS or (
-        path.startswith("/s/") and (path.endswith("/access") or path.endswith("/unlock"))
+    return (
+        path in CROSS_SITE_CAPABILITY_PATHS
+        or path.startswith("/tabletop/join/")
+        or (path.startswith("/s/") and (path.endswith("/access") or path.endswith("/unlock")))
     )
 
 

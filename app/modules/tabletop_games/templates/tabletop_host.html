@@ -16,6 +16,7 @@
       <span id="connection" class="font-mono text-[8px] uppercase text-zinc-600">соединение...</span>
       <button id="start-button" onclick="startGame()" class="h-9 bg-teal-400 px-4 font-mono text-[9px] font-black uppercase tracking-wider text-black hover:bg-teal-300">Начать</button>
       <button id="end-button" onclick="endGame()" class="hidden h-9 border border-zinc-700 px-3 font-mono text-[9px] font-bold uppercase text-zinc-400 hover:border-teal-700 hover:text-white">Завершить</button>
+      <button id="close-button" onclick="closeGame()" class="h-9 border border-rose-950 px-3 font-mono text-[9px] font-bold uppercase text-rose-500 hover:border-rose-700 hover:text-rose-300">Закрыть</button>
     </div>
   </header>
 
@@ -44,6 +45,7 @@
         </div>
         <input id="join-url" value="{{ join_url }}" readonly class="sr-only">
         <dl class="mt-3 grid grid-cols-2 gap-px border border-zinc-800 bg-zinc-800 font-mono text-[8px] uppercase"><div class="bg-black p-2"><dt class="text-zinc-600">Сценарий</dt><dd class="mt-1 truncate text-zinc-300">{{ scenario.title }}</dd></div><div class="bg-black p-2"><dt class="text-zinc-600">Чат</dt><dd class="mt-1 text-zinc-300">{{ room.config.player_chat|default('private') }}</dd></div></dl>
+        {% if room.config.show_storyteller_reference|default(true) %}<details class="mt-3 border-t border-zinc-800 pt-3"><summary class="cursor-pointer font-mono text-[8px] font-bold uppercase tracking-widest text-teal-500">Памятка сценария · {{ scenario.title }}</summary><p class="mt-2 text-[10px] leading-4 text-zinc-600">{{ scenario.description }}</p><div class="mt-3 space-y-2">{% for role in game.role_catalog if role.id in game.metadata.script_role_ids[room.config.script] %}<div class="border-l border-zinc-800 pl-2"><span class="font-mono text-[9px] font-bold {% if role.team in ['minion', 'demon'] %}text-rose-400{% else %}text-cyan-300{% endif %}">{{ role.name_ru }}</span><span class="ml-1 font-mono text-[8px] uppercase text-zinc-600">{{ role.team }}</span><p class="mt-0.5 text-[9px] leading-4 text-zinc-500">{{ role.ability_ru }}</p></div>{% endfor %}</div></details>{% endif %}
       </section>
 
       <section id="panel-messages" class="gm-panel border border-zinc-800 bg-zinc-950">
@@ -103,7 +105,7 @@ function playerCard(player) {
   const roleBlock = role.name_ru
     ? `<div class="mt-3 border-l-2 border-teal-800 pl-2"><div class="team-${role.team} font-mono text-[10px] font-black uppercase">${esc(role.name_ru)}</div><div class="mt-1 line-clamp-2 text-[9px] leading-4 text-zinc-500">${esc(role.ability_ru)}</div></div>`
     : '<div class="mt-3 font-mono text-[8px] uppercase text-zinc-700">Роль не выдана</div>';
-  return `<article class="player-token ${player.is_alive ? '' : 'dead'} border border-zinc-800 p-3" data-id="${player.id}">
+  return `<article draggable="true" ondragstart="dragPlayer(event,'${player.id}')" ondragover="event.preventDefault()" ondrop="dropPlayer(event,'${player.id}')" ontouchstart="rememberTouch(event,'${player.id}')" ontouchend="swapBySwipe(event,'${player.id}')" class="player-token ${player.is_alive ? '' : 'dead'} border border-zinc-800 p-3" data-id="${player.id}">
     <div class="flex items-start justify-between gap-2"><div class="min-w-0"><div class="flex items-center gap-2"><span class="h-1.5 w-1.5 shrink-0 ${player.online ? 'bg-teal-400' : 'bg-zinc-700'}"></span><strong class="truncate text-xs text-white">${esc(player.nickname)}</strong></div><div class="mt-1 font-mono text-[8px] text-zinc-600">Место ${player.seat + 1}</div></div><button onclick="updatePlayer('${player.id}',{is_alive:${!player.is_alive}})" class="border border-zinc-700 px-2 py-1 font-mono text-[8px] uppercase ${player.is_alive ? 'text-teal-400' : 'text-rose-400'}">${player.is_alive ? 'Жив' : 'Мёртв'}</button></div>
     ${roleBlock}
     <details class="mt-3 border-t border-zinc-800 pt-2"><summary class="cursor-pointer font-mono text-[8px] uppercase text-zinc-600">Метки и заметки</summary><input value="${esc((player.reminders || []).join(', '))}" onchange="updatePlayer('${player.id}',{reminders:this.value.split(',')})" class="mt-2 w-full border border-zinc-800 bg-black p-2 text-[9px] text-amber-300 outline-none" placeholder="Метки через запятую"><textarea onchange="updatePlayer('${player.id}',{gm_notes:this.value})" class="mt-2 w-full resize-none border border-zinc-800 bg-black p-2 text-[9px] text-zinc-400 outline-none" rows="2" placeholder="Заметка ведущего">${esc(player.gm_notes)}</textarea></details>
@@ -132,9 +134,31 @@ async function endGame() {
   await api(`/api/tabletop/rooms/${roomId}/end`, {method: 'POST'});
   await loadState();
 }
+async function closeGame() {
+  if (!confirm('Закрыть комнату и отозвать доступ у всех игроков? Это действие нельзя отменить.')) return;
+  try { await api(`/api/tabletop/rooms/${roomId}/close`, {method: 'POST'}); location.href = '/tabletop'; }
+  catch (error) { alert(error.message); }
+}
 async function updatePlayer(id, data) {
   await api(`/api/tabletop/rooms/${roomId}/participants/${id}`, {method: 'PATCH', body: JSON.stringify(data)});
   await loadState();
+}
+let draggedPlayerId = null;
+let touchStartX = 0;
+function dragPlayer(event, id) { draggedPlayerId = id; event.dataTransfer.effectAllowed = 'move'; }
+async function dropPlayer(event, targetId) { event.preventDefault(); if (draggedPlayerId && draggedPlayerId !== targetId) await swapPlayers(draggedPlayerId, targetId); draggedPlayerId = null; }
+function rememberTouch(event) { touchStartX = event.changedTouches[0].clientX; }
+async function swapBySwipe(event, id) {
+  const distance = event.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(distance) < 56) return;
+  const players = [...state.participants].sort((a, b) => a.seat - b.seat);
+  const index = players.findIndex(player => player.id === id);
+  const target = players[index + (distance > 0 ? 1 : -1)];
+  if (target) await swapPlayers(id, target.id);
+}
+async function swapPlayers(id, targetId) {
+  try { await api(`/api/tabletop/rooms/${roomId}/participants/${id}/swap`, {method: 'POST', body: JSON.stringify({target_id: targetId})}); await loadState(); }
+  catch (error) { alert(error.message); }
 }
 async function sendMessage(event) {
   event.preventDefault();
