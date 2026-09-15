@@ -67,7 +67,7 @@ let socket = null;
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
+  const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options, cache: 'no-store'});
   if (!response.ok) {
     let detail = {};
     try { detail = await response.json(); } catch {}

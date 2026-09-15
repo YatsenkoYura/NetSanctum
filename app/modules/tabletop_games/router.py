@@ -458,6 +458,11 @@ async def join_game(
     room = await require_public_room(db, code)
     if room.status == "closed":
         raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
+    existing_participant = await authenticate_player(
+        db, room, request.cookies.get(player_cookie_name(room.code))
+    )
+    if existing_participant:
+        return RedirectResponse(f"/tabletop/room/{room.code}", status_code=303)
     nickname = " ".join(nickname.strip().split())
     if not nickname:
         raise HTTPException(status_code=422, detail="Введите ник")
@@ -485,7 +490,9 @@ async def join_game(
         secure=use_secure_cookies(request),
         samesite="lax",
         max_age=86400,
-        path=f"/tabletop/room/{room.code}",
+        # A room-scoped cookie is available on its join URL so one browser profile
+        # cannot silently overwrite its current player identity for that room.
+        path="/tabletop",
     )
     await notify(room.id, "player.joined")
     return response
@@ -497,7 +504,7 @@ async def player_room(request: Request, code: str, db: AsyncSession = Depends(ge
     if room.status == "closed":
         raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
     participant = await require_player(request, db, room)
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "tabletop_player.html",
         {
@@ -509,13 +516,21 @@ async def player_room(request: Request, code: str, db: AsyncSession = Depends(ge
             "scenario": room_scenario(room),
         },
     )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @router.get("/tabletop/room/{code}/api/state")
-async def get_player_state(request: Request, code: str, db: AsyncSession = Depends(get_db)):
+async def get_player_state(
+    request: Request,
+    code: str,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     room = await require_public_room(db, code)
     if room.status == "closed":
         raise HTTPException(status_code=410, detail="Комната закрыта ведущим")
+    response.headers["Cache-Control"] = "private, no-store"
     return await player_state(db, room, await require_player(request, db, room))
 
 
