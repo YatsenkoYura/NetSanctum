@@ -18,9 +18,14 @@ class MessageCreate(BaseModel):
 class ParticipantUpdate(BaseModel):
     is_alive: bool | None = None
     seat: int | None = Field(default=None, ge=0, le=99)
+    role_id: str | None = Field(default=None, min_length=1, max_length=63)
     reminders: list[str] | None = Field(default=None, max_length=20)
     gm_notes: str | None = Field(default=None, max_length=2000)
 
 
 class ParticipantSwap(BaseModel):
     target_id: str = Field(min_length=36, max_length=36)
+
+
+class ParticipantEffect(BaseModel):
+    effect: str = Field(min_length=1, max_length=80)

@@ -8,6 +8,7 @@ from app.modules.tabletop_games.games.blood_on_the_clocktower.game import (
     validate_config,
 )
 from app.modules.tabletop_games.registry import game_registry
+from app.modules.tabletop_games.schemas import ParticipantEffect, ParticipantUpdate
 from app.modules.tabletop_games.services import hash_player_token, player_cookie_name, room_channel
 
 
@@ -112,6 +113,16 @@ class TabletopGameRegistryTests(unittest.TestCase):
         self.assertTrue(config["minion_bluffs"])
         self.assertEqual("moon is red", config["evil_code_word"])
 
+    def test_each_script_exposes_roles_for_manual_storyteller_assignment(self):
+        game = game_registry.get("blood_on_the_clocktower")
+        assert game is not None
+
+        for script, role_ids in game.metadata["script_role_ids"].items():
+            with self.subTest(script=script):
+                choices = [role for role in game.role_catalog if role.id in role_ids]
+                self.assertEqual(set(role_ids), {role.id for role in choices})
+                self.assertTrue(any(role.team == "demon" for role in choices))
+
 
 class TabletopSecurityTests(unittest.TestCase):
     def test_player_token_helpers_do_not_expose_raw_token(self):
@@ -127,6 +138,10 @@ class TabletopSecurityTests(unittest.TestCase):
         self.assertEqual(channel, RealtimeHub.validate_channel(channel))
         with self.assertRaises(ValueError):
             RealtimeHub.validate_channel("../room")
+
+    def test_storyteller_role_and_effect_payloads_are_bounded(self):
+        self.assertEqual("imp", ParticipantUpdate(role_id="imp").role_id)
+        self.assertEqual("Отравлен", ParticipantEffect(effect="Отравлен").effect)
 
 
 if __name__ == "__main__":

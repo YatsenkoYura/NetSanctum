@@ -6,7 +6,7 @@
   <title>{{ room.title }}</title>
   <link rel="stylesheet" href="/static/tailwind.css">
   <style>
-  body{background:radial-gradient(circle at 50% 0,rgba(13,148,136,.16),transparent 34%),#050707}.player-shell{max-width:960px;margin:0 auto}.player-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}.role-card{min-height:420px;background:linear-gradient(145deg,rgba(19,78,74,.34),#09090b 62%)}.role-secret .role-content{filter:blur(18px);opacity:.12;user-select:none}.role-secret .reveal-prompt{opacity:1}.reveal-prompt{opacity:0;transition:opacity .15s}.team-townsfolk,.team-outsider{color:#67e8f9}.team-minion,.team-demon{color:#fb7185}.chat-list{height:300px;overflow:auto}.player-tabs{display:none}@media(max-width:767px){body{padding-bottom:68px}.player-layout{display:block}.player-side{display:contents}.player-panel{display:none}.player-panel.mobile-active{display:block}.player-tabs{position:fixed;right:0;bottom:0;left:0;z-index:50;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #27272a;background:rgba(9,9,11,.97);backdrop-filter:blur(12px)}.player-tabs.two-tabs{grid-template-columns:repeat(2,1fr)}.player-tab[aria-selected="true"]{color:#5eead4;background:#134e4a}.role-card{min-height:calc(100dvh - 190px)}.chat-list{height:calc(100dvh - 265px);min-height:320px}}@media(min-width:768px){.player-panel{display:block!important}}
+  body{background:radial-gradient(circle at 50% 0,rgba(13,148,136,.16),transparent 34%),#050707}.player-shell{max-width:960px;margin:0 auto}.player-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}.role-card{min-height:420px;background:linear-gradient(145deg,rgba(19,78,74,.34),#09090b 62%)}.role-secret .role-content{filter:blur(18px);opacity:.12;user-select:none}.role-secret .reveal-prompt{opacity:1}.reveal-prompt{opacity:0;transition:opacity .15s}.team-townsfolk,.team-outsider{color:#67e8f9}.team-minion,.team-demon{color:#fb7185}.chat-list{height:300px;overflow:auto}.player-tabs{display:none}.role-sigil{display:inline-flex;height:2.4rem;width:2.4rem;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:999px}.effect-mark{border:1px solid #854d0e;background:#09090b;color:#facc15}@media(max-width:767px){body{padding-bottom:68px}.player-layout{display:block}.player-side{display:contents}.player-panel{display:none}.player-panel.mobile-active{display:block}.player-tabs{position:fixed;right:0;bottom:0;left:0;z-index:50;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #27272a;background:rgba(9,9,11,.97);backdrop-filter:blur(12px)}.player-tabs.two-tabs{grid-template-columns:repeat(2,1fr)}.player-tab[aria-selected="true"]{color:#5eead4;background:#134e4a}.role-card{min-height:calc(100dvh - 190px)}.chat-list{height:calc(100dvh - 265px);min-height:320px}}@media(min-width:768px){.player-panel{display:block!important}}
   </style>
 </head>
 <body class="min-h-dvh text-zinc-300">
@@ -104,7 +104,8 @@ function renderRole() {
     knowledge.classList.add('hidden');
     return;
   }
-  content.innerHTML = `<div class="font-mono text-[9px] font-bold uppercase tracking-[.24em] team-${role.team}">${esc(role.team)}</div><div class="mt-2 text-3xl font-black uppercase text-white sm:text-4xl">${esc(role.name_ru)}</div><div class="mt-1 font-mono text-[10px] text-zinc-600">${esc(role.name_en)}</div><div class="mt-5 border-l-2 border-teal-700 pl-4 text-sm leading-6 text-zinc-300">${esc(role.ability_ru)}</div>`;
+  const sigil = role.team === 'demon' ? '&#9789;' : role.team === 'minion' ? '&#10013;' : role.team === 'outsider' ? '&#9670;' : '&#10022;';
+  content.innerHTML = `<div class="role-sigil team-${role.team} font-mono text-lg">${sigil}</div><div class="mt-4 font-mono text-[9px] font-bold uppercase tracking-[.24em] team-${role.team}">${esc(role.team)}</div><div class="mt-2 text-3xl font-black uppercase text-white sm:text-4xl">${esc(role.name_ru)}</div><div class="mt-1 font-mono text-[10px] text-zinc-600">${esc(role.name_en)}</div><div class="mt-5 border-l-2 border-teal-700 pl-4 text-sm leading-6 text-zinc-300">${esc(role.ability_ru)}</div>`;
   const info = state.me.knowledge || {};
   const parts = [];
   if (info.evil_team?.length) parts.push(`<b class="text-rose-400">Злая команда:</b> ${info.evil_team.map(esc).join(', ')}`);
@@ -113,7 +114,7 @@ function renderRole() {
   knowledge.innerHTML = parts.join('<br>');
   knowledge.classList.toggle('hidden', !parts.length);
   const reminders = state.me.reminders || [];
-  document.getElementById('reminder-list').innerHTML = reminders.map(reminder => `<span class="border border-amber-950 bg-black px-2 py-1 text-[9px] text-amber-300">${esc(reminder)}</span>`).join('');
+  document.getElementById('reminder-list').innerHTML = reminders.map(reminder => `<span class="effect-mark px-2 py-1 text-[9px]">${esc(reminder)}</span>`).join('');
   document.getElementById('reminders').classList.toggle('hidden', !reminders.length);
 }
 
@@ -127,7 +128,7 @@ function renderPlayers() {
 }
 
 function renderMessages() {
-  document.getElementById('messages').innerHTML = state.messages.map(message => `<div class="${message.sender_id === me ? 'ml-6 border-teal-900' : 'mr-6 border-zinc-800'} border bg-black p-2 text-[10px]"><div class="font-mono text-[8px] uppercase text-zinc-600">${esc(message.sender)}${message.audience === 'broadcast' ? ' · всем' : message.recipient ? ' → ' + esc(message.recipient) : ' → ведущему'}</div><div class="mt-1 whitespace-pre-wrap text-zinc-300">${esc(message.text)}</div></div>`).join('');
+  document.getElementById('messages').innerHTML = state.messages.map(message => `<div class="${message.sender_id === me ? 'ml-6 border-teal-900' : 'mr-6 border-zinc-800'} border bg-black p-2 text-[10px]"><div class="font-mono text-[8px] uppercase text-zinc-600">${esc(message.sender)}${message.audience === 'broadcast' ? ' · всем' : message.recipient ? ' · лично → ' + esc(message.recipient) : ' · лично → ведущему'}</div><div class="mt-1 whitespace-pre-wrap text-zinc-300">${esc(message.text)}</div></div>`).join('');
   const messages = document.getElementById('messages');
   messages.scrollTop = messages.scrollHeight;
   const mode = state.room.config.player_chat || (state.room.config.allow_player_messages ? 'private' : 'gm_only');

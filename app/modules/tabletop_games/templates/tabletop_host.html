@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Гримуар — {{ room.title }}{% endblock %}
 {% block head_extra %}
-<style>
-.gm-shell{max-width:1600px;margin:0 auto}.host-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}.grimoire{min-height:660px;background:radial-gradient(circle at 50% 42%,rgba(20,184,166,.1),transparent 34%),linear-gradient(145deg,#09090b,#050707)}.player-token{background:linear-gradient(145deg,#111415,#09090b);transition:border-color .15s,opacity .15s}.player-token:hover{border-color:#0f766e}.player-token.dead{filter:grayscale(.85);opacity:.52}.team-townsfolk,.team-outsider{color:#67e8f9}.team-minion,.team-demon{color:#fb7185}.chat-scroll{height:320px;overflow:auto}.mobile-gm-tabs{display:none}.panel-label{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#71717a}@media(max-width:899px){.host-layout{display:block}.side-panel{display:contents}.gm-panel{display:none}.gm-panel.mobile-active{display:block}.mobile-gm-tabs{position:sticky;top:0;z-index:35;display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #27272a;background:#09090b}.mobile-gm-tab[aria-selected="true"]{background:#134e4a;color:#5eead4}.grimoire{min-height:calc(100dvh - 230px)}.chat-scroll{height:calc(100dvh - 360px);min-height:260px}}@media(min-width:900px){.gm-panel{display:block!important}}
+  <style>
+  .gm-shell{max-width:1600px;margin:0 auto}.host-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}.grimoire{min-height:660px;background:radial-gradient(circle at 50% 42%,rgba(20,184,166,.1),transparent 34%),linear-gradient(145deg,#09090b,#050707)}.player-token{background:linear-gradient(145deg,#111415,#09090b);transition:border-color .15s,opacity .15s}.player-token:hover{border-color:#0f766e}.player-token.dead{filter:grayscale(.85);opacity:.52}.team-townsfolk,.team-outsider{color:#67e8f9}.team-minion,.team-demon{color:#fb7185}.chat-scroll{height:320px;overflow:auto}.mobile-gm-tabs{display:none}.panel-label{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#71717a}.effect-token{cursor:grab}.effect-token:active{cursor:grabbing}.effect-token[data-effect="Отравлен"]{border-color:#a16207;color:#facc15}.effect-token[data-effect="Пьян"]{border-color:#7c3aed;color:#c4b5fd}.effect-token[data-effect="Защищён"]{border-color:#0e7490;color:#67e8f9}.effect-token[data-effect="Без способности"]{border-color:#be123c;color:#fda4af}.effect-token[data-effect="Безумие"]{border-color:#a21caf;color:#f0abfc}.effect-token[data-effect="Под угрозой"]{border-color:#b45309;color:#fdba74}@media(max-width:899px){.host-layout{display:block}.side-panel{display:contents}.gm-panel{display:none}.gm-panel.mobile-active{display:block}.mobile-gm-tabs{position:sticky;top:0;z-index:35;display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #27272a;background:#09090b}.mobile-gm-tab[aria-selected="true"]{background:#134e4a;color:#5eead4}.grimoire{min-height:calc(100dvh - 230px)}.chat-scroll{height:calc(100dvh - 360px);min-height:260px}}@media(min-width:900px){.gm-panel{display:block!important}}
 </style>
 {% endblock %}
 {% block content %}
@@ -32,6 +32,7 @@
         <span class="panel-label">Гримуар</span>
         <div class="flex items-center gap-3 font-mono text-[9px] uppercase"><span id="room-status" class="text-zinc-600"></span><span id="player-count-inline" class="text-teal-500"></span></div>
       </div>
+      <div class="mb-3 border-b border-zinc-800 pb-3"><div class="mb-2 flex items-center gap-2"><svg class="h-4 w-4 text-amber-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/><circle cx="12" cy="12" r="8.5"/></svg><span class="panel-label">Жетоны гримуара</span><span class="font-mono text-[8px] text-zinc-600">перетащите или выберите и коснитесь игрока</span></div><div class="flex flex-wrap gap-1.5">{% for effect in grimoire_effects %}<button draggable="true" onclick="selectEffect({{ effect|tojson }})" ondragstart="dragEffect(event,{{ effect|tojson }})" data-effect="{{ effect }}" class="effect-token border bg-black px-2 py-1 font-mono text-[8px] font-bold uppercase">{{ effect }}</button>{% endfor %}</div></div>
       <div id="players" class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3"></div>
       <div id="empty-players" class="py-28 text-center font-mono text-[10px] uppercase tracking-widest text-zinc-700">Игроки подключатся по коду {{ room.code }}</div>
     </section>
@@ -105,9 +106,16 @@ function playerCard(player) {
   const roleBlock = role.name_ru
     ? `<div class="mt-3 border-l-2 border-teal-800 pl-2"><div class="team-${role.team} font-mono text-[10px] font-black uppercase">${esc(role.name_ru)}</div><div class="mt-1 line-clamp-2 text-[9px] leading-4 text-zinc-500">${esc(role.ability_ru)}</div></div>`
     : '<div class="mt-3 font-mono text-[8px] uppercase text-zinc-700">Роль не выдана</div>';
-  return `<article draggable="true" ondragstart="dragPlayer(event,'${player.id}')" ondragover="event.preventDefault()" ondrop="dropPlayer(event,'${player.id}')" ontouchstart="rememberTouch(event,'${player.id}')" ontouchend="swapBySwipe(event,'${player.id}')" class="player-token ${player.is_alive ? '' : 'dead'} border border-zinc-800 p-3" data-id="${player.id}">
+  const effects = (player.reminders || []).map(effect => `<span data-effect="${esc(effect)}" class="effect-token border bg-black px-1.5 py-0.5 font-mono text-[7px] uppercase">${esc(effect)}</span>`).join('');
+  const roleOptions = roleOptionsData.map(role => {
+    const id = role.id;
+    return `<option value="${esc(id)}" ${id === player.role?.id ? 'selected' : ''}>${esc(role.name_ru)} · ${esc(role.name_en)}</option>`;
+  }).join('');
+  return `<article draggable="true" onclick="applySelectedEffect('${player.id}')" ondragstart="dragPlayer(event,'${player.id}')" ondragover="event.preventDefault()" ondrop="dropPlayer(event,'${player.id}')" ontouchstart="rememberTouch(event,'${player.id}')" ontouchend="swapBySwipe(event,'${player.id}')" class="player-token ${player.is_alive ? '' : 'dead'} border border-zinc-800 p-3" data-id="${player.id}">
     <div class="flex items-start justify-between gap-2"><div class="min-w-0"><div class="flex items-center gap-2"><span class="h-1.5 w-1.5 shrink-0 ${player.online ? 'bg-teal-400' : 'bg-zinc-700'}"></span><strong class="truncate text-xs text-white">${esc(player.nickname)}</strong></div><div class="mt-1 font-mono text-[8px] text-zinc-600">Место ${player.seat + 1}</div></div><button onclick="updatePlayer('${player.id}',{is_alive:${!player.is_alive}})" class="border border-zinc-700 px-2 py-1 font-mono text-[8px] uppercase ${player.is_alive ? 'text-teal-400' : 'text-rose-400'}">${player.is_alive ? 'Жив' : 'Мёртв'}</button></div>
     ${roleBlock}
+    <label class="mt-3 block font-mono text-[8px] uppercase text-zinc-600">Роль<select onchange="updatePlayer('${player.id}',{role_id:this.value})" class="mt-1 h-8 w-full border border-zinc-800 bg-black px-2 text-[9px] text-zinc-300 outline-none focus:border-teal-400"><option value="">Выберите роль</option>${roleOptions}</select></label>
+    ${effects ? `<div class="mt-2 flex flex-wrap gap-1">${effects}</div>` : ''}
     <details class="mt-3 border-t border-zinc-800 pt-2"><summary class="cursor-pointer font-mono text-[8px] uppercase text-zinc-600">Метки и заметки</summary><input value="${esc((player.reminders || []).join(', '))}" onchange="updatePlayer('${player.id}',{reminders:this.value.split(',')})" class="mt-2 w-full border border-zinc-800 bg-black p-2 text-[9px] text-amber-300 outline-none" placeholder="Метки через запятую"><textarea onchange="updatePlayer('${player.id}',{gm_notes:this.value})" class="mt-2 w-full resize-none border border-zinc-800 bg-black p-2 text-[9px] text-zinc-400 outline-none" rows="2" placeholder="Заметка ведущего">${esc(player.gm_notes)}</textarea></details>
   </article>`;
 }
@@ -143,10 +151,15 @@ async function updatePlayer(id, data) {
   await api(`/api/tabletop/rooms/${roomId}/participants/${id}`, {method: 'PATCH', body: JSON.stringify(data)});
   await loadState();
 }
+const roleOptionsData = {{ role_options|tojson }};
 let draggedPlayerId = null;
 let touchStartX = 0;
-function dragPlayer(event, id) { draggedPlayerId = id; event.dataTransfer.effectAllowed = 'move'; }
-async function dropPlayer(event, targetId) { event.preventDefault(); if (draggedPlayerId && draggedPlayerId !== targetId) await swapPlayers(draggedPlayerId, targetId); draggedPlayerId = null; }
+let selectedEffect = null;
+function dragPlayer(event, id) { draggedPlayerId = id; if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; }
+function dragEffect(event, effect) { event.dataTransfer.setData('application/x-tabletop-effect', effect); event.dataTransfer.effectAllowed = 'copy'; }
+function selectEffect(effect) { selectedEffect = effect; document.querySelectorAll('[data-effect]').forEach(token => token.classList.toggle('ring-1', token.dataset.effect === effect)); }
+async function applySelectedEffect(id) { if (!selectedEffect) return; const effect = selectedEffect; selectedEffect = null; await addEffect(id, effect); }
+async function dropPlayer(event, targetId) { event.preventDefault(); const effect = event.dataTransfer?.getData('application/x-tabletop-effect'); if (effect) { await addEffect(targetId, effect); return; } if (draggedPlayerId && draggedPlayerId !== targetId) await swapPlayers(draggedPlayerId, targetId); draggedPlayerId = null; }
 function rememberTouch(event) { touchStartX = event.changedTouches[0].clientX; }
 async function swapBySwipe(event, id) {
   const distance = event.changedTouches[0].clientX - touchStartX;
@@ -158,6 +171,10 @@ async function swapBySwipe(event, id) {
 }
 async function swapPlayers(id, targetId) {
   try { await api(`/api/tabletop/rooms/${roomId}/participants/${id}/swap`, {method: 'POST', body: JSON.stringify({target_id: targetId})}); await loadState(); }
+  catch (error) { alert(error.message); }
+}
+async function addEffect(id, effect) {
+  try { await api(`/api/tabletop/rooms/${roomId}/participants/${id}/effects`, {method: 'POST', body: JSON.stringify({effect})}); await loadState(); }
   catch (error) { alert(error.message); }
 }
 async function sendMessage(event) {

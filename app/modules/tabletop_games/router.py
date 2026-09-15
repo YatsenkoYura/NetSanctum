@@ -15,7 +15,12 @@ from app.core.security import get_current_user, redis_client, use_secure_cookies
 from app.core.templates import templates
 from app.modules.tabletop_games.models import TabletopMessage, TabletopParticipant, TabletopRoom
 from app.modules.tabletop_games.registry import game_registry
-from app.modules.tabletop_games.schemas import MessageCreate, ParticipantSwap, ParticipantUpdate
+from app.modules.tabletop_games.schemas import (
+    MessageCreate,
+    ParticipantEffect,
+    ParticipantSwap,
+    ParticipantUpdate,
+)
 from app.modules.tabletop_games.services import (
     authenticate_player,
     close_room,
@@ -27,8 +32,10 @@ from app.modules.tabletop_games.services import (
     owner_state,
     player_cookie_name,
     player_state,
+    role_payload,
     room_channel,
     room_payload,
+    set_participant_role,
     start_room,
     swap_participants,
 )
@@ -36,6 +43,14 @@ from app.modules.tabletop_games.services import (
 router = APIRouter(tags=["tabletop-games"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+GRIMOIRE_EFFECTS = (
+    "Отравлен",
+    "Пьян",
+    "Защищён",
+    "Без способности",
+    "Безумие",
+    "Под угрозой",
+)
 
 
 def not_found() -> HTTPException:
@@ -204,6 +219,9 @@ async def host_room(
     user=Depends(get_current_user),
 ):
     room = await require_room(db, room_id)
+    game = game_registry.get(room.game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Игра не установлена")
     base_url = settings.PUBLIC_BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
     return templates.TemplateResponse(
         request,
@@ -212,9 +230,15 @@ async def host_room(
             "user": user,
             "lang": request.cookies.get("lang", "ru"),
             "room": room,
-            "game": game_registry.get(room.game_id),
+            "game": game,
             "scenario": room_scenario(room),
             "join_url": f"{base_url}/tabletop/join/{room.code}",
+            "role_options": [
+                role_payload(role)
+                for role in game.role_catalog
+                if role.id in game.metadata["script_role_ids"][room.config["script"]]
+            ],
+            "grimoire_effects": GRIMOIRE_EFFECTS,
         },
     )
 
@@ -312,12 +336,44 @@ async def update_participant(
     if not participant:
         raise HTTPException(status_code=404, detail="Игрок не найден")
     values = body.model_dump(exclude_unset=True)
+    role_id = values.pop("role_id", None)
+    if role_id is not None:
+        try:
+            await set_participant_role(db, room, participant, role_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     if "reminders" in values:
         values["reminders"] = [item.strip()[:80] for item in values["reminders"] if item.strip()]
     for field, value in values.items():
         setattr(participant, field, value)
-    await db.commit()
+    if values:
+        await db.commit()
     await notify(room.id, "grimoire.updated")
+    return {"status": "ok"}
+
+
+@router.post("/api/tabletop/rooms/{room_id}/participants/{participant_id}/effects")
+async def add_participant_effect(
+    room_id: str,
+    participant_id: str,
+    body: ParticipantEffect,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    if body.effect not in GRIMOIRE_EFFECTS:
+        raise HTTPException(status_code=422, detail="Неизвестный эффект гримуара")
+    room = await require_room(db, room_id)
+    participant = await db.scalar(
+        select(TabletopParticipant).where(
+            TabletopParticipant.id == participant_id, TabletopParticipant.room_id == room.id
+        )
+    )
+    if not participant:
+        raise HTTPException(status_code=404, detail="Игрок не найден")
+    if body.effect not in participant.reminders:
+        participant.reminders = [*participant.reminders, body.effect]
+        await db.commit()
+        await notify(room.id, "grimoire.updated")
     return {"status": "ok"}
 
 

@@ -250,6 +250,34 @@ async def swap_participants(
     await db.commit()
 
 
+async def set_participant_role(
+    db: AsyncSession, room: TabletopRoom, participant: TabletopParticipant, role_id: str
+) -> None:
+    game = game_registry.get(room.game_id)
+    if not game:
+        raise ValueError("Игра больше не установлена")
+    eligible_role_ids = set(game.metadata.get("script_role_ids", {}).get(room.config.get("script"), ()))
+    role = next(
+        (item for item in game.role_catalog if item.id == role_id and item.id in eligible_role_ids), None
+    )
+    if not role:
+        raise ValueError("Эта роль не входит в выбранный сценарий")
+    assigned_ids = set(
+        (
+            await db.scalars(
+                select(TabletopParticipant.role_id).where(
+                    TabletopParticipant.room_id == room.id,
+                    TabletopParticipant.id != participant.id,
+                    TabletopParticipant.role_id.is_not(None),
+                )
+            )
+        ).all()
+    )
+    participant.role_id = role.id
+    participant.role_data = _prepare_role_data(role, game, assigned_ids | {role.id}, eligible_role_ids)
+    await db.commit()
+
+
 async def active_participant_ids(room_id: str, participants: list[TabletopParticipant]) -> set[str]:
     keys = [f"tabletop:presence:{room_id}:{participant.id}" for participant in participants]
     if not keys:
@@ -300,10 +328,16 @@ async def room_messages(
         query = query.where(
             or_(
                 TabletopMessage.audience == "broadcast",
-                TabletopMessage.sender_participant_id == participant_id,
+                and_(
+                    TabletopMessage.audience == "gm",
+                    TabletopMessage.sender_participant_id == participant_id,
+                ),
                 and_(
                     TabletopMessage.audience == "player",
-                    TabletopMessage.recipient_participant_id == participant_id,
+                    or_(
+                        TabletopMessage.sender_participant_id == participant_id,
+                        TabletopMessage.recipient_participant_id == participant_id,
+                    ),
                 ),
             )
         )
