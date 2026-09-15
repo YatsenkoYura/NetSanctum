@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.module_types import ShareAsset, ShareRoute
 from app.modules.vault.models import VaultCollection, VaultItem
+from app.modules.vault.services import vault_tag_filter
 
 MAX_SHARED_ITEMS = 500
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -210,6 +211,9 @@ class VaultShareProvider:
                 | VaultItem.og_title.ilike(pattern)
             )
 
+        if tag := query.get("tag"):
+            stmt = stmt.where(vault_tag_filter(tag))
+
         sort_by = query.get("sort_by", "created_at")
         sort_order = query.get("sort_order", "desc")
         if sort_order not in {"asc", "desc"}:
@@ -233,14 +237,6 @@ class VaultShareProvider:
         stmt = stmt.order_by(VaultItem.is_pinned.desc(), ordering).offset(offset).limit(limit)
         result = await db.execute(stmt)
         rows = result.all()
-
-        if tag := query.get("tag"):
-            normalized_tag = tag.lower()
-            rows = [
-                row
-                for row in rows
-                if row[0].tags and any(value.lower() == normalized_tag for value in row[0].tags)
-            ]
         return [self._serialize_item(item, collection_name, share) for item, collection_name in rows]
 
     @staticmethod

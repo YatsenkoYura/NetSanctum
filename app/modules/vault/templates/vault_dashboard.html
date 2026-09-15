@@ -1,13 +1,22 @@
 {% extends module_base|default("base.html") %}
 {% set is_shared = shared_mode|default(false) %}
+{% set is_readonly = is_shared or request.query_params.get('package_id') %}
 {% set collections = collections|default([]) %}
 {% set stats = stats|default({"total_items": 0, "avg_score": 0}) %}
 {% block title %}Vault — NetSanctum Workspaces{% endblock %}
 
 {% block head_extra %}
 <style>
-.vault-sidebar { width: 220px; flex-shrink: 0; transition: margin-left .2s ease, width .2s ease; }
+.vault-shell { min-height:calc(100dvh - 7rem); }
+.vault-sidebar { width:220px; flex-shrink:0; transition:margin-left .2s ease, transform .2s ease; }
 .vault-sidebar.collapsed { margin-left: -220px; }
+.vault-toolbar { position:sticky; top:0; z-index:30; }
+.vault-toolbar-primary, .vault-toolbar-actions { display:flex; align-items:center; gap:.75rem; min-width:0; }
+.vault-search { width:11rem; }
+.vault-status { position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; min-height:12rem; background:#000; color:#71717a; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+.vault-toast { position:fixed; right:1rem; bottom:1rem; z-index:100; max-width:min(24rem, calc(100vw - 2rem)); border:1px solid #3f3f46; background:#09090b; padding:.65rem .8rem; color:#e4e4e7; font-size:11px; box-shadow:0 12px 35px rgba(0,0,0,.7); }
+.vault-toast.error { border-color:#ef4444; color:#fca5a5; }
+.sidebar-backdrop { display:none; }
 
 .ws-item { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; cursor:pointer; border-left:2px solid transparent; transition:all .12s; }
 .ws-item:hover { color:#e4e4e7; background:rgba(255,255,255,.03); }
@@ -57,16 +66,46 @@
 .mini-sheet-table td, .mini-sheet-table th { border:1px solid #27272a; padding:5px 8px; white-space:nowrap; text-align:left; }
 
 /* Whiteboard Canvas Viewport */
-.wb-viewport { position:relative; width:100%; height:620px; background:#050505; border:1px solid #27272a; overflow:hidden; user-select:none; }
+.wb-viewport { position:relative; width:100%; height:clamp(420px, 68dvh, 720px); background:#050505; border:1px solid #27272a; overflow:hidden; user-select:none; touch-action:none; }
 .wb-world { position:absolute; top:0; left:0; width:3000px; height:3000px; background-image:radial-gradient(#1f1f23 1px, transparent 1px); background-size:20px 20px; transform-origin:0 0; }
 .wb-canvas-layer { position:absolute; top:0; left:0; width:3000px; height:3000px; z-index:1; }
 .wb-node { position:absolute; width:190px; background:#09090b; border:1px solid #27272a; padding:8px; cursor:move; box-shadow:0 8px 20px rgba(0,0,0,0.7); z-index:2; }
 .wb-node:hover { border-color:#2dd4bf; }
+.wb-node textarea { touch-action:auto; }
+
+@media (max-width: 767px) {
+  .vault-shell { min-height:calc(100dvh - 8.5rem); }
+  .vault-sidebar { position:fixed; inset:0 auto 0 0; z-index:70; width:min(86vw, 320px); margin-left:0 !important; transform:translateX(-105%); box-shadow:18px 0 50px rgba(0,0,0,.75); }
+  .vault-sidebar.is-open { transform:translateX(0); }
+  .sidebar-backdrop { position:fixed; inset:0; z-index:60; display:block; border:0; background:rgba(0,0,0,.72); opacity:0; pointer-events:none; transition:opacity .2s ease; }
+  .sidebar-backdrop.is-open { opacity:1; pointer-events:auto; }
+  .vault-toolbar { align-items:stretch !important; flex-direction:column; gap:.5rem !important; padding:.65rem !important; }
+  .vault-toolbar-primary { justify-content:space-between; }
+  .vault-toolbar-actions { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:.5rem; }
+  .vault-toolbar-actions .outpost-only { grid-column:1 / -1; justify-content:center; }
+  .vault-search { width:100%; min-width:0; height:2.25rem; }
+  #board-viewport { padding:.65rem; }
+  .tile-card:hover { transform:none; }
+  .vault-view-header { align-items:flex-start !important; flex-direction:column; gap:.65rem; }
+  .wb-toolbar { width:100%; overflow-x:auto; padding-bottom:.25rem; }
+  .wb-toolbar > * { flex-shrink:0; }
+  .wb-viewport { height:calc(100dvh - 18rem); min-height:360px; }
+  .wb-node { width:170px; }
+  .row-del-btn, .col-del-btn { opacity:1; }
+  .plus-dropdown { position:fixed; top:auto; right:.65rem; bottom:1rem; left:.65rem; width:auto; }
+}
+
+@media (max-width: 420px) {
+  .vault-toolbar-actions { grid-template-columns:minmax(0, 1fr); }
+  #active-ws-title { max-width:9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="flex min-h-screen font-mono bg-black text-zinc-300">
+<div class="vault-shell flex font-mono bg-black text-zinc-300">
+
+  <button id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeSidebar()" aria-label="Закрыть боковую панель"></button>
 
   <!-- ── LEFT SIDEBAR (COLLAPSIBLE) ─────────────────────────── -->
   <aside id="sidebar" class="vault-sidebar bg-zinc-950 border-r border-zinc-800 flex flex-col py-3 relative">
@@ -81,7 +120,7 @@
 
     <div class="px-3 py-2 flex items-center justify-between border-b border-zinc-800">
       <span class="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Воркспейсы</span>
-      {% if not is_shared %}<button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
+      {% if not is_readonly %}<button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
     </div>
 
     <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
@@ -115,9 +154,9 @@
   <!-- ── MAIN WORKSPACE AREA ─────────────────────────────────── -->
   <div class="flex-1 flex flex-col min-w-0" id="main-workspace-root">
 
-    <div class="bg-zinc-950 border-b border-zinc-800 px-4 py-2 flex items-center justify-between gap-3">
+    <div class="vault-toolbar bg-zinc-950 border-b border-zinc-800 px-4 py-2 flex items-center justify-between gap-3">
 
-      <div class="flex items-center gap-3">
+      <div class="vault-toolbar-primary">
         <button onclick="toggleSidebar()" class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
 
         <div class="flex items-center gap-2 text-xs">
@@ -126,7 +165,7 @@
           <span class="text-white font-bold uppercase tracking-wider" id="active-ws-title">Все карточки</span>
         </div>
 
-        {% if not is_shared %}<div class="relative ml-2">
+        {% if not is_readonly %}<div class="relative ml-2">
           <button onclick="togglePlusDropdown(event)" class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
             <span>+</span> <span class="text-[10px] uppercase hidden sm:inline">Создать</span> ▾
           </button>
@@ -140,19 +179,19 @@
         </div>{% endif %}
       </div>
 
-      <div class="flex items-center gap-2">
-        {% if not is_shared %}<button onclick="sendToOutpost('/api/vault/sync-manifest')"
+      <div class="vault-toolbar-actions">
+        {% if not is_readonly %}<button onclick="sendToOutpost('/api/vault/sync-manifest')"
                 class="outpost-only text-[11px] text-teal-400 border border-teal-500/40 px-2 py-1 uppercase font-bold hover:bg-teal-950/40">
           Сохранить на устройство
         </button>{% endif %}
         <input type="text" id="vault-search" oninput="debounceSearch()" placeholder="Поиск..."
-               class="bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none w-44">
+               class="vault-search bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none">
 
         {% if not is_shared or share.allow_download %}<div class="relative">
           <button onclick="toggleExportMenu(event)" class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
           <div id="export-dropdown" class="hidden absolute right-0 top-7 w-28 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
             <button onclick="exportItems()" class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
-            {% if not is_shared %}<a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>{% endif %}
+            {% if not is_readonly %}<a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>{% endif %}
           </div>
         </div>{% endif %}
       </div>
@@ -161,14 +200,19 @@
     <!-- ── WORKSPACE VIEWPORTS ──────────────────────────────────── -->
     <div class="flex-1 relative overflow-y-auto p-4" id="board-viewport">
 
+      <div id="vault-status" class="vault-status">Загрузка хранилища...</div>
+
       <!-- 1. MASONRY TILES GRID -->
       <div id="view-tiles-container">
         <div id="tiles-grid"></div>
+        <div class="flex justify-center pt-4">
+          <button id="vault-load-more" onclick="loadMoreVault()" class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
+        </div>
       </div>
 
       <!-- 2. OBSIDIAN DIRECT NOTE EDITOR -->
       <div id="view-editor-container" class="hidden max-w-3xl mx-auto space-y-4 py-2">
-        <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
           <button onclick="closeEditorView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="auto-save-status">Сохранено</span>
         </div>
@@ -177,25 +221,25 @@
         <!-- Full-size Image Preview in Editor View -->
         <div id="editor-image-container" class="hidden"></div>
 
-        <input type="text" id="editor-title" {% if is_shared %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} placeholder="Заголовок (необязательно)..."
+        <input type="text" id="editor-title" {% if is_readonly %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} placeholder="Заголовок (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
-        <textarea id="editor-content" {% if is_shared %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} rows="14" placeholder="Пишите мысли здесь..."
+        <textarea id="editor-content" {% if is_readonly %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} rows="14" placeholder="Пишите мысли здесь..."
                   class="w-full bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-200 focus:outline-none focus:border-teal-400 resize-y leading-relaxed font-mono"></textarea>
       </div>
 
       <!-- 3. SPREADSHEET TABLE DOCUMENT -->
       <div id="view-sheet-container" class="hidden max-w-5xl mx-auto space-y-3 py-2">
-        <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
           <button onclick="closeSheetView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="sheet-save-status">Сохранено</span>
         </div>
         <input type="hidden" id="sheet-id">
 
-        <input type="text" id="sheet-title" {% if is_shared %}readonly{% else %}oninput="triggerSheetAutoSave()"{% endif %} placeholder="Название таблицы (необязательно)..."
+        <input type="text" id="sheet-title" {% if is_readonly %}readonly{% else %}oninput="triggerSheetAutoSave()"{% endif %} placeholder="Название таблицы (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
-        {% if not is_shared %}<div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
+        {% if not is_readonly %}<div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
           <button onclick="formatCell('bold')" class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
           <button onclick="formatCell('italic')" class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
           <button onclick="formatCell('strike')" class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
@@ -221,13 +265,13 @@
 
       <!-- 4. WHITEBOARD CANVAS -->
       <div id="view-whiteboard-container" class="hidden space-y-3 py-1">
-        <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
           <button onclick="closeWhiteboardView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
 
-          <div class="flex items-center gap-2">
+          <div class="wb-toolbar flex items-center gap-2">
             <div class="flex border border-zinc-800 p-0.5 bg-black">
               <button onclick="setWbMode('select')" id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
-              {% if not is_shared %}<button onclick="setWbMode('draw')" id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
+              {% if not is_readonly %}<button onclick="setWbMode('draw')" id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
               <button onclick="setWbMode('line')" id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
               <button onclick="setWbMode('erase')" id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>{% endif %}
             </div>
@@ -239,7 +283,7 @@
               <button onclick="changeBrushSize(2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
             </div>
 
-            {% if not is_shared %}<button onclick="clearWbCanvas()" class="tb-btn text-red-400 uppercase">Очистить все</button>
+            {% if not is_readonly %}<button onclick="clearWbCanvas()" class="tb-btn text-red-400 uppercase">Очистить все</button>
             <button onclick="addWhiteboardNode()" class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>{% endif %}
 
             <div class="flex items-center gap-1 border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
@@ -252,7 +296,7 @@
         </div>
 
         <input type="hidden" id="wb-id">
-        <input type="text" id="wb-title" {% if is_shared %}readonly{% else %}oninput="triggerWbAutoSave()"{% endif %} placeholder="Название доски (необязательно)..."
+        <input type="text" id="wb-title" {% if is_readonly %}readonly{% else %}oninput="triggerWbAutoSave()"{% endif %} placeholder="Название доски (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         <div class="wb-viewport" id="wb-viewport-el">
@@ -267,14 +311,16 @@
       <div id="vault-empty" class="hidden py-24 text-center space-y-3">
         <div class="w-10 h-10 border border-zinc-800 mx-auto flex items-center justify-center"><span class="text-zinc-700 text-xl font-mono">∅</span></div>
         <div class="text-xs font-bold text-zinc-600 uppercase tracking-widest">Пространство пусто</div>
-        <div class="text-[11px] text-zinc-700">{% if is_shared %}В этой публикации нет доступных карточек{% else %}Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера{% endif %}</div>
+        <div class="text-[11px] text-zinc-700">{% if is_shared %}В этой публикации нет доступных карточек{% elif is_readonly %}В офлайн-пакете нет доступных карточек{% else %}Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера{% endif %}</div>
       </div>
 
     </div>
   </div>
 </div>
 
-{% if not is_shared %}
+<div id="vault-toast" class="vault-toast hidden" role="status" aria-live="polite"></div>
+
+{% if not is_readonly %}
 <!-- Modal: New Workspace Name -->
 <div id="modal-workspace" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
@@ -323,10 +369,15 @@
 
 <script>
 const sharedMode = {{ is_shared|tojson }};
-const packageMode = new URLSearchParams(window.location.search).has('package_id');
+const packageId = new URLSearchParams(window.location.search).get('package_id');
+const packageMode = Boolean(packageId);
+const readOnlyMode = sharedMode || packageMode;
 let currentCollectionId = null;
 let currentItems = [];
 let packageItemsPromise = null;
+let workspaceLoadId = 0;
+let packageVisibleLimit = 200;
+let activeView = 'tiles';
 let autoSaveTimer = null;
 let sheetSaveTimer = null;
 let wbSaveTimer = null;
@@ -343,6 +394,63 @@ function escapeHtml(value) {
 function escapeAttr(value) { return escapeHtml(value); }
 
 function pathSegment(value) { return encodeURIComponent(String(value ?? '')); }
+
+function packageUrl(value) {
+  if (!packageMode) return value;
+  const url = new URL(value, window.location.origin);
+  url.searchParams.set('package_id', packageId);
+  return `${url.pathname}${url.search}`;
+}
+
+async function requestJson(url, options = {}, fallback = 'Не удалось выполнить запрос') {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    let message = fallback;
+    try {
+      const payload = await response.json();
+      message = payload.detail || payload.message || message;
+    } catch (error) {}
+    throw new Error(message);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+async function mutationJson(url, options, fallback) {
+  try {
+    return await requestJson(url, options, fallback);
+  } catch (error) {
+    showToast(error.message || fallback, true);
+    return null;
+  }
+}
+
+let toastTimer = null;
+function showToast(message, isError = false) {
+  const toast = document.getElementById('vault-toast');
+  if (!toast) return;
+  clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.classList.toggle('error', isError);
+  toast.classList.remove('hidden');
+  toastTimer = setTimeout(() => toast.classList.add('hidden'), 3200);
+}
+
+function updateCachedItem(item) {
+  if (!item) return;
+  window._vaultCache[item.id] = item;
+  const index = currentItems.findIndex(current => current.id === item.id);
+  const search = document.getElementById('vault-search')?.value.trim().toLowerCase() || '';
+  const matchesCollection = currentCollectionId === null || item.collection_id === currentCollectionId;
+  const matchesSearch = !search || [item.title, item.content, item.url, item.og_title, ...(item.tags || [])]
+    .some(value => String(value || '').toLowerCase().includes(search));
+  if (index >= 0 && matchesCollection && matchesSearch) currentItems[index] = item;
+  else if (index >= 0) currentItems.splice(index, 1);
+  else if (matchesCollection && matchesSearch) {
+    currentItems.unshift(item);
+    document.getElementById('vault-empty')?.classList.add('hidden');
+  }
+}
 
 function safeExternalUrl(value) {
   if (!value) return '';
@@ -374,7 +482,21 @@ let activeWbStrokes = [];
 let currentStroke = null;
 let wbCtx = null;
 
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function closeSidebar() {
+  document.getElementById('sidebar')?.classList.remove('is-open');
+  document.getElementById('sidebar-backdrop')?.classList.remove('is-open');
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (window.matchMedia('(max-width: 767px)').matches) {
+    const willOpen = !sidebar.classList.contains('is-open');
+    sidebar.classList.toggle('is-open', willOpen);
+    document.getElementById('sidebar-backdrop')?.classList.toggle('is-open', willOpen);
+    return;
+  }
+  sidebar.classList.toggle('collapsed');
+}
 function togglePlusDropdown(e) { e.stopPropagation(); document.getElementById('plus-dropdown')?.classList.toggle('show'); }
 function toggleExportMenu(e) { e.stopPropagation(); document.getElementById('export-dropdown')?.classList.toggle('hidden'); }
 
@@ -385,7 +507,7 @@ document.addEventListener('click', () => {
 
 // Tool Hotkeys
 document.addEventListener('keydown', (e) => {
-  if (sharedMode) return;
+  if (readOnlyMode) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   const key = e.key.toLowerCase();
   if (key === 'v' || key === '1') setWbMode('select');
@@ -396,7 +518,7 @@ document.addEventListener('keydown', (e) => {
 
 // ── FAST CLIPBOARD PASTE (CTRL+V) & DRAG & DROP ────────────────────────────
 document.addEventListener('paste', async (e) => {
-  if (sharedMode) return;
+  if (readOnlyMode) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
   const clipboardData = e.clipboardData || window.clipboardData;
@@ -437,7 +559,7 @@ async function processPastedText(text) {
       }
     } catch(err) {}
 
-    await fetch('/api/vault/items', {
+    const created = await mutationJson('/api/vault/items', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
@@ -448,8 +570,8 @@ async function processPastedText(text) {
         collection_id: currentCollectionId,
         auto_fetch_og: true
       })
-    });
-    loadWorkspace();
+    }, 'Не удалось сохранить ссылку');
+    if (created) { loadWorkspace(); loadVaultSummary(); }
     return;
   }
 
@@ -460,7 +582,7 @@ async function processPastedText(text) {
       const headers = lines[0].split(delim).map(h => h.trim());
       const rows = lines.slice(1).map(line => line.split(delim).map(c => c.trim()));
 
-      await fetch('/api/vault/items', {
+      const created = await mutationJson('/api/vault/items', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -470,8 +592,8 @@ async function processPastedText(text) {
           canvas_data: { headers: headers, rows: rows },
           collection_id: currentCollectionId
         })
-      });
-      loadWorkspace();
+      }, 'Не удалось создать таблицу');
+      if (created) { loadWorkspace(); loadVaultSummary(); }
       return;
     }
   }
@@ -484,7 +606,7 @@ async function processPastedText(text) {
     content = text.substring(firstLineEnd + 1).trim();
   }
 
-  await fetch('/api/vault/items', {
+  const created = await mutationJson('/api/vault/items', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -494,12 +616,12 @@ async function processPastedText(text) {
       node_type: 'note',
       collection_id: currentCollectionId
     })
-  });
-  loadWorkspace();
+  }, 'Не удалось создать заметку');
+  if (created) { loadWorkspace(); loadVaultSummary(); }
 }
 
 async function createNoteWithImage(base64Img) {
-  await fetch('/api/vault/items', {
+  const created = await mutationJson('/api/vault/items', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -509,8 +631,8 @@ async function createNoteWithImage(base64Img) {
       node_type: 'note',
       collection_id: currentCollectionId
     })
-  });
-  loadWorkspace();
+  }, 'Не удалось сохранить изображение');
+  if (created) { loadWorkspace(); loadVaultSummary(); }
 }
 
 // Attach Drag & Drop to Main Workspace Area
@@ -521,7 +643,7 @@ document.addEventListener('DOMContentLoaded', () => {
   root.addEventListener('dragover', (e) => { e.preventDefault(); root.classList.add('drag-over-active'); });
   root.addEventListener('dragleave', () => { root.classList.remove('drag-over-active'); });
   root.addEventListener('drop', async (e) => {
-    if (sharedMode) return;
+    if (readOnlyMode) return;
     e.preventDefault();
     root.classList.remove('drag-over-active');
 
@@ -556,12 +678,12 @@ function closeWorkspaceModal() { document.getElementById('modal-workspace').clas
 async function submitWorkspace() {
   const name = document.getElementById('ws-name-input').value.trim();
   if (!name) return;
-  const resp = await fetch('/api/vault/collections', {
+  const created = await mutationJson('/api/vault/collections', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ name: name })
-  });
-  if (resp.ok) { closeWorkspaceModal(); window.location.reload(); }
+  }, 'Не удалось создать воркспейс');
+  if (created) { closeWorkspaceModal(); window.location.reload(); }
 }
 
 function openLinkModal() {
@@ -600,14 +722,15 @@ async function submitLink() {
     auto_fetch_og: true
   };
 
-  const resp = await fetch('/api/vault/items', {
+  const created = await mutationJson('/api/vault/items', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
-  });
-  if (resp.ok) {
+  }, 'Не удалось сохранить ссылку');
+  if (created) {
     closeLinkModal();
     loadWorkspace();
+    loadVaultSummary();
   }
 }
 
@@ -622,14 +745,14 @@ async function instantCreate(type) {
       canvas_data: { headers: ['Колонка 1', 'Колонка 2', 'Колонка 3', 'Колонка 4'], rows: [['','','',''],['','','',''],['','','',''],['','','','']] },
       collection_id: currentCollectionId
     };
-    const resp = await fetch('/api/vault/items', {
+    const created = await mutationJson('/api/vault/items', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
-    });
-    if (resp.ok) {
-      const created = await resp.json();
-      loadWorkspace();
+    }, 'Не удалось создать таблицу');
+    if (created) {
+      updateCachedItem(created);
+      loadVaultSummary();
       openSheetView(created);
     }
     return;
@@ -643,14 +766,14 @@ async function instantCreate(type) {
       canvas_data: { nodes: [{ x: 80, y: 80, text: 'Новая карточка' }], strokes: [] },
       collection_id: currentCollectionId
     };
-    const resp = await fetch('/api/vault/items', {
+    const created = await mutationJson('/api/vault/items', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
-    });
-    if (resp.ok) {
-      const created = await resp.json();
-      loadWorkspace();
+    }, 'Не удалось создать доску');
+    if (created) {
+      updateCachedItem(created);
+      loadVaultSummary();
       openWhiteboardView(created);
     }
     return;
@@ -663,19 +786,21 @@ async function instantCreate(type) {
     collection_id: currentCollectionId
   };
 
-  const resp = await fetch('/api/vault/items', {
+  const created = await mutationJson('/api/vault/items', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
-  });
-  if (resp.ok) {
-    const created = await resp.json();
-    loadWorkspace();
+  }, 'Не удалось создать заметку');
+  if (created) {
+    updateCachedItem(created);
+    loadVaultSummary();
     openEditorView(created);
   }
 }
 
 function openEditorView(item) {
+  activeView = 'editor';
+  document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('editor-id').value = item.id;
   document.getElementById('editor-title').value = item.title || '';
   document.getElementById('editor-content').value = item.content || '';
@@ -703,37 +828,46 @@ function openEditorView(item) {
   document.getElementById('view-editor-container').classList.remove('hidden');
 }
 
-function closeEditorView() {
-  saveCurrentEditorData();
+async function closeEditorView() {
+  if (activeView !== 'editor') return;
+  clearTimeout(autoSaveTimer);
+  const savePromise = saveCurrentEditorData();
   document.getElementById('view-editor-container').classList.add('hidden');
   document.getElementById('view-tiles-container').classList.remove('hidden');
+  activeView = 'tiles';
+  renderTiles(currentItems);
+  return savePromise;
 }
 
 function triggerAutoSave() {
   document.getElementById('auto-save-status').innerText = 'Сохранение...';
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(async () => {
-    await saveCurrentEditorData();
-    document.getElementById('auto-save-status').innerText = 'Сохранено';
-  }, 350);
+    const saved = await saveCurrentEditorData();
+    document.getElementById('auto-save-status').innerText = saved ? 'Сохранено' : 'Ошибка сохранения';
+  }, 600);
 }
 
 async function saveCurrentEditorData() {
-  if (sharedMode) return;
+  if (readOnlyMode) return true;
   const id = document.getElementById('editor-id').value;
   const title = document.getElementById('editor-title').value.trim();
   const content = document.getElementById('editor-content').value.trim();
-  if (!id) return;
+  if (!id) return true;
+  updateCachedItem({...window._vaultCache[id], title, content});
 
-  await fetch(`/api/vault/items/${pathSegment(id)}`, {
+  const updated = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, content })
-  });
-  loadWorkspace();
+  }, 'Не удалось сохранить заметку');
+  updateCachedItem(updated);
+  return Boolean(updated);
 }
 
 function openSheetView(item) {
+  activeView = 'sheet';
+  document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('sheet-id').value = item.id;
   document.getElementById('sheet-title').value = item.title || '';
 
@@ -750,10 +884,15 @@ function openSheetView(item) {
   document.getElementById('view-sheet-container').classList.remove('hidden');
 }
 
-function closeSheetView() {
-  saveCurrentSheetData();
+async function closeSheetView() {
+  if (activeView !== 'sheet') return;
+  clearTimeout(sheetSaveTimer);
+  const savePromise = saveCurrentSheetData();
   document.getElementById('view-sheet-container').classList.add('hidden');
   document.getElementById('view-tiles-container').classList.remove('hidden');
+  activeView = 'tiles';
+  renderTiles(currentItems);
+  return savePromise;
 }
 
 function renderSheetCanvas() {
@@ -763,8 +902,8 @@ function renderSheetCanvas() {
   activeSheetData.headers.forEach((h, colIdx) => {
     html += `<th class="sheet-header">
       <div class="flex items-center justify-between px-1">
-        <input type="text" value="${escapeAttr(h)}" ${sharedMode ? 'readonly' : `onchange="updateHeader(${colIdx}, this.value)"`} class="cell-edit font-bold text-teal-400">
-        ${sharedMode ? '' : `<button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
+        <input type="text" value="${escapeAttr(h)}" ${readOnlyMode ? 'readonly' : `onchange="updateHeader(${colIdx}, this.value)"`} class="cell-edit font-bold text-teal-400">
+        ${readOnlyMode ? '' : `<button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
       </div>
     </th>`;
   });
@@ -775,11 +914,11 @@ function renderSheetCanvas() {
       <td class="text-center text-zinc-600 font-bold text-[9px] bg-zinc-950">
         <div class="flex items-center justify-between px-1">
           <span>${rowIdx + 1}</span>
-          ${sharedMode ? '' : `<button onclick="deleteRow(${rowIdx})" class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
+          ${readOnlyMode ? '' : `<button onclick="deleteRow(${rowIdx})" class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
         </div>
       </td>`;
     row.forEach((cell, colIdx) => {
-      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${sharedMode ? 'readonly' : `onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)"`} class="cell-edit"></td>`;
+      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${readOnlyMode ? 'readonly' : `onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)"`} class="cell-edit"></td>`;
     });
     html += '</tr>';
   });
@@ -880,27 +1019,31 @@ function triggerSheetAutoSave() {
   document.getElementById('sheet-save-status').innerText = 'Сохранение...';
   clearTimeout(sheetSaveTimer);
   sheetSaveTimer = setTimeout(async () => {
-    await saveCurrentSheetData();
-    document.getElementById('sheet-save-status').innerText = 'Сохранено';
-  }, 350);
+    const saved = await saveCurrentSheetData();
+    document.getElementById('sheet-save-status').innerText = saved ? 'Сохранено' : 'Ошибка сохранения';
+  }, 600);
 }
 
 async function saveCurrentSheetData() {
-  if (sharedMode) return;
+  if (readOnlyMode) return true;
   const id = document.getElementById('sheet-id').value;
   const title = document.getElementById('sheet-title').value.trim();
-  if (!id) return;
+  if (!id) return true;
+  updateCachedItem({...window._vaultCache[id], title, canvas_data: activeSheetData});
 
-  await fetch(`/api/vault/items/${pathSegment(id)}`, {
+  const updated = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, canvas_data: activeSheetData })
-  });
-  loadWorkspace();
+  }, 'Не удалось сохранить таблицу');
+  updateCachedItem(updated);
+  return Boolean(updated);
 }
 
 // ── WHITEBOARD VIEW ────────────────────────────────────────────────────────
 function openWhiteboardView(item) {
+  activeView = 'whiteboard';
+  document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('wb-id').value = item.id;
   document.getElementById('wb-title').value = item.title || '';
 
@@ -915,10 +1058,15 @@ function openWhiteboardView(item) {
   initWbCanvas();
 }
 
-function closeWhiteboardView() {
-  saveCurrentWbData();
+async function closeWhiteboardView() {
+  if (activeView !== 'whiteboard') return;
+  clearTimeout(wbSaveTimer);
+  const savePromise = saveCurrentWbData();
   document.getElementById('view-whiteboard-container').classList.add('hidden');
   document.getElementById('view-tiles-container').classList.remove('hidden');
+  activeView = 'tiles';
+  renderTiles(currentItems);
+  return savePromise;
 }
 
 function setWbMode(mode) {
@@ -958,34 +1106,42 @@ function renderWhiteboardNodes() {
     const x = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
     const y = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
     return `
-    <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" ${sharedMode ? '' : `onmousedown="handleWbNodeMouseDown(event, ${idx})"`}>
+    <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" ${readOnlyMode ? '' : `onpointerdown="handleWbNodePointerDown(event, ${idx})"`}>
       <div class="flex justify-between items-center pb-1 mb-1 border-b border-zinc-800">
         <span class="text-[9px] text-zinc-500 font-bold">CARD #${idx + 1}</span>
-        ${sharedMode ? '' : `<button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
+        ${readOnlyMode ? '' : `<button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
       </div>
-      <textarea ${sharedMode ? 'readonly' : `oninput="updateWbNodeText(${idx}, this.value)"`} class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
+      <textarea ${readOnlyMode ? 'readonly' : `oninput="updateWbNodeText(${idx}, this.value)"`} class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
     </div>
   `;
   }).join('');
 }
 
-function handleWbNodeMouseDown(e, idx) {
+function screenToWbPoint(e) {
+  const rect = document.getElementById('wb-canvas-layer').getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) / wbZoom,
+    y: (e.clientY - rect.top) / wbZoom
+  };
+}
+
+function handleWbNodePointerDown(e, idx) {
   if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+  if (!e.isPrimary) return;
+  e.preventDefault();
 
   if (wbMode === 'line') {
     e.stopPropagation();
-    const canvas = document.getElementById('wb-canvas-layer');
-    const rect = canvas.getBoundingClientRect();
-    const startX = (e.clientX - rect.left) / wbZoom;
-    const startY = (e.clientY - rect.top) / wbZoom;
+    const start = screenToWbPoint(e);
 
     isDrawingArrow = true;
-    currentStroke = { type: 'arrow', size: parseInt(document.getElementById('wb-brush-val').value || '4'), fromX: startX, fromY: startY, toX: startX, toY: startY };
+    currentStroke = { type: 'arrow', size: parseInt(document.getElementById('wb-brush-val').value || '4'), fromX: start.x, fromY: start.y, toX: start.x, toY: start.y };
 
     function onArrowMove(ev) {
       if (!isDrawingArrow) return;
-      currentStroke.toX = (ev.clientX - rect.left) / wbZoom;
-      currentStroke.toY = (ev.clientY - rect.top) / wbZoom;
+      const point = screenToWbPoint(ev);
+      currentStroke.toX = point.x;
+      currentStroke.toY = point.y;
       redrawAllStrokes();
       renderSingleStroke(currentStroke);
     }
@@ -998,12 +1154,14 @@ function handleWbNodeMouseDown(e, idx) {
         redrawAllStrokes();
         triggerWbAutoSave();
       }
-      document.removeEventListener('mousemove', onArrowMove);
-      document.removeEventListener('mouseup', onArrowUp);
+      document.removeEventListener('pointermove', onArrowMove);
+      document.removeEventListener('pointerup', onArrowUp);
+      document.removeEventListener('pointercancel', onArrowUp);
     }
 
-    document.addEventListener('mousemove', onArrowMove);
-    document.addEventListener('mouseup', onArrowUp);
+    document.addEventListener('pointermove', onArrowMove);
+    document.addEventListener('pointerup', onArrowUp);
+    document.addEventListener('pointercancel', onArrowUp);
     return;
   }
 
@@ -1013,26 +1171,30 @@ function handleWbNodeMouseDown(e, idx) {
 function dragWbNode(e, idx) {
   if (wbMode !== 'select') return;
   const el = document.getElementById('wb-node-' + idx);
-  let startX = e.clientX / wbZoom - el.offsetLeft;
-  let startY = e.clientY / wbZoom - el.offsetTop;
+  const startClientX = e.clientX;
+  const startClientY = e.clientY;
+  const startX = Number(activeWbNodes[idx]?.x) || 0;
+  const startY = Number(activeWbNodes[idx]?.y) || 0;
 
-  function onMouseMove(ev) {
+  function onPointerMove(ev) {
     if (activeWbNodes[idx]) {
-      activeWbNodes[idx].x = Math.max(0, ev.clientX / wbZoom - startX);
-      activeWbNodes[idx].y = Math.max(0, ev.clientY / wbZoom - startY);
+      activeWbNodes[idx].x = Math.max(0, startX + (ev.clientX - startClientX) / wbZoom);
+      activeWbNodes[idx].y = Math.max(0, startY + (ev.clientY - startClientY) / wbZoom);
       el.style.left = activeWbNodes[idx].x + 'px';
       el.style.top = activeWbNodes[idx].y + 'px';
     }
   }
 
-  function onMouseUp() {
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
+  function onPointerUp() {
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+    document.removeEventListener('pointercancel', onPointerUp);
     triggerWbAutoSave();
   }
 
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', onMouseUp);
+  document.addEventListener('pointermove', onPointerMove);
+  document.addEventListener('pointerup', onPointerUp);
+  document.addEventListener('pointercancel', onPointerUp);
 }
 
 function addWhiteboardNode() {
@@ -1140,14 +1302,14 @@ function applyWbTransform() {
 
 function attachWbEventListeners() {
   const viewport = document.getElementById('wb-viewport-el');
-  const canvas = document.getElementById('wb-canvas-layer');
 
-  viewport.onmousedown = (e) => {
+  viewport.onpointerdown = (e) => {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.closest('.wb-node')) return;
+    if (!e.isPrimary) return;
+    e.preventDefault();
+    viewport.setPointerCapture?.(e.pointerId);
 
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / wbZoom;
-    const y = (e.clientY - rect.top) / wbZoom;
+    const {x, y} = screenToWbPoint(e);
 
     if (wbMode === 'select') {
       isPanning = true;
@@ -1166,10 +1328,9 @@ function attachWbEventListeners() {
     }
   };
 
-  viewport.onmousemove = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / wbZoom;
-    const y = (e.clientY - rect.top) / wbZoom;
+  viewport.onpointermove = (e) => {
+    if (!e.isPrimary) return;
+    const {x, y} = screenToWbPoint(e);
 
     if (isPanning) {
       wbPanX = e.clientX - panStartX;
@@ -1197,7 +1358,7 @@ function attachWbEventListeners() {
     }
   };
 
-  viewport.onmouseup = () => {
+  const finishPointerAction = (e) => {
     if (isDrawing || isDrawingArrow) {
       if (currentStroke) {
         activeWbStrokes.push(currentStroke);
@@ -1209,7 +1370,10 @@ function attachWbEventListeners() {
       triggerWbAutoSave();
     }
     isPanning = false;
+    if (e && viewport.hasPointerCapture?.(e.pointerId)) viewport.releasePointerCapture(e.pointerId);
   };
+  viewport.onpointerup = finishPointerAction;
+  viewport.onpointercancel = finishPointerAction;
 
   viewport.onwheel = (e) => {
     e.preventDefault();
@@ -1302,54 +1466,56 @@ function generateWbCroppedPreview() {
 }
 
 async function saveCurrentWbData() {
-  if (sharedMode) return;
+  if (readOnlyMode) return true;
   const id = document.getElementById('wb-id').value;
   const title = document.getElementById('wb-title').value.trim();
-  if (!id) return;
+  if (!id) return true;
 
   const previewData = generateWbCroppedPreview();
-  await fetch(`/api/vault/items/${pathSegment(id)}`, {
+  const canvasData = { nodes: activeWbNodes, strokes: activeWbStrokes, drawing: previewData };
+  updateCachedItem({...window._vaultCache[id], title, canvas_data: canvasData});
+  const updated = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {
     method: 'PATCH',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ title, canvas_data: { nodes: activeWbNodes, strokes: activeWbStrokes, drawing: previewData } })
-  });
-  loadWorkspace();
+    body: JSON.stringify({ title, canvas_data: canvasData })
+  }, 'Не удалось сохранить доску');
+  updateCachedItem(updated);
+  return Boolean(updated);
 }
 
-function selectWorkspace(id, name) {
+async function closeActiveView() {
+  if (activeView === 'editor') return closeEditorView();
+  if (activeView === 'sheet') return closeSheetView();
+  if (activeView === 'whiteboard') return closeWhiteboardView();
+}
+
+async function selectWorkspace(id, name) {
+  closeActiveView();
   currentCollectionId = id;
   document.querySelectorAll('.ws-item').forEach(el => el.classList.remove('active'));
   const target = id ? document.getElementById('ws-item-' + id) : document.getElementById('ws-item-all');
   if (target) target.classList.add('active');
 
   document.getElementById('active-ws-title').innerText = name;
-  closeEditorView();
-  closeSheetView();
-  closeWhiteboardView();
+  closeSidebar();
   loadWorkspace();
 }
 
-async function loadSharedSummary() {
-  if (!sharedMode) return;
+async function loadVaultSummary() {
   try {
-    const [statsResp, collectionsResp] = await Promise.all([
-      fetch('/api/vault/stats'),
-      fetch('/api/vault/collections')
+    const [vaultStats, vaultCollections] = await Promise.all([
+      requestJson(packageUrl('/api/vault/stats'), {}, 'Не удалось загрузить статистику Vault'),
+      requestJson(packageUrl('/api/vault/collections'), {}, 'Не удалось загрузить воркспейсы')
     ]);
-    if (!statsResp.ok || !collectionsResp.ok) throw new Error('Could not load shared Vault summary');
-    const [sharedStats, sharedCollections] = await Promise.all([
-      statsResp.json(),
-      collectionsResp.json()
-    ]);
-    document.getElementById('ws-count-all').textContent = sharedStats.total_items;
-    document.getElementById('stat-total').textContent = sharedStats.total_items;
-    document.getElementById('stat-score').textContent = sharedStats.avg_score;
+    document.getElementById('ws-count-all').textContent = vaultStats.total_items;
+    document.getElementById('stat-total').textContent = vaultStats.total_items;
+    document.getElementById('stat-score').textContent = vaultStats.avg_score;
 
     const root = document.getElementById('vault-collections');
-    root.replaceChildren(...sharedCollections.map(collection => {
+    root.replaceChildren(...vaultCollections.map(collection => {
       const item = document.createElement('div');
       item.id = `ws-item-${collection.id}`;
-      item.className = 'ws-item';
+      item.className = collection.id === currentCollectionId ? 'ws-item active' : 'ws-item';
       item.addEventListener('click', () => selectWorkspace(collection.id, collection.name));
 
       const label = document.createElement('div');
@@ -1370,45 +1536,93 @@ async function loadSharedSummary() {
     }));
   } catch (error) {
     console.error(error);
+    if (!packageMode) showToast(error.message || 'Не удалось обновить статистику', true);
   }
 }
 
-async function loadWorkspace() {
+async function loadWorkspace({append = false} = {}) {
+  const loadId = ++workspaceLoadId;
   const search = document.getElementById('vault-search').value.trim();
-  let url = `/api/vault/items?limit=200&is_archived=false`;
-  if (!packageMode && currentCollectionId) url += `&collection_id=${currentCollectionId}`;
-  if (!packageMode && search) url += `&q=${encodeURIComponent(search)}`;
+  const status = document.getElementById('vault-status');
+  const loadMore = document.getElementById('vault-load-more');
+  if (append) {
+    loadMore.disabled = true;
+    loadMore.textContent = 'Загрузка...';
+  } else {
+    loadMore.classList.add('hidden');
+    loadMore.dataset.mode = 'more';
+    status.textContent = 'Загрузка хранилища...';
+    status.classList.toggle('hidden', activeView !== 'tiles');
+    document.getElementById('vault-empty').classList.add('hidden');
+    packageVisibleLimit = 200;
+  }
 
   try {
+    let loadedItems;
+    let hasMore = false;
     if (packageMode) {
       packageItemsPromise ||= (async () => {
         const items = [];
         for (let offset = 0; ; offset += 500) {
-          const resp = await fetch(`/api/vault/items?limit=500&offset=${offset}&is_archived=false`);
-          if (!resp.ok) throw new Error('Could not load offline Vault package');
-          const page = await resp.json();
+          const page = await requestJson(
+            packageUrl(`/api/vault/items?limit=500&offset=${offset}&is_archived=false`),
+            {},
+            'Не удалось открыть офлайн-пакет Vault'
+          );
           items.push(...page);
           if (page.length < 500) return items;
         }
       })();
       const packagedItems = await packageItemsPromise;
       const normalizedSearch = search.toLowerCase();
-      currentItems = packagedItems.filter(item => {
+      const filteredItems = packagedItems.filter(item => {
         if (currentCollectionId && item.collection_id !== currentCollectionId) return false;
         if (!normalizedSearch) return true;
         return [item.title, item.content, item.url, item.og_title, ...(item.tags || [])]
           .some(value => String(value || '').toLowerCase().includes(normalizedSearch));
       });
+      if (append) packageVisibleLimit += 200;
+      loadedItems = filteredItems.slice(0, packageVisibleLimit);
+      hasMore = filteredItems.length > loadedItems.length;
     } else {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('Could not load Vault workspace');
-      currentItems = await resp.json();
+      const offset = append ? currentItems.length : 0;
+      let url = `/api/vault/items?limit=201&offset=${offset}&is_archived=false`;
+      if (currentCollectionId) url += `&collection_id=${currentCollectionId}`;
+      if (search) url += `&q=${encodeURIComponent(search)}`;
+      const page = await requestJson(url, {}, 'Не удалось загрузить Vault');
+      hasMore = page.length > 200;
+      const visiblePage = page.slice(0, 200);
+      loadedItems = append ? [...currentItems, ...visiblePage] : visiblePage;
     }
+    if (loadId !== workspaceLoadId) return;
+    currentItems = loadedItems;
     currentItems.forEach(i => window._vaultCache[i.id] = i);
 
+    status.classList.add('hidden');
+    loadMore.classList.toggle('hidden', !hasMore);
+    loadMore.disabled = false;
+    loadMore.textContent = 'Показать ещё';
+    loadMore.dataset.mode = 'more';
     document.getElementById('vault-empty').classList.toggle('hidden', currentItems.length > 0);
     renderTiles(currentItems);
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    if (loadId !== workspaceLoadId) return;
+    console.error(e);
+    const message = e.message || 'Не удалось загрузить Vault';
+    loadMore.disabled = false;
+    loadMore.textContent = 'Повторить';
+    if (!append) {
+      status.textContent = message;
+      loadMore.dataset.mode = 'retry';
+      loadMore.classList.remove('hidden');
+    }
+    showToast(message, true);
+  }
+}
+
+function loadMoreVault() {
+  const retry = document.getElementById('vault-load-more').dataset.mode === 'retry';
+  loadWorkspace({append: !retry});
 }
 
 // ── TETRIS MASONRY RESIZING ──────────────────────────────────────────────────
@@ -1431,6 +1645,7 @@ window.addEventListener('resize', resizeAllGridItems);
 // ── MASONRY TILE RENDERING (UNCROPPED IMAGES & FULL PREVIEWS) ────────────────
 function renderTiles(items) {
   const grid = document.getElementById('tiles-grid');
+  document.getElementById('vault-empty').classList.toggle('hidden', items.length > 0 || activeView !== 'tiles');
 
   const sortedItems = [...items].sort((a, b) => {
     if (a.is_pinned !== b.is_pinned) return b.is_pinned ? 1 : -1;
@@ -1457,12 +1672,12 @@ function renderTiles(items) {
       const origHeaders = item.canvas_data.headers;
       const origRows = item.canvas_data.rows || [];
 
-      const nonArrRows = origRows.filter(r => r.some(c => c && c.trim() !== ''));
+      const nonArrRows = origRows.filter(r => r.some(c => String(c || '').trim() !== ''));
 
       const validColIndices = [];
       origHeaders.forEach((h, colIdx) => {
-        const hasHeader = h && !h.startsWith('Колонка ');
-        const hasCellData = origRows.some(r => r[colIdx] && r[colIdx].trim() !== '');
+        const hasHeader = h && !String(h).startsWith('Колонка ');
+        const hasCellData = origRows.some(r => String(r[colIdx] || '').trim() !== '');
         if (hasHeader || hasCellData || colIdx === 0) validColIndices.push(colIdx);
       });
 
@@ -1512,7 +1727,7 @@ function renderTiles(items) {
 
         <div class="flex items-center justify-between text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 mt-1">
           <div class="flex items-center gap-2">
-            ${sharedMode ? `<span class="text-xs ${item.is_pinned ? 'text-teal-400' : 'text-zinc-600'}">${item.is_pinned ? '★' : '☆'}</span>` : `<button onclick="togglePin(${itemId})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
+            ${readOnlyMode ? `<span class="text-xs ${item.is_pinned ? 'text-teal-400' : 'text-zinc-600'}">${item.is_pinned ? '★' : '☆'}</span>` : `<button onclick="togglePin(${itemId})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
               ${item.is_pinned ? '★' : '☆'}
             </button>`}
             <span>${new Date(item.created_at).toLocaleDateString('ru-RU')}</span>
@@ -1520,7 +1735,7 @@ function renderTiles(items) {
 
           <div class="flex gap-2 font-bold">
             <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
-            ${sharedMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase">✕</button>`}
+            ${readOnlyMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase">✕</button>`}
           </div>
         </div>
       </div>
@@ -1541,21 +1756,37 @@ function renderTiles(items) {
   });
 }
 
-async function togglePin(id) { await fetch(`/api/vault/items/${pathSegment(id)}/pin`, {method:'POST'}); loadWorkspace(); }
-async function deleteItem(id) { if (!confirm('Удалить?')) return; await fetch(`/api/vault/items/${pathSegment(id)}`, {method:'DELETE'}); loadWorkspace(); }
+async function togglePin(id) {
+  const updated = await mutationJson(`/api/vault/items/${pathSegment(id)}/pin`, {method:'POST'}, 'Не удалось изменить закрепление');
+  if (updated) loadWorkspace();
+}
+async function deleteItem(id) {
+  if (!confirm('Удалить?')) return;
+  const deleted = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {method:'DELETE'}, 'Не удалось удалить карточку');
+  if (deleted) { loadWorkspace(); loadVaultSummary(); }
+}
 
 async function exportItems() {
-  let items;
-  if (packageMode) {
-    if (!packageItemsPromise) await loadWorkspace();
-    items = await packageItemsPromise;
-  } else {
-    const resp = await fetch('/api/vault/items?limit=500&is_archived=false');
-    items = await resp.json();
+  try {
+    let items;
+    if (packageMode) {
+      if (!packageItemsPromise) await loadWorkspace();
+      items = await packageItemsPromise;
+    } else {
+      items = [];
+      for (let offset = 0; ; offset += 500) {
+        const page = await requestJson(`/api/vault/items?limit=500&offset=${offset}&is_archived=false`, {}, 'Не удалось экспортировать Vault');
+        items.push(...page);
+        if (page.length < 500) break;
+      }
+    }
+    const blob = new Blob([JSON.stringify(items, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `vault-export.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch (error) {
+    showToast(error.message || 'Не удалось экспортировать Vault', true);
   }
-  const blob = new Blob([JSON.stringify(items, null, 2)], {type: 'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `vault-export.json`; a.click();
 }
 
 function debounceSearch() {
@@ -1625,7 +1856,7 @@ function handleSheetPaste(e) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  loadSharedSummary();
+  loadVaultSummary();
   loadWorkspace();
   const sheetCanvas = document.getElementById('sheet-canvas');
   if (sheetCanvas) {

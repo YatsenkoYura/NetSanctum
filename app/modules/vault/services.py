@@ -5,7 +5,7 @@ import re
 from typing import Any
 from urllib.parse import urljoin
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.modules import module_registry
@@ -18,6 +18,12 @@ from app.modules.vault.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def vault_tag_filter(tag: str):
+    """Build a case-insensitive exact match against a PostgreSQL JSON tag array."""
+    tag_values = func.json_array_elements_text(VaultItem.tags).table_valued("value").alias("vault_tag")
+    return exists(select(1).select_from(tag_values).where(func.lower(tag_values.c.value) == tag.lower()))
 
 
 async def _is_public_http_url(url: str) -> bool:
@@ -246,6 +252,9 @@ async def list_vault_items(
             | (VaultItem.og_title.ilike(query_str))
         )
 
+    if tag:
+        stmt = stmt.where(vault_tag_filter(tag))
+
     # Sorting
     if sort_by == "score":
         order_col = VaultItem.score.desc() if sort_order == "desc" else VaultItem.score.asc()
@@ -257,17 +266,10 @@ async def list_vault_items(
         # Default: Pinned items first, then created_at desc
         order_col = VaultItem.created_at.desc() if sort_order == "desc" else VaultItem.created_at.asc()
 
-    stmt = stmt.order_by(VaultItem.is_pinned.desc(), order_col).offset(offset).limit(limit)
+    stmt = stmt.order_by(VaultItem.is_pinned.desc(), order_col)
 
-    res = await session.execute(stmt)
-    items = list(res.scalars().all())
-
-    # If tag filtering is specified in python (JSON array check)
-    if tag:
-        tag_lower = tag.lower()
-        items = [it for it in items if it.tags and any(t.lower() == tag_lower for t in it.tags)]
-
-    return items
+    res = await session.execute(stmt.offset(offset).limit(limit))
+    return list(res.scalars().all())
 
 
 async def get_vault_stats(session: AsyncSession) -> dict[str, Any]:
@@ -340,9 +342,21 @@ async def create_collection(session: AsyncSession, coll_in: VaultCollectionCreat
 
 async def list_collections(session: AsyncSession) -> list[VaultCollection]:
     """List all collections with items count."""
-    stmt = select(VaultCollection).order_by(VaultCollection.name.asc())
+    stmt = (
+        select(VaultCollection, func.count(VaultItem.id))
+        .outerjoin(
+            VaultItem,
+            (VaultItem.collection_id == VaultCollection.id) & (VaultItem.is_archived.is_(False)),
+        )
+        .group_by(VaultCollection.id)
+        .order_by(VaultCollection.name.asc())
+    )
     res = await session.execute(stmt)
-    return list(res.scalars().all())
+    collections = []
+    for collection, items_count in res.all():
+        collection.items_count = items_count
+        collections.append(collection)
+    return collections
 
 
 async def delete_collection(session: AsyncSession, coll_id: int) -> None:
