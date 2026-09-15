@@ -42,11 +42,10 @@
              onclick="switchMusicTab('playlist-detail')">
 
             <div class="aspect-square w-full bg-zinc-950 border border-zinc-800 overflow-hidden relative transition-all rounded-none">
-                {% for cover_url in playlist.cover_urls[:4] %}
-                    <img src="{{ cover_url }}" alt="" class="absolute inset-0 h-full w-full object-cover opacity-55 blur-[1px] transition-transform duration-300 {% if loop.index0 == 1 %}translate-x-4 -translate-y-3 scale-110{% elif loop.index0 == 2 %}-translate-x-4 translate-y-3 scale-110{% elif loop.index0 == 3 %}translate-x-2 translate-y-4 scale-110{% endif %}">
-                {% endfor %}
-                {% if not playlist.cover_urls %}<div class="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-teal-950/40"></div>{% endif %}
-                <div class="absolute inset-0 bg-black/35 group-hover:bg-black/15 transition-colors"></div>
+                {% if playlist.cover_urls %}<div class="grid h-full w-full grid-cols-3 grid-rows-3 gap-px bg-black">
+                    {% for cover_url in playlist.cover_urls * 9 %}{% if loop.index <= 9 %}<img src="{{ cover_url }}" alt="" class="h-full w-full scale-110 object-cover opacity-65 blur-[1px]">{% endif %}{% endfor %}
+                </div>{% else %}<div class="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-teal-950/40"></div>{% endif %}
+                <div class="absolute inset-0 bg-black/45 group-hover:bg-black/20 transition-colors"></div>
 
                 <!-- Play Overlay Hover -->
                 <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">

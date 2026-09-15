@@ -768,7 +768,7 @@ async def list_playlists(
     )
     covers: dict[int, list[str]] = {}
     for playlist_id, video_id in cover_result.all():
-        if len(covers.setdefault(playlist_id, [])) < 4:
+        if len(covers.setdefault(playlist_id, [])) < 21:
             covers[playlist_id].append(
                 f"/api/video-archiver/videos/{urllib.parse.quote(video_id, safe='')}/thumbnail"
             )

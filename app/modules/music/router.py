@@ -99,7 +99,7 @@ async def api_list_playlists(
                     f"/music/cover/{ps.song.id}"
                     for ps in p.playlist_songs
                     if ps.song and ps.song.cover_file_id
-                ][:4],
+                ][:9],
                 "cover_song_id": p.cover_song_id,
                 "songs": [ps.song_id for ps in p.playlist_songs] if p.playlist_songs else [],
             }

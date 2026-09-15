@@ -1923,11 +1923,11 @@
             }
 
             container.innerHTML = playlists.map(p => {
-                const covers = (p.cover_urls || []).map((url, index) => `<img src="${escapeAttr(url)}" class="absolute inset-0 h-full w-full object-cover opacity-55 blur-[1px] ${index ? 'scale-110 translate-x-3' : ''}">`).join('') || '<div class="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-teal-950/40"></div>';
+                const sourceCovers = p.cover_urls || [];
+                const covers = sourceCovers.length ? `<div class="grid h-full w-full grid-cols-7 grid-rows-3 gap-px bg-black">${Array.from({length: 21}, (_, index) => `<img src="${escapeAttr(sourceCovers[index % sourceCovers.length])}" class="h-full w-full scale-110 object-cover opacity-60 blur-[1px]">`).join('')}</div>` : '<div class="absolute inset-0 bg-gradient-to-br from-zinc-800 via-zinc-950 to-teal-950/40"></div>';
                 return `<div onclick="openPlaylistDetail(${escapedJsArg(p.id)})" class="group cursor-pointer overflow-hidden border-2 border-zinc-800 bg-zinc-950 p-3 font-mono hover:border-teal-400">
-                    <div class="relative mb-3 aspect-square overflow-hidden border border-zinc-800">${covers}<div class="absolute inset-0 bg-black/35"></div><button onclick="event.stopPropagation(); deletePlaylist(${escapedJsArg(p.id)})" class="absolute right-2 top-2 border border-zinc-700 bg-black/80 px-2 py-1 text-zinc-300 opacity-0 hover:text-red-400 group-hover:opacity-100">&times;</button></div>
-                    <h4 class="truncate text-sm font-bold uppercase text-white group-hover:text-teal-400">${escapeHtml(p.name)}</h4><p class="mt-1 text-[10px] text-zinc-500">${p.video_count} ${escapeHtml(i18n.playlist_video_count)}</p>
-                    ${p.description ? `<p class="mt-2 line-clamp-2 text-xs text-zinc-500">${escapeHtml(p.description)}</p>` : ''}
+                    <div class="relative mb-3 aspect-[7/3] overflow-hidden border border-zinc-800">${covers}<div class="absolute inset-0 bg-black/50"></div><button onclick="event.stopPropagation(); deletePlaylist(${escapedJsArg(p.id)})" class="absolute right-2 top-2 border border-zinc-700 bg-black/80 px-2 py-1 text-zinc-300 opacity-0 hover:text-red-400 group-hover:opacity-100">&times;</button><div class="absolute inset-x-0 bottom-0 p-3"><h4 class="truncate text-sm font-bold uppercase text-white group-hover:text-teal-400">${escapeHtml(p.name)}</h4><p class="mt-1 text-[10px] text-zinc-300">${p.video_count} ${escapeHtml(i18n.playlist_video_count)}</p></div></div>
+                    ${p.description ? `<p class="line-clamp-2 text-xs text-zinc-500">${escapeHtml(p.description)}</p>` : ''}
                 </div>`;
             }).join('');
         } catch (err) {
