@@ -246,6 +246,7 @@ class PlaylistService:
                         ArchivedVideo.thumbnail_path.isnot(None),
                     )
                     .order_by(ArchivedVideo.archived_at.desc())
+                    .limit(21)
                 )
             )
             .scalars()

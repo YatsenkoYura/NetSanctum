@@ -66,6 +66,7 @@ def _regenerate_playlist_cover(session, playlist_id: int) -> None:
             ArchivedVideo.thumbnail_path.isnot(None),
         )
         .order_by(ArchivedVideo.archived_at.desc())
+        .limit(21)
     ).all()
     playlist.cover_path = regenerate_playlist_cover(playlist, paths)
 

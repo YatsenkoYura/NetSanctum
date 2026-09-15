@@ -51,6 +51,7 @@ async def _regenerate_playlist_cover(db: AsyncSession, playlist: Playlist) -> No
                 .join(PlaylistSong)
                 .where(PlaylistSong.playlist_id == playlist.id, Song.cover_file_id.isnot(None))
                 .order_by(PlaylistSong.position)
+                .limit(9)
             )
         )
         .scalars()
@@ -96,6 +97,13 @@ async def api_list_playlists(
         query = query.where(Playlist.id == item_id)
     result = await db.execute(query)
     playlists = result.scalars().all()
+    generated_covers = False
+    for playlist in playlists:
+        if not playlist.cover_path:
+            await _regenerate_playlist_cover(db, playlist)
+            generated_covers = True
+    if generated_covers:
+        await db.commit()
 
     out = []
     for p in playlists:

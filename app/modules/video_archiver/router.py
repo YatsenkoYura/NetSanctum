@@ -754,6 +754,13 @@ async def list_playlists(
     playlists = await PlaylistService.list_playlists(db)
     if package_scope == "playlist":
         playlists = [playlist for playlist in playlists if playlist.id == item_id]
+    generated_covers = False
+    for playlist in playlists:
+        if not playlist.cover_path:
+            await PlaylistService._regenerate_cover(db, playlist)
+            generated_covers = True
+    if generated_covers:
+        await db.commit()
     count_result = await db.execute(
         select(
             video_playlist_association.c.playlist_id, func.count(video_playlist_association.c.video_id)

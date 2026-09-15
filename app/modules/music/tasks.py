@@ -48,6 +48,7 @@ def _regenerate_playlist_cover(session, playlist_id: int) -> None:
         .join(PlaylistSong)
         .where(PlaylistSong.playlist_id == playlist_id, Song.cover_file_id.isnot(None))
         .order_by(PlaylistSong.position)
+        .limit(9)
     ).all()
     playlist.cover_path = regenerate_playlist_cover(playlist, paths)
 
