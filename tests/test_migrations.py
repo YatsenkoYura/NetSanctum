@@ -89,6 +89,25 @@ class ModuleMigrationTests(unittest.TestCase):
         with self.assertRaises(IntegrityError), engine.begin() as connection:
             connection.execute(insert_global)
 
+    def test_tabletop_unique_columns_do_not_create_duplicate_constraints(self):
+        engine = self.make_engine()
+        registry = ModuleRegistry.discover(installed_modules={"tabletop_games"})
+
+        upgrade_database(engine, registry)
+
+        inspector = inspect(engine)
+        self.assertEqual([], inspector.get_unique_constraints("tabletop_rooms"))
+        self.assertEqual(
+            {"uq_tabletop_room_nickname"},
+            {constraint["name"] for constraint in inspector.get_unique_constraints("tabletop_participants")},
+        )
+        room_indexes = {index["name"]: index for index in inspector.get_indexes("tabletop_rooms")}
+        participant_indexes = {
+            index["name"]: index for index in inspector.get_indexes("tabletop_participants")
+        }
+        self.assertTrue(room_indexes["ix_tabletop_rooms_code"]["unique"])
+        self.assertTrue(participant_indexes["ix_tabletop_participants_token_hash"]["unique"])
+
     def test_disabled_installed_module_is_still_migrated(self):
         engine = self.make_engine()
         registry = ModuleRegistry.discover(

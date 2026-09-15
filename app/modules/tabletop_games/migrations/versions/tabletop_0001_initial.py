@@ -29,7 +29,6 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("code"),
     )
     op.create_index("ix_tabletop_rooms_code", "tabletop_rooms", ["code"], unique=True)
     op.create_index("ix_tabletop_rooms_game_id", "tabletop_rooms", ["game_id"])
@@ -51,7 +50,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["room_id"], ["tabletop_rooms.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("room_id", "nickname", name="uq_tabletop_room_nickname"),
-        sa.UniqueConstraint("token_hash"),
     )
     op.create_index("ix_tabletop_participants_room_id", "tabletop_participants", ["room_id"])
     op.create_index(
