@@ -311,13 +311,14 @@ def process_youtube_url_task(
     """Entry point for processing any supported music URL (YouTube, Spotify, SoundCloud, etc.)."""
     task_id = self.request.id
 
-    def update_redis_status(status_text: str):
+    def update_redis_status(status_text: str, state: str = "running"):
         data = {
             "task_id": task_id,
             "url": url,
             "title": "Resolving URL...",
             "status": status_text,
             "progress": "0%",
+            "state": state,
         }
         redis_client.setex(f"music_dl:{task_id}", 86400, json.dumps(data))
 
@@ -325,7 +326,7 @@ def process_youtube_url_task(
     try:
         validate_music_url(url)
     except ValueError as exc:
-        update_redis_status(str(exc))
+        update_redis_status(str(exc), "failed")
         return f"Error: {exc}"
     ydl_opts = {
         "quiet": True,
@@ -369,7 +370,7 @@ def process_youtube_url_task(
         except YtDlpPipelineError as exc:
             message = error_status(exc)
             logger.error("Spotify YouTube resolution failed: %s", message)
-            update_redis_status(message)
+            update_redis_status(message, "failed")
             return f"Error: {message}"
         except Exception as oembed_err:
             logger.warning(f"Spotify oEmbed resolution failed: {oembed_err}")
@@ -407,11 +408,11 @@ def process_youtube_url_task(
                     info_dict = entries[0]
                     url = _youtube_entry_url(info_dict)
                 except Exception as fb_err:
-                    update_redis_status(f"Could not resolve track: {error_status(fb_err)}")
+                    update_redis_status(f"Could not resolve track: {error_status(fb_err)}", "failed")
                     return f"Error: Fallback search failed ({fb_err})"
             else:
                 logger.error("Error fetching info for URL %s: %s", url, err_msg)
-                update_redis_status(err_msg)
+                update_redis_status(err_msg, "failed")
                 return f"Error: {err_msg}"
 
     if info_dict is None:
@@ -437,6 +438,7 @@ def process_youtube_url_task(
             with SyncSessionLocal() as session:
                 playlist = session.get(Playlist, playlist_id)
                 if not playlist:
+                    update_redis_status(f"Playlist {playlist_id} was not found", "failed")
                     return f"Error: Playlist {playlist_id} was not found"
                 playlist.name = playlist_title
                 playlist.description = playlist_description
@@ -534,13 +536,14 @@ def process_song_task(
     task_id = self.request.id
     display_title = "Fetching Metadata..."
 
-    def update_redis_status(status_text: str, percent: str = "0%"):
+    def update_redis_status(status_text: str, percent: str = "0%", state: str = "running"):
         data = {
             "task_id": task_id,
             "url": url,
             "title": display_title,
             "status": status_text,
             "progress": percent,
+            "state": state,
         }
         redis_client.setex(f"music_dl:{task_id}", 86400, json.dumps(data))
 
@@ -615,7 +618,7 @@ def process_song_task(
     except Exception as exc:
         message = error_status(exc)
         logger.error("Failed to download audio for %s: %s", url, message)
-        update_redis_status(message)
+        update_redis_status(message, state="failed")
         return f"Error downloading audio: {message}"
     finally:
         shutil.rmtree(download_dir, ignore_errors=True)

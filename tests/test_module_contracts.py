@@ -253,6 +253,10 @@ class ModuleManifestTests(unittest.TestCase):
         self.assertIsNotNone(spec)
         assert spec is not None
         self.assertEqual("video_ids", spec.selector_key)
+        self.assertEqual(
+            {"video", "playlist"},
+            {item.entity_type for item in spec.declared_selection_types},
+        )
         self.assertEqual("video_dashboard.html", spec.dashboard_template)
         self.assertEqual("/api/video-archiver", spec.api_prefix)
         self.assertIn("videos/{video_id}", {route.path for route in spec.routes})

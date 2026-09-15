@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from app.core.modules import ModuleRegistry
 from app.modules.alllib.share import AllLibShareProvider
-from app.modules.music.share import MusicShareProvider
+from app.modules.music.share import MusicShareProvider, _selected_songs
 from app.modules.sharing import router as sharing_router
 from app.modules.sharing.router import (
     _dispatch_shared_api,
@@ -23,6 +23,7 @@ from app.modules.sharing.router import (
 )
 from app.modules.sharing.schemas import ShareCreate
 from app.modules.sharing.service import (
+    CLEAR_SHARE_SESSIONS_SCRIPT,
     CREATE_SESSION_SCRIPT,
     MAX_SHARE_SESSIONS,
     RESERVE_PASSWORD_ATTEMPT_SCRIPT,
@@ -100,6 +101,8 @@ class ShareServiceTests(unittest.TestCase):
         self.assertIn('redis.call("ZREMRANGEBYSCORE"', CREATE_SESSION_SCRIPT)
         self.assertIn('redis.call("ZRANGE"', CREATE_SESSION_SCRIPT)
         self.assertIn('redis.call("SETEX"', CREATE_SESSION_SCRIPT)
+        self.assertIn('redis.call("EXISTS", KEYS[3])', CREATE_SESSION_SCRIPT)
+        self.assertIn('redis.call("ZRANGE", KEYS[1]', CLEAR_SHARE_SESSIONS_SCRIPT)
         self.assertEqual(32, MAX_SHARE_SESSIONS)
         self.assertIn('redis.call("INCR"', RESERVE_PASSWORD_ATTEMPT_SCRIPT)
         self.assertIn('redis.call("EXPIRE"', RESERVE_PASSWORD_ATTEMPT_SCRIPT)
@@ -212,27 +215,61 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["reserve", "bcrypt"], operations)
         delete.assert_awaited_once_with("share_attempts:share-id:127.0.0.1")
 
-    async def test_revoke_reads_sorted_session_index(self):
+    async def test_revocation_marker_blocks_racing_session_creation(self):
+        share = cast(
+            Any,
+            SimpleNamespace(
+                id="share-id",
+                expires_at=None,
+                access_count=0,
+                last_accessed_at=None,
+            ),
+        )
+        db = AsyncMock()
+        with patch.object(sharing_router.redis_client, "eval", AsyncMock(return_value=0)):
+            with self.assertRaises(HTTPException) as raised:
+                await sharing_router._establish_session(make_request(), share, db)
+
+        self.assertEqual(404, raised.exception.status_code)
+        db.commit.assert_not_awaited()
+
+    async def test_revoke_atomically_clears_indexed_sessions(self):
         share = SimpleNamespace(id="share-id", status="active", revoked_at=None)
         db = AsyncMock()
         db.get.return_value = share
-        zrange = AsyncMock(return_value=["session-a", "session-b"])
-        delete = AsyncMock()
+        evaluate = AsyncMock(return_value=2)
 
-        with (
-            patch.object(sharing_router.redis_client, "zrange", zrange),
-            patch.object(sharing_router.redis_client, "delete", delete),
-        ):
+        with patch.object(sharing_router.redis_client, "eval", evaluate):
             result = await sharing_router.revoke_share("share-id", db, SimpleNamespace())
 
         self.assertEqual({"status": "revoked", "id": "share-id"}, result)
-        zrange.assert_awaited_once_with("share_sessions:share-id", 0, -1)
-        delete.assert_has_awaits(
-            [
-                call("share_session:session-a", "share_session:session-b"),
-                call("share_sessions:share-id"),
-            ]
+        evaluate.assert_awaited_once_with(
+            CLEAR_SHARE_SESSIONS_SCRIPT,
+            2,
+            "share_sessions:share-id",
+            "share_revoked:share-id",
+            "share_session:",
         )
+
+    async def test_revoke_all_marks_active_shares_and_clears_sessions(self):
+        shares = [
+            SimpleNamespace(id="share-a", status="active", revoked_at=None),
+            SimpleNamespace(id="share-b", status="active", revoked_at=None),
+        ]
+        result_proxy = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: shares))
+        db = AsyncMock()
+        db.execute.return_value = result_proxy
+        with patch.object(
+            sharing_router,
+            "_clear_share_sessions",
+            AsyncMock(return_value=1),
+        ) as clear_sessions:
+            result = await sharing_router.revoke_all_shares(db, SimpleNamespace())
+
+        self.assertEqual({"status": "revoked", "count": 2}, result)
+        self.assertTrue(all(share.status == "revoked" for share in shares))
+        db.commit.assert_awaited_once()
+        self.assertEqual([call("share-a"), call("share-b")], clear_sessions.await_args_list)
 
 
 class ShareProviderTests(unittest.TestCase):
@@ -246,16 +283,98 @@ class ShareProviderTests(unittest.TestCase):
         self.assertIsNotNone(spec)
         assert spec is not None
         self.assertEqual("video_ids", spec.selector_key)
+        self.assertEqual(
+            {"video_ids", "playlist_ids"},
+            {item.selector_key for item in spec.declared_selection_types},
+        )
         self.assertIsNone(disabled.share_provider("video_archiver"))
 
     def test_selected_video_outside_scope_is_hidden(self):
         provider = VideoShareProvider()
         share = SimpleNamespace(selection_mode="selected", selector={"video_ids": ["allowed"]})
 
-        with self.assertRaises(HTTPException) as raised:
+        with (
+            patch.object(provider, "_selected_videos", AsyncMock(return_value=[])),
+            self.assertRaises(HTTPException) as raised,
+        ):
             asyncio.run(provider._get_allowed_video(AsyncMock(), share, "other"))
 
         self.assertEqual(404, raised.exception.status_code)
+
+    def test_music_and_video_accept_mixed_item_and_playlist_selection(self):
+        def result(values):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+
+        music_db = AsyncMock()
+        music_db.execute.side_effect = [result([3]), result([7]), result([4, 5])]
+        music = asyncio.run(
+            MusicShareProvider().selection(
+                music_db,
+                "selected",
+                {"song_ids": ["3"], "playlist_ids": ["7"]},
+            )
+        )
+        video_db = AsyncMock()
+        video_db.execute.side_effect = [result(["video-1"]), result([9]), result(["video-2"])]
+        video = asyncio.run(
+            VideoShareProvider().selection(
+                video_db,
+                "selected",
+                {"video_ids": ["video-1"], "playlist_ids": ["9"]},
+            )
+        )
+
+        self.assertEqual(
+            {"song_ids": [3, 4, 5], "playlist_ids": [7]},
+            music,
+        )
+        self.assertEqual(
+            {
+                "video_ids": ["video-1", "video-2"],
+                "playlist_ids": [9],
+            },
+            video,
+        )
+
+    def test_selected_playlists_expand_the_shared_media_scope(self):
+        def result(values):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+
+        songs = [SimpleNamespace(id=2), SimpleNamespace(id=3)]
+        music_db = AsyncMock()
+        music_db.execute.return_value = result(songs)
+        selected_songs = asyncio.run(
+            _selected_songs(
+                music_db,
+                SimpleNamespace(
+                    selection_mode="selected",
+                    selector={"song_ids": [2, 3], "playlist_ids": [7]},
+                ),
+            )
+        )
+
+        videos = [SimpleNamespace(id="video-2"), SimpleNamespace(id="video-3")]
+        video_db = AsyncMock()
+        video_db.execute.return_value = result(videos)
+        selected_videos = asyncio.run(
+            VideoShareProvider()._selected_videos(
+                video_db,
+                SimpleNamespace(
+                    selection_mode="selected",
+                    selector={"video_ids": ["video-2", "video-3"], "playlist_ids": [9]},
+                ),
+            )
+        )
+
+        self.assertEqual([2, 3], [song.id for song in selected_songs])
+        self.assertEqual(["video-2", "video-3"], [video.id for video in selected_videos])
+
+    def test_sharing_ui_builds_multi_type_selectors_and_bulk_revoke(self):
+        template = (ROOT / "app/modules/sharing/templates/shares_dashboard.html").read_text()
+
+        self.assertIn("input.dataset.selectorKey", template)
+        self.assertIn("revokeAllShares", template)
+        self.assertIn("shares.filter(share => share.status === 'active')", template)
 
     def test_public_routes_do_not_depend_on_owner_auth(self):
         application_dependencies = {

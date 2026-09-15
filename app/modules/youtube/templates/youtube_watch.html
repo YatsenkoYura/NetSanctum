@@ -3,6 +3,18 @@
 {% block title %}NetSanctum — YouTube{% endblock %}
 
 {% block content %}
+<style>
+    @media (hover: none), (pointer: coarse) {
+        #youtube-controls { transform: translateY(0) !important; }
+        #youtube-player-settings-panel {
+            position: fixed !important;
+            inset: auto 12px 72px 12px !important;
+            width: auto !important;
+            max-height: min(65dvh, 480px) !important;
+            border: 2px solid rgb(39 39 42) !important;
+        }
+    }
+</style>
 <div class="space-y-4">
     <div class="flex items-center justify-between gap-3 border-b-2 border-zinc-800 pb-3">
         <a href="/youtube/dashboard" class="flex h-10 w-10 items-center justify-center border border-zinc-700 text-zinc-400 transition hover:border-teal-400 hover:text-teal-400" title="{{ _('youtube', 'back_to_catalog') }}">
@@ -10,10 +22,6 @@
             <span class="sr-only">{{ _('youtube', 'back_to_catalog') }}</span>
         </a>
         <div class="flex items-center gap-3">
-            <label class="flex cursor-pointer items-center gap-2 font-mono text-[10px] uppercase text-zinc-500">
-                <input id="youtube-autoplay" type="checkbox" class="h-3.5 w-3.5 accent-teal-400">
-                {{ _('youtube', 'autoplay') }}
-            </label>
             <a id="youtube-watch-external" href="#" target="_blank" rel="noopener noreferrer" class="flex h-10 w-10 items-center justify-center border border-zinc-700 text-zinc-400 transition hover:border-teal-400 hover:text-teal-400" title="{{ _('youtube', 'open_youtube') }}">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H18v4.5M18 6l-7.5 7.5M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
                 <span class="sr-only">{{ _('youtube', 'open_youtube') }}</span>
@@ -22,20 +30,22 @@
         </div>
     </div>
 
-    <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
-        <main class="space-y-4 lg:col-span-9">
+    <div id="youtube-watch-layout" class="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
+        <main id="youtube-watch-main" class="space-y-4 lg:col-span-9">
             <div id="youtube-player-shell" class="group relative aspect-video overflow-hidden border-2 border-zinc-800 bg-black">
                 <div id="youtube-watch-loader" class="absolute inset-0 z-10 flex items-center justify-center bg-black/90 font-mono text-xs uppercase tracking-wider text-teal-400">{{ _('youtube', 'preparing_stream') }}</div>
                 <div id="youtube-watch-player-slot" class="h-full w-full"><video id="youtube-watch-player" class="h-full w-full object-contain" playsinline></video></div>
                 <button id="youtube-center-play" type="button" class="absolute left-1/2 top-1/2 z-20 hidden flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-teal-400 bg-black/80 text-teal-400 transition hover:bg-teal-400 hover:text-black"><svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg></button>
-                <div id="youtube-controls" class="absolute bottom-0 left-0 right-0 z-20 flex translate-y-full flex-col gap-2 border-t border-zinc-800 bg-zinc-950/95 p-3 transition group-hover:translate-y-0">
+                <div id="youtube-controls" class="absolute bottom-0 left-0 right-0 z-20 flex translate-y-0 flex-col gap-2 border-t border-zinc-800 bg-zinc-950/95 p-3 transition sm:translate-y-full sm:group-hover:translate-y-0 sm:group-focus-within:translate-y-0">
                     <input id="youtube-progress" type="range" min="0" max="1000" value="0" class="h-1 w-full accent-teal-400">
                     <div class="flex items-center gap-3 font-mono text-[10px] text-zinc-300">
                         <button id="youtube-play-toggle" type="button" class="text-teal-400"><svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg></button>
                         <span id="youtube-time">0:00 / 0:00</span>
-                        <input id="youtube-volume" type="range" min="0" max="1" step="0.05" value="1" class="ml-auto w-20 accent-teal-400">
-                        <button id="youtube-controls-pip" type="button" title="{{ _('youtube', 'picture_in_picture') }}" class="text-zinc-400 hover:text-teal-400"><svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="12" y="12" width="8" height="6"/><path d="M21 12V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7"/></svg></button>
+                        <input id="youtube-volume" type="range" min="0" max="1" step="0.05" value="1" class="ml-auto hidden w-20 accent-teal-400 sm:block">
+                        <button id="youtube-controls-theater" data-desktop-player-action data-player-theater type="button" title="Theater mode" class="hidden text-zinc-400 hover:text-teal-400 md:inline-flex"><svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12"/><path d="M7 9h10v6H7z"/></svg></button>
+                        <button id="youtube-controls-pip" data-desktop-player-action data-player-pip type="button" title="{{ _('youtube', 'picture_in_picture') }}" class="hidden text-zinc-400 hover:text-teal-400 md:inline-flex"><svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="12" y="12" width="8" height="6"/><path d="M21 12V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7"/></svg></button>
                         <button id="youtube-controls-settings" type="button" title="{{ _('youtube', 'player_settings') }}" class="text-zinc-400 hover:text-teal-400"><svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3m10-10h-3M5 12H2m17.1-7.1L17 7m-10 10-2.1 2.1m0-14.2L7 7m10 10 2.1 2.1"/></svg></button>
+                        <button id="youtube-controls-fullscreen" type="button" title="{{ _('youtube', 'fullscreen') }}" class="text-zinc-400 hover:text-teal-400"><svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
                     </div>
                 </div>
                 <section id="youtube-player-settings-panel" class="absolute inset-x-0 bottom-0 z-30 hidden max-h-[72%] grid grid-cols-1 gap-4 overflow-y-auto border-t-2 border-zinc-800 bg-zinc-950 p-4 shadow-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:w-80 sm:max-h-none sm:border-l-2 sm:border-t-0">
@@ -44,6 +54,7 @@
                         <button id="youtube-settings-close" type="button" class="text-zinc-500 hover:text-white"><svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
                     </div>
                     <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'playback_speed') }} <span id="youtube-playback-rate-label" class="text-teal-400">1x</span><input id="youtube-playback-rate" type="range" min="0.25" max="2" step="0.25" value="1" class="mt-3 w-full accent-teal-400"></label>
+                    <label class="flex min-h-10 items-center justify-between gap-3 border border-zinc-800 bg-black px-3 font-mono text-[10px] uppercase text-zinc-400"><span>{{ _('youtube', 'autoplay') }}</span><input id="youtube-autoplay" data-player-autoplay="youtube" type="checkbox" class="h-4 w-4 accent-teal-400"></label>
                     <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'subtitles') }}<select id="youtube-captions" class="mt-2 h-10 w-full border border-zinc-700 bg-black px-2 text-zinc-300"><option value="">{{ _('youtube', 'off') }}</option></select></label>
                     <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'available_quality') }}<select id="youtube-quality" class="mt-2 h-10 w-full border border-zinc-700 bg-black px-2 text-zinc-300"><option value="auto">Auto</option></select></label>
                     <label class="font-mono text-[10px] uppercase text-zinc-500">{{ _('youtube', 'audio_tracks') }}<select id="youtube-audio-track" class="mt-2 h-10 w-full border border-zinc-700 bg-black px-2 text-zinc-300"><option value="auto">Auto</option></select></label>
@@ -82,7 +93,7 @@
             </section>
         </main>
 
-        <aside class="border-2 border-zinc-800 bg-zinc-950 lg:sticky lg:top-4 lg:col-span-3">
+        <aside id="youtube-watch-aside" class="border-2 border-zinc-800 bg-zinc-950 lg:sticky lg:top-4 lg:col-span-3">
             <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
                 <h2 class="font-mono text-xs font-bold uppercase text-white">{{ _('youtube', 'up_next') }}</h2>
                 <span id="youtube-queue-count" class="font-mono text-[9px] text-zinc-600"></span>
@@ -103,6 +114,13 @@
     const retainedPlayer = miniPlayerHost.querySelector('#youtube-watch-player');
     const player = retainedPlayer || playerSlot.querySelector('#youtube-watch-player');
     if (retainedPlayer) playerSlot.replaceChildren(player);
+    player.removeAttribute('controls');
+    player._youtubePageBindings?.abort();
+    const youtubePageBindings = new AbortController();
+    player._youtubePageBindings = youtubePageBindings;
+    const playerSignal = youtubePageBindings.signal;
+    const autoplayTransition = sessionStorage.getItem('youtube:autoplay-next') === videoId;
+    if (autoplayTransition) sessionStorage.removeItem('youtube:autoplay-next');
     const loader = document.getElementById('youtube-watch-loader');
     const queue = document.getElementById('youtube-watch-queue');
     const autoplay = document.getElementById('youtube-autoplay');
@@ -188,7 +206,7 @@
         const endpoint = playlistId
             ? `/api/youtube/playlists/${encodeURIComponent(playlistId)}/items`
             : `/api/youtube/channels/${encodeURIComponent(channelId)}/videos`;
-        const response = await fetch(endpoint);
+        const response = await fetch(endpoint, {signal: playerSignal});
         const payload = await apiJson(response);
         renderQueue(payload.items || []);
         if (payload.avatar_url) {
@@ -198,13 +216,18 @@
         }
     }
 
-    function useFallback(streamUrl) {
+    function useFallback(streamUrl, resumeAt = 0, resumePlaying = false) {
         stopMse?.();
         stopMse = null;
         player._youtubeStopMse = null;
         player.src = streamUrl;
         player.load();
-        return player.play().catch(() => {});
+        if (resumeAt > 0) {
+            player.addEventListener('loadedmetadata', () => {
+                player.currentTime = Math.min(resumeAt, player.duration || resumeAt);
+            }, {once: true, signal: playerSignal});
+        }
+        if (resumePlaying) return player.play().catch(() => {});
     }
 
     async function startMse(mse, fallbackUrl, resumeAt = 0, resumePlaying = false) {
@@ -214,16 +237,20 @@
             || mse?.audio_tracks?.[0];
         if (!window.MediaSource || !videoTrack || !audioTrack
             || !MediaSource.isTypeSupported(videoTrack.mime) || !MediaSource.isTypeSupported(audioTrack.mime)) {
-            return useFallback(fallbackUrl);
+            return useFallback(fallbackUrl, resumeAt, resumePlaying);
         }
         try {
             const {createFile} = await import('/static/mp4box.all.mjs');
             stopMse?.();
+            player._youtubeTransportBindings?.abort();
+            const transportBindings = new AbortController();
+            player._youtubeTransportBindings = transportBindings;
             const mediaSource = new MediaSource();
             const objectUrl = URL.createObjectURL(mediaSource);
             let stopped = false;
             stopMse = () => {
                 stopped = true;
+                transportBindings.abort();
                 URL.revokeObjectURL(objectUrl);
             };
             player._youtubeStopMse = stopMse;
@@ -261,7 +288,10 @@
                 const pump = async () => {
                     try {
                         while (!stopped) {
-                            const response = await fetch(track.url, {headers: {Range: `bytes=${offset}-${offset + 1048575}`}});
+                            const response = await fetch(track.url, {
+                                headers: {Range: `bytes=${offset}-${offset + 1048575}`},
+                                signal: transportBindings.signal,
+                            });
                             if (!response.ok && response.status !== 206) throw new Error('MSE track is unavailable');
                             const buffer = await response.arrayBuffer();
                             if (!buffer.byteLength) break;
@@ -287,14 +317,18 @@
             }
             if (resumePlaying) return player.play().catch(() => {});
         } catch (error) {
+            if (error.name === 'AbortError') return;
             console.warn('MSE playback failed; using the compatible stream.', error);
-            return useFallback(fallbackUrl);
+            return useFallback(fallbackUrl, resumeAt, resumePlaying);
         }
     }
 
     async function loadVideo() {
         try {
-            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/stream`, {method: 'POST'});
+            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/stream`, {
+                method: 'POST',
+                signal: playerSignal,
+            });
             const payload = await apiJson(response);
             document.title = `${payload.title} — NetSanctum`;
             document.getElementById('youtube-watch-title').textContent = payload.title;
@@ -347,11 +381,12 @@
             currentMse = payload.mse;
             fallbackStreamUrl = payload.stream_url;
             if (player.dataset.youtubeVideoId !== videoId) {
-                await startMse(payload.mse, payload.stream_url);
+                await startMse(payload.mse, payload.stream_url, 0, autoplayTransition || autoplay.checked);
                 player.dataset.youtubeVideoId = videoId;
             }
             loader.classList.add('hidden');
         } catch (error) {
+            if (error.name === 'AbortError') return;
             loader.textContent = error.message;
             loader.classList.add('text-red-400');
         }
@@ -363,7 +398,9 @@
         button.disabled = true;
         container.textContent = {{ _('youtube', 'loading')|tojson }};
         try {
-            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/comments`);
+            const response = await fetch(`/api/youtube/videos/${encodeURIComponent(videoId)}/comments`, {
+                signal: playerSignal,
+            });
             const payload = await apiJson(response);
             if (!payload.items.length) {
                 container.textContent = {{ _('youtube', 'no_comments')|tojson }};
@@ -395,7 +432,10 @@
         }
     }
 
-    autoplay.checked = localStorage.getItem('youtube-autoplay') === '1';
+    if (localStorage.getItem('netsanctum:player:autoplay:youtube') === null) {
+        NetSanctumMediaPlayer.setAutoplay('youtube', localStorage.getItem('youtube-autoplay') === '1');
+    }
+    NetSanctumMediaPlayer.syncAutoplayControls('youtube', false);
     const toggleSettings = () => document.getElementById('youtube-player-settings-panel').classList.toggle('hidden');
     document.getElementById('youtube-player-settings').addEventListener('click', toggleSettings);
     document.getElementById('youtube-controls-settings').addEventListener('click', toggleSettings);
@@ -403,16 +443,20 @@
     const togglePlay = () => (player.paused ? player.play() : player.pause());
     document.getElementById('youtube-center-play').addEventListener('click', togglePlay);
     document.getElementById('youtube-play-toggle').addEventListener('click', togglePlay);
-    player.addEventListener('play', () => { document.getElementById('youtube-center-play').classList.add('hidden'); document.getElementById('youtube-play-toggle').innerHTML = '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M7 5h4v14H7V5Zm6 0h4v14h-4V5Z"/></svg>'; });
-    player.addEventListener('pause', () => { document.getElementById('youtube-center-play').classList.remove('hidden'); document.getElementById('youtube-play-toggle').innerHTML = '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>'; });
+    player.addEventListener('play', () => { document.getElementById('youtube-center-play').classList.add('hidden'); document.getElementById('youtube-play-toggle').innerHTML = '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M7 5h4v14H7V5Zm6 0h4v14h-4V5Z"/></svg>'; }, {signal: playerSignal});
+    player.addEventListener('pause', () => { document.getElementById('youtube-center-play').classList.remove('hidden'); document.getElementById('youtube-play-toggle').innerHTML = '<svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>'; }, {signal: playerSignal});
     player.addEventListener('timeupdate', () => {
         const progress = document.getElementById('youtube-progress');
         progress.value = player.duration ? Math.round(player.currentTime / player.duration * 1000) : 0;
         const format = value => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
         document.getElementById('youtube-time').textContent = `${format(player.currentTime || 0)} / ${format(player.duration || 0)}`;
-    });
+    }, {signal: playerSignal});
     document.getElementById('youtube-progress').addEventListener('input', event => { if (player.duration) player.currentTime = player.duration * event.target.value / 1000; });
-    document.getElementById('youtube-volume').addEventListener('input', event => { player.volume = Number(event.target.value); });
+    document.getElementById('youtube-volume').addEventListener('input', event => {
+        player.volume = Number(event.target.value);
+        player.muted = player.volume === 0;
+        localStorage.setItem('player_volume', String(player.volume));
+    });
     document.getElementById('youtube-quality').addEventListener('change', () => {
         if (currentMse) startMse(currentMse, fallbackStreamUrl, player.currentTime, !player.paused);
     });
@@ -427,18 +471,36 @@
         track.kind = 'subtitles'; track.src = captions.value; track.default = true;
         player.append(track);
     });
-    const pip = () => player.requestPictureInPicture?.().catch(() => {});
-    document.getElementById('youtube-controls-pip').addEventListener('click', pip);
-    autoplay.addEventListener('change', () => localStorage.setItem('youtube-autoplay', autoplay.checked ? '1' : '0'));
+    let theaterMode = false;
+    const toggleTheater = () => {
+        if (!window.matchMedia('(min-width: 1024px) and (hover: hover) and (pointer: fine)').matches) return;
+        theaterMode = !theaterMode;
+        document.getElementById('youtube-watch-main').classList.toggle('lg:col-span-9', !theaterMode);
+        document.getElementById('youtube-watch-main').classList.toggle('lg:col-span-12', theaterMode);
+        document.getElementById('youtube-watch-aside').classList.toggle('lg:hidden', theaterMode);
+    };
+    document.getElementById('youtube-controls-theater').addEventListener('click', toggleTheater);
+    document.getElementById('youtube-controls-pip').addEventListener('click', () => NetSanctumMediaPlayer.togglePiP(player));
+    document.getElementById('youtube-controls-fullscreen').addEventListener('click', () => NetSanctumMediaPlayer.toggleFullscreen(playerShell));
+    autoplay.addEventListener('change', () => NetSanctumMediaPlayer.setAutoplay('youtube', autoplay.checked));
     player.addEventListener('ended', () => {
         if (!autoplay.checked) return;
         const index = queueItems.findIndex(item => item.entity_id === videoId);
         const next = queueItems[index + 1];
         if (next) {
+            sessionStorage.setItem('youtube:autoplay-next', next.entity_id);
             const url = queueUrl(next);
             if (!window.netSanctumNavigate?.(url)) window.location.assign(url);
         }
+    }, {signal: playerSignal});
+    NetSanctumMediaPlayer.bind(player, {
+        container: playerShell,
+        active: () => player.isConnected && player.closest('#youtube-player-shell'),
+        showControls: () => {},
+        toggleTheater,
+        onVolume: video => { document.getElementById('youtube-volume').value = video.muted ? 0 : video.volume; },
     });
+    NetSanctumMediaPlayer.syncDesktopActions(playerShell);
     document.getElementById('youtube-load-comments').addEventListener('click', loadComments);
     renderCatalogMetadata(catalogItem);
     loadVideo();

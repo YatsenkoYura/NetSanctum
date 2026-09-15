@@ -18,6 +18,7 @@
     <!-- HTMX (Local for Offline/Self-Hosted usage) -->
     <script src="/static/htmx.min.js"></script>
     {% if not request.query_params.get('package_id') %}<script src="/static/browser-runtime.js?v=5b906b1" defer></script>{% endif %}
+    {% include "media_player_script.html" %}
 
     <style>
         * {
@@ -648,7 +649,12 @@
             function preserveYouTubePlayer() {
                 const player = document.getElementById('youtube-watch-player');
                 const host = document.getElementById('youtube-mini-player-host');
-                if (player && host && player.parentElement !== host) host.append(player);
+                if (player && host && player.parentElement !== host) {
+                    player._youtubePageBindings?.abort();
+                    player._netSanctumPlayerBindings?.abort();
+                    player.setAttribute('controls', 'controls');
+                    host.append(player);
+                }
             }
 
             function navigate(url, source) {

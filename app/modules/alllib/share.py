@@ -396,7 +396,7 @@ class AllLibShareProvider:
                 )
             video_url = f"{prefix}/chapters/{chapter.id}/video"
             return HTMLResponse(
-                f'<div class="custom-video-player relative w-full h-full bg-black"><video id="anime-video-player" class="w-full h-full object-contain" autoplay controls><source src="{video_url}">Your browser does not support the video tag.</video></div>'
+                f'<div class="custom-video-player relative w-full h-full bg-black"><video id="anime-video-player" class="w-full h-full object-contain" playsinline preload="metadata" controls><source src="{video_url}">Your browser does not support the video tag.</video></div>'
             )
 
         page_urls = [

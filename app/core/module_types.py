@@ -286,6 +286,24 @@ class ShareAsset:
 
 
 @dataclass(frozen=True, slots=True)
+class ShareSelectionType:
+    """One entity type a module allows owners to include in a share."""
+
+    selector_key: str
+    entity_type: str
+    title_en: str
+    title_ru: str
+
+    def __post_init__(self) -> None:
+        if not TABLE_NAME_PATTERN.fullmatch(self.selector_key):
+            raise ValueError(f"Invalid share selector key: {self.selector_key!r}")
+        if not UI_EXTENSION_ID_PATTERN.fullmatch(self.entity_type):
+            raise ValueError(f"Invalid shared entity type: {self.entity_type!r}")
+        if not self.title_en.strip() or not self.title_ru.strip():
+            raise ValueError("Shared entity type titles must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ShareSpec:
     """Declarative read-only sharing contract implemented by a module."""
 
@@ -296,11 +314,31 @@ class ShareSpec:
     routes: tuple[ShareRoute, ...] = ()
     assets: tuple[ShareAsset, ...] = ()
     max_items: int = 500
+    selection_types: tuple[ShareSelectionType, ...] = ()
+
+    @property
+    def declared_selection_types(self) -> tuple[ShareSelectionType, ...]:
+        if self.selection_types:
+            return self.selection_types
+        return (
+            ShareSelectionType(
+                selector_key=self.selector_key,
+                entity_type="item",
+                title_en="Items",
+                title_ru="Элементы",
+            ),
+        )
 
     def __post_init__(self) -> None:
         _validate_object_path(self.provider, "Share provider")
         if not TABLE_NAME_PATTERN.fullmatch(self.selector_key):
             raise ValueError(f"Invalid share selector key: {self.selector_key!r}")
+        selector_keys = [item.selector_key for item in self.declared_selection_types]
+        entity_types = [item.entity_type for item in self.declared_selection_types]
+        if self.selector_key not in selector_keys:
+            raise ValueError("Primary share selector key must be declared in selection_types")
+        if len(selector_keys) != len(set(selector_keys)) or len(entity_types) != len(set(entity_types)):
+            raise ValueError("Share selection types must have unique keys and entity types")
         template_path = PurePosixPath(self.dashboard_template)
         if (
             not self.dashboard_template.endswith(".html")

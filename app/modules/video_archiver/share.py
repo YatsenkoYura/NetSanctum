@@ -2,7 +2,7 @@ import urllib.parse
 from pathlib import PurePosixPath
 
 from fastapi import HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.module_types import ShareAsset, ShareRoute
@@ -17,20 +17,40 @@ from app.modules.video_archiver.models import (
 
 class VideoShareProvider:
     async def catalog(self, db: AsyncSession) -> list[dict]:
-        result = await db.execute(select(ArchivedVideo).order_by(ArchivedVideo.archived_at.desc()))
-        return [
+        videos_result = await db.execute(select(ArchivedVideo).order_by(ArchivedVideo.archived_at.desc()))
+        playlists_result = await db.execute(
+            select(VideoPlaylist, func.count(video_playlist_association.c.video_id))
+            .outerjoin(
+                video_playlist_association,
+                VideoPlaylist.id == video_playlist_association.c.playlist_id,
+            )
+            .group_by(VideoPlaylist.id)
+            .order_by(VideoPlaylist.created_at.desc())
+        )
+        videos = [
             {
                 "id": video.id,
                 "title": video.title,
                 "subtitle": f"{video.channel_name} · {video.platform}",
+                "selector_key": "video_ids",
                 "channel_name": video.channel_name,
                 "platform": video.platform,
                 "duration": video.duration,
                 "status": video.status,
                 "has_file": bool(video.file_path),
             }
-            for video in result.scalars().all()
+            for video in videos_result.scalars().all()
         ]
+        playlists = [
+            {
+                "id": playlist.id,
+                "title": playlist.name,
+                "subtitle": f"{video_count} videos",
+                "selector_key": "playlist_ids",
+            }
+            for playlist, video_count in playlists_result.all()
+        ]
+        return playlists + videos
 
     async def selection(
         self,
@@ -41,11 +61,14 @@ class VideoShareProvider:
         if selection_mode == "all":
             return {}
 
-        video_ids = selector.get("video_ids")
-        if not isinstance(video_ids, list) or not video_ids:
-            raise HTTPException(status_code=422, detail="Select at least one video")
-        if len(video_ids) > 500:
-            raise HTTPException(status_code=422, detail="A share may contain at most 500 videos")
+        video_ids = selector.get("video_ids", [])
+        playlist_ids = selector.get("playlist_ids", [])
+        if not isinstance(video_ids, list) or not isinstance(playlist_ids, list):
+            raise HTTPException(status_code=422, detail="Invalid video archive selection")
+        if not video_ids and not playlist_ids:
+            raise HTTPException(status_code=422, detail="Select at least one video or playlist")
+        if len(video_ids) + len(playlist_ids) > 500:
+            raise HTTPException(status_code=422, detail="A share may contain at most 500 items")
 
         normalized_ids = []
         for video_id in video_ids:
@@ -54,18 +77,55 @@ class VideoShareProvider:
             if video_id not in normalized_ids:
                 normalized_ids.append(video_id)
 
-        result = await db.execute(select(ArchivedVideo.id).where(ArchivedVideo.id.in_(normalized_ids)))
-        found_ids = set(result.scalars().all())
+        normalized_playlist_ids = []
+        for playlist_id in playlist_ids:
+            if isinstance(playlist_id, str) and playlist_id.isascii() and playlist_id.isdigit():
+                playlist_id = int(playlist_id)
+            if isinstance(playlist_id, bool) or not isinstance(playlist_id, int) or playlist_id < 1:
+                raise HTTPException(status_code=422, detail="Invalid playlist ID")
+            if playlist_id not in normalized_playlist_ids:
+                normalized_playlist_ids.append(playlist_id)
+
+        video_result = await db.execute(select(ArchivedVideo.id).where(ArchivedVideo.id.in_(normalized_ids)))
+        found_ids = set(video_result.scalars().all())
         if missing := set(normalized_ids) - found_ids:
             raise HTTPException(status_code=422, detail=f"Videos not found: {', '.join(sorted(missing))}")
-        return {"video_ids": normalized_ids}
+        playlist_result = await db.execute(
+            select(VideoPlaylist.id).where(VideoPlaylist.id.in_(normalized_playlist_ids))
+        )
+        found_playlist_ids = set(playlist_result.scalars().all())
+        if missing := set(normalized_playlist_ids) - found_playlist_ids:
+            missing_list = ", ".join(str(item) for item in sorted(missing))
+            raise HTTPException(status_code=422, detail=f"Playlists not found: {missing_list}")
+        resolved_video_ids = list(normalized_ids)
+        if normalized_playlist_ids:
+            members_result = await db.execute(
+                select(video_playlist_association.c.video_id).where(
+                    video_playlist_association.c.playlist_id.in_(normalized_playlist_ids)
+                )
+            )
+            for video_id in members_result.scalars().all():
+                if video_id not in resolved_video_ids:
+                    resolved_video_ids.append(video_id)
+        if len(resolved_video_ids) > 500:
+            raise HTTPException(
+                status_code=422,
+                detail="Selected playlists contain more than 500 videos",
+            )
+        return {
+            "video_ids": resolved_video_ids,
+            "playlist_ids": normalized_playlist_ids,
+        }
 
     @staticmethod
-    def _is_allowed(share, video_id: str) -> bool:
-        return share.selection_mode == "all" or video_id in share.selector.get("video_ids", [])
+    def _scope_video_ids(share) -> list[str] | None:
+        if share.selection_mode == "all":
+            return None
+        return list(share.selector.get("video_ids", []))
 
     async def _get_allowed_video(self, db: AsyncSession, share, video_id: str) -> ArchivedVideo:
-        if not self._is_allowed(share, video_id):
+        scope_ids = self._scope_video_ids(share)
+        if scope_ids is not None and video_id not in scope_ids:
             raise HTTPException(status_code=404, detail="Shared content not found")
         video = await db.get(ArchivedVideo, video_id)
         if not video:
@@ -77,7 +137,7 @@ class VideoShareProvider:
             result = await db.execute(select(ArchivedVideo).order_by(ArchivedVideo.archived_at.desc()))
             return list(result.scalars().all())
 
-        video_ids = share.selector.get("video_ids", [])
+        video_ids = self._scope_video_ids(share) or []
         result = await db.execute(select(ArchivedVideo).where(ArchivedVideo.id.in_(video_ids)))
         videos = {video.id: video for video in result.scalars().all()}
         return [videos[video_id] for video_id in video_ids if video_id in videos]
@@ -112,18 +172,52 @@ class VideoShareProvider:
     async def _shared_playlists(self, db: AsyncSession, share) -> list[dict]:
         videos = await self._selected_videos(db, share)
         allowed_ids = {video.id for video in videos}
-        if not allowed_ids:
-            return []
-        result = await db.execute(
+        explicit_playlist_ids = (
+            share.selector.get("playlist_ids", []) if share.selection_mode != "all" else []
+        )
+        playlists: dict[int, dict] = {}
+        if explicit_playlist_ids:
+            explicit_result = await db.execute(
+                select(VideoPlaylist).where(VideoPlaylist.id.in_(explicit_playlist_ids))
+            )
+            explicit = {playlist.id: playlist for playlist in explicit_result.scalars().all()}
+            for playlist_id in explicit_playlist_ids:
+                if playlist := explicit.get(playlist_id):
+                    playlists[playlist.id] = {
+                        "id": playlist.id,
+                        "name": playlist.name,
+                        "description": playlist.description,
+                        "created_at": playlist.created_at,
+                        "video_ids": [],
+                        "video_count": 0,
+                        "cover_url": None,
+                    }
+        legacy_selector = share.selection_mode != "all" and "playlist_ids" not in share.selector
+        direct_video_ids = share.selector.get("video_ids", []) if legacy_selector else []
+        if share.selection_mode == "all":
+            relation_filter = None
+        elif explicit_playlist_ids and direct_video_ids:
+            relation_filter = or_(
+                video_playlist_association.c.playlist_id.in_(explicit_playlist_ids),
+                video_playlist_association.c.video_id.in_(direct_video_ids),
+            )
+        elif explicit_playlist_ids:
+            relation_filter = video_playlist_association.c.playlist_id.in_(explicit_playlist_ids)
+        elif direct_video_ids:
+            relation_filter = video_playlist_association.c.video_id.in_(direct_video_ids)
+        else:
+            return list(playlists.values())
+        query = (
             select(VideoPlaylist, video_playlist_association.c.video_id)
             .join(
                 video_playlist_association,
                 VideoPlaylist.id == video_playlist_association.c.playlist_id,
             )
-            .where(video_playlist_association.c.video_id.in_(allowed_ids))
             .order_by(VideoPlaylist.created_at.desc())
         )
-        playlists: dict[int, dict] = {}
+        if relation_filter is not None:
+            query = query.where(and_(relation_filter, video_playlist_association.c.video_id.in_(allowed_ids)))
+        result = await db.execute(query)
         for playlist, video_id in result.all():
             item = playlists.setdefault(
                 playlist.id,
@@ -136,6 +230,9 @@ class VideoShareProvider:
                 },
             )
             item["video_ids"].append(video_id)
+        for item in playlists.values():
+            item["video_count"] = len(item["video_ids"])
+            item["cover_url"] = None
         return list(playlists.values())
 
     async def entities(

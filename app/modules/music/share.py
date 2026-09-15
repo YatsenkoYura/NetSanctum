@@ -1,5 +1,5 @@
 from fastapi import HTTPException, Request
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.module_types import ShareAsset, ShareRoute
@@ -9,12 +9,15 @@ from app.modules.music.models import Playlist, PlaylistSong, Song
 MAX_SHARED_SONGS = 500
 
 
-def _is_allowed(share, song_id: int) -> bool:
-    return share.selection_mode == "all" or song_id in share.selector.get("song_ids", [])
+def _scope_song_ids(share) -> list[int] | None:
+    if share.selection_mode == "all":
+        return None
+    return list(share.selector.get("song_ids", []))
 
 
 async def _get_scoped_song(db: AsyncSession, share, song_id: int) -> Song:
-    if not _is_allowed(share, song_id):
+    scope_ids = _scope_song_ids(share)
+    if scope_ids is not None and song_id not in scope_ids:
         raise HTTPException(status_code=404, detail="Shared content not found")
     song = await db.get(Song, song_id)
     if not song:
@@ -27,7 +30,7 @@ async def _selected_songs(db: AsyncSession, share) -> list[Song]:
         result = await db.execute(select(Song).order_by(Song.created_at.desc()))
         return list(result.scalars().all())
 
-    song_ids = share.selector.get("song_ids", [])
+    song_ids = _scope_song_ids(share) or []
     result = await db.execute(select(Song).where(Song.id.in_(song_ids)))
     songs = {song.id: song for song in result.scalars().all()}
     return [songs[song_id] for song_id in song_ids if song_id in songs]
@@ -52,16 +55,45 @@ def _serialize_song(song: Song, share) -> dict:
 async def _shared_playlists(db: AsyncSession, share) -> list[dict]:
     songs = await _selected_songs(db, share)
     song_map = {song.id: song for song in songs}
-    if not song_map:
-        return []
-
-    result = await db.execute(
+    explicit_playlist_ids = share.selector.get("playlist_ids", []) if share.selection_mode != "all" else []
+    playlists: dict[int, dict] = {}
+    if explicit_playlist_ids:
+        explicit_result = await db.execute(select(Playlist).where(Playlist.id.in_(explicit_playlist_ids)))
+        explicit = {playlist.id: playlist for playlist in explicit_result.scalars().all()}
+        for playlist_id in explicit_playlist_ids:
+            if playlist := explicit.get(playlist_id):
+                playlists[playlist.id] = {
+                    "id": playlist.id,
+                    "name": playlist.name,
+                    "description": playlist.description,
+                    "created_at": playlist.created_at,
+                    "songs": [],
+                    "cover_song_id": None,
+                    "cover_url": None,
+                }
+    legacy_selector = share.selection_mode != "all" and "playlist_ids" not in share.selector
+    direct_song_ids = share.selector.get("song_ids", []) if legacy_selector else []
+    if share.selection_mode == "all":
+        relation_filter = None
+    elif explicit_playlist_ids and direct_song_ids:
+        relation_filter = or_(
+            PlaylistSong.playlist_id.in_(explicit_playlist_ids),
+            PlaylistSong.song_id.in_(direct_song_ids),
+        )
+    elif explicit_playlist_ids:
+        relation_filter = PlaylistSong.playlist_id.in_(explicit_playlist_ids)
+    elif direct_song_ids:
+        relation_filter = PlaylistSong.song_id.in_(direct_song_ids)
+    else:
+        return list(playlists.values())
+    query = (
         select(Playlist, PlaylistSong.song_id)
         .join(PlaylistSong, Playlist.id == PlaylistSong.playlist_id)
-        .where(PlaylistSong.song_id.in_(song_map))
         .order_by(Playlist.created_at.desc(), PlaylistSong.position.asc())
     )
-    playlists: dict[int, dict] = {}
+    if relation_filter is not None:
+        query = query.where(and_(relation_filter, PlaylistSong.song_id.in_(song_map)))
+    result = await db.execute(query)
     for playlist, song_id in result.all():
         item = playlists.setdefault(
             playlist.id,
@@ -96,6 +128,12 @@ async def _shared_playlists(db: AsyncSession, share) -> list[dict]:
 class MusicShareProvider:
     async def catalog(self, db: AsyncSession) -> list[dict]:
         songs_result = await db.execute(select(Song).order_by(Song.created_at.desc()))
+        playlists_result = await db.execute(
+            select(Playlist, func.count(PlaylistSong.song_id))
+            .outerjoin(PlaylistSong, Playlist.id == PlaylistSong.playlist_id)
+            .group_by(Playlist.id)
+            .order_by(Playlist.created_at.desc())
+        )
         relations_result = await db.execute(
             select(PlaylistSong.song_id, Playlist.id, Playlist.name)
             .join(Playlist, Playlist.id == PlaylistSong.playlist_id)
@@ -104,11 +142,12 @@ class MusicShareProvider:
         playlists_by_song: dict[int, list[dict]] = {}
         for song_id, playlist_id, playlist_name in relations_result.all():
             playlists_by_song.setdefault(song_id, []).append({"id": playlist_id, "name": playlist_name})
-        return [
+        songs = [
             {
                 "id": song.id,
                 "title": song.title,
                 "subtitle": song.author or song.original_artist or "Unknown artist",
+                "selector_key": "song_ids",
                 "author": song.author,
                 "original_artist": song.original_artist,
                 "channel_name": song.author or song.original_artist or "Unknown artist",
@@ -117,6 +156,16 @@ class MusicShareProvider:
             }
             for song in songs_result.scalars().all()
         ]
+        playlists = [
+            {
+                "id": playlist.id,
+                "title": playlist.name,
+                "subtitle": f"{song_count} songs",
+                "selector_key": "playlist_ids",
+            }
+            for playlist, song_count in playlists_result.all()
+        ]
+        return playlists + songs
 
     async def selection(
         self,
@@ -129,13 +178,16 @@ class MusicShareProvider:
         if selection_mode != "selected":
             raise HTTPException(status_code=422, detail="Invalid selection mode")
 
-        song_ids = selector.get("song_ids")
-        if not isinstance(song_ids, list) or not song_ids:
-            raise HTTPException(status_code=422, detail="Select at least one song")
-        if len(song_ids) > MAX_SHARED_SONGS:
+        song_ids = selector.get("song_ids", [])
+        playlist_ids = selector.get("playlist_ids", [])
+        if not isinstance(song_ids, list) or not isinstance(playlist_ids, list):
+            raise HTTPException(status_code=422, detail="Invalid music selection")
+        if not song_ids and not playlist_ids:
+            raise HTTPException(status_code=422, detail="Select at least one song or playlist")
+        if len(song_ids) + len(playlist_ids) > MAX_SHARED_SONGS:
             raise HTTPException(
                 status_code=422,
-                detail=f"A share may contain at most {MAX_SHARED_SONGS} songs",
+                detail=f"A share may contain at most {MAX_SHARED_SONGS} items",
             )
 
         normalized_ids: list[int] = []
@@ -156,7 +208,44 @@ class MusicShareProvider:
         if missing := set(normalized_ids) - found_ids:
             missing_list = ", ".join(str(song_id) for song_id in sorted(missing))
             raise HTTPException(status_code=422, detail=f"Songs not found: {missing_list}")
-        return {"song_ids": normalized_ids}
+        normalized_playlist_ids: list[int] = []
+        for playlist_id in playlist_ids:
+            if isinstance(playlist_id, bool):
+                raise HTTPException(status_code=422, detail="Invalid playlist ID")
+            if isinstance(playlist_id, str):
+                if not playlist_id.isascii() or not playlist_id.isdigit():
+                    raise HTTPException(status_code=422, detail="Invalid playlist ID")
+                playlist_id = int(playlist_id)
+            if not isinstance(playlist_id, int) or playlist_id < 1:
+                raise HTTPException(status_code=422, detail="Invalid playlist ID")
+            if playlist_id not in normalized_playlist_ids:
+                normalized_playlist_ids.append(playlist_id)
+        playlist_result = await db.execute(
+            select(Playlist.id).where(Playlist.id.in_(normalized_playlist_ids))
+        )
+        found_playlist_ids = set(playlist_result.scalars().all())
+        if missing := set(normalized_playlist_ids) - found_playlist_ids:
+            missing_list = ", ".join(str(item) for item in sorted(missing))
+            raise HTTPException(status_code=422, detail=f"Playlists not found: {missing_list}")
+        resolved_song_ids = list(normalized_ids)
+        if normalized_playlist_ids:
+            members_result = await db.execute(
+                select(PlaylistSong.song_id)
+                .where(PlaylistSong.playlist_id.in_(normalized_playlist_ids))
+                .order_by(PlaylistSong.playlist_id, PlaylistSong.position)
+            )
+            for song_id in members_result.scalars().all():
+                if song_id not in resolved_song_ids:
+                    resolved_song_ids.append(song_id)
+        if len(resolved_song_ids) > MAX_SHARED_SONGS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Selected playlists contain more than {MAX_SHARED_SONGS} songs",
+            )
+        return {
+            "song_ids": resolved_song_ids,
+            "playlist_ids": normalized_playlist_ids,
+        }
 
     async def entities(
         self,

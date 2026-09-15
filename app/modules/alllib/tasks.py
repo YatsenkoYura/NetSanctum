@@ -294,13 +294,19 @@ def download_lib_task(
     """Download chapters for any Lib Network title (Novel, Manga, Hentai, etc.)."""
     task_id = self.request.id
 
-    def update_redis(status: str, progress: str = "0%", media_title: str = "Resolving..."):
+    def update_redis(
+        status: str,
+        progress: str = "0%",
+        media_title: str = "Resolving...",
+        state: str = "running",
+    ):
         data = {
             "task_id": task_id,
             "url": url,
             "title": media_title,
             "status": status,
             "progress": progress,
+            "state": state,
         }
         redis_client.setex(f"alllib_dl:{task_id}", 86400, json.dumps(data))
 
@@ -319,7 +325,7 @@ def download_lib_task(
 
     slug = api.extract_slug_from_url(url)
     if not slug:
-        update_redis("Failed: Invalid URL format", "Error")
+        update_redis("Failed: Invalid URL format", "Error", state="failed")
         return f"Error: Failed to extract slug from URL: {url}"
 
     try:
@@ -945,5 +951,5 @@ def download_lib_task(
 
     except Exception as e:
         logger.error(f"Failed task for URL {url}: {e}")
-        update_redis(f"Failed: {str(e)[:50]}...", "Error")
+        update_redis(f"Failed: {str(e)[:50]}...", "Error", state="failed")
         return f"Error downloading title: {e}"

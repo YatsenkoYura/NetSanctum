@@ -19,6 +19,10 @@ local session_id = ARGV[3]
 local session_prefix = ARGV[4]
 local max_sessions = tonumber(ARGV[5])
 
+if redis.call("EXISTS", KEYS[3]) == 1 then
+    return 0
+end
+
 local expired = redis.call("ZRANGEBYSCORE", index_key, "-inf", now)
 for _, expired_session_id in ipairs(expired) do
     redis.call("DEL", session_prefix .. expired_session_id)
@@ -38,6 +42,16 @@ redis.call("ZADD", index_key, expires_at, session_id)
 local latest = redis.call("ZRANGE", index_key, -1, -1, "WITHSCORES")
 redis.call("EXPIRE", index_key, math.max(1, math.ceil(tonumber(latest[2]) - now) + 1))
 return 1
+"""
+
+CLEAR_SHARE_SESSIONS_SCRIPT = """
+local session_ids = redis.call("ZRANGE", KEYS[1], 0, -1)
+redis.call("SETEX", KEYS[2], 300, "1")
+for _, session_id in ipairs(session_ids) do
+    redis.call("DEL", ARGV[1] .. session_id)
+end
+redis.call("DEL", KEYS[1])
+return #session_ids
 """
 
 RESERVE_PASSWORD_ATTEMPT_SCRIPT = """

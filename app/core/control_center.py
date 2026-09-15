@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.module_config import load_enabled_module_ids
 from app.core.modules import ModuleStatus, module_registry
+from app.core.task_dispatch import is_terminal_task_payload
 
 PROCESS_STARTED_AT = time.monotonic()
 TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -162,6 +163,8 @@ async def tracked_tasks() -> list[dict[str, Any]]:
                         payload = json.loads(raw)
                     except json.JSONDecodeError:
                         payload = {"status": "invalid tracker payload"}
+                    if is_terminal_task_payload(payload):
+                        continue
                     payload.update(
                         {
                             "key": key,
@@ -192,11 +195,8 @@ def tasks_blocking_module_change(selected: set[str], tasks: list[dict[str, Any]]
 async def cancel_tracked_task(task_id: str) -> int:
     if not TASK_ID_PATTERN.fullmatch(task_id):
         raise ValueError("Invalid task id")
-    from app.core.scheduler import celery_app
-
-    await asyncio.to_thread(celery_app.control.revoke, task_id, terminate=True)
     client = _redis_client()
-    deleted = 0
+    matching_keys = []
     try:
         for record in module_registry.declared_records():
             if not record.spec:
@@ -210,9 +210,16 @@ async def cancel_tracked_task(task_id: str) -> int:
                         payload = json.loads(raw)
                     except json.JSONDecodeError:
                         payload = {}
+                    if is_terminal_task_payload(payload):
+                        continue
                     if payload.get("task_id") == task_id or key.endswith(f":{task_id}"):
-                        deleted += await client.delete(key)
-        return deleted
+                        matching_keys.append(key)
+        if not matching_keys:
+            return 0
+        from app.core.scheduler import celery_app
+
+        await asyncio.to_thread(celery_app.control.revoke, task_id, terminate=True)
+        return await client.delete(*matching_keys)
     finally:
         await client.aclose()
 

@@ -4,6 +4,21 @@ import json
 import uuid
 from typing import Any
 
+TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cancelled"})
+
+
+def is_terminal_task_payload(payload: dict[str, Any]) -> bool:
+    if str(payload.get("state") or "").lower() in TERMINAL_TASK_STATES:
+        return True
+    status = str(payload.get("status") or "").strip().lower()
+    title = str(payload.get("title") or "").strip().lower()
+    return (
+        status in {"completed", "already available", "conversion completed", "error"}
+        or status.startswith(("failed:", "error:"))
+        or title == "error"
+        or title.endswith("(finished)")
+    )
+
 
 def _task_payload(task_id: str, payload: dict[str, Any]) -> str:
     return json.dumps({**payload, "task_id": task_id})

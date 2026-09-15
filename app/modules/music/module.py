@@ -4,6 +4,7 @@ from app.core.module_types import (
     ModuleSpec,
     ShareAsset,
     ShareRoute,
+    ShareSelectionType,
     ShareSpec,
     UiActionSpec,
 )
@@ -34,6 +35,10 @@ MODULE = ModuleSpec(
     share=ShareSpec(
         provider="app.modules.music.share:PROVIDER",
         selector_key="song_ids",
+        selection_types=(
+            ShareSelectionType("song_ids", "song", "Songs", "Песни"),
+            ShareSelectionType("playlist_ids", "playlist", "Playlists", "Плейлисты"),
+        ),
         dashboard_template="music.html",
         api_prefix="/api/music",
         routes=(

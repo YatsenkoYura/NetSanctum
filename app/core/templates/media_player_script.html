@@ -1,0 +1,218 @@
+<script>
+    (() => {
+        const AUTOPLAY_PREFIX = 'netsanctum:player:autoplay:';
+        const VOLUME_KEY = 'player_volume';
+
+        function isDesktop() {
+            return window.matchMedia('(min-width: 769px) and (hover: hover) and (pointer: fine)').matches;
+        }
+
+        function isTheaterDesktop() {
+            return window.matchMedia('(min-width: 1024px) and (hover: hover) and (pointer: fine)').matches;
+        }
+
+        function isEditableTarget(target) {
+            return Boolean(target?.closest?.('input, textarea, select, button, a, [role="button"], [contenteditable="true"]'));
+        }
+
+        function autoplayEnabled(key, defaultValue = true) {
+            const saved = localStorage.getItem(`${AUTOPLAY_PREFIX}${key}`);
+            return saved === null ? defaultValue : saved === '1';
+        }
+
+        function syncAutoplayControls(key, defaultValue = true) {
+            const enabled = autoplayEnabled(key, defaultValue);
+            document.querySelectorAll(`[data-player-autoplay="${CSS.escape(key)}"]`).forEach(input => {
+                input.checked = enabled;
+            });
+            return enabled;
+        }
+
+        function setAutoplay(key, enabled) {
+            localStorage.setItem(`${AUTOPLAY_PREFIX}${key}`, enabled ? '1' : '0');
+            syncAutoplayControls(key);
+        }
+
+        function togglePlayback(video) {
+            if (video.paused) return video.play().catch(() => {});
+            video.pause();
+        }
+
+        async function togglePiP(video) {
+            if (!isDesktop() || !document.pictureInPictureEnabled || !video.requestPictureInPicture) return;
+            try {
+                if (document.pictureInPictureElement) return await document.exitPictureInPicture();
+                return await video.requestPictureInPicture();
+            } catch (error) {
+                console.warn('Picture-in-Picture is unavailable.', error);
+            }
+        }
+
+        async function toggleFullscreen(container) {
+            if (!container) return;
+            try {
+                if (document.fullscreenElement) return await document.exitFullscreen?.();
+                return await container.requestFullscreen?.();
+            } catch (error) {
+                console.warn('Fullscreen is unavailable.', error);
+            }
+        }
+
+        function syncDesktopActions(root = document) {
+            const desktop = isDesktop();
+            root.querySelectorAll('[data-desktop-player-action]').forEach(element => {
+                element.classList.toggle('hidden', !desktop);
+                element.style.display = desktop ? '' : 'none';
+            });
+            root.querySelectorAll('[data-player-pip]').forEach(element => {
+                const available = desktop
+                    && document.pictureInPictureEnabled
+                    && HTMLVideoElement.prototype.requestPictureInPicture;
+                element.classList.toggle('hidden', !available);
+                element.style.display = available ? '' : 'none';
+            });
+            root.querySelectorAll('[data-player-theater]').forEach(element => {
+                const available = isTheaterDesktop();
+                element.classList.toggle('hidden', !available);
+                element.style.display = available ? '' : 'none';
+            });
+            root.querySelectorAll('video[data-netsanctum-player]').forEach(video => {
+                if ('disablePictureInPicture' in video) video.disablePictureInPicture = !desktop;
+            });
+        }
+
+        function bind(video, options = {}) {
+            if (!video) return null;
+            video._netSanctumPlayerBindings?.abort();
+            const bindings = new AbortController();
+            video._netSanctumPlayerBindings = bindings;
+            video.dataset.netsanctumPlayer = 'true';
+            const {signal} = bindings;
+            const container = options.container || video.closest('.custom-video-player') || video.parentElement;
+            const active = options.active || (() => video.isConnected && !video.closest('.hidden'));
+            const showControls = options.showControls || (() => {});
+            const seek = seconds => {
+                video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + seconds));
+                showControls();
+                options.onSeek?.(seconds);
+            };
+            const setVolume = value => {
+                video.volume = Math.max(0, Math.min(1, value));
+                video.muted = video.volume === 0;
+                localStorage.setItem(VOLUME_KEY, String(video.volume));
+                options.onVolume?.(video);
+                showControls();
+            };
+
+            const rawSavedVolume = localStorage.getItem(VOLUME_KEY);
+            const savedVolume = rawSavedVolume === null ? NaN : Number(rawSavedVolume);
+            if (Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 1) {
+                video.volume = savedVolume;
+                if (savedVolume === 0) video.muted = true;
+                options.onVolume?.(video);
+            }
+            syncDesktopActions(container || document);
+
+            let touchStartX = 0;
+            let touchStartY = 0;
+            let touchStartTime = 0;
+            let lastTap = 0;
+            video.addEventListener('touchstart', event => {
+                const touch = event.changedTouches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                touchStartTime = Date.now();
+                showControls();
+            }, {passive: true, signal});
+            video.addEventListener('touchend', event => {
+                video._netSanctumLastTouch = Date.now();
+                const touch = event.changedTouches[0];
+                const dx = touch.clientX - touchStartX;
+                const dy = touch.clientY - touchStartY;
+                const elapsed = Date.now() - touchStartTime;
+                if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) && elapsed < 500) {
+                    seek(dx > 0 ? 10 : -10);
+                    return;
+                }
+                if (options.verticalNavigation && Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(dx) && elapsed < 500) {
+                    options.verticalNavigation(dy > 0 ? 1 : -1);
+                    return;
+                }
+                const now = Date.now();
+                if (now - lastTap < 300) {
+                    const rect = video.getBoundingClientRect();
+                    seek(touch.clientX - rect.left < rect.width / 2 ? -10 : 10);
+                    lastTap = 0;
+                    return;
+                }
+                lastTap = now;
+                showControls();
+            }, {passive: true, signal});
+
+            window.addEventListener('keydown', event => {
+                if (
+                    !isDesktop()
+                    || !active()
+                    || isEditableTarget(event.target)
+                    || event.ctrlKey
+                    || event.metaKey
+                    || event.altKey
+                ) return;
+                const actions = {
+                    Space: () => togglePlayback(video),
+                    KeyK: () => togglePlayback(video),
+                    ArrowLeft: () => seek(-5),
+                    ArrowRight: () => seek(5),
+                    KeyJ: () => seek(-10),
+                    KeyL: () => seek(10),
+                    ArrowUp: () => setVolume(video.volume + 0.1),
+                    ArrowDown: () => setVolume(video.volume - 0.1),
+                    KeyM: () => {
+                        video.muted = !video.muted;
+                        options.onVolume?.(video);
+                        showControls();
+                    },
+                    KeyF: () => options.toggleFullscreen
+                        ? options.toggleFullscreen()
+                        : toggleFullscreen(container),
+                    KeyI: () => togglePiP(video),
+                    KeyT: () => { if (isTheaterDesktop()) options.toggleTheater?.(); },
+                    KeyN: () => options.onNext?.(),
+                    KeyP: () => options.onPrevious?.(),
+                };
+                const action = actions[event.code];
+                if (!action || (event.repeat && !['ArrowUp', 'ArrowDown'].includes(event.code))) return;
+                event.preventDefault();
+                action();
+            }, {signal});
+
+            if (options.onEnded) video.addEventListener('ended', options.onEnded, {signal});
+            return {abort: () => bindings.abort(), seek, setVolume};
+        }
+
+        window.NetSanctumMediaPlayer = {
+            autoplayEnabled,
+            bind,
+            isDesktop,
+            setAutoplay,
+            syncAutoplayControls,
+            syncDesktopActions,
+            toggleFullscreen,
+            togglePiP,
+            togglePlayback,
+            wasRecentTouch: video => Date.now() - Number(video?._netSanctumLastTouch || 0) < 600,
+        };
+        document.addEventListener('htmx:beforeCleanupElement', event => {
+            const element = event.detail?.elt;
+            if (!element) return;
+            const videos = element.matches?.('video')
+                ? [element]
+                : [...(element.querySelectorAll?.('video') || [])];
+            videos.forEach(video => {
+                video._youtubePageBindings?.abort();
+                video._netSanctumPlayerBindings?.abort();
+            });
+        });
+        window.addEventListener('resize', () => syncDesktopActions());
+    })();
+</script>

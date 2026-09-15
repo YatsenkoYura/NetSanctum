@@ -692,7 +692,7 @@ async def get_chapter_ui(
 
             <!-- Custom Video Player wrapper for anime-video-player -->
             <div id="anime-video-container" class="custom-video-player relative w-full aspect-video group bg-black overflow-hidden flex items-center justify-center border border-zinc-800 shadow-2xl">
-                <video id="anime-video-player" class="w-full h-full object-contain focus:outline-none" autoplay>
+                <video id="anime-video-player" class="w-full h-full object-contain focus:outline-none" playsinline preload="metadata">
                     <source src="{video_url}" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
@@ -734,7 +734,9 @@ async def get_chapter_ui(
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                                 </button>
                                 <!-- Settings Dropdown -->
-                                <div class="settings-dropdown absolute bottom-full right-0 mb-2 bg-zinc-950 border border-zinc-800 py-2 hidden flex-col w-40 text-[10px] shadow-2xl z-30 font-mono">
+                                <div class="settings-dropdown absolute bottom-full right-0 mb-2 bg-zinc-950 border border-zinc-800 p-3 hidden flex-col w-64 max-h-[60vh] overflow-y-auto text-[10px] shadow-2xl z-30 font-mono" role="dialog" aria-label="Player settings">
+                                    <div class="mb-2 flex items-center justify-between border-b border-zinc-800 pb-2"><span class="font-bold uppercase text-teal-400">Player settings</span><button type="button" onclick="toggleSettingsMenu('anime-video-player')" class="px-2 py-1 text-zinc-400 hover:text-white">&times;</button></div>
+                                    <label class="mb-2 flex min-h-9 items-center justify-between gap-3 border-b border-zinc-900 pb-2 text-zinc-400"><span class="font-bold uppercase tracking-wider">Autoplay next</span><input data-player-autoplay="alllib-anime" type="checkbox" onchange="setAnimeAutoplay(this.checked)" class="h-4 w-4 accent-teal-400"></label>
                                     <!-- Speed Section -->
                                     <div class="px-2 pb-1.5 text-left">
                                         <span class="text-zinc-500 font-bold block uppercase tracking-wider text-[8px] mb-1">Speed</span>
@@ -750,8 +752,11 @@ async def get_chapter_ui(
                                     </div>
                                 </div>
                             </div>
+                            <button onclick="toggleAnimeTheater()" data-desktop-player-action data-player-theater class="theater-btn hidden font-bold hover:text-teal-400 transition-colors uppercase p-1 md:inline-flex" title="Theater mode">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12"/><path d="M7 9h10v6H7z"/></svg>
+                            </button>
                             <!-- Picture-in-Picture button -->
-                            <button onclick="togglePiPCustom('anime-video-player')" class="pip-btn font-bold hover:text-teal-400 transition-colors uppercase p-1" title="Picture-in-Picture">
+                            <button onclick="togglePiPCustom('anime-video-player')" data-desktop-player-action data-player-pip class="pip-btn hidden font-bold hover:text-teal-400 transition-colors uppercase p-1 md:inline-flex" title="Picture-in-Picture">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a2 2 0 012 2v5a2 2 0 01-2 2h-5a2 2 0 01-2-2v-5a2 2 0 012-2h5z" />
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M21 12v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h6" />

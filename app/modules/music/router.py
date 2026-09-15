@@ -17,7 +17,7 @@ from app.core.browser_client import revoke_browser_credentials
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.task_dispatch import dispatch_tracked_async
+from app.core.task_dispatch import dispatch_tracked_async, is_terminal_task_payload
 from app.core.templates import templates
 
 redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
@@ -713,7 +713,9 @@ async def active_downloads_ui(request: Request, user=Depends(get_current_user)):
     for k in keys:
         data = await redis_client.get(k)
         if data:
-            downloads.append(json.loads(data))
+            payload = json.loads(data)
+            if not is_terminal_task_payload(payload):
+                downloads.append(payload)
 
     if not downloads:
         return HTMLResponse('<div class="text-xs font-mono text-zinc-600">No active downloads</div>')
@@ -751,9 +753,9 @@ async def cancel_all_downloads_ui(request: Request, user=Depends(get_current_use
     for k in keys:
         data = await redis_client.get(k)
         if data:
-            import json
-
             parsed = json.loads(data)
+            if is_terminal_task_payload(parsed):
+                continue
             task_id = parsed.get("task_id")
             if task_id:
                 celery_app.control.revoke(task_id, terminate=True)

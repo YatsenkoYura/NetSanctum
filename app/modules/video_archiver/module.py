@@ -4,6 +4,7 @@ from app.core.module_types import (
     ModuleSpec,
     ShareAsset,
     ShareRoute,
+    ShareSelectionType,
     ShareSpec,
     UiActionSpec,
 )
@@ -44,6 +45,10 @@ MODULE = ModuleSpec(
     share=ShareSpec(
         provider="app.modules.video_archiver.share:PROVIDER",
         selector_key="video_ids",
+        selection_types=(
+            ShareSelectionType("video_ids", "video", "Videos", "Видео"),
+            ShareSelectionType("playlist_ids", "playlist", "Playlists", "Плейлисты"),
+        ),
         dashboard_template="video_dashboard.html",
         api_prefix="/api/video-archiver",
         routes=(

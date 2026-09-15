@@ -26,6 +26,7 @@ from app.core.templates import templates
 from app.modules.sharing.models import ShareLink
 from app.modules.sharing.schemas import ShareCreate
 from app.modules.sharing.service import (
+    CLEAR_SHARE_SESSIONS_SCRIPT,
     CREATE_SESSION_SCRIPT,
     MAX_SHARE_SESSIONS,
     RESERVE_PASSWORD_ATTEMPT_SCRIPT,
@@ -177,6 +178,18 @@ def _summary(share: ShareLink) -> dict:
     }
 
 
+async def _clear_share_sessions(share_id: str) -> int:
+    return int(
+        await redis_client.eval(
+            CLEAR_SHARE_SESSIONS_SCRIPT,
+            2,
+            f"share_sessions:{share_id}",
+            f"share_revoked:{share_id}",
+            "share_session:",
+        )
+    )
+
+
 async def _active_share(db: AsyncSession, share_id: str) -> ShareLink:
     share = await db.get(ShareLink, share_id)
     if not share or not is_active(share) or module_registry.share_provider(share.module_id) is None:
@@ -206,11 +219,12 @@ async def _establish_session(request: Request, share: ShareLink, db: AsyncSessio
     session_key = f"share_session:{session_id}"
     session_index = f"share_sessions:{share.id}"
     try:
-        await redis_client.eval(
+        created = await redis_client.eval(
             CREATE_SESSION_SCRIPT,
-            2,
+            3,
             session_index,
             session_key,
+            f"share_revoked:{share.id}",
             ttl,
             share.id,
             session_id,
@@ -219,6 +233,8 @@ async def _establish_session(request: Request, share: ShareLink, db: AsyncSessio
         )
     except Exception:
         raise HTTPException(status_code=503, detail="Shared session service is unavailable")
+    if not created:
+        raise _not_found()
 
     share.access_count += 1
     share.last_accessed_at = utc_now()
@@ -319,6 +335,15 @@ async def list_share_providers(user=Depends(get_current_user)):
                     "title_en": record.spec.title_en,
                     "title_ru": record.spec.title_ru,
                     "selector_key": record.spec.share.selector_key,
+                    "selection_types": [
+                        {
+                            "selector_key": item.selector_key,
+                            "entity_type": item.entity_type,
+                            "title_en": item.title_en,
+                            "title_ru": item.title_ru,
+                        }
+                        for item in record.spec.share.declared_selection_types
+                    ],
                 }
             )
     return providers
@@ -330,7 +355,18 @@ async def list_shareable_content(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    return await _provider(module_id).catalog(db)
+    spec = _share_spec(module_id)
+    items = await _provider(module_id).catalog(db)
+    declared_keys = {item.selector_key for item in spec.declared_selection_types}
+    catalog = []
+    for item in items:
+        selector_key = item.get("selector_key")
+        if selector_key is None and len(declared_keys) == 1:
+            selector_key = spec.selector_key
+        if selector_key not in declared_keys:
+            raise RuntimeError(f"Share provider {module_id!r} returned an undeclared selection type")
+        catalog.append({**item, "selector_key": selector_key})
+    return catalog
 
 
 @router.get("/api/shares")
@@ -351,14 +387,21 @@ async def create_share(
         raise HTTPException(status_code=422, detail="Expiration must be in the future")
 
     share_spec = _share_spec(body.module_id)
-    selected_items = body.selector.get(share_spec.selector_key, [])
-    if body.selection_mode == "selected" and (
-        not isinstance(selected_items, list) or len(selected_items) > share_spec.max_items
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=f"A share may contain at most {share_spec.max_items} items",
-        )
+    if body.selection_mode == "selected":
+        declared_keys = {item.selector_key for item in share_spec.declared_selection_types}
+        if unknown_keys := set(body.selector) - declared_keys:
+            raise HTTPException(
+                status_code=422,
+                detail="Unsupported shared entity types: " + ", ".join(sorted(unknown_keys)),
+            )
+        selected_items = list(body.selector.values())
+        if any(not isinstance(items, list) for items in selected_items):
+            raise HTTPException(status_code=422, detail="Shared entity selections must be lists")
+        if sum(len(items) for items in selected_items) > share_spec.max_items:
+            raise HTTPException(
+                status_code=422,
+                detail=f"A share may contain at most {share_spec.max_items} items",
+            )
     selector = await _provider(body.module_id).selection(
         db,
         body.selection_mode,
@@ -388,6 +431,26 @@ async def create_share(
     return {**_summary(share), "url": f"{base_url}{path}"}
 
 
+@router.delete("/api/shares")
+async def revoke_all_shares(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    result = await db.execute(select(ShareLink).where(ShareLink.status == "active"))
+    shares = list(result.scalars().all())
+    revoked_at = utc_now()
+    for share in shares:
+        share.status = "revoked"
+        share.revoked_at = revoked_at
+    await db.commit()
+    for share in shares:
+        try:
+            await _clear_share_sessions(share.id)
+        except Exception as exc:
+            logger.warning("Could not clear Redis sessions for revoked share %s: %s", share.id, exc)
+    return {"status": "revoked", "count": len(shares)}
+
+
 @router.delete("/api/shares/{share_id}")
 async def revoke_share(
     share_id: str,
@@ -401,11 +464,7 @@ async def revoke_share(
     share.revoked_at = utc_now()
     await db.commit()
     try:
-        session_index = f"share_sessions:{share.id}"
-        session_ids = await redis_client.zrange(session_index, 0, -1)
-        if session_ids:
-            await redis_client.delete(*(f"share_session:{session_id}" for session_id in session_ids))
-        await redis_client.delete(session_index)
+        await _clear_share_sessions(share.id)
     except Exception as exc:
         logger.warning("Could not clear Redis sessions for revoked share %s: %s", share.id, exc)
     return {"status": "revoked", "id": share.id}

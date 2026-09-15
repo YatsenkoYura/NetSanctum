@@ -134,8 +134,15 @@ def process_video_url_task(
     """
     task_id = self.request.id
 
-    def update_status(status: str, title: str = "Resolving URL..."):
-        data = {"task_id": task_id, "url": url, "title": title, "status": status, "progress": "0%"}
+    def update_status(status: str, title: str = "Resolving URL...", state: str = "running"):
+        data = {
+            "task_id": task_id,
+            "url": url,
+            "title": title,
+            "status": status,
+            "progress": "0%",
+            "state": state,
+        }
         redis_client.setex(f"video_dl:{task_id}", 86400, json.dumps(data))
 
     update_status("Fetching info...")
@@ -143,7 +150,7 @@ def process_video_url_task(
     try:
         provider = PlatformRegistry.require_supported_url(url)
     except ValueError as exc:
-        update_status(str(exc), "Error")
+        update_status(str(exc), "Error", "failed")
         return f"Error: {exc}"
 
     def dispatch_download(video_url: str, title: str, source_video_id: str | None = None):
@@ -191,7 +198,7 @@ def process_video_url_task(
     except YtDlpPipelineError as exc:
         message = error_status(exc)
         logger.error("Error fetching info for URL %s: %s", url, message)
-        update_status(message, "Error")
+        update_status(message, "Error", "failed")
         return f"Error: {message}"
 
     if "entries" in info_dict:
@@ -214,6 +221,7 @@ def process_video_url_task(
             with SyncSessionLocal() as session:
                 playlist = session.get(VideoPlaylist, playlist_id)
                 if not playlist:
+                    update_status(f"Playlist {playlist_id} was not found", "Error", "failed")
                     return f"Error: Playlist {playlist_id} was not found"
                 playlist.name = playlist_title
                 playlist.description = playlist_description
@@ -288,8 +296,20 @@ def download_video_task(
     """Downloads a single video, caches metadata + comments, and saves to database."""
     task_id = self.request.id
 
-    def update_redis(status: str, progress: str = "0%", title: str = "Downloading..."):
-        data = {"task_id": task_id, "url": url, "title": title, "status": status, "progress": progress}
+    def update_redis(
+        status: str,
+        progress: str = "0%",
+        title: str = "Downloading...",
+        state: str = "running",
+    ):
+        data = {
+            "task_id": task_id,
+            "url": url,
+            "title": title,
+            "status": status,
+            "progress": progress,
+            "state": state,
+        }
         redis_client.setex(f"video_dl:{task_id}", 86400, json.dumps(data))
 
     # Helper hook to monitor yt-dlp progress
@@ -322,7 +342,7 @@ def download_video_task(
     try:
         provider = PlatformRegistry.require_supported_url(url)
     except ValueError as exc:
-        update_redis(str(exc), "Error")
+        update_redis(str(exc), "Error", state="failed")
         return f"Error: {exc}"
     cookies_text = _get_platform_cookies(provider.platform_id)
 
@@ -546,7 +566,7 @@ def download_video_task(
     except Exception as exc:
         message = error_status(exc)
         logger.error("Failed to process video %s: %s", url, message)
-        update_redis(message, "Error")
+        update_redis(message, "Error", state="failed")
         return f"Error downloading video: {message}"
     finally:
         try:
@@ -723,6 +743,20 @@ def _sync_video_metadata(video_id: str, task_id: str | None = None) -> str:
     with SyncSessionLocal() as session:
         video = session.get(ArchivedVideo, video_id)
         if not video:
+            if task_id:
+                redis_client.setex(
+                    f"video_dl:{task_id}",
+                    3600,
+                    json.dumps(
+                        {
+                            "task_id": task_id,
+                            "title": video_id,
+                            "status": "Video not found in local database",
+                            "state": "failed",
+                            "progress": "0%",
+                        }
+                    ),
+                )
             return "Video not found in local database."
 
         platform_id = video.platform or "youtube"
@@ -814,7 +848,7 @@ def youtube_oauth2_task(self) -> str:
     redis_client.setex(
         f"video_oauth:{task_id}",
         3600,
-        json.dumps({"status": "error", "message": message}),
+        json.dumps({"task_id": task_id, "status": "error", "state": "failed", "message": message}),
     )
     return message
 
@@ -848,9 +882,29 @@ def sync_all_videos_task(self, dates: list[str] | None = None) -> str:
 
     total = len(videos)
     if total == 0:
+        redis_client.setex(
+            f"video_dl:{task_id}",
+            3600,
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "title": "Global Metadata Sync",
+                    "status": "No videos to sync",
+                    "state": "completed",
+                    "progress": "100%",
+                }
+            ),
+        )
         return "No videos to sync."
 
     def update_progress(current, success, failed, current_vid, step_name="Updating metadata"):
+        state = (
+            "completed"
+            if step_name == "Finished"
+            else "failed"
+            if step_name.startswith("Aborted")
+            else "running"
+        )
         data = {
             "task_id": task_id,
             "url": "sync_all",
@@ -862,6 +916,7 @@ def sync_all_videos_task(self, dates: list[str] | None = None) -> str:
             "failed_count": failed,
             "total_count": total,
             "current_video": current_vid,
+            "state": state,
         }
         redis_client.setex(f"video_dl:{task_id}", 86400, json.dumps(data))
 

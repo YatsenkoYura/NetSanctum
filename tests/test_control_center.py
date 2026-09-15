@@ -1,10 +1,13 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from app.core.control_center import cancel_tracked_task, tasks_blocking_module_change
+from app.core.control_center import cancel_tracked_task, tasks_blocking_module_change, tracked_tasks
 from app.core.module_config import (
     load_enabled_module_ids,
     parse_module_ids,
@@ -13,7 +16,11 @@ from app.core.module_config import (
 )
 from app.core.modules import ModuleRegistry
 from app.core.observability import redact_log_message
-from app.core.task_dispatch import dispatch_tracked_async, dispatch_tracked_sync
+from app.core.task_dispatch import (
+    dispatch_tracked_async,
+    dispatch_tracked_sync,
+    is_terminal_task_payload,
+)
 
 
 @dataclass
@@ -105,6 +112,48 @@ class ModuleTaskSafetyTests(unittest.TestCase):
             control_center.module_registry = original_registry
 
         self.assertEqual({"music"}, blocked)
+
+    def test_terminal_result_trackers_are_not_active_tasks(self):
+        self.assertTrue(is_terminal_task_payload({"state": "completed"}))
+        self.assertTrue(is_terminal_task_payload({"state": "failed"}))
+        self.assertTrue(is_terminal_task_payload({"status": "Failed: network error"}))
+        self.assertTrue(
+            is_terminal_task_payload({"title": "Global Metadata Sync (Finished)", "progress": "100%"})
+        )
+        self.assertFalse(is_terminal_task_payload({"state": "running"}))
+        self.assertFalse(is_terminal_task_payload({"status": "Queued"}))
+
+    def test_control_center_filters_terminal_result_trackers(self):
+        class FakeRedis:
+            async def scan_iter(self, *, match, count):
+                yield "music_convert:done"
+                yield "music_convert:running"
+
+            async def get(self, key):
+                state = "completed" if key.endswith("done") else "running"
+                return json.dumps({"task_id": key.rsplit(":", 1)[-1], "state": state})
+
+            async def ttl(self, key):
+                return 60
+
+            async def aclose(self):
+                return None
+
+        registry = SimpleNamespace(
+            declared_records=lambda: [
+                SimpleNamespace(
+                    id="music",
+                    spec=SimpleNamespace(progress_key_patterns=("music_convert:*",)),
+                )
+            ]
+        )
+        with (
+            patch("app.core.control_center._redis_client", return_value=FakeRedis()),
+            patch("app.core.control_center.module_registry", registry),
+        ):
+            result = asyncio.run(tracked_tasks())
+
+        self.assertEqual(["running"], [task["task_id"] for task in result])
 
 
 class TrackedDispatchTests(unittest.TestCase):
