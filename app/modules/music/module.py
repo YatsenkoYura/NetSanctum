@@ -66,6 +66,12 @@ MODULE = ModuleSpec(
             resource_handler="app.modules.music.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
         ),
+        IntegrationSpec(
+            id="media.audio.playlist.import.v1",
+            handler="app.modules.music.integrations:import_playlist_audio",
+            request_model="app.modules.music.integrations:ImportPlaylistAudioRequest",
+            result_model="app.modules.music.integrations:ImportEntityAudioResult",
+        ),
     ),
     ui_actions=(
         UiActionSpec(

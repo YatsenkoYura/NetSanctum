@@ -30,6 +30,10 @@ class ImportEntityAudioRequest(BaseModel):
     entity_id: str = Field(min_length=1)
 
 
+class ImportPlaylistAudioRequest(BaseModel):
+    source_url: str = Field(min_length=1)
+
+
 class ImportEntityAudioResult(BaseModel):
     status: str
     task_id: str
@@ -129,4 +133,32 @@ async def import_entity_audio(
         status="dispatched",
         task_id=task.id,
         message="Audio import queued",
+    )
+
+
+async def import_playlist_audio(
+    request: ImportPlaylistAudioRequest,
+    context: IntegrationContext,
+) -> ImportEntityAudioResult:
+    """Queue a source playlist for audio extraction without coupling consumers to Music tasks."""
+    try:
+        validate_music_url(request.source_url, resolve=False)
+    except ValueError as exc:
+        raise IntegrationRejectedError(str(exc)) from exc
+    task = await dispatch_tracked_async(
+        process_youtube_url_task,
+        redis_client,
+        "music_dl",
+        {
+            "url": request.source_url,
+            "title": "Resolving playlist...",
+            "status": "Queued from integration",
+            "progress": "0%",
+        },
+        args=(request.source_url,),
+    )
+    return ImportEntityAudioResult(
+        status="dispatched",
+        task_id=task.id,
+        message="Playlist audio import queued",
     )

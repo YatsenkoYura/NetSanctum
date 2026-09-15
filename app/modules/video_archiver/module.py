@@ -95,7 +95,7 @@ MODULE = ModuleSpec(
             result_model="app.contracts.video_archive_v1:ArchiveVideoResult",
         ),
     ),
-    uses_integrations=("media.audio.import.v1",),
+    uses_integrations=("media.audio.import.v1", "media.audio.playlist.import.v1"),
     uses_integration_contracts=("video.source.catalog.v1",),
     ui_actions=(
         UiActionSpec(

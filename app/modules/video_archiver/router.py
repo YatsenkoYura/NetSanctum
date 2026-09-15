@@ -15,6 +15,7 @@ from app.core.browser_client import revoke_browser_credentials
 from app.core.browser_snapshots import browser_snapshot_store
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.module_types import IntegrationContext, IntegrationRejectedError, IntegrationUnavailableError
 from app.core.modules import module_registry
 from app.core.secret_values import decrypt_secret_value
 from app.core.security import get_current_user
@@ -876,27 +877,17 @@ async def convert_playlist_to_music(
         raise HTTPException(status_code=404, detail="Playlist not found")
     if not playlist.source_url:
         raise HTTPException(status_code=400, detail="Attach a playlist URL before converting it to music")
-    from app.modules.music.security import validate_music_url
-    from app.modules.music.tasks import process_youtube_url_task
-
     try:
-        validate_music_url(playlist.source_url, resolve=False)
-    except ValueError as exc:
+        result = await module_registry.invoke_integration(
+            "media.audio.playlist.import.v1",
+            {"source_url": playlist.source_url},
+            IntegrationContext(session=db, user=user, registry=module_registry, consumer_id="video_archiver"),
+        )
+    except IntegrationRejectedError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    music_redis = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
-    task = await dispatch_tracked_async(
-        process_youtube_url_task,
-        music_redis,
-        "music_dl",
-        {
-            "url": playlist.source_url,
-            "title": playlist.name,
-            "status": "Converting playlist from Video Archive",
-            "progress": "0%",
-        },
-        args=(playlist.source_url,),
-    )
-    return {"status": "dispatched", "task_id": task.id, "playlist_id": playlist.id}
+    except IntegrationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {**result, "playlist_id": playlist.id}
 
 
 @router.get("/api/video-archiver/playlists/{playlist_id}/sync-manifest")
