@@ -1321,6 +1321,9 @@
                 );
             }
             allLibraryVideos = videos;
+            if (currentVideo && !document.getElementById('library-player-view').classList.contains('hidden')) {
+                loadQueue();
+            }
 
             if (videos.length === 0) {
                 grid.innerHTML = `<div class="col-span-full py-12 text-center text-zinc-500 font-mono text-sm border-2 border-dashed border-zinc-800">${escapeHtml(search ? i18n.no_matches : '{{ _("video_archiver", "no_videos") }}')}</div>`;
@@ -1331,21 +1334,11 @@
                 const videoIdPath = pathSegment(video.id);
                 const videoIdArg = escapedJsArg(video.id);
                 const thumbnailSrc = video.thumbnail_path ? `/api/video-archiver/videos/${videoIdPath}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9" fill="%2318181b"><rect width="16" height="9"/><path d="M6 3v3l4-2z" fill="%2327272a"/></svg>';
-                const resolutionBadge = video.resolution ? `<span class="absolute top-2 left-2 bg-black/80 px-2 py-0.5 text-[9px] font-mono text-teal-400 border border-zinc-800">${escapeHtml(video.resolution)}</span>` : '';
                 const deletedBadge = video.is_deleted_on_youtube ? `
                     <span class="absolute top-2 right-2 bg-red-950 px-2 py-0.5 text-[9px] font-mono text-red-400 border border-red-800 uppercase flex items-center gap-1">
                         <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                         <span>${escapeHtml(i18n.unavailable_on_youtube)}</span>
                     </span>` : '';
-
-                const platformBadges = {
-                    youtube: '<span class="bg-red-950/90 text-red-400 border border-red-800 text-[8px] font-mono px-1 font-bold uppercase">YT</span>',
-                    vk: '<span class="bg-blue-950/90 text-blue-400 border border-blue-800 text-[8px] font-mono px-1 font-bold uppercase">VK</span>',
-                    telegram: '<span class="bg-sky-950/90 text-sky-400 border border-sky-800 text-[8px] font-mono px-1 font-bold uppercase">TG</span>',
-                    boosty: '<span class="bg-amber-950/90 text-amber-400 border border-amber-800 text-[8px] font-mono px-1 font-bold uppercase">BOOSTY</span>',
-                    rutube: '<span class="bg-emerald-950/90 text-emerald-400 border border-emerald-800 text-[8px] font-mono px-1 font-bold uppercase">RUTUBE</span>',
-                };
-                const platformBadge = platformBadges[video.platform] || `<span class="bg-zinc-900/90 text-zinc-400 border border-zinc-700 text-[8px] font-mono px-1 font-bold uppercase">${escapeHtml((video.platform || 'OTHER').toUpperCase())}</span>`;
 
                 const channelName = video.channel_name || '';
                 const initialChar = video.channel_name ? video.channel_name.charAt(0).toUpperCase() : 'C';
@@ -1358,12 +1351,7 @@
                         <!-- Thumbnail Area -->
                         <div class="relative aspect-video bg-black overflow-hidden border-b-2 border-zinc-800">
                             <img src="${escapeAttr(thumbnailSrc)}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${escapeAttr(video.title)}">
-                            ${resolutionBadge}
                             ${deletedBadge}
-                            <div class="absolute bottom-2 right-2 flex items-center gap-1">
-                                ${platformBadge}
-                                <span class="bg-black/80 px-2 py-0.5 text-[9px] font-mono text-zinc-300 border border-zinc-800">${formatDuration(video.duration)}</span>
-                            </div>
                             <!-- Delete button — visible on hover -->
                             {% if not package_mode %}<button onclick="event.stopPropagation(); deleteVideo(${videoIdArg})"
                                     class="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 bg-red-950/90 border border-red-800 hover:bg-red-900 text-red-400 p-1 transition-all"
@@ -1376,6 +1364,7 @@
                         <div class="p-4 flex-1 flex flex-col justify-between space-y-4">
                             <div class="space-y-2">
                                 <h3 class="text-xs font-bold text-white line-clamp-2 leading-snug group-hover:text-teal-400 transition-colors">${escapeHtml(video.title)}</h3>
+                                <div class="font-mono text-[9px] text-zinc-600">${formatDuration(video.duration)}</div>
                                 <div class="flex items-center gap-2 mt-1" onclick="event.stopPropagation(); filterByChannel(${escapedJsArg(video.channel_id || channelName)}, ${escapedJsArg(channelName)})" title="Открыть канал: ${escapeAttr(channelName)}">
                                     <div class="relative w-5 h-5 border border-zinc-700 bg-zinc-900 flex-shrink-0 flex items-center justify-center font-bold font-mono text-[9px] text-teal-400 uppercase rounded-none overflow-hidden hover:border-teal-400 transition-colors">
                                         ${avatarInnerHtml}
@@ -1402,6 +1391,8 @@
 
     // ── Unified Library Player View ───────────────────────────
     window.playVideoInLibrary = async function(videoId) {
+        window._archiveRestoreRequest?.abort();
+        window.persistentVideoPlayer?.close();
         document.getElementById('videos-grid-container').classList.add('hidden');
         const searchBar = document.getElementById('universal-search-bar');
         if (searchBar) {
@@ -1426,6 +1417,11 @@
             const resp = await fetch(`/api/video-archiver/videos/${pathSegment(videoId)}`);
             const video = await resp.json();
             currentVideo = video;
+            player.dataset.persistentModule = 'video_archiver';
+            player.dataset.persistentTitle = video.title;
+            player.dataset.persistentChannel = video.channel_name || '';
+            player.dataset.persistentDuration = String(video.duration || 0);
+            player.dataset.archiveOrigin = 'library';
             document.getElementById('video-entity-actions').setAttribute('data-entity-id', video.id);
 
             // Load Queue in Sidebar
@@ -2155,6 +2151,8 @@
 
     // Play video inside playlist with 2s delay
     window.playVideoInPlaylist = async function(videoId) {
+        window._archiveRestoreRequest?.abort();
+        window.persistentVideoPlayer?.close();
         // Stop current music audio player if playing
         if (window.musicPlayer && typeof window.musicPlayer.pause === 'function') {
             window.musicPlayer.pause();
@@ -2175,6 +2173,12 @@
         try {
             const resp = await fetch(`/api/video-archiver/videos/${pathSegment(videoId)}`);
             const video = await resp.json();
+            player.dataset.persistentModule = 'video_archiver';
+            player.dataset.persistentTitle = video.title;
+            player.dataset.persistentChannel = video.channel_name || '';
+            player.dataset.persistentDuration = String(video.duration || 0);
+            player.dataset.archiveOrigin = 'playlist';
+            player.dataset.persistentPlaylistId = String(currentPlaylist?.id || '');
 
             // Populate Metadata
             document.getElementById('playlist-detail-video-title').textContent = video.title;
@@ -2817,6 +2821,10 @@
     function bindVideoEvents(videoId) {
         const video = document.getElementById(videoId);
         if (!video) return;
+        video._archivePageBindings?.abort();
+        const archivePageBindings = new AbortController();
+        video._archivePageBindings = archivePageBindings;
+        const pageSignal = archivePageBindings.signal;
         const container = video.closest('.custom-video-player') || video.parentElement;
         const progressBar = container.querySelector('.progress-bar');
         const currTimeSpan = container.querySelector('.curr-time');
@@ -2837,16 +2845,16 @@
                 if (progressBar) progressBar.style.width = `${pct}%`;
                 if (currTimeSpan) currTimeSpan.innerText = formatDuration(video.currentTime);
             }
-        });
+        }, {signal: pageSignal});
 
         video.addEventListener('loadedmetadata', () => {
             if (durTimeSpan) durTimeSpan.innerText = formatDuration(video.duration);
-        });
+        }, {signal: pageSignal});
 
         // Controls auto-show on mousemove / touch
-        container.addEventListener('mousemove', () => showControlsFor(container, videoId));
-        container.addEventListener('pointermove', () => showControlsFor(container, videoId));
-        container.addEventListener('pointerdown', () => showControlsFor(container, videoId));
+        container.addEventListener('mousemove', () => showControlsFor(container, videoId), {signal: pageSignal});
+        container.addEventListener('pointermove', () => showControlsFor(container, videoId), {signal: pageSignal});
+        container.addEventListener('pointerdown', () => showControlsFor(container, videoId), {signal: pageSignal});
 
         // Hide controls immediately on mouseleave if playing
         container.addEventListener('mouseleave', () => {
@@ -2856,7 +2864,7 @@
                 container.classList.add('controls-hidden');
                 clearTimeout(window._controlsTimers[videoId]);
             }
-        });
+        }, {signal: pageSignal});
 
         const playAdjacent = direction => {
             const items = videoId === 'playlist-video-player' ? playlistVideos : allLibraryVideos;
@@ -2889,21 +2897,168 @@
             if (!NetSanctumMediaPlayer.isDesktop() || NetSanctumMediaPlayer.wasRecentTouch(video)) return;
             toggleCustomPlay(videoId);
             showControlsFor(container, videoId);
-        });
+        }, {signal: pageSignal});
 
         video.addEventListener('play', () => {
             if (centerPlayBtn) centerPlayBtn.classList.add('hidden');
             const playBtn = container.querySelector('.play-btn');
             if (playBtn) playBtn.innerHTML = PAUSE_ICON;
             showControlsFor(container, videoId);
-        });
+        }, {signal: pageSignal});
 
         video.addEventListener('pause', () => {
             if (centerPlayBtn) centerPlayBtn.classList.remove('hidden');
             const playBtn = container.querySelector('.play-btn');
             if (playBtn) playBtn.innerHTML = PLAY_ICON;
             showControlsFor(container, videoId);
-        });
+        }, {signal: pageSignal});
+    }
+
+    async function hydrateRestoredArchivePlayer(video, origin) {
+        window._archiveRestoreRequest?.abort();
+        window._archiveRestoreRequest = new AbortController();
+        const request = window._archiveRestoreRequest;
+        const isCurrent = () => request === window._archiveRestoreRequest && document.getElementById(video.id) === video;
+        const videoId = video.dataset.mediaId || '';
+        if (videoId) {
+            try {
+                const response = await fetch(`/api/video-archiver/videos/${pathSegment(videoId)}`, {
+                    signal: request.signal,
+                });
+                const metadata = await response.json();
+                if (response.ok && isCurrent()) {
+                    if (origin === 'playlist') {
+                        document.getElementById('playlist-detail-video-title').textContent = metadata.title;
+                        document.getElementById('playlist-detail-video-channel').textContent = metadata.channel_name;
+                        document.getElementById('playlist-detail-video-res').textContent = metadata.resolution || '';
+                        document.getElementById('playlist-detail-video-duration').textContent = formatDuration(metadata.duration);
+                        document.getElementById('playlist-detail-video-archived').textContent = formatDate(metadata.archived_at);
+                        document.getElementById('playlist-detail-video-desc').textContent = metadata.description || '';
+                        const avatar = document.getElementById('playlist-detail-video-avatar');
+                        avatar.classList.add('relative', 'overflow-hidden');
+                        avatar.textContent = metadata.channel_name?.charAt(0).toUpperCase() || 'C';
+                        if (metadata.channel_avatar_url) {
+                            const image = document.createElement('img');
+                            image.src = `/api/video-archiver/videos/${pathSegment(metadata.id)}/avatar`;
+                            image.className = 'absolute inset-0 w-full h-full object-cover';
+                            image.addEventListener('error', () => image.remove());
+                            avatar.append(image);
+                        }
+                        renderComments(metadata.comments, 'playlist-detail-video-comments');
+                    } else {
+                        currentVideo = metadata;
+                        loadQueue();
+                        document.getElementById('player-detail-title').textContent = metadata.title;
+                        document.getElementById('player-detail-channel').textContent = metadata.channel_name;
+                        document.getElementById('player-detail-resolution').textContent = metadata.resolution || '';
+                        document.getElementById('player-detail-duration').textContent = formatDuration(metadata.duration);
+                        document.getElementById('player-detail-archived').textContent = formatDate(metadata.archived_at);
+                        document.getElementById('player-detail-desc').textContent = metadata.description || '';
+                        document.getElementById('player-detail-views').textContent = metadata.view_count !== null
+                            ? Number(metadata.view_count).toLocaleString() : '-';
+                        document.getElementById('player-detail-likes').textContent = metadata.like_count !== null
+                            ? Number(metadata.like_count).toLocaleString() : '-';
+                        const tagsContainer = document.getElementById('player-detail-tags-container');
+                        const tagsList = document.getElementById('player-detail-tags');
+                        tagsContainer.classList.toggle('hidden', !metadata.tags?.length);
+                        tagsList.replaceChildren(...(metadata.tags || []).map(value => {
+                            const tag = document.createElement('span');
+                            tag.className = 'bg-zinc-900 border border-zinc-800 text-zinc-400 text-[9px] px-2 py-0.5 font-mono';
+                            tag.textContent = `#${value}`;
+                            return tag;
+                        }));
+                        const avatar = document.getElementById('player-detail-avatar-container');
+                        avatar.classList.add('relative', 'overflow-hidden');
+                        avatar.textContent = metadata.channel_name?.charAt(0).toUpperCase() || 'C';
+                        if (metadata.channel_avatar_url) {
+                            const image = document.createElement('img');
+                            image.src = `/api/video-archiver/videos/${pathSegment(metadata.id)}/avatar`;
+                            image.className = 'absolute inset-0 w-full h-full object-cover';
+                            image.addEventListener('error', () => image.remove());
+                            avatar.append(image);
+                        }
+                        renderComments(metadata.comments, 'player-detail-comments');
+                    }
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                console.warn('Could not restore archived video metadata.', error);
+            }
+        }
+        const playlistId = video.dataset.persistentPlaylistId;
+        if (origin === 'playlist' && playlistId) {
+            try {
+                const response = await fetch(`/api/video-archiver/playlists/${pathSegment(playlistId)}`, {
+                    signal: request.signal,
+                });
+                const playlist = await response.json();
+                if (response.ok && isCurrent()) {
+                    currentPlaylist = playlist;
+                    playlistVideos = playlist.videos || [];
+                    document.getElementById('video-playlist-source-url').value = playlist.source_url || '';
+                    document.getElementById('sidebar-playlist-title').textContent = playlist.name;
+                    document.getElementById('sidebar-playlist-desc').textContent = playlist.description || '';
+                    document.getElementById('sidebar-playlist-delete-btn').onclick = () => deletePlaylist(playlist.id);
+                    drawPlaylistSidebarList();
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                console.warn('Could not restore video playlist metadata.', error);
+            }
+        }
+    }
+
+    function restorePersistentArchivePlayer() {
+        const retained = window.persistentVideoPlayer?.take('video_archiver');
+        if (!retained) return;
+        const origin = retained.dataset.archiveOrigin === 'playlist' ? 'playlist' : 'library';
+        const targetVideoId = origin === 'playlist' ? 'playlist-video-player' : 'shared-video-player';
+        const targetSourceId = origin === 'playlist' ? 'playlist-video-source' : 'shared-video-source';
+        retained.id = targetVideoId;
+        const source = retained.querySelector('source');
+        if (source) source.id = targetSourceId;
+        const placeholder = document.getElementById(targetVideoId);
+        placeholder.replaceWith(retained);
+        const videoId = retained.dataset.mediaId || '';
+        const searchBar = document.getElementById('universal-search-bar');
+        if (searchBar) {
+            searchBar.classList.add('hidden');
+            searchBar.classList.remove('flex');
+        }
+        if (origin === 'playlist') {
+            activeTab = 'playlists';
+            ['library', 'download', 'playlists'].forEach(tab => {
+                const button = document.getElementById(`btn-tab-${tab}`);
+                if (!button) return;
+                button.className = tab === 'playlists'
+                    ? 'p-3 transition-all border border-transparent bg-zinc-900 text-teal-400 hover:text-white flex items-center justify-center'
+                    : 'p-3 transition-all border border-transparent hover:bg-zinc-900 text-zinc-400 hover:text-teal-400 flex items-center justify-center';
+            });
+            document.getElementById('tab-content-library').classList.add('hidden');
+            document.getElementById('tab-content-download').classList.add('hidden');
+            document.getElementById('tab-content-playlists').classList.remove('hidden');
+            document.getElementById('playlists-grid-view').classList.add('hidden');
+            document.getElementById('playlist-detail-view').classList.remove('hidden');
+            document.getElementById('playlist-player-placeholder').classList.add('hidden');
+            document.getElementById('playlist-player-loader').classList.add('hidden');
+            document.getElementById('playlist-video-container').classList.remove('hidden');
+            document.getElementById('playlist-video-details-card').classList.remove('hidden');
+            document.getElementById('playlist-detail-video-title').textContent = retained.dataset.persistentTitle || 'Video';
+            document.getElementById('playlist-detail-video-channel').textContent = retained.dataset.persistentChannel || '';
+            document.getElementById('playlist-detail-video-duration').textContent = formatDuration(Number(retained.dataset.persistentDuration || 0));
+            document.getElementById('playlist-detail-video-avatar').textContent = retained.dataset.persistentChannel?.charAt(0).toUpperCase() || 'C';
+        } else {
+            currentVideo = {id: videoId, title: retained.dataset.persistentTitle || 'Video'};
+            document.getElementById('videos-grid-container').classList.add('hidden');
+            document.getElementById('library-player-view').classList.remove('hidden');
+            document.getElementById('player-loader').classList.add('hidden');
+            document.getElementById('shared-video-container').classList.remove('hidden');
+            document.getElementById('player-detail-title').textContent = currentVideo.title;
+            document.getElementById('player-detail-channel').textContent = retained.dataset.persistentChannel || '';
+            document.getElementById('player-detail-duration').textContent = formatDuration(Number(retained.dataset.persistentDuration || 0));
+            if (videoId) document.getElementById('video-entity-actions').setAttribute('data-entity-id', videoId);
+        }
+        hydrateRestoredArchivePlayer(retained, origin);
     }
 
     // Polling Active Tasks (Every 3 seconds when download tab is open)
@@ -2911,6 +3066,7 @@
 
     // Initial Load
     function initVideoDashboard() {
+        restorePersistentArchivePlayer();
         loadLibrary();
         {% if not package_mode %}loadManagement();{% endif %}
         toggleCommentsInputs();

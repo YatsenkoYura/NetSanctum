@@ -110,8 +110,7 @@
     const videoId = {{ video_id|tojson }};
     const playlistId = new URLSearchParams(window.location.search).get('list');
     const playerSlot = document.getElementById('youtube-watch-player-slot');
-    const miniPlayerHost = document.getElementById('youtube-mini-player-host');
-    const retainedPlayer = miniPlayerHost.querySelector('#youtube-watch-player');
+    const retainedPlayer = window.persistentVideoPlayer?.take('youtube');
     const player = retainedPlayer || playerSlot.querySelector('#youtube-watch-player');
     if (retainedPlayer) playerSlot.replaceChildren(player);
     player.removeAttribute('controls');
@@ -161,6 +160,8 @@
 
     function renderCatalogMetadata(item) {
         if (!item) return;
+        player.dataset.persistentModule = 'youtube';
+        player.dataset.persistentTitle = item.title || 'YouTube';
         document.title = `${item.title} — NetSanctum`;
         document.getElementById('youtube-watch-title').textContent = item.title || 'YouTube';
         document.getElementById('youtube-watch-channel').textContent = item.channel_title || 'YouTube';
@@ -331,6 +332,8 @@
             });
             const payload = await apiJson(response);
             document.title = `${payload.title} — NetSanctum`;
+            player.dataset.persistentModule = 'youtube';
+            player.dataset.persistentTitle = payload.title || 'YouTube';
             document.getElementById('youtube-watch-title').textContent = payload.title;
             document.getElementById('youtube-watch-channel').textContent = payload.channel_title || 'YouTube';
             document.getElementById('youtube-watch-channel-initial').textContent = (payload.channel_title || 'Y').charAt(0);

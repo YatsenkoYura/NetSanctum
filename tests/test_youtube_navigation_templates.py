@@ -9,7 +9,7 @@ class YouTubeNavigationTemplateTests(unittest.TestCase):
         watch = (ROOT / "app/modules/youtube/templates/youtube_watch.html").read_text()
 
         self.assertIn('id="youtube-watch-player-slot"', watch)
-        self.assertIn("const retainedPlayer = miniPlayerHost.querySelector('#youtube-watch-player');", watch)
+        self.assertIn("const retainedPlayer = window.persistentVideoPlayer?.take('youtube');", watch)
         self.assertIn("if (retainedPlayer) playerSlot.replaceChildren(player);", watch)
         self.assertIn("player.dataset.youtubeVideoId !== videoId", watch)
 

@@ -149,6 +149,15 @@
                 showControls();
             }, {passive: true, signal});
 
+            video.addEventListener('play', () => {
+                if (window.musicPlayer?.currentSong) window.musicPlayer.close();
+                const persistent = window.persistentVideoPlayer?.current?.video;
+                if (persistent && persistent !== video) window.persistentVideoPlayer.close();
+                document.querySelectorAll('video[data-netsanctum-player]').forEach(other => {
+                    if (other !== video && !other.paused) other.pause();
+                });
+            }, {signal});
+
             window.addEventListener('keydown', event => {
                 if (
                     !isDesktop()
@@ -210,7 +219,15 @@
                 : [...(element.querySelectorAll?.('video') || [])];
             videos.forEach(video => {
                 video._youtubePageBindings?.abort();
+                video._archivePageBindings?.abort();
                 video._netSanctumPlayerBindings?.abort();
+                if (video.closest('#persistent-video-host')) return;
+                video.pause();
+                video._youtubeStopMse?.();
+                video._youtubeTransportBindings?.abort();
+                video.removeAttribute('src');
+                video.querySelectorAll('source, track').forEach(source => source.removeAttribute('src'));
+                video.load();
             });
         });
         window.addEventListener('resize', () => syncDesktopActions());

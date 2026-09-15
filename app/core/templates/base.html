@@ -88,26 +88,41 @@
             scrollbar-width: none;
         }
 
-        #youtube-mini-player-host {
+        #global-video-player {
             position: fixed;
             right: 1rem;
             bottom: 1rem;
-            z-index: 40;
+            z-index: 45;
             width: min(22rem, calc(100vw - 2rem));
-            aspect-ratio: 16 / 9;
             overflow: hidden;
             border: 2px solid #27272a;
-            background: #000;
+            background: rgb(9 9 11 / 0.96);
             box-shadow: 0 20px 40px rgb(0 0 0 / 0.5);
         }
 
-        #youtube-mini-player-host:empty {
-            display: none;
+        #persistent-video-host {
+            aspect-ratio: 16 / 9;
+            background: #000;
+        }
+
+        #persistent-video-host video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
 
         @media (max-width: 639px) {
-            #youtube-mini-player-host {
-                bottom: 5rem;
+            #global-video-player {
+                bottom: 1rem;
+            }
+            body.persistent-video-active #main-content {
+                padding-bottom: calc(56.25vw + 5rem) !important;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            #global-video-player {
+                right: 22rem;
             }
         }
     </style>
@@ -153,7 +168,7 @@
                 {% if user %}
                 <!-- Mobile Module Dropdown (Visible only on sm/xs screens) -->
                 <div class="block md:hidden">
-                    <select onchange="if(this.value) window.location.href=this.value;"
+                    <select onchange="if(this.value && !window.netSanctumNavigate?.(this.value)) window.location.href=this.value;"
                         class="bg-zinc-950 border border-teal-500/50 text-teal-400 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 font-bold uppercase cursor-pointer max-w-[130px] truncate">
                         {% if navigation_modules %}
                         {% for mod in navigation_modules %}
@@ -192,11 +207,22 @@
     </nav>
 
     <!-- ── Main Content Area ───────────────────────────── -->
-    <main id="main-content" class="px-3 sm:px-6 py-2 transition-all duration-500 max-w-full overflow-x-hidden">
+    <main id="main-content" hx-history-elt class="px-3 sm:px-6 py-2 transition-all duration-500 max-w-full overflow-x-hidden">
         {% block content %}{% endblock %}
     </main>
 
-    <div id="youtube-mini-player-host" aria-label="YouTube mini-player"></div>
+    <section id="global-video-player" class="hidden" aria-label="Video mini-player">
+        <div class="flex items-center justify-between gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2">
+            <div class="min-w-0">
+                <div id="global-video-kind" class="font-mono text-[8px] font-bold uppercase tracking-widest text-teal-400">Video</div>
+                <div id="global-video-title" class="truncate text-[11px] font-semibold text-zinc-200">Now playing</div>
+            </div>
+            <button type="button" onclick="window.persistentVideoPlayer.close()"
+                    class="flex h-8 w-8 shrink-0 items-center justify-center border border-zinc-700 text-zinc-400 hover:border-red-500 hover:text-red-400"
+                    title="Close player" aria-label="Close player">&times;</button>
+        </div>
+        <div id="persistent-video-host"></div>
+    </section>
 
     <!-- ── Global Music Player (Mobile Responsive Bottom Sheet / Floating Card) ───────────────────────────── -->
     <div id="global-player"
@@ -209,8 +235,13 @@
                 <span id="gp-header-text" class="text-[9px] font-mono text-zinc-400 uppercase tracking-widest">Now
                     Playing</span>
             </div>
-            <button id="gp-collapse-btn"
-                class="text-zinc-500 hover:text-white transition-transform duration-300">▼</button>
+            <div class="flex items-center gap-2">
+                <button id="gp-collapse-btn"
+                    class="text-zinc-500 hover:text-white transition-transform duration-300">▼</button>
+                <button type="button" onclick="event.stopPropagation(); window.musicPlayer.close()"
+                    class="flex h-7 w-7 items-center justify-center border border-zinc-700 text-zinc-500 hover:border-red-500 hover:text-red-400"
+                    title="Close player" aria-label="Close player">&times;</button>
+            </div>
         </div>
 
         <div id="gp-expanded-content" class="p-4 flex flex-col gap-5">
@@ -312,6 +343,17 @@
             pause() {
                 this.audio.pause();
             },
+            close() {
+                this.audio.pause();
+                this.audio.removeAttribute('src');
+                this.audio.load();
+                this.currentSong = null;
+                this.currentQueue = [];
+                this.currentIndex = -1;
+                document.getElementById('global-player').classList.add('translate-y-full', 'opacity-0');
+                document.getElementById('main-content').classList.remove('pb-28');
+                this.updateUI(false);
+            },
             togglePlaybackMode() {
                 if (this.playbackMode === 'normal') {
                     this.playbackMode = 'repeat';
@@ -370,6 +412,8 @@
                 this.play(song, true); // true = keep already-set queue
             },
             play(song, keepQueue = false) {
+                window.persistentVideoPlayer?.close();
+                document.querySelectorAll('video').forEach(video => video.pause());
                 this.currentSong = song;
                 // Only rebuild queue when keepQueue is NOT true
                 // (keepQueue===true means we already set currentQueue above, or next/prev set it)
@@ -522,6 +566,58 @@
                 return m + ':' + (s < 10 ? '0' : '') + s;
             }
         };
+        window.persistentVideoPlayer = {
+            current: null,
+            attach(video) {
+                if (!video?.currentSrc || video.ended) return;
+                if (this.current?.video && this.current.video !== video) this.close();
+                this.current = {
+                    video,
+                    moduleId: video.dataset.persistentModule || 'video',
+                    title: video.dataset.persistentTitle || 'Now playing',
+                };
+                video.setAttribute('controls', 'controls');
+                video.setAttribute('controlslist', 'nodownload noremoteplayback');
+                document.getElementById('persistent-video-host').replaceChildren(video);
+                document.getElementById('global-video-kind').textContent =
+                    this.current.moduleId === 'youtube' ? 'YouTube' : 'Video Archive';
+                document.getElementById('global-video-title').textContent = this.current.title;
+                document.getElementById('global-video-player').classList.remove('hidden');
+                document.body.classList.add('persistent-video-active');
+                if (window.musicPlayer?.currentSong) window.musicPlayer.close();
+            },
+            take(moduleId) {
+                if (!this.current || this.current.moduleId !== moduleId) return null;
+                const video = this.current.video;
+                this.current = null;
+                document.getElementById('global-video-player').classList.add('hidden');
+                document.body.classList.remove('persistent-video-active');
+                video.removeAttribute('controls');
+                video.removeAttribute('controlslist');
+                return video;
+            },
+            pause() {
+                this.current?.video?.pause();
+            },
+            close() {
+                const video = this.current?.video;
+                if (video) {
+                    video.pause();
+                    video._youtubeStopMse?.();
+                    video._youtubeTransportBindings?.abort();
+                    video._youtubePageBindings?.abort();
+                    video._netSanctumPlayerBindings?.abort();
+                    video.removeAttribute('src');
+                    video.querySelectorAll('source, track').forEach(source => source.removeAttribute('src'));
+                    video.load();
+                    video.remove();
+                }
+                this.current = null;
+                document.getElementById('persistent-video-host').replaceChildren();
+                document.getElementById('global-video-player').classList.add('hidden');
+                document.body.classList.remove('persistent-video-active');
+            },
+        };
         // Initialize once when the page fully loads
         document.addEventListener('DOMContentLoaded', () => {
             window.musicPlayer.init();
@@ -630,13 +726,15 @@
             }
         })();
 
-        // Keep the YouTube video element outside the HTMX swap target while navigating internally.
+        // Keep active video elements outside the HTMX swap target while navigating internally.
         (function () {
             const navigationPaths = [
                 '/dashboard',
                 '/youtube/dashboard',
                 '/music/dashboard',
                 '/video-archiver/dashboard',
+                '/alllib/dashboard',
+                '/vault/dashboard',
                 '/shares/dashboard',
                 '/storage/dashboard',
             ];
@@ -646,14 +744,22 @@
                 return navigationPaths.includes(url.pathname) || /^\/youtube\/watch\/[^/]+$/.test(url.pathname);
             }
 
-            function preserveYouTubePlayer() {
-                const player = document.getElementById('youtube-watch-player');
-                const host = document.getElementById('youtube-mini-player-host');
-                if (player && host && player.parentElement !== host) {
+            function preserveActiveVideo() {
+                const youtubePlayer = document.getElementById('youtube-watch-player');
+                const archivePlayers = [
+                    document.getElementById('shared-video-player'),
+                    document.getElementById('playlist-video-player'),
+                ];
+                const player = youtubePlayer?.currentSrc && !youtubePlayer.paused
+                    ? youtubePlayer
+                    : archivePlayers.find(
+                        video => video?.currentSrc && !video.paused && !video.ended && !video.closest('.hidden')
+                    );
+                if (player && !player.closest('#persistent-video-host')) {
                     player._youtubePageBindings?.abort();
+                    player._archivePageBindings?.abort();
                     player._netSanctumPlayerBindings?.abort();
-                    player.setAttribute('controls', 'controls');
-                    host.append(player);
+                    window.persistentVideoPlayer.attach(player);
                 }
             }
 
@@ -683,7 +789,7 @@
             });
 
             document.addEventListener('htmx:beforeSwap', function (event) {
-                if (navigationRequest && event.detail.target?.id === 'main-content') preserveYouTubePlayer();
+                if (event.detail.target?.id === 'main-content') preserveActiveVideo();
             });
 
             document.addEventListener('htmx:afterRequest', function (event) {

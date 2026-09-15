@@ -62,6 +62,31 @@ class MediaPlayerContractTests(unittest.TestCase):
         self.assertIn("signal: transportBindings.signal", youtube)
         self.assertIn('src="/static/htmx.min.js"', shared_base)
 
+    def test_persistent_video_shell_and_close_actions_are_global(self):
+        base = (ROOT / "app/core/templates/base.html").read_text()
+        video = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
+
+        self.assertIn('id="global-video-player"', base)
+        self.assertIn('id="persistent-video-host"', base)
+        self.assertIn("window.persistentVideoPlayer.close()", base)
+        self.assertIn("window.musicPlayer.close()", base)
+        self.assertIn("function preserveActiveVideo()", base)
+        self.assertIn("body.persistent-video-active #main-content", base)
+        self.assertIn("!video.paused", base)
+        self.assertIn("player.dataset.persistentModule = 'video_archiver'", video)
+        self.assertIn("restorePersistentArchivePlayer()", video)
+        self.assertIn("video._archivePageBindings?.abort()", video)
+
+    def test_video_cards_keep_metadata_off_the_thumbnail(self):
+        video = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
+        card_start = video.index("grid.innerHTML = videos.map(video =>")
+        card_end = video.index("} catch (err)", card_start)
+        card = video[card_start:card_end]
+
+        self.assertNotIn("resolutionBadge", card)
+        self.assertNotIn("platformBadge", card)
+        self.assertIn("${formatDuration(video.duration)}</div>", card)
+
 
 if __name__ == "__main__":
     unittest.main()
