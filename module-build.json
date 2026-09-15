@@ -6,6 +6,7 @@
     "youtube",
     "vault",
     "alllib",
+    "tabletop_games",
     "computercraft",
     "storage"
   ],
@@ -50,6 +51,11 @@
     "storage": {
       "required": false,
       "extra": null,
+      "system_packages": []
+    },
+    "tabletop_games": {
+      "required": false,
+      "extra": "tabletop_games",
       "system_packages": []
     },
     "vault": {

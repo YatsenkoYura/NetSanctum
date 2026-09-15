@@ -218,7 +218,7 @@ class ModuleMigrationTests(unittest.TestCase):
         migrations = installed_migrations(registry)
 
         self.assertEqual(
-            {"alllib", "music", "settings", "sharing", "vault", "video_archiver"},
+            {"alllib", "music", "settings", "sharing", "tabletop_games", "vault", "video_archiver"},
             {migration.module_id for migration in migrations},
         )
         for migration in migrations:

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Настольные игры — NetSanctum{% endblock %}
+{% block head_extra %}
+<style>
+.tabletop-hero { background:radial-gradient(circle at 78% 20%,rgba(127,29,29,.3),transparent 30%),linear-gradient(135deg,#09090b,#050505 62%,#180809); }
+.game-card { min-height:300px; background:linear-gradient(155deg,rgba(69,10,10,.72),#09090b 58%); }
+.clock-face { width:7rem;height:7rem;border:1px solid #7f1d1d;border-radius:50%;position:relative;box-shadow:0 0 45px rgba(127,29,29,.25); }
+.clock-face:before,.clock-face:after { content:"";position:absolute;left:50%;bottom:50%;width:1px;background:#dc2626;transform-origin:bottom; }
+.clock-face:before { height:2.5rem;transform:rotate(28deg); }.clock-face:after { height:1.8rem;transform:rotate(128deg); }
+</style>
+{% endblock %}
+{% block content %}
+<section class="tabletop-hero border border-zinc-800 px-5 py-10 sm:px-10 sm:py-14">
+  <div class="flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
+    <div class="max-w-2xl">
+      <div class="mb-3 font-mono text-[10px] font-bold uppercase tracking-[.32em] text-red-500">Game master console</div>
+      <h1 class="text-3xl font-black uppercase tracking-tight text-white sm:text-5xl">Настольные игры</h1>
+      <p class="mt-4 max-w-xl text-sm leading-6 text-zinc-400">Создайте комнату, соберите игроков по QR-коду и ведите партию из защищённого интерфейса.</p>
+    </div>
+    <div class="clock-face shrink-0" aria-hidden="true"></div>
+  </div>
+</section>
+
+<section class="mt-6">
+  <div class="mb-3 flex items-end justify-between border-b border-zinc-800 pb-2">
+    <h2 class="font-mono text-xs font-black uppercase tracking-widest text-zinc-200">Доступные игры</h2>
+    <span class="font-mono text-[10px] text-zinc-600">{{ games|length }} установлено</span>
+  </div>
+  <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+    {% for game in games %}
+    <article class="game-card group relative overflow-hidden border border-zinc-800 p-6 hover:border-red-800">
+      <div class="absolute -right-8 -top-8 h-28 w-28 rounded-full border border-red-950"></div>
+      <div class="font-mono text-[9px] font-bold uppercase tracking-[.25em] text-red-500">{{ game.min_players }}–{{ game.max_players }} игроков</div>
+      <h3 class="mt-12 max-w-sm text-2xl font-black uppercase leading-tight text-white">{{ game.title_ru }}</h3>
+      <div class="mt-1 font-serif text-sm italic text-zinc-500">{{ game.title_en }}</div>
+      <p class="mt-5 max-w-md text-xs leading-5 text-zinc-400">{{ game.description_ru }}</p>
+      <a href="/tabletop/games/{{ game.id }}" class="mt-8 inline-flex border border-red-700 bg-red-950/40 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-wider text-red-300 hover:bg-red-900 hover:text-white">Создать партию →</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="mt-8">
+  <div class="mb-3 border-b border-zinc-800 pb-2"><h2 class="font-mono text-xs font-black uppercase tracking-widest text-zinc-200">Последние комнаты</h2></div>
+  <div class="overflow-x-auto border border-zinc-800">
+    <table class="w-full min-w-[620px] text-left font-mono text-xs">
+      <thead class="bg-zinc-950 text-[9px] uppercase tracking-widest text-zinc-600"><tr><th class="p-3">Комната</th><th class="p-3">Код</th><th class="p-3">Игроки</th><th class="p-3">Статус</th><th></th></tr></thead>
+      <tbody class="divide-y divide-zinc-900">
+      {% for room in rooms %}
+        <tr class="hover:bg-zinc-950"><td class="p-3 font-bold text-zinc-200">{{ room.title }}</td><td class="p-3 tracking-widest text-red-400">{{ room.code }}</td><td class="p-3 text-zinc-500">{{ room.participants|length }} / {{ room.config.player_limit }}</td><td class="p-3 uppercase text-zinc-500">{{ room.status }}</td><td class="p-3 text-right"><a class="text-red-400 hover:text-red-300" href="/tabletop/rooms/{{ room.id }}">Открыть →</a></td></tr>
+      {% else %}
+        <tr><td colspan="5" class="p-8 text-center text-zinc-600">Комнат пока нет</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

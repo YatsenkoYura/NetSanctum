@@ -23,6 +23,7 @@ NetSanctum core
     ├── AllLib
     ├── Music
     ├── Vault
+    ├── Tabletop Games
     ├── Video Archiver
     ├── YouTube
     └── future independent modules
@@ -133,6 +134,9 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **Video Archiver** downloads and streams videos, subtitles, metadata, and comments.
 - **YouTube** provides keyless server-side browsing, optional isolated account login, streaming, and Video Archiver actions.
 - **Vault** stores notes, bookmarks, collections, ratings, and media progress.
+- **Tabletop Games** hosts token-scoped live game rooms with QR invites, Redis-backed WebSockets,
+  private roles, messaging, and game-specific GM tools. Each game lives in its own package under
+  `app/modules/tabletop_games/games/`.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
 - **ComputerCraft** runs the NetSanctumOS controller, monitor viewers, and speaker playback.
 - **Auth and Settings** provide internal platform services used by the other modules.

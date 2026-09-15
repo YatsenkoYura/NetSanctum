@@ -27,6 +27,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tabletop_games = [
+    "qrcode==8.2",
+]
 alllib = [
     "anicli-api==0.9.2",
     "requests==2.33.0",

@@ -23,6 +23,7 @@ from app.core.database import AsyncSessionLocal, async_engine
 from app.core.http_security import security_headers_middleware
 from app.core.modules import module_registry
 from app.core.observability import configure_observability, process_role
+from app.core.realtime import realtime_hub
 from app.core.security import OwnerUser, get_current_user
 from app.core.templates import templates
 
@@ -161,6 +162,7 @@ async def lifespan(application: FastAPI):
 
             await stop_encryption_migration()
         await module_registry.run_shutdown_hooks()
+        await realtime_hub.close()
         await async_engine.dispose()
         logger.info("Database engine disposed")
 
