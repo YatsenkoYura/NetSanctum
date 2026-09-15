@@ -886,14 +886,25 @@ async def convert_playlist_to_music(
     playlist = await db.get(VideoPlaylist, playlist_id)
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    if not playlist.source_url:
-        raise HTTPException(status_code=400, detail="Attach a playlist URL before converting it to music")
     try:
-        result = await module_registry.invoke_integration(
-            "media.audio.playlist.import.v1",
-            {"source_url": playlist.source_url},
-            IntegrationContext(session=db, user=user, registry=module_registry, consumer_id="video_archiver"),
+        context = IntegrationContext(
+            session=db, user=user, registry=module_registry, consumer_id="video_archiver"
         )
+        if playlist.source_url:
+            result = await module_registry.invoke_integration(
+                "media.audio.playlist.import.v1", {"source_url": playlist.source_url}, context
+            )
+        else:
+            videos = await PlaylistService.get_playlist_videos(db, playlist.id)
+            if not videos:
+                raise HTTPException(status_code=400, detail="Playlist has no videos to convert")
+            queued = 0
+            for video in videos:
+                await module_registry.invoke_integration(
+                    "media.audio.import.v1", {"entity_type": "video", "entity_id": video.id}, context
+                )
+                queued += 1
+            result = {"status": "dispatched", "task_id": None, "message": f"Queued {queued} video imports"}
     except IntegrationRejectedError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except IntegrationUnavailableError as exc:

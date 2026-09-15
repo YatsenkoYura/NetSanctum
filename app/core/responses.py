@@ -84,7 +84,11 @@ def serve_storage_file_chunked(file_path: str, media_type: str | None = None) ->
         media_type, _ = mimetypes.guess_type(file_path)
         media_type = media_type or "application/octet-stream"
 
-    return StreamingResponse(storage_chunk_generator(storage, file_path), media_type=media_type)
+    return StreamingResponse(
+        storage_chunk_generator(storage, file_path),
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 def serve_media_stream(request: Request, file_path: str, media_type: str | None = None) -> Response:

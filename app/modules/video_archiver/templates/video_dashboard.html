@@ -553,35 +553,34 @@
         <!-- Playlist Detail Split/Player View (Activated on Open) -->
         <div id="playlist-detail-view" class="hidden space-y-6">
             <div class="flex justify-between items-center bg-zinc-950 border-t-2 border-x-2 border-zinc-800 p-4">
-                <button onclick="closePlaylistDetail()" class="bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-white font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                    &larr; {{ _('video_archiver', 'back_to_playlists') }}
+                <button onclick="closePlaylistDetail()" title="{{ _('video_archiver', 'back_to_playlists') }}" class="h-9 w-9 bg-zinc-900 border border-zinc-700 hover:border-teal-400 text-white flex items-center justify-center transition-colors">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
                 </button>
-                <div class="flex items-center gap-2">
-                    <button onclick="syncVideoPlaylist()" class="bg-emerald-950/50 hover:bg-emerald-500 border border-emerald-500/50 hover:text-black text-emerald-400 font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                        {{ _('video_archiver', 'update_new_videos') }}
+                <div class="flex min-w-0 flex-1 items-center justify-end gap-2">
+                    <input id="playlist-module-search" type="search" oninput="filterPlaylistVideos()" placeholder="{{ _('video_archiver', 'search_placeholder') }}" class="hidden min-w-0 flex-1 bg-black border border-zinc-800 px-3 py-2 text-xs text-white outline-none focus:border-teal-400 sm:block">
+                    <button onclick="syncVideoPlaylist()" title="{{ _('video_archiver', 'update_new_videos') }}" class="h-9 w-9 bg-emerald-950/50 hover:bg-emerald-500 border border-emerald-500/50 hover:text-black text-emerald-400 flex items-center justify-center transition-colors">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v16M8 8h8a4 4 0 010 8H8"/><path stroke-linecap="round" stroke-linejoin="round" d="M8 4l-4 4 4 4"/></svg>
                     </button>
-                    <button onclick="convertVideoPlaylistToMusic()" class="bg-zinc-900 hover:bg-teal-400 border border-teal-500/50 hover:text-black text-teal-400 font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                        {{ _('video_archiver', 'convert_to_music') }}
+                    <button onclick="convertVideoPlaylistToMusic()" title="{{ _('video_archiver', 'convert_to_music') }}" class="h-9 w-9 bg-zinc-900 hover:bg-teal-400 border border-teal-500/50 hover:text-black text-teal-400 flex items-center justify-center transition-colors">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.1-1.3 2-3 2s-3-.9-3-2 1.3-2 3-2 3 .9 3 2zm12-3c0 1.1-1.3 2-3 2s-3-.9-3-2 1.3-2 3-2 3 .9 3 2z"/></svg>
                     </button>
                     <button onclick="sendToOutpost('/api/video-archiver/playlists/' + pathSegment(currentPlaylist.id) + '/sync-manifest')"
                             class="outpost-only bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors mr-2">
                         Save to Device
                     </button>
-                    <button onclick="toggleTheaterModePlaylist()" id="btn-theater-mode-playlist" class="bg-teal-400 hover:bg-teal-300 text-black font-black font-mono text-xs px-3 py-1.5 uppercase transition-colors">
-                        {{ _('video_archiver', 'theater_mode') }}
-                    </button>
                 </div>
             </div>
 
             <div id="playlist-player-wrapper" class="grid grid-cols-1 lg:grid-cols-12 gap-6 border-2 border-zinc-800 p-4 sm:p-6 bg-zinc-950">
-                <div class="col-span-full border border-zinc-800 bg-black p-3">
+                <details class="col-span-full border border-zinc-800 bg-black p-3">
+                    <summary class="cursor-pointer text-[10px] font-mono font-bold uppercase text-zinc-500">{{ _('video_archiver', 'playlist_source_url') }}</summary>
                     <label for="video-playlist-source-url" class="mb-2 block text-[10px] font-mono font-bold uppercase text-zinc-500">{{ _('video_archiver', 'playlist_source_url') }}</label>
                     <div class="flex flex-col gap-2 sm:flex-row">
                         <input id="video-playlist-source-url" type="url" placeholder="Supported playlist URL" class="min-w-0 flex-1 border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-teal-400">
                         <button onclick="saveVideoPlaylistSource()" class="border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-[10px] font-bold uppercase text-zinc-200 hover:border-teal-400 hover:text-teal-400">{{ _('video_archiver', 'save_link') }}</button>
                     </div>
                     <p id="video-playlist-source-feedback" class="mt-2 text-[10px] font-mono text-zinc-500">Updates retain archived videos and download only new entries.</p>
-                </div>
+                </details>
                 <!-- Left Column: Standardized HTML5 Video Player + Video Details -->
                 <div id="playlist-player-main" class="col-span-1 lg:col-span-8 space-y-6">
                     <div class="relative aspect-video bg-black border-2 border-zinc-800 overflow-hidden flex items-center justify-center">
@@ -665,6 +664,9 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <button onclick="toggleTheaterModePlaylist()" id="btn-theater-mode-playlist" class="font-bold hover:text-teal-400 transition-colors p-1" title="{{ _('video_archiver', 'theater_mode') }}">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M4 16v4h4m8-12h4V4m-4 16h4v-4"/><rect x="3" y="7" width="18" height="10" rx="0" stroke-width="1.5"/></svg>
+                                        </button>
                                         <!-- Picture-in-Picture button -->
                                         <button onclick="togglePiPCustom('playlist-video-player')" class="pip-btn font-bold hover:text-teal-400 transition-colors uppercase p-1" title="Picture-in-Picture">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -2047,7 +2049,10 @@
 
     function drawPlaylistSidebarList() {
         const list = document.getElementById('playlist-sidebar-list');
-        const filter = document.getElementById('playlist-sidebar-search').value.toLowerCase();
+        const filter = [
+            document.getElementById('playlist-sidebar-search').value,
+            document.getElementById('playlist-module-search')?.value || '',
+        ].join(' ').toLowerCase();
 
         let filtered = playlistVideos.filter(v =>
             v.title.toLowerCase().includes(filter) || v.channel_name.toLowerCase().includes(filter)
@@ -2212,11 +2217,11 @@
         if (isPlaylistTheater) {
             main.className = "col-span-12 space-y-6";
             sidebar.className = "hidden";
-            btn.textContent = `[${i18n.show_sidebar}]`;
+            btn.title = i18n.show_sidebar;
         } else {
             main.className = "col-span-8 space-y-6";
             sidebar.className = "col-span-4 bg-zinc-900/10 border-2 border-zinc-800 p-4 flex flex-col h-[650px] space-y-4";
-            btn.textContent = `[${i18n.theater_mode}]`;
+            btn.title = i18n.theater_mode;
         }
     };
 
