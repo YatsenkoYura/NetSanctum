@@ -3,6 +3,7 @@ Music module router.
 """
 
 import json
+import re
 
 import anyio
 import redis.asyncio as aioredis
@@ -38,6 +39,7 @@ def _t(key: str, lang: str = "en") -> str:
 
 
 router = APIRouter(prefix="/music", tags=["music"])
+TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 
 async def _regenerate_playlist_cover(db: AsyncSession, playlist: Playlist) -> None:
@@ -704,7 +706,9 @@ async def start_download(
 @router.get("/ui/downloads_active", response_class=HTMLResponse, include_in_schema=False)
 async def active_downloads_ui(request: Request, user=Depends(get_current_user)):
     """HTMX endpoint to poll active downloads."""
-    keys = [key async for key in redis_client.scan_iter(match="music_dl:*", count=100)]
+    keys = []
+    for pattern in ("music_dl:*", "music_convert:*"):
+        keys.extend([key async for key in redis_client.scan_iter(match=pattern, count=100)])
     downloads = []
     for k in keys:
         data = await redis_client.get(k)
@@ -741,7 +745,9 @@ async def cancel_all_downloads_ui(request: Request, user=Depends(get_current_use
     """HTMX endpoint to cancel all active downloads."""
     from app.core.scheduler import celery_app
 
-    keys = [key async for key in redis_client.scan_iter(match="music_dl:*", count=100)]
+    keys = []
+    for pattern in ("music_dl:*", "music_convert:*"):
+        keys.extend([key async for key in redis_client.scan_iter(match=pattern, count=100)])
     for k in keys:
         data = await redis_client.get(k)
         if data:
@@ -762,7 +768,22 @@ async def cancel_download_ui(task_id: str, request: Request, user=Depends(get_cu
 
     celery_app.control.revoke(task_id, terminate=True)
     await redis_client.delete(f"music_dl:{task_id}")
+    await redis_client.delete(f"music_convert:{task_id}")
     return HTMLResponse("")
+
+
+@router.get("/api/conversions/{task_id}")
+async def get_conversion_status(task_id: str, user=Depends(get_current_user)):
+    """Return persisted progress and the resulting Music audio URL."""
+    if not TASK_ID_PATTERN.fullmatch(task_id):
+        raise HTTPException(status_code=404, detail="Conversion task not found")
+    raw = await redis_client.get(f"music_convert:{task_id}")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Conversion task not found")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Conversion status is unavailable") from exc
 
 
 @router.get("/api/songs/{song_id}/sync-manifest")

@@ -6,7 +6,10 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import tempfile
+from collections.abc import Callable
+from pathlib import Path
 from urllib.parse import urlparse
 
 import redis
@@ -54,6 +57,219 @@ def _regenerate_playlist_cover(session, playlist_id: int) -> None:
 
 
 redis_client = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+
+
+def _set_conversion_status(
+    task_id: str,
+    *,
+    source_id: str,
+    title: str,
+    state: str,
+    status: str,
+    progress: int,
+    **result,
+) -> None:
+    payload = {
+        "task_id": task_id,
+        "source_id": source_id,
+        "title": title,
+        "state": state,
+        "status": status,
+        "progress": f"{progress}%",
+        "progress_percent": progress,
+        **result,
+    }
+    ttl = 3600 if state in {"completed", "failed"} else 86400
+    try:
+        redis_client.setex(f"music_convert:{task_id}", ttl, json.dumps(payload))
+    except Exception as exc:
+        logger.warning("Could not update conversion status for %s: %s", task_id, exc)
+
+
+def _extract_archived_audio(
+    storage_path: str,
+    output_path: Path,
+    duration: int,
+    progress_callback: Callable[[int], None],
+) -> None:
+    """Materialize a stored video and extract a predictable MP3 with FFmpeg."""
+    storage = get_storage()
+    input_suffix = Path(storage_path).suffix or ".video"
+    input_path = output_path.with_name(f"source{input_suffix}")
+    source = storage.get_file_stream(storage_path)
+    try:
+        with input_path.open("wb") as destination:
+            shutil.copyfileobj(source, destination, length=1024 * 1024)
+    finally:
+        source.close()
+
+    media_duration = float(duration)
+    if media_duration <= 0:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(input_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            media_duration = float(probe.stdout.strip())
+        except ValueError:
+            media_duration = 0
+
+    command = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(input_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "192k",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        str(output_path),
+    ]
+    with tempfile.TemporaryFile(mode="w+t") as errors:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            text=True,
+        )
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            key, _, value = raw_line.strip().partition("=")
+            if media_duration > 0 and key in {"out_time_us", "out_time_ms"} and value.isdigit():
+                elapsed_seconds = int(value) / 1_000_000
+                progress_callback(min(90, 10 + int(80 * elapsed_seconds / media_duration)))
+        return_code = process.wait()
+        if return_code != 0 or not output_path.is_file():
+            errors.seek(0)
+            detail = errors.read().strip()[-1000:]
+            raise RuntimeError(detail or f"FFmpeg exited with status {return_code}")
+
+
+@celery_app.task(bind=True)
+def convert_archived_video_task(
+    self,
+    source_id: str,
+    storage_path: str,
+    title: str,
+    author: str | None = None,
+    description: str | None = None,
+    source_url: str | None = None,
+    thumbnail_path: str | None = None,
+    duration: int = 0,
+) -> str:
+    """Extract an archived video's audio into the Music library."""
+    task_id = self.request.id
+    audio_file_id = None
+    cover_file_id = None
+    source_reference = (source_url or f"archive:{source_id}")[:255]
+
+    def update(state: str, status: str, progress: int, **result) -> None:
+        _set_conversion_status(
+            task_id,
+            source_id=source_id,
+            title=title,
+            state=state,
+            status=status,
+            progress=progress,
+            **result,
+        )
+
+    update("running", "Checking source", 2)
+    storage = get_storage()
+    try:
+        if not storage.file_exists(storage_path):
+            raise FileNotFoundError("Archived video file is unavailable")
+
+        with SyncSessionLocal() as session:
+            existing_song = session.scalar(select(Song).where(Song.youtube_url == source_reference))
+            if existing_song and storage.file_exists(existing_song.audio_file_id):
+                update(
+                    "completed",
+                    "Already available",
+                    100,
+                    song_id=existing_song.id,
+                    audio_url=f"/music/audio/{existing_song.id}",
+                )
+                return f"Already available: {existing_song.title}"
+
+        with tempfile.TemporaryDirectory(prefix="netsanctum_archive_audio_") as temp_dir:
+            audio_path = Path(temp_dir) / "audio.mp3"
+            update("running", "Preparing archived video", 5)
+            _extract_archived_audio(
+                storage_path,
+                audio_path,
+                duration,
+                lambda progress: update("running", "Extracting audio", progress),
+            )
+            update("running", "Saving audio", 94)
+            audio_file_id = storage.save_file(
+                audio_path.read_bytes(),
+                f"music/audio/archive-{task_id}.mp3",
+            )
+
+        if thumbnail_path and storage.file_exists(thumbnail_path):
+            cover_suffix = Path(thumbnail_path).suffix.lower()
+            if cover_suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+                cover_suffix = ".jpg"
+            with storage.get_file_stream(thumbnail_path) as cover:
+                cover_file_id = storage.save_file(
+                    cover.read(),
+                    f"music/covers/archive-{task_id}{cover_suffix}",
+                )
+
+        update("running", "Adding to Music library", 98)
+        with SyncSessionLocal() as session:
+            song = Song(
+                title=title,
+                author=author or "Unknown",
+                original_artist=None,
+                cover_file_id=cover_file_id,
+                audio_file_id=audio_file_id,
+                youtube_url=source_reference,
+            )
+            session.add(song)
+            session.commit()
+            session.refresh(song)
+            song_id = song.id
+
+        update(
+            "completed",
+            "Conversion completed",
+            100,
+            song_id=song_id,
+            audio_url=f"/music/audio/{song_id}",
+        )
+        return f"Converted archived video: {title}"
+    except Exception as exc:
+        if audio_file_id:
+            storage.delete_file(audio_file_id)
+        if cover_file_id:
+            storage.delete_file(cover_file_id)
+        message = str(exc) or exc.__class__.__name__
+        logger.error("Failed to convert archived video %s: %s", source_id, message)
+        update("failed", f"Conversion failed: {message}", 0, error=message)
+        return f"Error converting archived video: {message}"
 
 
 def _get_api_keys() -> tuple[str, str]:

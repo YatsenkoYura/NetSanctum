@@ -20,7 +20,7 @@ from app.core.module_types import (
 from app.core.task_dispatch import dispatch_tracked_async
 from app.modules.music.models import Song
 from app.modules.music.security import validate_music_url
-from app.modules.music.tasks import process_youtube_url_task
+from app.modules.music.tasks import convert_archived_video_task, process_youtube_url_task
 
 redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
@@ -38,6 +38,7 @@ class ImportEntityAudioResult(BaseModel):
     status: str
     task_id: str
     message: str
+    status_url: str | None = None
 
 
 def _serialize_song(song: Song) -> LibraryItem:
@@ -108,6 +109,40 @@ async def import_entity_audio(
     )
     if not entity:
         raise IntegrationRejectedError("Source entity was not found")
+
+    storage_path = entity.get("storage_path")
+    if "storage_path" in entity:
+        if not storage_path:
+            raise IntegrationRejectedError("Archived video file is not ready for conversion")
+        task = await dispatch_tracked_async(
+            convert_archived_video_task,
+            redis_client,
+            "music_convert",
+            {
+                "source_id": request.entity_id,
+                "title": entity.get("title") or "Archived video",
+                "status": "Queued",
+                "state": "queued",
+                "progress": "0%",
+                "progress_percent": 0,
+            },
+            kwargs={
+                "source_id": request.entity_id,
+                "storage_path": storage_path,
+                "title": entity.get("title") or "Archived video",
+                "author": entity.get("author"),
+                "description": entity.get("description"),
+                "source_url": entity.get("source_url"),
+                "thumbnail_path": entity.get("thumbnail_storage_path"),
+                "duration": entity.get("duration") or 0,
+            },
+        )
+        return ImportEntityAudioResult(
+            status="dispatched",
+            task_id=task.id,
+            status_url=f"/music/api/conversions/{task.id}",
+            message="Archived video conversion queued",
+        )
 
     source_url = entity.get("source_url")
     if not source_url:

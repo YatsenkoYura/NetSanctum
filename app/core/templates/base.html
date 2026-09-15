@@ -745,6 +745,11 @@
                         const detail = typeof result.detail === 'string' ? result.detail : 'Integration failed';
                         throw new Error(detail);
                     }
+                    if (result.status_url) {
+                        if (typeof window.showToast === 'function') window.showToast('Action queued');
+                        await this.trackAction(button, action, result);
+                        return;
+                    }
                     window.dispatchEvent(new CustomEvent('netsanctum:integration-complete', {
                         detail: {action: action, result: result},
                     }));
@@ -760,6 +765,31 @@
                     }
                 } finally {
                     button.disabled = false;
+                }
+            }
+
+            async trackAction(button, action, result) {
+                while (this.isConnected) {
+                    const response = await fetch(result.status_url);
+                    const status = await response.json();
+                    if (!response.ok) throw new Error(status.detail || 'Could not read task status');
+                    const progress = status.progress || `${status.progress_percent || 0}%`;
+                    button.textContent = `${progress} ${status.status || ''}`.trim();
+                    window.dispatchEvent(new CustomEvent('netsanctum:integration-progress', {
+                        detail: {action: action, result: result, status: status},
+                    }));
+                    if (status.state === 'completed') {
+                        window.dispatchEvent(new CustomEvent('netsanctum:integration-complete', {
+                            detail: {action: action, result: {...result, ...status}},
+                        }));
+                        if (typeof window.showToast === 'function') window.showToast('Conversion completed');
+                        button.textContent = action.label;
+                        return;
+                    }
+                    if (status.state === 'failed') {
+                        throw new Error(status.error || status.status || 'Conversion failed');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
         }

@@ -83,7 +83,7 @@ MODULE = ModuleSpec(
             entity_types=("video",),
         ),
     ),
-    progress_key_patterns=("music_dl:*",),
+    progress_key_patterns=("music_dl:*", "music_convert:*"),
     dependency_extra="music",
     system_packages=("deno", "ffmpeg"),
 )

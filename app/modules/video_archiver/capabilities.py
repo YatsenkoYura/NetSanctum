@@ -25,8 +25,14 @@ async def resolve_entity(db: AsyncSession, entity_type: str, entity_id: str) -> 
     source_url = PlatformRegistry.get_provider_by_id(video.platform).build_video_url(video.id)
     return {
         "type": entity_type,
+        "id": video.id,
         "title": video.title,
+        "description": video.description,
+        "author": video.channel_name,
+        "duration": video.duration,
         "url": f"/video-archiver/dashboard?video_id={video.id}",
         "thumbnail": f"/api/video-archiver/videos/{video.id}/thumbnail" if video.thumbnail_path else None,
+        "thumbnail_storage_path": video.thumbnail_path,
+        "storage_path": video.file_path if video.status == "completed" else None,
         "source_url": source_url,
     }

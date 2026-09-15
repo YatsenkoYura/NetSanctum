@@ -2024,16 +2024,43 @@
     async function convertVideoPlaylistToMusic() {
         if (!currentPlaylist) return;
         const feedback = document.getElementById('video-playlist-source-feedback');
-        if (!(await saveVideoPlaylistSource())) return;
         try {
             const response = await fetch(`/api/video-archiver/playlists/${pathSegment(currentPlaylist.id)}/convert-to-music`, {method: 'POST'});
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || 'Could not queue music conversion');
-            feedback.textContent = 'Music conversion queued for the whole playlist.';
+            feedback.textContent = `Music conversion queued for ${payload.task_ids.length} archived videos.`;
             feedback.className = 'mt-2 text-[10px] font-mono text-emerald-400';
+            pollPlaylistMusicConversions(payload.status_urls || [], feedback);
         } catch (error) {
             feedback.textContent = error.message;
             feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+        }
+    }
+
+    async function pollPlaylistMusicConversions(statusUrls, feedback) {
+        while (statusUrls.length && feedback.isConnected) {
+            try {
+                const statuses = await Promise.all(statusUrls.map(async url => {
+                    const response = await fetch(url);
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload.detail || 'Could not read conversion status');
+                    return payload;
+                }));
+                const completed = statuses.filter(status => status.state === 'completed').length;
+                const failed = statuses.filter(status => status.state === 'failed').length;
+                const progress = Math.round(statuses.reduce(
+                    (total, status) => total + Number(status.progress_percent || 0), 0
+                ) / statuses.length);
+                feedback.textContent = `Music conversion: ${completed}/${statuses.length} completed, ${progress}%` +
+                    (failed ? `, ${failed} failed` : '');
+                feedback.className = `mt-2 text-[10px] font-mono ${failed ? 'text-red-400' : 'text-emerald-400'}`;
+                if (completed + failed === statuses.length) return;
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (error) {
+                feedback.textContent = error.message;
+                feedback.className = 'mt-2 text-[10px] font-mono text-red-400';
+                return;
+            }
         }
     }
 

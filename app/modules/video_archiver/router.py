@@ -890,21 +890,29 @@ async def convert_playlist_to_music(
         context = IntegrationContext(
             session=db, user=user, registry=module_registry, consumer_id="video_archiver"
         )
-        if playlist.source_url:
-            result = await module_registry.invoke_integration(
-                "media.audio.playlist.import.v1", {"source_url": playlist.source_url}, context
-            )
-        else:
-            videos = await PlaylistService.get_playlist_videos(db, playlist.id)
-            if not videos:
-                raise HTTPException(status_code=400, detail="Playlist has no videos to convert")
-            queued = 0
-            for video in videos:
+        videos = await PlaylistService.get_playlist_videos(db, playlist.id)
+        if not videos:
+            raise HTTPException(status_code=400, detail="Playlist has no videos to convert")
+        ready_videos = [video for video in videos if video.status == "completed" and video.file_path]
+        if not ready_videos:
+            raise HTTPException(status_code=400, detail="Playlist has no archived video files to convert")
+        conversions = []
+        for video in ready_videos:
+            conversions.append(
                 await module_registry.invoke_integration(
                     "media.audio.import.v1", {"entity_type": "video", "entity_id": video.id}, context
                 )
-                queued += 1
-            result = {"status": "dispatched", "task_id": None, "message": f"Queued {queued} video imports"}
+            )
+        result = {
+            "status": "dispatched",
+            "task_id": conversions[0]["task_id"] if len(conversions) == 1 else None,
+            "task_ids": [conversion["task_id"] for conversion in conversions],
+            "status_urls": [
+                conversion["status_url"] for conversion in conversions if conversion.get("status_url")
+            ],
+            "skipped": len(videos) - len(ready_videos),
+            "message": f"Queued {len(conversions)} archived video conversions",
+        }
     except IntegrationRejectedError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except IntegrationUnavailableError as exc:
