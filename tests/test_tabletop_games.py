@@ -7,6 +7,11 @@ from app.modules.tabletop_games.games.blood_on_the_clocktower.game import (
     assign_roles,
     validate_config,
 )
+from app.modules.tabletop_games.games.mafia.game import (
+    PLAYER_DISTRIBUTION as MAFIA_PLAYER_DISTRIBUTION,
+    assign_roles as assign_mafia_roles,
+    validate_config as validate_mafia_config,
+)
 from app.modules.tabletop_games.registry import game_registry
 from app.modules.tabletop_games.schemas import ParticipantEffect, ParticipantUpdate
 from app.modules.tabletop_games.services import hash_player_token, player_cookie_name, room_channel
@@ -122,6 +127,34 @@ class TabletopGameRegistryTests(unittest.TestCase):
                 choices = [role for role in game.role_catalog if role.id in role_ids]
                 self.assertEqual(set(role_ids), {role.id for role in choices})
                 self.assertTrue(any(role.team == "demon" for role in choices))
+
+    def test_mafia_is_discovered_with_a_large_role_catalog(self):
+        game = game_registry.get("mafia")
+
+        self.assertIsNotNone(game)
+        assert game is not None
+        self.assertEqual(5, game.min_players)
+        self.assertEqual(15, game.max_players)
+        self.assertGreaterEqual(len(game.role_catalog), 20)
+
+    def test_mafia_assigns_complete_unique_role_sets_for_every_scenario(self):
+        game = game_registry.get("mafia")
+        assert game is not None
+
+        for script, role_ids in game.metadata["script_role_ids"].items():
+            for player_count, distribution in MAFIA_PLAYER_DISTRIBUTION.items():
+                with self.subTest(script=script, player_count=player_count):
+                    roles = assign_mafia_roles(player_count, {"script": script})
+                    self.assertEqual(player_count, len(roles))
+                    self.assertEqual(player_count, len({role.id for role in roles}))
+                    self.assertLessEqual({role.id for role in roles}, set(role_ids))
+                    self.assertEqual(distribution[0], sum(role.team == "townsfolk" for role in roles))
+                    self.assertEqual(distribution[2], sum(role.team == "minion" for role in roles))
+                    self.assertEqual(1, sum(role.team == "demon" for role in roles))
+
+    def test_mafia_rejects_unknown_script(self):
+        with self.assertRaises(ValueError):
+            validate_mafia_config({"script": "unknown"})
 
 
 class TabletopSecurityTests(unittest.TestCase):

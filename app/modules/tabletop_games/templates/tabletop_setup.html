@@ -41,7 +41,7 @@
       {% endfor %}
     </div>
 
-    <p class="mt-3 text-[10px] leading-4 text-zinc-600">Обычный состав рассчитывается по официальной таблице и может меняться свойствами ролей. Ручной состав является вариантом: числа должны дать ровно выбранное число игроков.</p>
+    <p class="mt-3 text-[10px] leading-4 text-zinc-600">Состав ролей рассчитывается по таблице выбранной игры и сценарию. Настройки игры могут менять доступную информацию и правила связи.</p>
 
     <div class="mt-6 flex justify-end"><button class="flex h-11 items-center gap-3 bg-teal-400 px-5 font-mono text-[10px] font-black uppercase tracking-wider text-black hover:bg-teal-300">Создать комнату <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button></div>
   </form>
@@ -50,9 +50,10 @@
   const manualDistribution = document.getElementById('manual_distribution');
   const manualCounts = document.querySelectorAll('.manual-count input');
   function updateManualDistribution() {
+    if (!manualDistribution) return;
     manualCounts.forEach(input => { input.disabled = !manualDistribution.checked; input.required = manualDistribution.checked; });
   }
-  manualDistribution.addEventListener('change', updateManualDistribution);
+  if (manualDistribution) manualDistribution.addEventListener('change', updateManualDistribution);
   updateManualDistribution();
 </script>
 {% endblock %}
