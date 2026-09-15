@@ -22,6 +22,7 @@ class NavigationContractTests(unittest.TestCase):
         self.assertIn('id="global-video-player"', base)
         self.assertIn('id="main-content" hx-history-elt', base)
         self.assertIn("document.addEventListener('click'", base)
+        self.assertIn("preserveActiveVideo();", base)
         self.assertIn("htmx.ajax('GET', url.pathname + url.search", base)
         self.assertIn("select: '#main-content'", base)
         self.assertIn("push: url.pathname + url.search", base)
