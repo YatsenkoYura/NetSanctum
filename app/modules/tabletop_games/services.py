@@ -141,14 +141,17 @@ async def authenticate_player(
 
 
 def _prepare_role_data(
-    role: RoleDefinition, game: GameDefinition, assigned_role_ids: set[str]
+    role: RoleDefinition,
+    game: GameDefinition,
+    assigned_role_ids: set[str],
+    eligible_role_ids: set[str],
 ) -> dict[str, Any]:
     data: dict[str, Any] = role_payload(role)
     if role.id == "drunk":
         candidates = [
             item
             for item in game.role_catalog
-            if item.team == "townsfolk" and item.id not in assigned_role_ids
+            if item.team == "townsfolk" and item.id in eligible_role_ids and item.id not in assigned_role_ids
         ]
         if candidates:
             data["perceived_role"] = role_payload(secrets.choice(candidates))
@@ -177,14 +180,19 @@ async def start_room(db: AsyncSession, room: TabletopRoom) -> TabletopRoom:
         raise ValueError(f"Для старта нужно от {game.min_players} до {game.max_players} игроков")
     roles = game.assign_roles(len(participants), room.config)
     assigned_ids = {role.id for role in roles}
+    eligible_role_ids = set(
+        game.metadata.get("script_role_ids", {}).get(room.config.get("script"), assigned_ids)
+    )
     for participant, role in zip(participants, roles, strict=True):
         participant.role_id = role.id
-        participant.role_data = _prepare_role_data(role, game, assigned_ids)
+        participant.role_data = _prepare_role_data(role, game, assigned_ids, eligible_role_ids)
         participant.is_alive = True
     good_bluffs = [
         item
         for item in game.role_catalog
-        if item.team in {"townsfolk", "outsider"} and item.id not in assigned_ids
+        if item.team in {"townsfolk", "outsider"}
+        and item.id in eligible_role_ids
+        and item.id not in assigned_ids
     ]
     room.game_state = {
         "demon_bluffs": [role_payload(item) for item in secrets.SystemRandom().sample(good_bluffs, 3)]
@@ -208,13 +216,15 @@ async def active_participant_ids(room_id: str, participants: list[TabletopPartic
     return {participant.id for participant, value in zip(participants, values, strict=True) if value}
 
 
-def participant_public(participant: TabletopParticipant, online_ids: set[str]) -> dict[str, Any]:
+def participant_public(
+    participant: TabletopParticipant, online_ids: set[str], *, show_online: bool = True
+) -> dict[str, Any]:
     return {
         "id": participant.id,
         "nickname": participant.nickname,
         "seat": participant.seat,
         "is_alive": participant.is_alive,
-        "online": participant.id in online_ids,
+        "online": participant.id in online_ids if show_online else None,
     }
 
 
@@ -301,9 +311,11 @@ async def player_state(
     online_ids = await active_participant_ids(room.id, participants)
     visible_role = None
     knowledge: dict[str, Any] = {}
+    evil_info = room.config.get("evil_info", "standard")
+    reveal_evil = evil_info == "always" or (evil_info == "standard" and len(participants) >= 7)
     if room.status != "lobby" and participant.role_data:
         visible_role = participant.role_data.get("perceived_role", participant.role_data)
-        if len(participants) >= 7 and participant.role_data.get("team") == "demon":
+        if reveal_evil and participant.role_data.get("team") == "demon":
             knowledge = {
                 "evil_team": [
                     item.nickname
@@ -312,7 +324,7 @@ async def player_state(
                 ],
                 "bluffs": room.game_state.get("demon_bluffs", []),
             }
-        elif len(participants) >= 7 and participant.role_data.get("team") == "minion":
+        elif reveal_evil and participant.role_data.get("team") == "minion":
             knowledge = {
                 "evil_team": [
                     item.nickname
@@ -322,8 +334,26 @@ async def player_state(
             }
     return {
         "room": room_payload(room),
-        "me": {**participant_public(participant, online_ids), "role": visible_role, "knowledge": knowledge},
-        "participants": [participant_public(item, online_ids) for item in participants],
+        "me": {
+            **participant_public(participant, online_ids),
+            "role": visible_role,
+            "knowledge": knowledge,
+        },
+        "participants": [
+            {
+                **participant_public(
+                    item,
+                    online_ids,
+                    show_online=room.config.get("show_online_status", True),
+                ),
+                "role": (
+                    item.role_data or None
+                    if room.status == "ended" and room.config.get("reveal_roles_on_end", True)
+                    else None
+                ),
+            }
+            for item in participants
+        ],
         "messages": await room_messages(db, room.id, participant.id),
     }
 

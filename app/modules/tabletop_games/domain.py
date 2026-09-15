@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -25,3 +25,5 @@ class GameDefinition:
     validate_config: Callable[[dict[str, Any]], dict[str, Any]]
     assign_roles: Callable[[int, dict[str, Any]], list[RoleDefinition]]
     role_catalog: tuple[RoleDefinition, ...] = ()
+    cover_url: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)

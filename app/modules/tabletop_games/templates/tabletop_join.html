@@ -1,3 +1,31 @@
-<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Войти в игру</title><link rel="stylesheet" href="/static/tailwind.css"><style>body{background:radial-gradient(circle at 50% 18%,#3f0b0b,#09090b 42%,#000 75%)}.sigil{width:82px;height:82px;border:1px solid #991b1b;border-radius:50%;box-shadow:0 0 50px #7f1d1d55;position:relative}.sigil:after{content:"";position:absolute;inset:16px;border:1px solid #450a0a;transform:rotate(45deg)}</style></head>
-<body class="min-h-dvh text-zinc-300"><main class="mx-auto flex min-h-dvh max-w-lg items-center px-4 py-10"><section class="w-full border border-red-950 bg-black/80 p-6 shadow-2xl sm:p-9"><div class="sigil mx-auto"></div><div class="mt-7 text-center"><div class="font-mono text-[9px] font-bold uppercase tracking-[.3em] text-red-500">Приглашение в игру · {{ room.code }}</div><h1 class="mt-3 text-2xl font-black uppercase text-white">{{ room.title }}</h1><p class="mt-2 text-sm text-zinc-500">{{ game.title_ru if game else room.game_id }}</p></div>
-{% if room.status == 'lobby' %}<form method="post" class="mt-8"><label class="block font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-500">Ваш ник</label><input name="nickname" required minlength="1" maxlength="40" autocomplete="nickname" autofocus class="mt-2 w-full border border-zinc-700 bg-zinc-950 px-4 py-3 text-center text-lg font-bold text-white outline-none focus:border-red-600" placeholder="Как вас называть?">{% if error %}<p class="mt-3 border border-red-900 bg-red-950/40 p-3 text-center text-xs text-red-300">{{ error }}</p>{% endif %}<button class="mt-4 w-full border border-red-700 bg-red-900 px-5 py-3 font-mono text-xs font-black uppercase tracking-widest text-white">Присоединиться</button></form>{% else %}<p class="mt-8 border border-zinc-800 bg-zinc-950 p-4 text-center text-sm text-zinc-400">Набор игроков уже закрыт.</p>{% endif %}</section></main></body></html>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Войти в игру</title>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <style>
+  body{background:#050707}.join-cover{background-position:center;background-size:cover}.join-cover:after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,#09090b,rgba(4,47,46,.4)),rgba(0,0,0,.28)}
+  </style>
+</head>
+<body class="min-h-dvh text-zinc-300">
+  <main class="mx-auto flex min-h-dvh max-w-md items-center px-3 py-6">
+    <section class="w-full overflow-hidden border border-zinc-800 bg-zinc-950">
+      <div class="join-cover relative h-40" style="background-image:url('{{ game.cover_url if game else '' }}')"><div class="relative z-10 flex h-full flex-col justify-end p-4"><div class="font-mono text-[8px] font-bold uppercase tracking-[.25em] text-teal-300">Комната {{ room.code }}</div><h1 class="mt-1 text-xl font-black uppercase text-white">{{ room.title }}</h1></div></div>
+      <div class="p-4 sm:p-6">
+      {% if room.status == 'lobby' %}
+        <form method="post">
+          <label class="block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Ваш ник</label>
+          <input name="nickname" required minlength="1" maxlength="40" autocomplete="nickname" autofocus class="mt-2 h-12 w-full border border-zinc-700 bg-black px-4 text-center text-base font-bold text-white outline-none focus:border-teal-400" placeholder="Как вас называть?">
+          {% if error %}<p class="mt-3 border border-rose-900 bg-rose-950/30 p-3 text-center text-xs text-rose-300">{{ error }}</p>{% endif %}
+          <button class="mt-3 h-11 w-full bg-teal-400 font-mono text-[10px] font-black uppercase tracking-widest text-black hover:bg-teal-300">Войти в комнату</button>
+        </form>
+      {% else %}
+        <p class="border border-zinc-800 bg-black p-4 text-center text-sm text-zinc-400">Набор игроков уже закрыт.</p>
+      {% endif %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

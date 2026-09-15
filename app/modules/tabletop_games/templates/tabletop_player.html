@@ -1,17 +1,164 @@
-<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ room.title }}</title><link rel="stylesheet" href="/static/tailwind.css"><style>body{background:radial-gradient(circle at 50% 0,#300909,#09090b 32%,#000 72%)}.role-card{background:linear-gradient(145deg,#2a0a0a,#09090b 65%);min-height:280px}.role-secret .role-content{filter:blur(16px);opacity:.2;user-select:none}.chat-list{max-height:36dvh;overflow:auto}.team-townsfolk,.team-outsider{color:#93c5fd}.team-minion,.team-demon{color:#f87171}</style></head>
-<body class="min-h-dvh text-zinc-300"><main class="mx-auto max-w-2xl px-3 py-5 sm:py-9"><header class="flex items-start justify-between border-b border-red-950 pb-4"><div><div class="font-mono text-[9px] font-bold uppercase tracking-[.26em] text-red-500">{{ game.title_ru if game else room.game_id }}</div><h1 class="mt-1 text-xl font-black uppercase text-white">{{ room.title }}</h1></div><div class="text-right"><div class="font-mono text-[9px] uppercase text-zinc-600">Вы вошли как</div><div class="text-sm font-bold text-white">{{ participant.nickname }}</div><div id="connection" class="font-mono text-[8px] uppercase text-zinc-600">соединение...</div></div></header>
-<section id="lobby" class="mt-6 border border-zinc-800 bg-zinc-950/80 p-6 text-center"><div class="font-mono text-[10px] font-bold uppercase tracking-[.25em] text-amber-500">Ожидание ведущего</div><div id="lobby-count" class="mt-4 text-4xl font-black text-white">—</div><p class="mt-2 text-xs text-zinc-500">игроков в комнате</p><div id="lobby-players" class="mt-5 flex flex-wrap justify-center gap-2"></div></section>
-<section id="role-section" class="mt-6 hidden"><button id="role-card" onclick="this.classList.toggle('role-secret')" class="role-card role-secret relative w-full overflow-hidden border border-red-900 p-6 text-left"><div class="absolute right-3 top-3 font-mono text-[8px] uppercase tracking-widest text-zinc-600">Нажмите, чтобы скрыть / показать</div><div id="role-content" class="role-content flex min-h-[230px] flex-col justify-end"></div></button><div id="knowledge" class="mt-3 hidden border border-zinc-800 bg-zinc-950 p-4 text-xs text-zinc-400"></div></section>
-<section class="mt-5 border border-zinc-800 bg-zinc-950"><div class="flex items-center justify-between border-b border-zinc-800 p-3"><div class="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-400">Сообщения</div><div id="unread" class="hidden h-2 w-2 rounded-full bg-red-500"></div></div><div id="messages" class="chat-list space-y-2 p-3"></div><form id="message-form" onsubmit="sendMessage(event)" class="border-t border-zinc-800 p-3"><select id="recipient" class="mb-2 w-full border border-zinc-800 bg-black p-2 text-xs text-zinc-300"><option value="gm">Ведущему</option></select><div class="flex gap-2"><input id="message-text" maxlength="1000" required class="min-w-0 flex-1 border border-zinc-800 bg-black p-2 text-sm text-white outline-none focus:border-red-700" placeholder="Сообщение..."><button class="bg-red-900 px-4 font-mono text-[9px] font-bold uppercase text-white">Отправить</button></div></form></section>
-<section class="mt-5"><div class="mb-2 font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-600">Круг игроков</div><div id="players" class="grid grid-cols-2 gap-2 sm:grid-cols-3"></div></section>
-</main><script>
-const code={{ room.code|tojson }},me={{ participant.id|tojson }};let state=null,ws=null;
-const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-async function api(path,options={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!r.ok){let d={};try{d=await r.json()}catch{}throw new Error(d.detail||'Ошибка')}return r.json()}
-async function load(){state=await api(`/tabletop/room/${code}/api/state`);render()}
-function render(){const lobby=state.room.status==='lobby';document.getElementById('lobby').classList.toggle('hidden',!lobby);document.getElementById('role-section').classList.toggle('hidden',lobby);document.getElementById('lobby-count').textContent=`${state.participants.length} / ${state.room.config.player_limit}`;document.getElementById('lobby-players').innerHTML=state.participants.map(p=>`<span class="border border-zinc-800 px-2 py-1 text-[10px] ${p.online?'text-emerald-400':'text-zinc-600'}">${esc(p.nickname)}</span>`).join('');renderRole();document.getElementById('players').innerHTML=state.participants.map(p=>`<div class="border ${p.is_alive?'border-zinc-800':'border-red-950 opacity-50'} bg-zinc-950 p-3"><div class="flex items-center gap-2"><span class="h-1.5 w-1.5 rounded-full ${p.online?'bg-emerald-500':'bg-zinc-700'}"></span><span class="truncate text-xs font-bold ${p.id===me?'text-red-400':'text-zinc-300'}">${esc(p.nickname)}</span></div><div class="mt-1 font-mono text-[8px] uppercase text-zinc-600">${p.is_alive?'жив':'мёртв'}</div></div>`).join('');const rec=document.getElementById('recipient'),value=rec.value;rec.innerHTML='<option value="gm">Ведущему</option>'+(state.room.config.allow_player_messages?state.participants.filter(p=>p.id!==me).map(p=>`<option value="${p.id}">${esc(p.nickname)}</option>`).join(''):'');rec.value=[...rec.options].some(o=>o.value===value)?value:'gm';document.getElementById('messages').innerHTML=state.messages.map(m=>`<div class="${m.sender_id===me?'ml-6 border-red-900':'mr-6 border-zinc-800'} border bg-black p-2 text-xs"><div class="font-mono text-[8px] uppercase text-zinc-600">${esc(m.sender)}${m.audience==='broadcast'?' · всем':m.recipient?' → '+esc(m.recipient):' → ведущему'}</div><div class="mt-1 whitespace-pre-wrap text-zinc-300">${esc(m.text)}</div></div>`).join('');const box=document.getElementById('messages');box.scrollTop=box.scrollHeight;document.getElementById('message-form').classList.toggle('hidden',state.room.status==='ended')}
-function renderRole(){const r=state.me.role,content=document.getElementById('role-content'),knowledge=document.getElementById('knowledge');if(!r){content.innerHTML='<div class="text-zinc-600">Роль не назначена</div>';return}content.innerHTML=`<div class="font-mono text-[9px] font-bold uppercase tracking-[.25em] team-${r.team}">${esc(r.team)}</div><div class="mt-2 text-3xl font-black uppercase text-white">${esc(r.name_ru)}</div><div class="mt-4 border-l-2 border-red-800 pl-4 text-sm leading-6 text-zinc-300">${esc(r.ability_ru)}</div>`;const k=state.me.knowledge||{},parts=[];if(k.evil_team?.length)parts.push(`<b class="text-red-400">Злая команда:</b> ${k.evil_team.map(esc).join(', ')}`);if(k.bluffs?.length)parts.push(`<b class="text-amber-400">Блефы:</b> ${k.bluffs.map(x=>esc(x.name_ru)).join(', ')}`);knowledge.innerHTML=parts.join('<br>');knowledge.classList.toggle('hidden',!parts.length)}
-async function sendMessage(e){e.preventDefault();const target=document.getElementById('recipient').value,input=document.getElementById('message-text');try{await api(`/tabletop/room/${code}/api/messages`,{method:'POST',body:JSON.stringify({text:input.value,audience:target==='gm'?'gm':'player',recipient_id:target==='gm'?null:target})});input.value='';await load()}catch(err){alert(err.message)}}
-function connect(){const proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(`${proto}://${location.host}/tabletop/room/${code}/ws`);ws.onopen=()=>{document.getElementById('connection').textContent='онлайн'};ws.onmessage=()=>load();ws.onclose=()=>{document.getElementById('connection').textContent='переподключение';setTimeout(connect,1500)}}
-setInterval(()=>{if(ws?.readyState===1)ws.send('ping')},20000);load();connect();
-</script></body></html>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ room.title }}</title>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <style>
+  body{background:radial-gradient(circle at 50% 0,rgba(13,148,136,.16),transparent 34%),#050707}.player-shell{max-width:960px;margin:0 auto}.player-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}.role-card{min-height:420px;background:linear-gradient(145deg,rgba(19,78,74,.34),#09090b 62%)}.role-secret .role-content{filter:blur(18px);opacity:.12;user-select:none}.role-secret .reveal-prompt{opacity:1}.reveal-prompt{opacity:0;transition:opacity .15s}.team-townsfolk,.team-outsider{color:#67e8f9}.team-minion,.team-demon{color:#fb7185}.chat-list{height:300px;overflow:auto}.player-tabs{display:none}@media(max-width:767px){body{padding-bottom:68px}.player-layout{display:block}.player-side{display:contents}.player-panel{display:none}.player-panel.mobile-active{display:block}.player-tabs{position:fixed;right:0;bottom:0;left:0;z-index:50;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #27272a;background:rgba(9,9,11,.97);backdrop-filter:blur(12px)}.player-tab[aria-selected="true"]{color:#5eead4;background:#134e4a}.role-card{min-height:calc(100dvh - 190px)}.chat-list{height:calc(100dvh - 265px);min-height:320px}}@media(min-width:768px){.player-panel{display:block!important}}
+  </style>
+</head>
+<body class="min-h-dvh text-zinc-300">
+  <main class="player-shell px-3 py-3 sm:py-6">
+    <header class="flex items-center justify-between gap-3 border border-zinc-800 bg-zinc-950 px-3 py-3">
+      <div class="min-w-0"><div class="truncate font-mono text-[8px] font-bold uppercase tracking-[.2em] text-teal-500">{{ scenario.title }}</div><h1 class="mt-1 truncate text-sm font-black uppercase text-white sm:text-base">{{ room.title }}</h1></div>
+      <div class="shrink-0 text-right"><div class="text-xs font-bold text-white">{{ participant.nickname }}</div><div id="connection" class="font-mono text-[8px] uppercase text-zinc-600">соединение...</div></div>
+    </header>
+
+    <div class="player-layout mt-3">
+      <section id="player-panel-role" class="player-panel mobile-active">
+        <div id="lobby" class="role-card flex min-h-[420px] flex-col items-center justify-center border border-zinc-800 p-6 text-center">
+          <div class="flex h-12 w-12 items-center justify-center border border-teal-900 text-teal-400"><svg class="h-5 w-5 animate-pulse" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 7v5l3 2M4 12a8 8 0 1016 0 8 8 0 10-16 0Z"/></svg></div>
+          <div class="mt-5 font-mono text-[10px] font-bold uppercase tracking-[.22em] text-teal-500">Ожидание ведущего</div>
+          <div id="lobby-count" class="mt-3 text-3xl font-black text-white">—</div>
+          <p class="mt-1 text-[10px] text-zinc-600">игроков подключено</p>
+          <div id="lobby-players" class="mt-5 flex flex-wrap justify-center gap-1.5"></div>
+        </div>
+        <button id="role-card" onclick="this.classList.toggle('role-secret')" class="role-card role-secret relative hidden w-full overflow-hidden border border-teal-900 p-5 text-left sm:p-7">
+          <div class="reveal-prompt pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center"><svg class="h-7 w-7 text-teal-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg><span class="mt-3 font-mono text-[9px] font-bold uppercase tracking-widest text-teal-300">Показать роль</span></div>
+          <div class="absolute right-3 top-3 font-mono text-[8px] uppercase tracking-widest text-zinc-600">Нажмите, чтобы скрыть</div>
+          <div id="role-content" class="role-content flex min-h-[360px] flex-col justify-end"></div>
+        </button>
+        <div id="knowledge" class="mt-2 hidden border border-zinc-800 bg-zinc-950 p-3 text-xs leading-5 text-zinc-400"></div>
+      </section>
+
+      <aside class="player-side space-y-3">
+        <section id="player-panel-circle" class="player-panel border border-zinc-800 bg-zinc-950">
+          <div class="border-b border-zinc-800 p-3 font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-500">Круг игроков</div>
+          <div id="players" class="grid grid-cols-2 gap-px bg-zinc-800"></div>
+        </section>
+        <section id="player-panel-chat" class="player-panel border border-zinc-800 bg-zinc-950">
+          <div class="border-b border-zinc-800 p-3 font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-500">Сообщения</div>
+          <div id="messages" class="chat-list space-y-2 p-3"></div>
+          <form id="message-form" onsubmit="sendMessage(event)" class="border-t border-zinc-800 p-3">
+            <select id="recipient" class="mb-2 h-9 w-full border border-zinc-800 bg-black px-2 text-[10px] text-zinc-300 outline-none focus:border-teal-400"><option value="gm">Ведущему</option></select>
+            <div class="flex gap-2"><input id="message-text" maxlength="1000" required class="h-10 min-w-0 flex-1 border border-zinc-800 bg-black px-3 text-xs text-white outline-none focus:border-teal-400" placeholder="Сообщение..."><button class="h-10 w-10 shrink-0 bg-teal-400 text-black" aria-label="Отправить"><svg class="mx-auto h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m4 4 17 8-17 8 4-8-4-8Zm4 8h13"/></svg></button></div>
+          </form>
+          <div id="chat-disabled" class="hidden border-t border-zinc-800 p-4 text-center font-mono text-[9px] uppercase text-zinc-600">Отправка сообщений отключена</div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <nav class="player-tabs" aria-label="Разделы игры">
+    <button class="player-tab py-3 font-mono text-[9px] font-bold uppercase text-zinc-500" aria-selected="true" onclick="showPlayerPanel('role',this)">Роль</button>
+    <button class="player-tab py-3 font-mono text-[9px] font-bold uppercase text-zinc-500" aria-selected="false" onclick="showPlayerPanel('circle',this)">Игроки</button>
+    <button class="player-tab py-3 font-mono text-[9px] font-bold uppercase text-zinc-500" aria-selected="false" onclick="showPlayerPanel('chat',this)">Чат</button>
+  </nav>
+
+<script>
+const code = {{ room.code|tojson }};
+const me = {{ participant.id|tojson }};
+let state = null;
+let socket = null;
+const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
+  if (!response.ok) {
+    let detail = {};
+    try { detail = await response.json(); } catch {}
+    throw new Error(detail.detail || 'Ошибка');
+  }
+  return response.json();
+}
+
+async function load() {
+  state = await api(`/tabletop/room/${code}/api/state`);
+  render();
+}
+
+function render() {
+  const lobby = state.room.status === 'lobby';
+  document.getElementById('lobby').classList.toggle('hidden', !lobby);
+  document.getElementById('role-card').classList.toggle('hidden', lobby);
+  document.getElementById('lobby-count').textContent = `${state.participants.length} / ${state.room.config.player_limit}`;
+  document.getElementById('lobby-players').innerHTML = state.participants.map(player => `<span class="border border-zinc-800 px-2 py-1 text-[9px] ${player.online === true ? 'text-teal-400' : 'text-zinc-500'}">${esc(player.nickname)}</span>`).join('');
+  renderRole();
+  renderPlayers();
+  renderMessages();
+}
+
+function renderRole() {
+  const role = state.me.role;
+  const content = document.getElementById('role-content');
+  const knowledge = document.getElementById('knowledge');
+  if (!role) {
+    content.innerHTML = '<div class="font-mono text-[9px] uppercase text-zinc-600">Игра завершена</div>';
+    knowledge.classList.add('hidden');
+    return;
+  }
+  content.innerHTML = `<div class="font-mono text-[9px] font-bold uppercase tracking-[.24em] team-${role.team}">${esc(role.team)}</div><div class="mt-2 text-3xl font-black uppercase text-white sm:text-4xl">${esc(role.name_ru)}</div><div class="mt-1 font-mono text-[10px] text-zinc-600">${esc(role.name_en)}</div><div class="mt-5 border-l-2 border-teal-700 pl-4 text-sm leading-6 text-zinc-300">${esc(role.ability_ru)}</div>`;
+  const info = state.me.knowledge || {};
+  const parts = [];
+  if (info.evil_team?.length) parts.push(`<b class="text-rose-400">Злая команда:</b> ${info.evil_team.map(esc).join(', ')}`);
+  if (info.bluffs?.length) parts.push(`<b class="text-amber-400">Блефы:</b> ${info.bluffs.map(item => esc(item.name_ru)).join(', ')}`);
+  knowledge.innerHTML = parts.join('<br>');
+  knowledge.classList.toggle('hidden', !parts.length);
+}
+
+function renderPlayers() {
+  const showOnline = state.room.config.show_online_status !== false;
+  document.getElementById('players').innerHTML = state.participants.map(player => {
+    const online = showOnline ? `<span class="h-1.5 w-1.5 shrink-0 ${player.online ? 'bg-teal-400' : 'bg-zinc-700'}"></span>` : '';
+    const revealed = player.role?.name_ru ? `<div class="mt-1 truncate font-mono text-[8px] team-${player.role.team}">${esc(player.role.name_ru)}</div>` : '';
+    return `<div class="bg-black p-3 ${player.is_alive ? '' : 'opacity-45'}"><div class="flex items-center gap-2">${online}<span class="truncate text-[11px] font-bold ${player.id === me ? 'text-teal-400' : 'text-zinc-300'}">${esc(player.nickname)}</span></div><div class="mt-1 font-mono text-[8px] uppercase text-zinc-600">${player.is_alive ? 'жив' : 'мёртв'}</div>${revealed}</div>`;
+  }).join('');
+}
+
+function renderMessages() {
+  document.getElementById('messages').innerHTML = state.messages.map(message => `<div class="${message.sender_id === me ? 'ml-6 border-teal-900' : 'mr-6 border-zinc-800'} border bg-black p-2 text-[10px]"><div class="font-mono text-[8px] uppercase text-zinc-600">${esc(message.sender)}${message.audience === 'broadcast' ? ' · всем' : message.recipient ? ' → ' + esc(message.recipient) : ' → ведущему'}</div><div class="mt-1 whitespace-pre-wrap text-zinc-300">${esc(message.text)}</div></div>`).join('');
+  const messages = document.getElementById('messages');
+  messages.scrollTop = messages.scrollHeight;
+  const mode = state.room.config.player_chat || (state.room.config.allow_player_messages ? 'private' : 'gm_only');
+  const recipient = document.getElementById('recipient');
+  const selected = recipient.value;
+  recipient.innerHTML = '<option value="gm">Ведущему</option>' + (mode === 'private' ? state.participants.filter(player => player.id !== me).map(player => `<option value="${player.id}">${esc(player.nickname)}</option>`).join('') : '');
+  recipient.value = [...recipient.options].some(option => option.value === selected) ? selected : 'gm';
+  const disabled = mode === 'off' || state.room.status === 'ended';
+  document.getElementById('message-form').classList.toggle('hidden', disabled);
+  document.getElementById('chat-disabled').classList.toggle('hidden', !disabled);
+}
+
+function showPlayerPanel(name, button) {
+  document.querySelectorAll('.player-panel').forEach(panel => panel.classList.remove('mobile-active'));
+  document.getElementById(`player-panel-${name}`).classList.add('mobile-active');
+  document.querySelectorAll('.player-tab').forEach(tab => tab.setAttribute('aria-selected', 'false'));
+  button.setAttribute('aria-selected', 'true');
+}
+
+async function sendMessage(event) {
+  event.preventDefault();
+  const target = document.getElementById('recipient').value;
+  const input = document.getElementById('message-text');
+  try {
+    await api(`/tabletop/room/${code}/api/messages`, {method: 'POST', body: JSON.stringify({text: input.value, audience: target === 'gm' ? 'gm' : 'player', recipient_id: target === 'gm' ? null : target})});
+    input.value = '';
+    await load();
+  } catch (error) { alert(error.message); }
+}
+
+function connect() {
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  socket = new WebSocket(`${protocol}://${location.host}/tabletop/room/${code}/ws`);
+  socket.onopen = () => { const status = document.getElementById('connection'); status.textContent = 'онлайн'; status.className = 'font-mono text-[8px] uppercase text-teal-400'; };
+  socket.onmessage = () => load();
+  socket.onclose = () => { document.getElementById('connection').textContent = 'переподключение'; setTimeout(connect, 1500); };
+}
+setInterval(() => { if (socket?.readyState === 1) socket.send('ping'); }, 20000);
+load();
+connect();
+</script>
+</body>
+</html>

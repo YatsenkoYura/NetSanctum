@@ -40,6 +40,15 @@ def not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Игровая комната не найдена")
 
 
+def room_scenario(room: TabletopRoom) -> dict[str, str]:
+    game = game_registry.get(room.game_id)
+    scenarios = game.metadata.get("scenarios", ()) if game else ()
+    return next(
+        (scenario for scenario in scenarios if scenario["id"] == room.config.get("script")),
+        {"title": str(room.config.get("script", "Сценарий"))},
+    )
+
+
 async def notify(room_id: str, event: str) -> None:
     try:
         await realtime_hub.publish(room_channel(room_id), event)
@@ -136,7 +145,10 @@ async def create_game_room(
     title: str = Form(..., min_length=1, max_length=120),
     player_limit: int = Form(10),
     script: str = Form("trouble_brewing"),
-    allow_player_messages: bool = Form(False),
+    player_chat: str = Form("private"),
+    evil_info: str = Form("standard"),
+    show_online_status: bool = Form(False),
+    reveal_roles_on_end: bool = Form(False),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -151,7 +163,10 @@ async def create_game_room(
             {
                 "player_limit": player_limit,
                 "script": script,
-                "allow_player_messages": allow_player_messages,
+                "player_chat": player_chat,
+                "evil_info": evil_info,
+                "show_online_status": show_online_status,
+                "reveal_roles_on_end": reveal_roles_on_end,
             },
         )
     except ValueError as exc:
@@ -176,6 +191,7 @@ async def host_room(
             "lang": request.cookies.get("lang", "ru"),
             "room": room,
             "game": game_registry.get(room.game_id),
+            "scenario": room_scenario(room),
             "join_url": f"{base_url}/tabletop/join/{room.code}",
         },
     )
@@ -376,6 +392,7 @@ async def player_room(request: Request, code: str, db: AsyncSession = Depends(ge
             "room": room,
             "participant": participant,
             "game": game_registry.get(room.game_id),
+            "scenario": room_scenario(room),
         },
     )
 
@@ -398,10 +415,15 @@ async def player_message(
     await reserve_message(request, room.id, participant.id)
     if room.status == "ended":
         raise HTTPException(status_code=409, detail="Игра завершена")
+    chat_mode = room.config.get(
+        "player_chat", "private" if room.config.get("allow_player_messages", True) else "gm_only"
+    )
+    if chat_mode == "off":
+        raise HTTPException(status_code=403, detail="Отправка сообщений отключена")
     audience = "gm" if body.audience == "gm" else "player"
     recipient = None
     if audience == "player":
-        if not room.config.get("allow_player_messages", True):
+        if chat_mode != "private":
             raise HTTPException(status_code=403, detail="Личные сообщения игроков отключены")
         recipient = await db.scalar(
             select(TabletopParticipant).where(

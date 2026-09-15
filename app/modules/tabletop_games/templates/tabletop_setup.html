@@ -1,27 +1,43 @@
 {% extends "base.html" %}
 {% block title %}Новая партия — {{ game.title_ru }}{% endblock %}
-{% block head_extra %}<style>.setup-panel{background:linear-gradient(145deg,#09090b,#170708)}</style>{% endblock %}
+{% block head_extra %}
+<style>
+.setup-cover{height:150px;background-position:center 43%;background-size:cover}.setup-cover:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.92),rgba(4,47,46,.5)),linear-gradient(0deg,#09090b,transparent 70%)}.scenario-input:checked+.scenario-card{border-color:#2dd4bf;background:rgba(19,78,74,.22)}.scenario-input:checked+.scenario-card .scenario-mark{background:#2dd4bf;border-color:#2dd4bf}.toggle-input:checked+.toggle-track{border-color:#2dd4bf;background:#134e4a}.toggle-input:checked+.toggle-track:after{transform:translateX(18px);background:#5eead4}.toggle-track:after{content:"";display:block;width:14px;height:14px;margin:2px;background:#71717a;transition:.15s}@media(max-width:639px){.setup-cover{height:120px}.scenario-grid{grid-template-columns:1fr}}
+</style>
+{% endblock %}
 {% block content %}
-<div class="mx-auto max-w-3xl py-6 sm:py-12">
-  <a href="/tabletop" class="font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-600 hover:text-white">← Все игры</a>
-  <div class="setup-panel mt-5 border border-zinc-800 p-5 sm:p-9">
-    <div class="font-mono text-[9px] font-bold uppercase tracking-[.3em] text-red-500">Новая игровая комната</div>
-    <h1 class="mt-3 text-3xl font-black uppercase text-white">{{ game.title_ru }}</h1>
-    <p class="mt-2 text-sm text-zinc-500">Настройте партию. После создания появятся ссылка и QR-код для игроков.</p>
-    <form method="post" action="/tabletop/rooms" class="mt-8 space-y-6">
-      <input type="hidden" name="game_id" value="{{ game.id }}">
-      <label class="block"><span class="mb-2 block font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">Название партии</span><input required maxlength="120" name="title" value="Партия {{ game.title_ru }}" class="w-full border border-zinc-700 bg-black px-4 py-3 text-sm text-white outline-none focus:border-red-600"></label>
-      {% for field in game.config_schema %}
-        {% if field.type == 'number' %}
-        <label class="block"><span class="mb-2 block font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">{{ field.label_ru }}</span><input type="number" name="{{ field.name }}" value="{{ field.default }}" min="{{ field.min }}" max="{{ field.max }}" class="w-full border border-zinc-700 bg-black px-4 py-3 text-sm text-white outline-none focus:border-red-600"></label>
-        {% elif field.type == 'select' %}
-        <label class="block"><span class="mb-2 block font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">{{ field.label_ru }}</span><select name="{{ field.name }}" class="w-full border border-zinc-700 bg-black px-4 py-3 text-sm text-white outline-none focus:border-red-600">{% for value, label in field.options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+<div class="mx-auto max-w-5xl py-2 sm:py-5">
+  <div class="setup-cover relative overflow-hidden border border-zinc-800" style="background-image:url('{{ game.cover_url }}')">
+    <div class="relative z-10 flex h-full flex-col justify-end p-4 sm:p-6">
+      <a href="/tabletop" class="mb-auto w-fit font-mono text-[9px] font-bold uppercase tracking-widest text-teal-300 hover:text-white">← Игры</a>
+      <h1 class="text-xl font-black uppercase text-white sm:text-2xl">{{ game.title_ru }}</h1>
+    </div>
+  </div>
+
+  <form method="post" action="/tabletop/rooms" class="border-x border-b border-zinc-800 bg-zinc-950 p-4 sm:p-6">
+    <input type="hidden" name="game_id" value="{{ game.id }}">
+    <div class="grid gap-4 md:grid-cols-[1fr_180px]">
+      <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Название партии</span><input required maxlength="120" name="title" value="Партия {{ game.title_ru }}" class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none focus:border-teal-400"></label>
+      <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Игроков</span><input type="number" name="player_limit" value="10" min="5" max="15" class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none focus:border-teal-400"></label>
+    </div>
+
+    <fieldset class="mt-6"><legend class="mb-3 font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-500">Сценарий</legend><div class="scenario-grid grid grid-cols-3 gap-2">
+      {% for scenario in game.metadata.scenarios %}
+      <label class="cursor-pointer"><input class="scenario-input sr-only" type="radio" name="script" value="{{ scenario.id }}" {% if loop.first %}checked{% endif %}><span class="scenario-card block h-full border border-zinc-800 bg-black p-3 transition-colors"><span class="flex items-start justify-between gap-2"><strong class="text-xs text-white">{{ scenario.title }}</strong><i class="scenario-mark mt-0.5 h-2.5 w-2.5 shrink-0 border border-zinc-600"></i></span><span class="mt-1 block font-mono text-[8px] uppercase text-teal-600">{{ scenario.level }}</span><span class="mt-3 block text-[10px] leading-4 text-zinc-500">{{ scenario.description }}</span></span></label>
+      {% endfor %}
+    </div></fieldset>
+
+    <div class="mt-6 grid gap-4 border-t border-zinc-800 pt-5 md:grid-cols-2">
+      {% for field in game.config_schema if field.name not in ['player_limit', 'script'] %}
+        {% if field.type == 'select' %}
+        <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">{{ field.label_ru }}</span><select name="{{ field.name }}" class="h-11 w-full border border-zinc-800 bg-black px-3 text-xs text-zinc-300 outline-none focus:border-teal-400">{% for value, label in field.options %}<option value="{{ value }}" {% if value == field.default %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         {% elif field.type == 'boolean' %}
-        <label class="flex cursor-pointer items-center gap-3 border border-zinc-800 bg-black/40 p-4"><input type="checkbox" name="{{ field.name }}" value="true" {% if field.default %}checked{% endif %} class="h-4 w-4 accent-red-700"><span class="text-sm text-zinc-300">{{ field.label_ru }}</span></label>
+        <label class="flex min-h-11 cursor-pointer items-center justify-between gap-3 border border-zinc-800 bg-black px-3 py-2"><span class="text-xs text-zinc-300">{{ field.label_ru }}</span><span><input class="toggle-input sr-only" type="checkbox" name="{{ field.name }}" value="true" {% if field.default %}checked{% endif %}><i class="toggle-track block h-5 w-9 border border-zinc-700 bg-zinc-900"></i></span></label>
         {% endif %}
       {% endfor %}
-      <button class="w-full border border-red-700 bg-red-900 px-5 py-3 font-mono text-xs font-black uppercase tracking-widest text-white hover:bg-red-800">Создать комнату</button>
-    </form>
-  </div>
+    </div>
+
+    <div class="mt-6 flex justify-end"><button class="flex h-11 items-center gap-3 bg-teal-400 px-5 font-mono text-[10px] font-black uppercase tracking-wider text-black hover:bg-teal-300">Создать комнату <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button></div>
+  </form>
 </div>
 {% endblock %}

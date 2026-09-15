@@ -19,7 +19,7 @@ class TabletopGameRegistryTests(unittest.TestCase):
         assert game is not None
         self.assertEqual(5, game.min_players)
         self.assertEqual(15, game.max_players)
-        self.assertGreater(len(game.role_catalog), 20)
+        self.assertGreater(len(game.role_catalog), 70)
 
     def test_clocktower_assigns_complete_unique_role_sets(self):
         random.seed(42)
@@ -41,6 +41,37 @@ class TabletopGameRegistryTests(unittest.TestCase):
     def test_clocktower_rejects_invalid_player_limits(self):
         with self.assertRaises(ValueError):
             validate_config({"player_limit": 4})
+
+    def test_each_clocktower_script_has_a_complete_unique_role_set(self):
+        game = game_registry.get("blood_on_the_clocktower")
+        assert game is not None
+
+        script_role_ids = game.metadata["script_role_ids"]
+        for script, role_ids in script_role_ids.items():
+            with self.subTest(script=script):
+                roles = assign_roles(12, {"script": script})
+                self.assertEqual(12, len(roles))
+                self.assertEqual(12, len({role.id for role in roles}))
+                self.assertLessEqual({role.id for role in roles}, set(role_ids))
+                self.assertEqual(1, sum(role.team == "demon" for role in roles))
+
+    def test_clocktower_keeps_game_specific_options(self):
+        config = validate_config(
+            {
+                "player_limit": 12,
+                "script": "sects_and_violets",
+                "player_chat": "gm_only",
+                "evil_info": "never",
+                "show_online_status": False,
+                "reveal_roles_on_end": False,
+            }
+        )
+
+        self.assertEqual("sects_and_violets", config["script"])
+        self.assertEqual("gm_only", config["player_chat"])
+        self.assertEqual("never", config["evil_info"])
+        self.assertFalse(config["show_online_status"])
+        self.assertFalse(config["reveal_roles_on_end"])
 
 
 class TabletopSecurityTests(unittest.TestCase):

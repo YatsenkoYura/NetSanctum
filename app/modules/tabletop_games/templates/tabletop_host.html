@@ -2,34 +2,159 @@
 {% block title %}Гримуар — {{ room.title }}{% endblock %}
 {% block head_extra %}
 <style>
-.host-grid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:1rem}.grimoire{background:radial-gradient(circle at center,#1c0909,#080808 63%);min-height:650px}.player-token{background:linear-gradient(145deg,#18181b,#09090b);transition:.15s}.player-token.dead{filter:grayscale(1);opacity:.58}.team-townsfolk{color:#60a5fa}.team-outsider{color:#93c5fd}.team-minion{color:#fb7185}.team-demon{color:#ef4444}.chat-scroll{height:330px;overflow:auto}@media(max-width:900px){.host-grid{grid-template-columns:1fr}.grimoire{min-height:auto}.side-panel{order:-1}}
+.gm-shell{max-width:1600px;margin:0 auto}.host-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:12px}.grimoire{min-height:660px;background:radial-gradient(circle at 50% 42%,rgba(20,184,166,.1),transparent 34%),linear-gradient(145deg,#09090b,#050707)}.player-token{background:linear-gradient(145deg,#111415,#09090b);transition:border-color .15s,opacity .15s}.player-token:hover{border-color:#0f766e}.player-token.dead{filter:grayscale(.85);opacity:.52}.team-townsfolk,.team-outsider{color:#67e8f9}.team-minion,.team-demon{color:#fb7185}.chat-scroll{height:320px;overflow:auto}.mobile-gm-tabs{display:none}.panel-label{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#71717a}@media(max-width:899px){.host-layout{display:block}.side-panel{display:contents}.gm-panel{display:none}.gm-panel.mobile-active{display:block}.mobile-gm-tabs{position:sticky;top:0;z-index:35;display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #27272a;background:#09090b}.mobile-gm-tab[aria-selected="true"]{background:#134e4a;color:#5eead4}.grimoire{min-height:calc(100dvh - 230px)}.chat-scroll{height:calc(100dvh - 360px);min-height:260px}}@media(min-width:900px){.gm-panel{display:block!important}}
 </style>
 {% endblock %}
 {% block content %}
-<div class="border-b border-zinc-800 py-3 font-mono">
-  <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><a href="/tabletop" class="text-[9px] font-bold uppercase tracking-widest text-zinc-600 hover:text-white">Настольные игры /</a><h1 class="mt-1 text-lg font-black uppercase text-white">{{ room.title }}</h1></div><div class="flex items-center gap-2"><span id="connection" class="text-[9px] uppercase text-zinc-600">соединение...</span><button id="start-button" onclick="startGame()" class="border border-red-700 bg-red-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-white">Начать игру</button><button id="end-button" onclick="endGame()" class="hidden border border-zinc-700 px-4 py-2 text-[10px] font-bold uppercase text-zinc-400">Завершить</button></div></div>
-</div>
-<div class="host-grid mt-4">
-  <section class="grimoire border border-red-950 p-3 sm:p-5"><div class="mb-4 flex items-center justify-between"><div class="font-mono text-[10px] font-bold uppercase tracking-[.25em] text-red-500">Гримуар ведущего</div><div id="room-status" class="font-mono text-[9px] uppercase text-zinc-600"></div></div><div id="players" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div><div id="empty-players" class="py-28 text-center font-mono text-xs uppercase tracking-widest text-zinc-700">Ожидаем игроков</div></section>
-  <aside class="side-panel space-y-4">
-    <section class="border border-zinc-800 bg-zinc-950 p-4"><div class="flex gap-4"><img src="/tabletop/rooms/{{ room.id }}/qr.svg" alt="QR-код приглашения" class="h-28 w-28 bg-white p-1"><div class="min-w-0"><div class="font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-600">Код комнаты</div><div class="mt-1 font-mono text-2xl font-black tracking-[.18em] text-red-400">{{ room.code }}</div><div id="player-count" class="mt-2 text-xs text-zinc-500">0 / {{ room.config.player_limit }}</div></div></div><button onclick="copyInvite()" class="mt-3 w-full border border-zinc-700 px-3 py-2 font-mono text-[9px] font-bold uppercase text-zinc-300 hover:border-red-700">Скопировать ссылку</button><input id="join-url" value="{{ join_url }}" readonly class="sr-only"></section>
-    <section class="border border-zinc-800 bg-zinc-950"><div class="border-b border-zinc-800 p-3 font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-400">Связь с игроками</div><div id="messages" class="chat-scroll space-y-2 p-3"></div><form onsubmit="sendMessage(event)" class="border-t border-zinc-800 p-3"><select id="message-recipient" class="mb-2 w-full border border-zinc-800 bg-black p-2 text-xs text-zinc-300"><option value="broadcast">Всем игрокам</option></select><textarea id="message-text" maxlength="1000" required rows="2" class="w-full resize-none border border-zinc-800 bg-black p-2 text-xs text-white outline-none focus:border-red-700" placeholder="Сообщение..."></textarea><button class="mt-2 w-full bg-zinc-800 p-2 font-mono text-[9px] font-bold uppercase text-white hover:bg-red-900">Отправить</button></form></section>
-  </aside>
+<div class="gm-shell">
+  <header class="flex flex-col gap-3 border border-zinc-800 bg-zinc-950 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider text-zinc-600"><a href="/tabletop" class="hover:text-teal-400">Игры</a><span>/</span><span>{{ scenario.title }}</span></div>
+      <h1 class="mt-1 truncate text-base font-black uppercase text-white">{{ room.title }}</h1>
+    </div>
+    <div class="flex items-center justify-between gap-2 sm:justify-end">
+      <span id="connection" class="font-mono text-[8px] uppercase text-zinc-600">соединение...</span>
+      <button id="start-button" onclick="startGame()" class="h-9 bg-teal-400 px-4 font-mono text-[9px] font-black uppercase tracking-wider text-black hover:bg-teal-300">Начать</button>
+      <button id="end-button" onclick="endGame()" class="hidden h-9 border border-zinc-700 px-3 font-mono text-[9px] font-bold uppercase text-zinc-400 hover:border-teal-700 hover:text-white">Завершить</button>
+    </div>
+  </header>
+
+  <nav class="mobile-gm-tabs mt-2" aria-label="Инструменты ведущего">
+    <button class="mobile-gm-tab py-3 font-mono text-[9px] font-bold uppercase text-zinc-500" aria-selected="true" onclick="showGmPanel('grimoire',this)">Гримуар</button>
+    <button class="mobile-gm-tab py-3 font-mono text-[9px] font-bold uppercase text-zinc-500" aria-selected="false" onclick="showGmPanel('messages',this)">Чат</button>
+    <button class="mobile-gm-tab py-3 font-mono text-[9px] font-bold uppercase text-zinc-500" aria-selected="false" onclick="showGmPanel('invite',this)">Вход</button>
+  </nav>
+
+  <div class="host-layout mt-3">
+    <section id="panel-grimoire" class="gm-panel mobile-active grimoire border border-zinc-800 p-3 sm:p-4">
+      <div class="mb-3 flex items-center justify-between border-b border-zinc-800 pb-3">
+        <span class="panel-label">Гримуар</span>
+        <div class="flex items-center gap-3 font-mono text-[9px] uppercase"><span id="room-status" class="text-zinc-600"></span><span id="player-count-inline" class="text-teal-500"></span></div>
+      </div>
+      <div id="players" class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3"></div>
+      <div id="empty-players" class="py-28 text-center font-mono text-[10px] uppercase tracking-widest text-zinc-700">Игроки подключатся по коду {{ room.code }}</div>
+    </section>
+
+    <aside class="side-panel space-y-3">
+      <section id="panel-invite" class="gm-panel border border-zinc-800 bg-zinc-950 p-3">
+        <div class="mb-3 flex items-center justify-between"><span class="panel-label">Вход в комнату</span><span id="player-count" class="font-mono text-[9px] text-zinc-600">0 / {{ room.config.player_limit }}</span></div>
+        <div class="grid grid-cols-[112px_1fr] gap-3">
+          <img src="/tabletop/rooms/{{ room.id }}/qr.svg" alt="QR-код приглашения" class="h-28 w-28 bg-white p-1">
+          <div class="flex min-w-0 flex-col justify-between"><div><div class="font-mono text-[8px] uppercase tracking-widest text-zinc-600">Код</div><div class="mt-1 font-mono text-xl font-black tracking-[.16em] text-teal-400">{{ room.code }}</div></div><button onclick="copyInvite()" class="h-9 border border-zinc-700 font-mono text-[8px] font-bold uppercase text-zinc-300 hover:border-teal-400 hover:text-teal-300">Копировать ссылку</button></div>
+        </div>
+        <input id="join-url" value="{{ join_url }}" readonly class="sr-only">
+        <dl class="mt-3 grid grid-cols-2 gap-px border border-zinc-800 bg-zinc-800 font-mono text-[8px] uppercase"><div class="bg-black p-2"><dt class="text-zinc-600">Сценарий</dt><dd class="mt-1 truncate text-zinc-300">{{ scenario.title }}</dd></div><div class="bg-black p-2"><dt class="text-zinc-600">Чат</dt><dd class="mt-1 text-zinc-300">{{ room.config.player_chat|default('private') }}</dd></div></dl>
+      </section>
+
+      <section id="panel-messages" class="gm-panel border border-zinc-800 bg-zinc-950">
+        <div class="border-b border-zinc-800 p-3"><span class="panel-label">Связь с игроками</span></div>
+        <div id="messages" class="chat-scroll space-y-2 p-3"></div>
+        <form onsubmit="sendMessage(event)" class="border-t border-zinc-800 p-3">
+          <select id="message-recipient" class="mb-2 h-9 w-full border border-zinc-800 bg-black px-2 text-[10px] text-zinc-300 outline-none focus:border-teal-400"><option value="broadcast">Всем игрокам</option></select>
+          <div class="flex gap-2"><input id="message-text" maxlength="1000" required class="h-10 min-w-0 flex-1 border border-zinc-800 bg-black px-3 text-xs text-white outline-none focus:border-teal-400" placeholder="Сообщение..."><button class="h-10 w-10 shrink-0 bg-teal-400 text-black hover:bg-teal-300" aria-label="Отправить"><svg class="mx-auto h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m4 4 17 8-17 8 4-8-4-8Zm4 8h13"/></svg></button></div>
+        </form>
+      </section>
+    </aside>
+  </div>
 </div>
 <script>
-const roomId={{ room.id|tojson }};let state=null;
-const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-async function api(path,options={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!r.ok){let d={};try{d=await r.json()}catch{}throw new Error(d.detail||'Ошибка запроса')}return r.json()}
-async function loadState(){state=await api(`/api/tabletop/rooms/${roomId}`);render()}
-function render(){const r=state.room,ps=state.participants;document.getElementById('room-status').textContent=r.status;document.getElementById('player-count').textContent=`${ps.length} / ${r.config.player_limit} · онлайн ${ps.filter(p=>p.online).length}`;document.getElementById('start-button').classList.toggle('hidden',r.status!=='lobby');document.getElementById('end-button').classList.toggle('hidden',r.status!=='playing');document.getElementById('empty-players').classList.toggle('hidden',ps.length>0);document.getElementById('players').innerHTML=ps.map(playerCard).join('');const select=document.getElementById('message-recipient'),value=select.value;select.innerHTML='<option value="broadcast">Всем игрокам</option>'+ps.map(p=>`<option value="${p.id}">${esc(p.nickname)}</option>`).join('');select.value=[...select.options].some(o=>o.value===value)?value:'broadcast';document.getElementById('messages').innerHTML=state.messages.map(messageCard).join('');const box=document.getElementById('messages');box.scrollTop=box.scrollHeight}
-function playerCard(p){const role=p.role||{};return `<article class="player-token ${p.is_alive?'':'dead'} border border-zinc-800 p-3" data-id="${p.id}"><div class="flex items-start justify-between gap-2"><div><div class="flex items-center gap-2"><span class="h-2 w-2 rounded-full ${p.online?'bg-emerald-500':'bg-zinc-700'}"></span><strong class="text-sm text-white">${esc(p.nickname)}</strong></div><div class="mt-1 font-mono text-[9px] text-zinc-600">Место ${p.seat+1}</div></div><button onclick="updatePlayer('${p.id}',{is_alive:${!p.is_alive}})" class="border border-zinc-700 px-2 py-1 font-mono text-[8px] uppercase ${p.is_alive?'text-emerald-400':'text-red-400'}">${p.is_alive?'Жив':'Мёртв'}</button></div>${role.name_ru?`<div class="mt-4 border-l-2 border-red-900 pl-3"><div class="team-${role.team} font-mono text-xs font-black uppercase">${esc(role.name_ru)}</div><div class="mt-1 text-[10px] leading-4 text-zinc-500">${esc(role.ability_ru)}</div></div>`:'<div class="mt-4 font-mono text-[9px] uppercase text-zinc-700">Роль не выдана</div>'}<input value="${esc((p.reminders||[]).join(', '))}" onchange="updatePlayer('${p.id}',{reminders:this.value.split(',')})" class="mt-3 w-full border border-zinc-800 bg-black p-2 text-[10px] text-amber-300 outline-none" placeholder="Метки через запятую"><textarea onchange="updatePlayer('${p.id}',{gm_notes:this.value})" class="mt-2 w-full resize-none border border-zinc-800 bg-black p-2 text-[10px] text-zinc-400 outline-none" rows="2" placeholder="Заметка ведущего">${esc(p.gm_notes)}</textarea></article>`}
-function messageCard(m){const target=m.audience==='broadcast'?'всем':m.audience==='gm'?'ведущему':m.recipient||'';return `<div class="border-l border-zinc-700 pl-2 text-[10px]"><div class="font-mono text-zinc-600">${esc(m.sender)} → ${esc(target)}</div><div class="mt-0.5 whitespace-pre-wrap text-zinc-300">${esc(m.text)}</div></div>`}
-async function startGame(){if(!confirm('Раздать роли и начать игру?'))return;try{await api(`/api/tabletop/rooms/${roomId}/start`,{method:'POST'});await loadState()}catch(e){alert(e.message)}}
-async function endGame(){if(!confirm('Завершить игру?'))return;await api(`/api/tabletop/rooms/${roomId}/end`,{method:'POST'});await loadState()}
-async function updatePlayer(id,data){await api(`/api/tabletop/rooms/${roomId}/participants/${id}`,{method:'PATCH',body:JSON.stringify(data)});await loadState()}
-async function sendMessage(e){e.preventDefault();const recipient=document.getElementById('message-recipient').value,text=document.getElementById('message-text');await api(`/api/tabletop/rooms/${roomId}/messages`,{method:'POST',body:JSON.stringify({text:text.value,audience:recipient==='broadcast'?'broadcast':'player',recipient_id:recipient==='broadcast'?null:recipient})});text.value='';await loadState()}
-async function copyInvite(){await navigator.clipboard.writeText(document.getElementById('join-url').value)}
-function connect(){const proto=location.protocol==='https:'?'wss':'ws',ws=new WebSocket(`${proto}://${location.host}/tabletop/rooms/${roomId}/ws`);ws.onopen=()=>{document.getElementById('connection').textContent='онлайн';document.getElementById('connection').className='text-[9px] uppercase text-emerald-500'};ws.onmessage=()=>loadState();ws.onclose=()=>{document.getElementById('connection').textContent='переподключение';setTimeout(connect,1500)}}
-loadState();connect();
+const roomId = {{ room.id|tojson }};
+let state = null;
+const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
+  if (!response.ok) {
+    let detail = {};
+    try { detail = await response.json(); } catch {}
+    throw new Error(detail.detail || 'Ошибка запроса');
+  }
+  return response.json();
+}
+
+async function loadState() {
+  state = await api(`/api/tabletop/rooms/${roomId}`);
+  render();
+}
+
+function render() {
+  const room = state.room;
+  const players = state.participants;
+  const online = players.filter(player => player.online).length;
+  document.getElementById('room-status').textContent = room.status;
+  document.getElementById('player-count').textContent = `${players.length} / ${room.config.player_limit} · ${online} онлайн`;
+  document.getElementById('player-count-inline').textContent = `${players.length} игроков`;
+  document.getElementById('start-button').classList.toggle('hidden', room.status !== 'lobby');
+  document.getElementById('end-button').classList.toggle('hidden', room.status !== 'playing');
+  document.getElementById('empty-players').classList.toggle('hidden', players.length > 0);
+  document.getElementById('players').innerHTML = players.map(playerCard).join('');
+
+  const recipient = document.getElementById('message-recipient');
+  const selected = recipient.value;
+  recipient.innerHTML = '<option value="broadcast">Всем игрокам</option>' + players.map(player => `<option value="${player.id}">${esc(player.nickname)}</option>`).join('');
+  recipient.value = [...recipient.options].some(option => option.value === selected) ? selected : 'broadcast';
+  document.getElementById('messages').innerHTML = state.messages.map(messageCard).join('');
+  const messages = document.getElementById('messages');
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function playerCard(player) {
+  const role = player.role || {};
+  const roleBlock = role.name_ru
+    ? `<div class="mt-3 border-l-2 border-teal-800 pl-2"><div class="team-${role.team} font-mono text-[10px] font-black uppercase">${esc(role.name_ru)}</div><div class="mt-1 line-clamp-2 text-[9px] leading-4 text-zinc-500">${esc(role.ability_ru)}</div></div>`
+    : '<div class="mt-3 font-mono text-[8px] uppercase text-zinc-700">Роль не выдана</div>';
+  return `<article class="player-token ${player.is_alive ? '' : 'dead'} border border-zinc-800 p-3" data-id="${player.id}">
+    <div class="flex items-start justify-between gap-2"><div class="min-w-0"><div class="flex items-center gap-2"><span class="h-1.5 w-1.5 shrink-0 ${player.online ? 'bg-teal-400' : 'bg-zinc-700'}"></span><strong class="truncate text-xs text-white">${esc(player.nickname)}</strong></div><div class="mt-1 font-mono text-[8px] text-zinc-600">Место ${player.seat + 1}</div></div><button onclick="updatePlayer('${player.id}',{is_alive:${!player.is_alive}})" class="border border-zinc-700 px-2 py-1 font-mono text-[8px] uppercase ${player.is_alive ? 'text-teal-400' : 'text-rose-400'}">${player.is_alive ? 'Жив' : 'Мёртв'}</button></div>
+    ${roleBlock}
+    <details class="mt-3 border-t border-zinc-800 pt-2"><summary class="cursor-pointer font-mono text-[8px] uppercase text-zinc-600">Метки и заметки</summary><input value="${esc((player.reminders || []).join(', '))}" onchange="updatePlayer('${player.id}',{reminders:this.value.split(',')})" class="mt-2 w-full border border-zinc-800 bg-black p-2 text-[9px] text-amber-300 outline-none" placeholder="Метки через запятую"><textarea onchange="updatePlayer('${player.id}',{gm_notes:this.value})" class="mt-2 w-full resize-none border border-zinc-800 bg-black p-2 text-[9px] text-zinc-400 outline-none" rows="2" placeholder="Заметка ведущего">${esc(player.gm_notes)}</textarea></details>
+  </article>`;
+}
+
+function messageCard(message) {
+  const target = message.audience === 'broadcast' ? 'всем' : message.audience === 'gm' ? 'ведущему' : message.recipient || '';
+  return `<div class="border-l border-teal-900 pl-2 text-[10px]"><div class="font-mono text-zinc-600">${esc(message.sender)} → ${esc(target)}</div><div class="mt-0.5 whitespace-pre-wrap text-zinc-300">${esc(message.text)}</div></div>`;
+}
+
+function showGmPanel(name, button) {
+  document.querySelectorAll('.gm-panel').forEach(panel => panel.classList.remove('mobile-active'));
+  document.getElementById(`panel-${name}`).classList.add('mobile-active');
+  document.querySelectorAll('.mobile-gm-tab').forEach(tab => tab.setAttribute('aria-selected', 'false'));
+  button.setAttribute('aria-selected', 'true');
+}
+
+async function startGame() {
+  if (!confirm('Раздать роли и начать игру?')) return;
+  try { await api(`/api/tabletop/rooms/${roomId}/start`, {method: 'POST'}); await loadState(); }
+  catch (error) { alert(error.message); }
+}
+async function endGame() {
+  if (!confirm('Завершить игру?')) return;
+  await api(`/api/tabletop/rooms/${roomId}/end`, {method: 'POST'});
+  await loadState();
+}
+async function updatePlayer(id, data) {
+  await api(`/api/tabletop/rooms/${roomId}/participants/${id}`, {method: 'PATCH', body: JSON.stringify(data)});
+  await loadState();
+}
+async function sendMessage(event) {
+  event.preventDefault();
+  const recipient = document.getElementById('message-recipient').value;
+  const input = document.getElementById('message-text');
+  await api(`/api/tabletop/rooms/${roomId}/messages`, {method: 'POST', body: JSON.stringify({text: input.value, audience: recipient === 'broadcast' ? 'broadcast' : 'player', recipient_id: recipient === 'broadcast' ? null : recipient})});
+  input.value = '';
+  await loadState();
+}
+async function copyInvite() {
+  await navigator.clipboard.writeText(document.getElementById('join-url').value);
+}
+function connect() {
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const socket = new WebSocket(`${protocol}://${location.host}/tabletop/rooms/${roomId}/ws`);
+  socket.onopen = () => { const status = document.getElementById('connection'); status.textContent = 'онлайн'; status.className = 'font-mono text-[8px] uppercase text-teal-400'; };
+  socket.onmessage = () => loadState();
+  socket.onclose = () => { document.getElementById('connection').textContent = 'переподключение'; setTimeout(connect, 1500); };
+}
+loadState();
+connect();
 </script>
 {% endblock %}
