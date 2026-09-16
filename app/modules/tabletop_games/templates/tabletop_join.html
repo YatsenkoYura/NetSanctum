@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Войти в игру</title>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <style>
+  body{background:#050707}.join-cover{background-position:center;background-size:cover}.join-cover:after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,#09090b,rgba(4,47,46,.4)),rgba(0,0,0,.28)}
+  </style>
+</head>
+<body class="min-h-dvh text-zinc-300">
+  <main class="mx-auto flex min-h-dvh max-w-md items-center px-3 py-6">
+    <section class="w-full overflow-hidden border border-zinc-800 bg-zinc-950">
+      <div class="join-cover relative h-40" style="background-image:url('{{ game.cover_url if game else '' }}')"><div class="relative z-10 flex h-full flex-col justify-end p-4"><div class="font-mono text-[8px] font-bold uppercase tracking-[.25em] text-teal-300">Комната {{ room.code }}</div><h1 class="mt-1 text-xl font-black uppercase text-white">{{ room.title }}</h1></div></div>
+      <div class="p-4 sm:p-6">
+      {% if room.status == 'lobby' %}
+        <form method="post">
+          <label class="block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Ваш ник</label>
+          <input name="nickname" required minlength="1" maxlength="40" autocomplete="nickname" autofocus class="mt-2 h-12 w-full border border-zinc-700 bg-black px-4 text-center text-base font-bold text-white outline-none focus:border-teal-400" placeholder="Как вас называть?">
+          {% if error %}<p class="mt-3 border border-rose-900 bg-rose-950/30 p-3 text-center text-xs text-rose-300">{{ error }}</p>{% endif %}
+          <button class="mt-3 h-11 w-full bg-teal-400 font-mono text-[10px] font-black uppercase tracking-widest text-black hover:bg-teal-300">Войти в комнату</button>
+        </form>
+      {% else %}
+        <p class="border border-zinc-800 bg-black p-4 text-center text-sm text-zinc-400">Набор игроков уже закрыт.</p>
+      {% endif %}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

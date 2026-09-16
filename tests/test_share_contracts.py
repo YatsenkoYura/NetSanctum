@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, call, patch
 from fastapi import HTTPException, Request, Response
 from pydantic import ValidationError
 
+from app.core import security as core_security
+from app.core.module_types import ShareSpec
 from app.core.modules import ModuleRegistry
+from app.core.security import OPERATOR_SHARE_COOKIE, get_operator_share_id
 from app.modules.alllib.share import AllLibShareProvider
 from app.modules.music.share import MusicShareProvider, _selected_songs
 from app.modules.sharing import router as sharing_router
@@ -38,13 +41,14 @@ from app.modules.video_archiver.share import VideoShareProvider
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def make_request(path: str = "/s/share-id") -> Request:
+def make_request(path: str = "/s/share-id", cookie: str | None = None) -> Request:
+    headers = [(b"cookie", cookie.encode())] if cookie else []
     return Request(
         {
             "type": "http",
             "method": "GET",
             "path": path,
-            "headers": [],
+            "headers": headers,
             "query_string": b"",
             "scheme": "https",
             "server": ("testserver", 443),
@@ -107,8 +111,81 @@ class ShareServiceTests(unittest.TestCase):
         self.assertIn('redis.call("INCR"', RESERVE_PASSWORD_ATTEMPT_SCRIPT)
         self.assertIn('redis.call("EXPIRE"', RESERVE_PASSWORD_ATTEMPT_SCRIPT)
 
+    def test_interactive_share_path_must_be_local(self):
+        with self.assertRaises(ValueError):
+            ShareSpec(
+                provider="example.provider:SHARE",
+                selector_key="item_ids",
+                dashboard_template="dashboard.html",
+                api_prefix="/api/example",
+                interactive_entry_path="https://example.com/tabletop",
+            )
+
+
+class ShareOperatorSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_operator_session_is_scoped_to_its_module(self):
+        request = make_request(cookie=f"{OPERATOR_SHARE_COOKIE}=operator-session")
+        with patch.object(
+            core_security.redis_client,
+            "get",
+            AsyncMock(return_value="tabletop_games:share-id"),
+        ):
+            tabletop_share_id = await get_operator_share_id(request, "tabletop_games")
+            video_share_id = await get_operator_share_id(request, "video_archiver")
+
+        self.assertEqual("share-id", tabletop_share_id)
+        self.assertIsNone(video_share_id)
+
 
 class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interactive_share_creates_scoped_operator_session(self):
+        request = make_request()
+        share = SimpleNamespace(
+            id="share-id",
+            module_id="tabletop_games",
+            is_public=False,
+            password_hash=None,
+            expires_at=None,
+            access_count=0,
+            last_accessed_at=None,
+        )
+        db = AsyncMock()
+
+        with (
+            patch.object(sharing_router.redis_client, "eval", AsyncMock(return_value=1)) as evaluate,
+            patch.object(sharing_router.secrets, "token_urlsafe", return_value="operator-session"),
+        ):
+            response = await sharing_router._establish_session(request, share, db, "/tabletop")
+
+        self.assertEqual(303, response.status_code)
+        self.assertEqual("/tabletop", response.headers["location"])
+        self.assertIn(f"{OPERATOR_SHARE_COOKIE}=operator-session", response.headers["set-cookie"])
+        self.assertIn("Path=/", response.headers["set-cookie"])
+        self.assertIn("tabletop_games:share-id", evaluate.await_args.args)
+
+    async def test_public_interactive_share_reuses_one_session(self):
+        request = make_request()
+        share = SimpleNamespace(
+            id="share-id",
+            module_id="tabletop_games",
+            is_public=True,
+            password_hash=None,
+            expires_at=None,
+            access_count=0,
+            last_accessed_at=None,
+        )
+        db = AsyncMock()
+
+        with (
+            patch.object(sharing_router.redis_client, "eval", AsyncMock(return_value=2)),
+            patch.object(sharing_router.secrets, "token_urlsafe") as create_token,
+        ):
+            response = await sharing_router._establish_session(request, share, db, "/tabletop")
+
+        create_token.assert_not_called()
+        self.assertIn(f"{OPERATOR_SHARE_COOKIE}=share-id", response.headers["set-cookie"])
+        db.commit.assert_not_awaited()
+
     async def test_public_share_without_password_skips_session_and_db_write(self):
         request = make_request()
         share = SimpleNamespace(
@@ -137,6 +214,35 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
         establish_session.assert_not_awaited()
         render.assert_awaited_once_with(request, share)
         db.commit.assert_not_awaited()
+
+    async def test_public_interactive_share_establishes_operator_session(self):
+        request = make_request()
+        share = SimpleNamespace(
+            id="share-id",
+            is_public=True,
+            password_hash=None,
+            module_id="tabletop_games",
+        )
+        spec = SimpleNamespace(interactive_entry_path="/tabletop")
+        db = AsyncMock()
+        redirect = Response(status_code=303, headers={"Location": "/tabletop"})
+
+        with (
+            patch.object(sharing_router, "_active_share", AsyncMock(return_value=share)),
+            patch.object(sharing_router, "_share_spec", return_value=spec),
+            patch.object(sharing_router, "_has_session", AsyncMock(return_value=False)),
+            patch.object(
+                sharing_router,
+                "_establish_session",
+                AsyncMock(return_value=redirect),
+            ) as establish_session,
+            patch.object(sharing_router, "_render_shared_application", AsyncMock()) as render,
+        ):
+            response = await shared_application("share-id", request, db)
+
+        self.assertEqual(303, response.status_code)
+        establish_session.assert_awaited_once_with(request, share, db, "/tabletop")
+        render.assert_not_awaited()
 
     async def test_public_resource_is_authorized_without_session(self):
         request = make_request("/s/share-id/api/video-archiver/videos")
@@ -220,6 +326,7 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
             Any,
             SimpleNamespace(
                 id="share-id",
+                module_id="video_archiver",
                 expires_at=None,
                 access_count=0,
                 last_accessed_at=None,
@@ -243,6 +350,7 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
             result = await sharing_router.revoke_share("share-id", db, SimpleNamespace())
 
         self.assertEqual({"status": "revoked", "id": "share-id"}, result)
+        db.flush.assert_awaited_once()
         evaluate.assert_awaited_once_with(
             CLEAR_SHARE_SESSIONS_SCRIPT,
             2,
@@ -250,6 +358,23 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
             "share_revoked:share-id",
             "share_session:",
         )
+
+    async def test_revoke_rolls_back_when_sessions_cannot_be_cleared(self):
+        share = SimpleNamespace(id="share-id", status="active", revoked_at=None)
+        db = AsyncMock()
+        db.get.return_value = share
+
+        with patch.object(
+            sharing_router,
+            "_clear_share_sessions",
+            AsyncMock(side_effect=RuntimeError("redis unavailable")),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await sharing_router.revoke_share("share-id", db, SimpleNamespace())
+
+        self.assertEqual(503, raised.exception.status_code)
+        db.rollback.assert_awaited_once()
+        db.commit.assert_not_awaited()
 
     async def test_revoke_all_marks_active_shares_and_clears_sessions(self):
         shares = [
@@ -288,6 +413,15 @@ class ShareProviderTests(unittest.TestCase):
             {item.selector_key for item in spec.declared_selection_types},
         )
         self.assertIsNone(disabled.share_provider("video_archiver"))
+
+    def test_tabletop_provider_declares_interactive_panel_access(self):
+        registry = ModuleRegistry.discover({"tabletop_games"})
+        spec = registry.share_spec("tabletop_games")
+
+        self.assertIsNotNone(registry.share_provider("tabletop_games"))
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        self.assertEqual("/tabletop", spec.interactive_entry_path)
 
     def test_selected_video_outside_scope_is_hidden(self):
         provider = VideoShareProvider()

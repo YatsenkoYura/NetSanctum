@@ -5,11 +5,14 @@ from fastapi.responses import JSONResponse
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CROSS_SITE_CAPABILITY_PATHS = frozenset({"/alllib/api/save_token_external"})
+PRIVATE_CAPABILITY_PREFIXES = ("/s/", "/tabletop/join/", "/tabletop/room/")
 
 
 def _is_capability_route(path: str) -> bool:
-    return path in CROSS_SITE_CAPABILITY_PATHS or (
-        path.startswith("/s/") and (path.endswith("/access") or path.endswith("/unlock"))
+    return (
+        path in CROSS_SITE_CAPABILITY_PATHS
+        or path.startswith("/tabletop/join/")
+        or (path.startswith("/s/") and (path.endswith("/access") or path.endswith("/unlock")))
     )
 
 
@@ -40,6 +43,15 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.url.path.startswith(PRIVATE_CAPABILITY_PREFIXES):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
+            "base-uri 'none'; frame-ancestors 'none'"
+        )
     if request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response

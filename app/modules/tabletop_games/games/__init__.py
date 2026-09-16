@@ -1,0 +1,1 @@
+"""Installed tabletop game implementations."""

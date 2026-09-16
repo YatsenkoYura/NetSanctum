@@ -18,6 +18,7 @@ local share_id = ARGV[2]
 local session_id = ARGV[3]
 local session_prefix = ARGV[4]
 local max_sessions = tonumber(ARGV[5])
+local session_exists = redis.call("EXISTS", session_key)
 
 if redis.call("EXISTS", KEYS[3]) == 1 then
     return 0
@@ -41,6 +42,9 @@ redis.call("SETEX", session_key, ttl, share_id)
 redis.call("ZADD", index_key, expires_at, session_id)
 local latest = redis.call("ZRANGE", index_key, -1, -1, "WITHSCORES")
 redis.call("EXPIRE", index_key, math.max(1, math.ceil(tonumber(latest[2]) - now) + 1))
+if session_exists == 1 then
+    return 2
+end
 return 1
 """
 

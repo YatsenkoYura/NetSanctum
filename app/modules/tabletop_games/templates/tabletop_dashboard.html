@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Настольные игры — NetSanctum{% endblock %}
+{% block head_extra %}
+<style>
+.tabletop-shell{max-width:1500px;margin:0 auto}.tabletop-toolbar{min-height:62px}.tabletop-tab[aria-selected="true"]{border-color:#2dd4bf;background:#18181b;color:#2dd4bf}.game-cover{width:min(100%,430px);height:230px;background-position:center;background-size:cover}.game-cover:before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.9),rgba(3,25,24,.62) 62%,rgba(13,148,136,.2)),linear-gradient(0deg,rgba(0,0,0,.92),transparent 72%)}.game-cover:hover{border-color:#2dd4bf}.game-cover:hover .play-button{background:#2dd4bf;color:#000}.history-card{display:grid;grid-template-columns:minmax(0,2fr) .8fr .7fr .7fr auto;gap:1rem;align-items:center}@media(max-width:639px){.tabletop-toolbar{min-height:54px}.game-cover{height:190px}.history-card{grid-template-columns:1fr auto}.history-secondary{display:none}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="tabletop-shell space-y-5 sm:space-y-6">
+  <nav class="tabletop-toolbar flex items-center justify-between border border-zinc-800 bg-zinc-950 p-2" aria-label="Разделы настольных игр">
+    <div class="flex gap-1.5">
+      <button id="tab-games" class="tabletop-tab flex h-10 items-center gap-2 border border-transparent px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-500 hover:border-zinc-700 hover:text-white" aria-selected="true" onclick="switchTabletopTab('games')">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M4 7h16v10H4zM8 10v4M6 12h4M16 11v.01M18 14v.01" stroke-linecap="square"/></svg>
+        <span>Игры</span>
+      </button>
+      <button id="tab-history" class="tabletop-tab flex h-10 items-center gap-2 border border-transparent px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-500 hover:border-zinc-700 hover:text-white" aria-selected="false" onclick="switchTabletopTab('history')">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 8v5l3 2M4.9 5A9 9 0 1021 12M4 4v5h5" stroke-linecap="square"/></svg>
+        <span>История</span>
+      </button>
+    </div>
+    {% if shared_operator %}
+    <span class="font-mono text-[8px] uppercase tracking-widest text-amber-500">Доступ по ссылке</span>
+    {% else %}
+    <span class="hidden font-mono text-[9px] uppercase tracking-widest text-zinc-700 sm:block">Tabletop</span>
+    {% endif %}
+  </nav>
+
+  <section id="panel-games">
+    <div class="flex flex-wrap gap-4">
+      {% for game in games %}
+      <article class="game-cover group relative overflow-hidden border border-zinc-800" style="background-image:url('{{ game.cover_url }}')">
+        <div class="relative z-10 flex h-full flex-col justify-end p-4 sm:p-5">
+          <div class="mb-auto font-mono text-[9px] font-bold uppercase tracking-[.2em] text-teal-300">{{ game.min_players }}–{{ game.max_players }} игроков</div>
+          <div class="pr-14">
+            <h2 class="text-xl font-black uppercase leading-tight text-white sm:text-2xl">{{ game.title_ru }}</h2>
+            <p class="mt-1 truncate font-mono text-[10px] text-zinc-400">{{ game.title_en }}</p>
+          </div>
+          <a href="/tabletop/games/{{ game.id }}" class="play-button absolute bottom-4 right-4 flex h-10 w-10 items-center justify-center border border-teal-400 bg-black/70 text-teal-400 transition-colors" title="Создать партию" aria-label="Создать партию {{ game.title_ru }}">
+            <svg class="ml-0.5 h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </a>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="panel-history" class="hidden space-y-2">
+    {% for room in rooms %}
+    <a href="/tabletop/rooms/{{ room.id }}" class="history-card border border-zinc-800 bg-zinc-950 px-4 py-3 hover:border-teal-700">
+      <div class="min-w-0"><div class="truncate text-sm font-bold text-zinc-200">{{ room.title }}</div><div class="mt-1 font-mono text-[9px] uppercase text-zinc-600">{{ room.config.script|default(room.game_id)|replace('_', ' ') }}</div></div>
+      <div class="history-secondary font-mono text-[10px] tracking-widest text-teal-500">{{ room.code }}</div>
+      <div class="history-secondary font-mono text-[10px] text-zinc-500">{{ room.participants|length }} / {{ room.config.player_limit }}</div>
+      <div class="history-secondary font-mono text-[9px] uppercase text-zinc-500">{{ room.status }}</div>
+      <svg class="h-4 w-4 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" stroke-width="2"/></svg>
+    </a>
+    {% else %}
+    <div class="border border-dashed border-zinc-800 py-16 text-center font-mono text-[10px] uppercase tracking-widest text-zinc-700">История пока пуста</div>
+    {% endfor %}
+  </section>
+</div>
+<script>
+function switchTabletopTab(tab) {
+  for (const name of ['games', 'history']) {
+    const active = name === tab;
+    document.getElementById(`panel-${name}`).classList.toggle('hidden', !active);
+    document.getElementById(`tab-${name}`).setAttribute('aria-selected', String(active));
+  }
+  history.replaceState(null, '', tab === 'history' ? '#history' : location.pathname);
+}
+if (location.hash === '#history') switchTabletopTab('history');
+</script>
+{% endblock %}

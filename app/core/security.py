@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from fastapi import Header, HTTPException, Request, status
 from passlib.context import CryptContext
+from starlette.requests import HTTPConnection
 
 from app.core.config import get_settings
 
@@ -41,6 +42,7 @@ import redis.asyncio as aioredis
 
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 API_SESSION_TTL_SECONDS = 86400
+OPERATOR_SHARE_COOKIE = "netsanctum_operator_share"
 
 
 def _api_session_key(token: str) -> str:
@@ -122,6 +124,20 @@ async def get_current_user(request: Request):
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid access token or session",
     )
+
+
+async def get_operator_share_id(connection: HTTPConnection, module_id: str) -> str | None:
+    session_id = connection.cookies.get(OPERATOR_SHARE_COOKIE)
+    if not session_id:
+        return None
+    try:
+        value = await redis_client.get(f"share_session:{session_id}")
+    except Exception:
+        raise HTTPException(status_code=503, detail="Shared session service is unavailable")
+    prefix = f"{module_id}:"
+    if not value or not value.startswith(prefix):
+        return None
+    return value.removeprefix(prefix)
 
 
 def use_secure_cookies(request: Request) -> bool:

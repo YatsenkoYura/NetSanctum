@@ -162,6 +162,14 @@ class CoreBoundarySecurityTests(unittest.TestCase):
         )
         capability_request.scope["path"] = "/s/example/access"
         self.assertFalse(is_cross_site_request(capability_request))
+        join_request = self.request(
+            "POST",
+            "sanctum.example",
+            "https://invite.example",
+            "cross-site",
+        )
+        join_request.scope["path"] = "/tabletop/join/ABCD2345"
+        self.assertFalse(is_cross_site_request(join_request))
 
     def test_secret_values_are_encrypted_and_authenticated(self):
         encrypted = encrypt_secret_value("sensitive-value")

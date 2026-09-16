@@ -74,6 +74,7 @@ class ModuleMigrationTests(unittest.TestCase):
         self.assertEqual("music_0003", revisions["music"])
         self.assertEqual("sharing_0001", revisions["sharing"])
         self.assertEqual("settings_0002", revisions["settings"])
+        self.assertEqual("tabletop_0002", revisions["tabletop_games"])
 
     def test_settings_scope_indexes_reject_duplicate_nullable_scopes(self):
         engine = self.make_engine()
@@ -88,6 +89,26 @@ class ModuleMigrationTests(unittest.TestCase):
             connection.execute(insert_global)
         with self.assertRaises(IntegrityError), engine.begin() as connection:
             connection.execute(insert_global)
+
+    def test_tabletop_unique_columns_do_not_create_duplicate_constraints(self):
+        engine = self.make_engine()
+        registry = ModuleRegistry.discover(installed_modules={"tabletop_games"})
+
+        upgrade_database(engine, registry)
+
+        inspector = inspect(engine)
+        self.assertEqual([], inspector.get_unique_constraints("tabletop_rooms"))
+        self.assertEqual(
+            {"uq_tabletop_room_nickname"},
+            {constraint["name"] for constraint in inspector.get_unique_constraints("tabletop_participants")},
+        )
+        room_indexes = {index["name"]: index for index in inspector.get_indexes("tabletop_rooms")}
+        participant_indexes = {
+            index["name"]: index for index in inspector.get_indexes("tabletop_participants")
+        }
+        self.assertTrue(room_indexes["ix_tabletop_rooms_code"]["unique"])
+        self.assertIn("ix_tabletop_rooms_operator_share_id", room_indexes)
+        self.assertTrue(participant_indexes["ix_tabletop_participants_token_hash"]["unique"])
 
     def test_disabled_installed_module_is_still_migrated(self):
         engine = self.make_engine()
@@ -218,7 +239,7 @@ class ModuleMigrationTests(unittest.TestCase):
         migrations = installed_migrations(registry)
 
         self.assertEqual(
-            {"alllib", "music", "settings", "sharing", "vault", "video_archiver"},
+            {"alllib", "music", "settings", "sharing", "tabletop_games", "vault", "video_archiver"},
             {migration.module_id for migration in migrations},
         )
         for migration in migrations:

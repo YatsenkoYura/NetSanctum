@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#11070b"/>
+  <circle cx="890" cy="205" r="155" fill="#fb7185" opacity=".14"/>
+  <path d="M0 510 170 380l95 80 140-170 150 205 115-130 175 135h355v130H0Z" fill="#250b16"/>
+  <path d="M100 540h1000M210 540V290h105v250m80 0V175h130v365m95 0V340h105v200m90 0V245h130v295" fill="none" stroke="#fb7185" stroke-width="9" opacity=".5"/>
+  <text x="86" y="130" fill="#fecdd3" font-family="monospace" font-size="24" letter-spacing="10">NIGHT CITY</text>
+  <text x="82" y="215" fill="#fff1f2" font-family="sans-serif" font-size="76" font-weight="800">МАФИЯ</text>
+  <text x="88" y="260" fill="#fda4af" font-family="monospace" font-size="22" letter-spacing="4">НОЧНОЙ ГОРОД</text>
+</svg>

@@ -808,6 +808,9 @@ music = [
     { name = "requests" },
     { name = "yt-dlp", extra = ["curl-cffi", "default"] },
 ]
+tabletop-games = [
+    { name = "qrcode" },
+]
 video-archiver = [
     { name = "bgutil-ytdlp-pot-provider" },
     { name = "requests" },
@@ -848,6 +851,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = "==2.9.1" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "python-multipart", specifier = "==0.0.31" },
+    { name = "qrcode", marker = "extra == 'tabletop-games'", specifier = "==8.2" },
     { name = "redis", specifier = "==8.1.0" },
     { name = "requests", marker = "extra == 'alllib'", specifier = "==2.33.0" },
     { name = "requests", marker = "extra == 'music'", specifier = "==2.33.0" },
@@ -858,7 +862,7 @@ requires-dist = [
     { name = "yt-dlp", extras = ["curl-cffi", "default"], marker = "extra == 'video-archiver'", specifier = "==2026.8.18.122307.dev0" },
     { name = "yt-dlp", extras = ["curl-cffi", "default"], marker = "extra == 'youtube'", specifier = "==2026.8.18.122307.dev0" },
 ]
-provides-extras = ["alllib", "music", "video-archiver", "youtube", "browser-runtime"]
+provides-extras = ["tabletop-games", "alllib", "music", "video-archiver", "youtube", "browser-runtime"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1173,6 +1177,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/93/7baea19427dcfbe1e5a372d81473250b379f04b1bd3c4c5ff825e2327202/pyyaml-6.0.3-cp312-cp312-win32.whl", hash = "sha256:96b533f0e99f6579b3d4d4995707cf36df9100d67e0c8303a0c55b27b5f99bc5", size = 137658, upload-time = "2025-09-25T21:32:20.209Z" },
     { url = "https://files.pythonhosted.org/packages/86/bf/899e81e4cce32febab4fb42bb97dcdf66bc135272882d1987881a4b519e9/pyyaml-6.0.3-cp312-cp312-win_amd64.whl", hash = "sha256:5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b", size = 154003, upload-time = "2025-09-25T21:32:21.167Z" },
     { url = "https://files.pythonhosted.org/packages/1a/08/67bd04656199bbb51dbed1439b7f27601dfb576fb864099c7ef0c3e55531/pyyaml-6.0.3-cp312-cp312-win_arm64.whl", hash = "sha256:64386e5e707d03a7e172c0701abfb7e10f0fb753ee1d773128192742712a98fd", size = 140344, upload-time = "2025-09-25T21:32:22.617Z" },
+]
+
+[[package]]
+name = "qrcode"
+version = "8.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/b2/7fc2931bfae0af02d5f53b174e9cf701adbb35f39d69c2af63d4a39f81a9/qrcode-8.2.tar.gz", hash = "sha256:35c3f2a4172b33136ab9f6b3ef1c00260dd2f66f858f24d88418a015f446506c", size = 43317, upload-time = "2025-05-01T15:44:24.726Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/b8/d2d6d731733f51684bbf76bf34dab3b70a9148e8f2cef2bb544fccec681a/qrcode-8.2-py3-none-any.whl", hash = "sha256:16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f", size = 45986, upload-time = "2025-05-01T15:44:22.781Z" },
 ]
 
 [[package]]
