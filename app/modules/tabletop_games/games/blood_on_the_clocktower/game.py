@@ -18,6 +18,7 @@ PLAYER_DISTRIBUTION = {
     15: (9, 2, 3, 1),
 }
 TEAM_KEYS = ("townsfolk", "outsider", "minion", "demon")
+TEENSYVILLE_SCRIPTS = frozenset({"no_greater_joy", "over_the_river", "laissez_un_faire"})
 
 
 def standard_distribution(player_count: int) -> dict[str, int]:
@@ -33,6 +34,8 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     script = str(config.get("script", "trouble_brewing"))
     if script not in SCRIPT_ROLES:
         raise ValueError("Неизвестный сценарий")
+    if script in TEENSYVILLE_SCRIPTS and player_limit > 6:
+        raise ValueError("Сценарии Teensyville рассчитаны на 5–6 игроков")
     player_chat = str(config.get("player_chat", "private"))
     if player_chat not in {"private", "gm_only", "off"}:
         raise ValueError("Неизвестный режим сообщений")
@@ -86,6 +89,8 @@ def assign_roles(player_count: int, config: dict[str, Any]) -> list[RoleDefiniti
     script = str(config.get("script", "trouble_brewing"))
     if script not in SCRIPT_ROLES:
         raise ValueError("Неизвестный сценарий")
+    if script in TEENSYVILLE_SCRIPTS and player_count > 6:
+        raise ValueError("Сценарии Teensyville рассчитаны на 5–6 игроков")
     team_roles = roles_by_team(script)
     role_counts = config.get("role_counts")
     if not isinstance(role_counts, dict):
@@ -94,7 +99,10 @@ def assign_roles(player_count: int, config: dict[str, Any]) -> list[RoleDefiniti
     outsiders = int(role_counts["outsider"])
     minion_count = int(role_counts["minion"])
     demons = int(role_counts["demon"])
-    selected_minions = random.sample(team_roles["minion"], minion_count)
+    available_minions = team_roles["minion"]
+    if not config.get("manual_distribution", False) and outsiders + 2 > len(team_roles["outsider"]):
+        available_minions = tuple(item for item in available_minions if item.id != "baron")
+    selected_minions = random.sample(available_minions, minion_count)
     selected_demons = random.sample(team_roles["demon"], demons)
     outsider_delta = 0
     if not config.get("manual_distribution", False):
@@ -142,6 +150,9 @@ GAME = GameDefinition(
                 ("trouble_brewing", "Trouble Brewing"),
                 ("bad_moon_rising", "Bad Moon Rising"),
                 ("sects_and_violets", "Sects & Violets"),
+                ("no_greater_joy", "No Greater Joy"),
+                ("over_the_river", "Over the River"),
+                ("laissez_un_faire", "Laissez un Faire"),
             ),
             "default": "trouble_brewing",
         },
@@ -249,7 +260,7 @@ GAME = GameDefinition(
     ),
     validate_config=validate_config,
     assign_roles=assign_roles,
-    role_catalog=tuple(role for roles in SCRIPT_ROLES.values() for role in roles),
+    role_catalog=tuple({role.id: role for roles in SCRIPT_ROLES.values() for role in roles}.values()),
     cover_url="/static/tabletop-blood-clocktower.svg",
     metadata={
         "scenarios": (
@@ -270,6 +281,27 @@ GAME = GameDefinition(
                 "title": "Sects & Violets",
                 "level": "Продвинутый",
                 "description": "Меняющиеся роли, безумие и противоречивая информация.",
+            },
+            {
+                "id": "no_greater_joy",
+                "title": "No Greater Joy",
+                "level": "Teensyville · первая игра",
+                "description": "Простой следующий шаг после Trouble Brewing для 5–6 игроков.",
+                "max_players": 6,
+            },
+            {
+                "id": "over_the_river",
+                "title": "Over the River",
+                "level": "Teensyville · средний",
+                "description": "Компактный сценарий для 5–6 игроков с меняющимися ролями и регистрацией.",
+                "max_players": 6,
+            },
+            {
+                "id": "laissez_un_faire",
+                "title": "Laissez un Faire",
+                "level": "Teensyville · сложный",
+                "description": "Напряжённая пятидневная партия с Левиафаном для 5–6 игроков.",
+                "max_players": 6,
             },
         ),
         "script_role_ids": {

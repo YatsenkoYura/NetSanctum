@@ -1,4 +1,4 @@
-from app.core.module_types import MigrationSpec, ModuleSpec
+from app.core.module_types import MigrationSpec, ModuleSpec, ShareSelectionType, ShareSpec
 
 MODULE = ModuleSpec(
     id="tabletop_games",
@@ -15,5 +15,16 @@ MODULE = ModuleSpec(
         tables=("tabletop_rooms", "tabletop_participants", "tabletop_messages"),
     ),
     templates="templates",
+    share=ShareSpec(
+        provider="app.modules.tabletop_games.share:PROVIDER",
+        selector_key="panel_ids",
+        selection_types=(
+            ShareSelectionType("panel_ids", "panel", "Tabletop panel", "Панель настольных игр"),
+        ),
+        dashboard_template="tabletop_dashboard.html",
+        api_prefix="/api/tabletop",
+        max_items=1,
+        interactive_entry_path="/tabletop",
+    ),
     dependency_extra="tabletop_games",
 )

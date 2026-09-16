@@ -305,7 +305,7 @@ class ShareSelectionType:
 
 @dataclass(frozen=True, slots=True)
 class ShareSpec:
-    """Declarative read-only sharing contract implemented by a module."""
+    """Declarative sharing contract implemented by a module."""
 
     provider: str
     selector_key: str
@@ -315,6 +315,7 @@ class ShareSpec:
     assets: tuple[ShareAsset, ...] = ()
     max_items: int = 500
     selection_types: tuple[ShareSelectionType, ...] = ()
+    interactive_entry_path: str | None = None
 
     @property
     def declared_selection_types(self) -> tuple[ShareSelectionType, ...]:
@@ -351,6 +352,14 @@ class ShareSpec:
             )
         if not self.api_prefix.startswith("/api/") or self.api_prefix.endswith("/"):
             raise ValueError("Share API prefix must start with '/api/' and have no trailing slash")
+        if self.interactive_entry_path and (
+            not self.interactive_entry_path.startswith("/")
+            or self.interactive_entry_path.startswith("//")
+            or "?" in self.interactive_entry_path
+            or "#" in self.interactive_entry_path
+            or "\\" in self.interactive_entry_path
+        ):
+            raise ValueError("Interactive share entry path must be a local absolute URL path")
         if self.max_items < 1:
             raise ValueError("Share max_items must be positive")
         route_names = [route.name for route in self.routes]

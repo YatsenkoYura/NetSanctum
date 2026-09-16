@@ -7,7 +7,7 @@
     <div class="border-2 border-zinc-800 bg-zinc-950 p-5">
         <div class="font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">Access control</div>
         <h1 class="mt-2 text-2xl font-black text-white">Shared modules</h1>
-        <p class="mt-2 max-w-2xl text-sm text-zinc-500">Publish a read-only module with all content or a selected subset.</p>
+        <p class="mt-2 max-w-2xl text-sm text-zinc-500">Publish read-only content or grant scoped access to an interactive module.</p>
     </div>
 
     <form id="share-form" class="grid gap-4 border-2 border-zinc-800 bg-black p-5 md:grid-cols-2">
@@ -26,7 +26,7 @@
         <div class="flex flex-wrap gap-5 md:col-span-2">
             <label class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-all" type="checkbox"> Entire module</label>
             <label class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-public" type="checkbox"> Public URL</label>
-            <label class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-download" type="checkbox"> Show download button</label>
+            <label id="share-download-label" class="flex items-center gap-2 text-xs font-mono uppercase text-zinc-400"><input id="share-download" type="checkbox"> Show download button</label>
         </div>
         <div class="md:col-span-2">
             <div class="mb-2 font-mono text-xs uppercase text-zinc-500">Content</div>
@@ -89,6 +89,10 @@
         const moduleId = moduleSelect.value;
         const provider = providersById[moduleSelect.value];
         const submitButton = document.getElementById('create-share');
+        shareAll.checked = Boolean(provider?.interactive);
+        shareAll.disabled = Boolean(provider?.interactive);
+        document.getElementById('share-download').checked = false;
+        document.getElementById('share-download-label').classList.toggle('hidden', Boolean(provider?.interactive));
         submitButton.disabled = true;
         contentRoot.replaceChildren();
         contentRoot.classList.add('opacity-40');

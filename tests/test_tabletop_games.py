@@ -1,5 +1,9 @@
 import random
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from fastapi import HTTPException
 
 from app.core.realtime import RealtimeHub
 from app.modules.tabletop_games.games.blood_on_the_clocktower.game import (
@@ -13,8 +17,18 @@ from app.modules.tabletop_games.games.mafia.game import (
     validate_config as validate_mafia_config,
 )
 from app.modules.tabletop_games.registry import game_registry
+from app.modules.tabletop_games.router import (
+    TabletopOperator,
+    require_room,
+    require_tabletop_operator,
+)
 from app.modules.tabletop_games.schemas import ParticipantEffect, ParticipantUpdate
-from app.modules.tabletop_games.services import hash_player_token, player_cookie_name, room_channel
+from app.modules.tabletop_games.services import (
+    create_room,
+    hash_player_token,
+    player_cookie_name,
+    room_channel,
+)
 
 
 class TabletopGameRegistryTests(unittest.TestCase):
@@ -53,13 +67,80 @@ class TabletopGameRegistryTests(unittest.TestCase):
         assert game is not None
 
         script_role_ids = game.metadata["script_role_ids"]
+        scenario_by_id = {scenario["id"]: scenario for scenario in game.metadata["scenarios"]}
         for script, role_ids in script_role_ids.items():
             with self.subTest(script=script):
-                roles = assign_roles(12, {"script": script})
-                self.assertEqual(12, len(roles))
-                self.assertEqual(12, len({role.id for role in roles}))
+                player_count = min(12, scenario_by_id[script].get("max_players", 12))
+                roles = assign_roles(player_count, {"script": script})
+                self.assertEqual(player_count, len(roles))
+                self.assertEqual(player_count, len({role.id for role in roles}))
                 self.assertLessEqual({role.id for role in roles}, set(role_ids))
                 self.assertEqual(1, sum(role.team == "demon" for role in roles))
+
+    def test_clocktower_exposes_official_teensyville_scripts(self):
+        game = game_registry.get("blood_on_the_clocktower")
+        assert game is not None
+
+        expected_scripts = {
+            "no_greater_joy": {
+                "clockmaker",
+                "investigator",
+                "empath",
+                "chambermaid",
+                "artist",
+                "sage",
+                "drunk",
+                "klutz",
+                "scarlet_woman",
+                "baron",
+                "imp",
+            },
+            "over_the_river": {
+                "grandmother",
+                "clockmaker",
+                "innkeeper",
+                "snake_charmer",
+                "professor",
+                "slayer",
+                "lunatic",
+                "recluse",
+                "godfather",
+                "spy",
+                "imp",
+            },
+            "laissez_un_faire": {
+                "balloonist",
+                "savant",
+                "amnesiac",
+                "fisherman",
+                "artist",
+                "cannibal",
+                "mutant",
+                "lunatic",
+                "widow",
+                "goblin",
+                "leviathan",
+            },
+        }
+        scenario_by_id = {scenario["id"]: scenario for scenario in game.metadata["scenarios"]}
+        for script, expected_role_ids in expected_scripts.items():
+            with self.subTest(script=script):
+                self.assertEqual(expected_role_ids, set(game.metadata["script_role_ids"][script]))
+                self.assertEqual(6, scenario_by_id[script]["max_players"])
+
+    def test_clocktower_limits_teensyville_to_six_players(self):
+        config = validate_config({"player_limit": 6, "script": "no_greater_joy"})
+
+        self.assertEqual(6, config["player_limit"])
+        with self.assertRaises(ValueError):
+            validate_config({"player_limit": 7, "script": "no_greater_joy"})
+        with self.assertRaises(ValueError):
+            assign_roles(7, {"script": "no_greater_joy"})
+
+    def test_six_player_no_greater_joy_excludes_baron(self):
+        for _ in range(20):
+            roles = assign_roles(6, {"script": "no_greater_joy"})
+            self.assertNotIn("baron", {role.id for role in roles})
 
     def test_clocktower_keeps_game_specific_options(self):
         config = validate_config(
@@ -155,6 +236,59 @@ class TabletopGameRegistryTests(unittest.TestCase):
     def test_mafia_rejects_unknown_script(self):
         with self.assertRaises(ValueError):
             validate_mafia_config({"script": "unknown"})
+
+
+class TabletopSharedOperatorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shared_operator_is_accepted_without_owner_session(self):
+        owner_error = HTTPException(status_code=401, detail="Invalid session")
+        with (
+            patch(
+                "app.modules.tabletop_games.router.get_current_user",
+                AsyncMock(side_effect=owner_error),
+            ),
+            patch(
+                "app.modules.tabletop_games.router.get_operator_share_id",
+                AsyncMock(return_value="share-id"),
+            ),
+        ):
+            operator = await require_tabletop_operator(SimpleNamespace())
+
+        self.assertEqual("share-id", operator.share_id)
+        self.assertIsNone(operator.user)
+
+    async def test_shared_operator_can_only_access_rooms_from_its_link(self):
+        own_room = SimpleNamespace(operator_share_id="share-id")
+        other_room = SimpleNamespace(operator_share_id="other-share")
+        db = AsyncMock()
+        operator = TabletopOperator(share_id="share-id")
+
+        with patch(
+            "app.modules.tabletop_games.router.get_room",
+            AsyncMock(side_effect=[own_room, other_room]),
+        ):
+            self.assertIs(own_room, await require_room(db, "own-room", operator))
+            with self.assertRaises(HTTPException) as raised:
+                await require_room(db, "other-room", operator)
+
+        self.assertEqual(404, raised.exception.status_code)
+
+    async def test_shared_operator_id_is_stored_on_created_room(self):
+        db = MagicMock()
+        db.scalar = AsyncMock(return_value=None)
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        game = game_registry.get("blood_on_the_clocktower")
+        assert game is not None
+
+        room = await create_room(
+            db,
+            game,
+            "Shared game",
+            {"player_limit": 5},
+            operator_share_id="share-id",
+        )
+
+        self.assertEqual("share-id", room.operator_share_id)
 
 
 class TabletopSecurityTests(unittest.TestCase):

@@ -18,6 +18,7 @@ class TabletopRoom(Base):
     game_id: Mapped[str] = mapped_column(String(63), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="lobby", index=True)
+    operator_share_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     game_state: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

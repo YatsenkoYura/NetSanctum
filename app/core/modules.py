@@ -462,7 +462,7 @@ class ModuleRegistry:
         return None
 
     def share_provider(self, module_id: str) -> Any | None:
-        """Load the active module's optional, read-only sharing provider."""
+        """Load the active module's optional sharing provider."""
         record = self._records.get(module_id)
         if not record or record.status != ModuleStatus.ACTIVE or not record.spec or not record.spec.share:
             return None

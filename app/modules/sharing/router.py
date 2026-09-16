@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -16,6 +15,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.modules import module_registry
 from app.core.security import (
+    OPERATOR_SHARE_COOKIE,
     get_current_user,
     hash_password,
     redis_client,
@@ -38,7 +38,6 @@ from app.modules.sharing.service import (
 )
 
 router = APIRouter(tags=["sharing"])
-logger = logging.getLogger(__name__)
 settings = get_settings()
 SHARE_COOKIE = "netsanctum_share"
 PASSWORD_ATTEMPT_LIMIT = 5
@@ -98,6 +97,8 @@ def _shared_response(payload) -> Response:
 
 async def _render_shared_application(request: Request, share: ShareLink) -> Response:
     spec = _share_spec(share.module_id)
+    if spec.interactive_entry_path:
+        return RedirectResponse(spec.interactive_entry_path, status_code=303)
     response = templates.TemplateResponse(
         request,
         spec.dashboard_template,
@@ -197,12 +198,16 @@ async def _active_share(db: AsyncSession, share_id: str) -> ShareLink:
     return share
 
 
-async def _has_session(request: Request, share_id: str) -> bool:
-    session_id = request.cookies.get(SHARE_COOKIE)
+async def _has_session(request: Request, share: ShareLink, *, operator: bool = False) -> bool:
+    cookie_name = OPERATOR_SHARE_COOKIE if operator else SHARE_COOKIE
+    session_id = request.cookies.get(cookie_name)
     if not session_id:
         return False
     try:
-        return await redis_client.get(f"share_session:{session_id}") == share_id
+        value = await redis_client.get(f"share_session:{session_id}")
+        if operator:
+            return value == f"{share.module_id}:{share.id}"
+        return value in {share.id, f"{share.module_id}:{share.id}"}
     except Exception:
         raise HTTPException(status_code=503, detail="Shared session service is unavailable")
 
@@ -210,11 +215,18 @@ async def _has_session(request: Request, share_id: str) -> bool:
 async def _is_authorized(request: Request, share: ShareLink) -> bool:
     if share.is_public and not share.password_hash:
         return True
-    return await _has_session(request, share.id)
+    spec = _share_spec(share.module_id)
+    return await _has_session(request, share, operator=bool(spec.interactive_entry_path))
 
 
-async def _establish_session(request: Request, share: ShareLink, db: AsyncSession) -> Response:
-    session_id = secrets.token_urlsafe(32)
+async def _establish_session(
+    request: Request,
+    share: ShareLink,
+    db: AsyncSession,
+    interactive_entry_path: str | None = None,
+) -> Response:
+    reusable_public_session = bool(interactive_entry_path and share.is_public and not share.password_hash)
+    session_id = share.id if reusable_public_session else secrets.token_urlsafe(32)
     ttl = session_ttl(share)
     session_key = f"share_session:{session_id}"
     session_index = f"share_sessions:{share.id}"
@@ -226,7 +238,7 @@ async def _establish_session(request: Request, share: ShareLink, db: AsyncSessio
             session_key,
             f"share_revoked:{share.id}",
             ttl,
-            share.id,
+            f"{share.module_id}:{share.id}",
             session_id,
             "share_session:",
             MAX_SHARE_SESSIONS,
@@ -236,19 +248,20 @@ async def _establish_session(request: Request, share: ShareLink, db: AsyncSessio
     if not created:
         raise _not_found()
 
-    share.access_count += 1
-    share.last_accessed_at = utc_now()
-    await db.commit()
+    if created == 1:
+        share.access_count += 1
+        share.last_accessed_at = utc_now()
+        await db.commit()
 
-    response = RedirectResponse(url=f"/s/{share.id}", status_code=303)
+    response = RedirectResponse(url=interactive_entry_path or f"/s/{share.id}", status_code=303)
     response.set_cookie(
-        SHARE_COOKIE,
+        OPERATOR_SHARE_COOKIE if interactive_entry_path else SHARE_COOKIE,
         session_id,
         httponly=True,
         secure=use_secure_cookies(request),
         samesite="lax",
         max_age=ttl,
-        path=f"/s/{share.id}",
+        path="/" if interactive_entry_path else f"/s/{share.id}",
     )
     return _harden_shared_response(response)
 
@@ -344,6 +357,7 @@ async def list_share_providers(user=Depends(get_current_user)):
                         }
                         for item in record.spec.share.declared_selection_types
                     ],
+                    "interactive": bool(record.spec.share.interactive_entry_path),
                 }
             )
     return providers
@@ -442,12 +456,14 @@ async def revoke_all_shares(
     for share in shares:
         share.status = "revoked"
         share.revoked_at = revoked_at
-    await db.commit()
-    for share in shares:
-        try:
+    await db.flush()
+    try:
+        for share in shares:
             await _clear_share_sessions(share.id)
-        except Exception as exc:
-            logger.warning("Could not clear Redis sessions for revoked share %s: %s", share.id, exc)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Shared session service is unavailable")
+    await db.commit()
     return {"status": "revoked", "count": len(shares)}
 
 
@@ -462,11 +478,13 @@ async def revoke_share(
         raise HTTPException(status_code=404, detail="Share not found")
     share.status = "revoked"
     share.revoked_at = utc_now()
-    await db.commit()
+    await db.flush()
     try:
         await _clear_share_sessions(share.id)
-    except Exception as exc:
-        logger.warning("Could not clear Redis sessions for revoked share %s: %s", share.id, exc)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Shared session service is unavailable")
+    await db.commit()
     return {"status": "revoked", "id": share.id}
 
 
@@ -491,7 +509,12 @@ async def unlock_private_share(
             "Invalid password",
             secret,
         )
-    return await _establish_session(request, share, db)
+    return await _establish_session(
+        request,
+        share,
+        db,
+        _share_spec(share.module_id).interactive_entry_path,
+    )
 
 
 @router.post("/s/{share_id}/unlock", include_in_schema=False)
@@ -506,7 +529,12 @@ async def unlock_public_share(
         raise _not_found()
     if not await _check_password(request, share, password):
         return _unlock_page(request, share, f"/s/{share.id}/unlock", "Invalid password")
-    return await _establish_session(request, share, db)
+    return await _establish_session(
+        request,
+        share,
+        db,
+        _share_spec(share.module_id).interactive_entry_path,
+    )
 
 
 @router.api_route(
@@ -534,11 +562,14 @@ async def shared_application(
     db: AsyncSession = Depends(get_db),
 ):
     share = await _active_share(db, share_id)
+    spec = _share_spec(share.module_id)
     if share.is_public and not share.password_hash:
+        if spec.interactive_entry_path and not await _has_session(request, share, operator=True):
+            return await _establish_session(request, share, db, spec.interactive_entry_path)
         response = await _render_shared_application(request, share)
         return _harden_shared_response(response)
 
-    if not await _has_session(request, share.id):
+    if not await _has_session(request, share, operator=bool(spec.interactive_entry_path)):
         if not share.is_public:
             response = templates.TemplateResponse(
                 request,

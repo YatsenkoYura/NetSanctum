@@ -472,10 +472,122 @@ SECTS_AND_VIOLETS = (
     ),
 )
 
+TEENSYVILLE_ADDITIONAL_ROLES = (
+    role(
+        "balloonist",
+        "Воздухоплаватель",
+        "Balloonist",
+        "townsfolk",
+        "Каждую ночь вы узнаете игрока с типом роли, отличным от показанного прошлой ночью. В игре может быть на одного чужака больше.",
+    ),
+    role(
+        "amnesiac",
+        "Амнезик",
+        "Amnesiac",
+        "townsfolk",
+        "Вы не знаете свою способность. Каждый день наедине угадывайте её и узнавайте, насколько близки к ответу.",
+    ),
+    role(
+        "fisherman",
+        "Рыбак",
+        "Fisherman",
+        "townsfolk",
+        "Один раз за игру днём обратитесь к ведущему за советом, который поможет вашей команде победить.",
+    ),
+    role(
+        "cannibal",
+        "Каннибал",
+        "Cannibal",
+        "townsfolk",
+        "Вы получаете способность последнего казнённого и погибшего игрока. Если он злой, вы отравлены до казни доброго игрока.",
+    ),
+    role(
+        "widow",
+        "Вдова",
+        "Widow",
+        "minion",
+        "В первую ночь посмотрите гримуар и выберите игрока: он отравлен. Один добрый игрок знает, что Вдова в игре.",
+    ),
+    role(
+        "goblin",
+        "Гоблин",
+        "Goblin",
+        "minion",
+        "Если при выдвижении вы публично назвались Гоблином и в этот день были казнены, ваша команда побеждает.",
+    ),
+    role(
+        "leviathan",
+        "Левиафан",
+        "Leviathan",
+        "demon",
+        "Если казнено больше одного доброго игрока, зло побеждает. Все знают, что вы в игре. После пятого дня зло побеждает.",
+    ),
+)
+
+_ROLE_BY_ID = {
+    item.id: item
+    for script in (TROUBLE_BREWING, BAD_MOON_RISING, SECTS_AND_VIOLETS, TEENSYVILLE_ADDITIONAL_ROLES)
+    for item in script
+}
+
+NO_GREATER_JOY = tuple(
+    _ROLE_BY_ID[role_id]
+    for role_id in (
+        "clockmaker",
+        "investigator",
+        "empath",
+        "chambermaid",
+        "artist",
+        "sage",
+        "drunk",
+        "klutz",
+        "scarlet_woman",
+        "baron",
+        "imp",
+    )
+)
+
+OVER_THE_RIVER = tuple(
+    _ROLE_BY_ID[role_id]
+    for role_id in (
+        "grandmother",
+        "clockmaker",
+        "innkeeper",
+        "snake_charmer",
+        "professor",
+        "slayer",
+        "lunatic",
+        "recluse",
+        "godfather",
+        "spy",
+        "imp",
+    )
+)
+
+LAISSEZ_UN_FAIRE = tuple(
+    _ROLE_BY_ID[role_id]
+    for role_id in (
+        "balloonist",
+        "savant",
+        "amnesiac",
+        "fisherman",
+        "artist",
+        "cannibal",
+        "mutant",
+        "lunatic",
+        "widow",
+        "goblin",
+        "leviathan",
+    )
+)
+
 SCRIPT_ROLES = {
     "trouble_brewing": TROUBLE_BREWING,
     "bad_moon_rising": BAD_MOON_RISING,
     "sects_and_violets": SECTS_AND_VIOLETS,
+    "no_greater_joy": NO_GREATER_JOY,
+    "over_the_river": OVER_THE_RIVER,
+    "laissez_un_faire": LAISSEZ_UN_FAIRE,
 }
 
 

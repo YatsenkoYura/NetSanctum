@@ -38,6 +38,7 @@ async def create_room(
     game: GameDefinition,
     title: str,
     config: dict[str, Any],
+    operator_share_id: str | None = None,
 ) -> TabletopRoom:
     title = " ".join(title.split())
     if not title:
@@ -54,6 +55,7 @@ async def create_room(
         code=code,
         game_id=game.id,
         title=title,
+        operator_share_id=operator_share_id,
         config=game.validate_config(config),
         status="lobby",
         game_state={},
@@ -64,13 +66,16 @@ async def create_room(
     return room
 
 
-async def list_rooms(db: AsyncSession) -> list[TabletopRoom]:
-    result = await db.execute(
+async def list_rooms(db: AsyncSession, operator_share_id: str | None = None) -> list[TabletopRoom]:
+    query = (
         select(TabletopRoom)
         .options(selectinload(TabletopRoom.participants))
         .order_by(TabletopRoom.created_at.desc())
         .limit(50)
     )
+    if operator_share_id is not None:
+        query = query.where(TabletopRoom.operator_share_id == operator_share_id)
+    result = await db.execute(query)
     return list(result.scalars().unique())
 
 

@@ -1,6 +1,9 @@
+import asyncio
 import io
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -11,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.realtime import realtime_hub
-from app.core.security import get_current_user, redis_client, use_secure_cookies
+from app.core.security import (
+    get_current_user,
+    get_operator_share_id,
+    redis_client,
+    use_secure_cookies,
+)
 from app.core.templates import templates
 from app.modules.tabletop_games.models import TabletopMessage, TabletopParticipant, TabletopRoom
 from app.modules.tabletop_games.registry import game_registry
@@ -53,6 +61,15 @@ GRIMOIRE_EFFECTS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class TabletopOperator:
+    user: Any | None = None
+    share_id: str | None = None
+
+    def can_access(self, room: TabletopRoom) -> bool:
+        return self.share_id is None or room.operator_share_id == self.share_id
+
+
 def not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Игровая комната не найдена")
 
@@ -73,9 +90,27 @@ async def notify(room_id: str, event: str) -> None:
         logger.exception("Could not publish tabletop event %s", event)
 
 
-async def require_room(db: AsyncSession, room_id: str) -> TabletopRoom:
+async def require_tabletop_operator(
+    request: Request,
+) -> TabletopOperator:
+    try:
+        return TabletopOperator(user=await get_current_user(request))
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        share_id = await get_operator_share_id(request, "tabletop_games")
+        if not share_id:
+            raise exc
+        return TabletopOperator(share_id=share_id)
+
+
+async def require_room(
+    db: AsyncSession,
+    room_id: str,
+    operator: TabletopOperator,
+) -> TabletopRoom:
     room = await get_room(db, room_id)
-    if not room:
+    if not room or not operator.can_access(room):
         raise not_found()
     return room
 
@@ -120,38 +155,46 @@ def websocket_origin_allowed(websocket: WebSocket) -> bool:
     )
 
 
-async def websocket_owner(websocket: WebSocket) -> bool:
+async def websocket_operator(websocket: WebSocket) -> TabletopOperator | None:
     session_id = websocket.cookies.get("access_token")
-    return bool(session_id and await redis_client.get(f"session:{session_id}") == "1")
+    if session_id and await redis_client.get(f"session:{session_id}") == "1":
+        return TabletopOperator()
+    share_id = await get_operator_share_id(websocket, "tabletop_games")
+    return TabletopOperator(share_id=share_id) if share_id else None
 
 
 @router.get("/tabletop", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
     return templates.TemplateResponse(
         request,
         "tabletop_dashboard.html",
         {
-            "user": user,
+            "user": operator.user,
             "lang": request.cookies.get("lang", "ru"),
             "games": game_registry.all(),
-            "rooms": await list_rooms(db),
+            "rooms": await list_rooms(db, operator.share_id),
+            "shared_operator": operator.share_id is not None,
         },
     )
 
 
 @router.get("/tabletop/games/{game_id}", response_class=HTMLResponse, include_in_schema=False)
-async def game_setup(request: Request, game_id: str, user=Depends(get_current_user)):
+async def game_setup(
+    request: Request,
+    game_id: str,
+    operator: TabletopOperator = Depends(require_tabletop_operator),
+):
     game = game_registry.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Игра не установлена")
     return templates.TemplateResponse(
         request,
         "tabletop_setup.html",
-        {"user": user, "lang": request.cookies.get("lang", "ru"), "game": game},
+        {"user": operator.user, "lang": request.cookies.get("lang", "ru"), "game": game},
     )
 
 
@@ -177,7 +220,7 @@ async def create_game_room(
     reveal_roles_on_end: bool = Form(False),
     show_storyteller_reference: bool = Form(False),
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
     game = game_registry.get(game_id)
     if not game:
@@ -205,6 +248,7 @@ async def create_game_room(
                 "reveal_roles_on_end": reveal_roles_on_end,
                 "show_storyteller_reference": show_storyteller_reference,
             },
+            operator_share_id=operator.share_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -216,9 +260,9 @@ async def host_room(
     request: Request,
     room_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     game = game_registry.get(room.game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Игра не установлена")
@@ -227,7 +271,7 @@ async def host_room(
         request,
         "tabletop_host.html",
         {
-            "user": user,
+            "user": operator.user,
             "lang": request.cookies.get("lang", "ru"),
             "room": room,
             "game": game,
@@ -248,12 +292,12 @@ async def room_qr(
     request: Request,
     room_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
     import qrcode
     import qrcode.image.svg
 
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     base_url = settings.PUBLIC_BASE_URL.rstrip("/") or str(request.base_url).rstrip("/")
     image = qrcode.make(
         f"{base_url}/tabletop/join/{room.code}",
@@ -274,18 +318,18 @@ async def room_qr(
 async def get_owner_room_state(
     room_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    return await owner_state(db, await require_room(db, room_id))
+    return await owner_state(db, await require_room(db, room_id, operator))
 
 
 @router.post("/api/tabletop/rooms/{room_id}/start")
 async def start_game(
     room_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     try:
         await start_room(db, room)
     except ValueError as exc:
@@ -298,9 +342,9 @@ async def start_game(
 async def end_game(
     room_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     room.status = "ended"
     room.ended_at = datetime.now(UTC)
     await db.commit()
@@ -312,9 +356,9 @@ async def end_game(
 async def force_close_game(
     room_id: str,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await close_room(db, await require_room(db, room_id))
+    room = await close_room(db, await require_room(db, room_id, operator))
     await notify(room.id, "game.closed")
     return room_payload(room)
 
@@ -325,9 +369,9 @@ async def update_participant(
     participant_id: str,
     body: ParticipantUpdate,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     participant = await db.scalar(
         select(TabletopParticipant).where(
             TabletopParticipant.id == participant_id, TabletopParticipant.room_id == room.id
@@ -358,11 +402,11 @@ async def add_participant_effect(
     participant_id: str,
     body: ParticipantEffect,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
     if body.effect not in GRIMOIRE_EFFECTS:
         raise HTTPException(status_code=422, detail="Неизвестный эффект гримуара")
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     participant = await db.scalar(
         select(TabletopParticipant).where(
             TabletopParticipant.id == participant_id, TabletopParticipant.room_id == room.id
@@ -383,9 +427,9 @@ async def swap_player_seats(
     participant_id: str,
     body: ParticipantSwap,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     try:
         await swap_participants(db, room, participant_id, body.target_id)
     except ValueError as exc:
@@ -399,9 +443,9 @@ async def owner_message(
     room_id: str,
     body: MessageCreate,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    operator: TabletopOperator = Depends(require_tabletop_operator),
 ):
-    room = await require_room(db, room_id)
+    room = await require_room(db, room_id, operator)
     audience = "broadcast" if body.audience == "broadcast" else "player"
     recipient = None
     if audience == "player":
@@ -582,12 +626,20 @@ async def player_message(
 
 @router.websocket("/tabletop/rooms/{room_id}/ws")
 async def owner_socket(websocket: WebSocket, room_id: str):
-    if not websocket_origin_allowed(websocket) or not await websocket_owner(websocket):
+    if not websocket_origin_allowed(websocket):
+        await websocket.close(code=4401)
+        return
+    try:
+        operator = await websocket_operator(websocket)
+    except HTTPException:
+        await websocket.close(code=1011)
+        return
+    if not operator:
         await websocket.close(code=4401)
         return
     async with AsyncSessionLocal() as db:
         room = await get_room(db, room_id)
-    if not room:
+    if not room or not operator.can_access(room):
         await websocket.close(code=4404)
         return
     channel = room_channel(room.id)
@@ -596,7 +648,19 @@ async def owner_socket(websocket: WebSocket, room_id: str):
     await websocket.send_json({"event": "connected", "data": {}})
     try:
         while True:
-            await websocket.receive_text()
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except TimeoutError:
+                pass
+            if operator.share_id:
+                try:
+                    current_share_id = await get_operator_share_id(websocket, "tabletop_games")
+                except HTTPException:
+                    await websocket.close(code=1011)
+                    return
+                if current_share_id != operator.share_id:
+                    await websocket.close(code=4401)
+                    return
     except WebSocketDisconnect:
         pass
     finally:

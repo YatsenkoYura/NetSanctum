@@ -18,12 +18,12 @@
     <input type="hidden" name="game_id" value="{{ game.id }}">
     <div class="grid gap-4 md:grid-cols-[1fr_180px]">
       <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Название партии</span><input required maxlength="120" name="title" value="Партия {{ game.title_ru }}" class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none focus:border-teal-400"></label>
-      <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Игроков</span><input type="number" name="player_limit" value="10" min="5" max="15" class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none focus:border-teal-400"></label>
+      <label class="block"><span class="mb-2 block font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500">Игроков</span><input id="player-limit" type="number" name="player_limit" value="10" min="5" max="15" class="h-11 w-full border border-zinc-800 bg-black px-3 text-sm text-white outline-none focus:border-teal-400"></label>
     </div>
 
     <fieldset class="mt-6"><legend class="mb-3 font-mono text-[9px] font-bold uppercase tracking-widest text-zinc-500">Сценарий</legend><div class="scenario-grid grid grid-cols-3 gap-2">
       {% for scenario in game.metadata.scenarios %}
-      <label class="cursor-pointer"><input class="scenario-input sr-only" type="radio" name="script" value="{{ scenario.id }}" {% if loop.first %}checked{% endif %}><span class="scenario-card block h-full border border-zinc-800 bg-black p-3 transition-colors"><span class="flex items-start justify-between gap-2"><strong class="text-xs text-white">{{ scenario.title }}</strong><i class="scenario-mark mt-0.5 h-2.5 w-2.5 shrink-0 border border-zinc-600"></i></span><span class="mt-1 block font-mono text-[8px] uppercase text-teal-600">{{ scenario.level }}</span><span class="mt-3 block text-[10px] leading-4 text-zinc-500">{{ scenario.description }}</span></span></label>
+      <label class="cursor-pointer"><input class="scenario-input sr-only" type="radio" name="script" value="{{ scenario.id }}" data-max-players="{{ scenario.max_players|default(game.max_players) }}" {% if loop.first %}checked{% endif %}><span class="scenario-card block h-full border border-zinc-800 bg-black p-3 transition-colors"><span class="flex items-start justify-between gap-2"><strong class="text-xs text-white">{{ scenario.title }}</strong><i class="scenario-mark mt-0.5 h-2.5 w-2.5 shrink-0 border border-zinc-600"></i></span><span class="mt-1 block font-mono text-[8px] uppercase text-teal-600">{{ scenario.level }}</span><span class="mt-3 block text-[10px] leading-4 text-zinc-500">{{ scenario.description }}</span></span></label>
       {% endfor %}
     </div></fieldset>
 
@@ -49,11 +49,21 @@
 <script>
   const manualDistribution = document.getElementById('manual_distribution');
   const manualCounts = document.querySelectorAll('.manual-count input');
+  const playerLimit = document.getElementById('player-limit');
+  const scenarios = document.querySelectorAll('.scenario-input');
   function updateManualDistribution() {
     if (!manualDistribution) return;
     manualCounts.forEach(input => { input.disabled = !manualDistribution.checked; input.required = manualDistribution.checked; });
   }
+  function updatePlayerLimit() {
+    const selected = document.querySelector('.scenario-input:checked');
+    if (!selected || !playerLimit) return;
+    playerLimit.max = selected.dataset.maxPlayers;
+    if (Number(playerLimit.value) > Number(playerLimit.max)) playerLimit.value = playerLimit.max;
+  }
   if (manualDistribution) manualDistribution.addEventListener('change', updateManualDistribution);
+  scenarios.forEach(input => input.addEventListener('change', updatePlayerLimit));
   updateManualDistribution();
+  updatePlayerLimit();
 </script>
 {% endblock %}

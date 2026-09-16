@@ -74,6 +74,7 @@ class ModuleMigrationTests(unittest.TestCase):
         self.assertEqual("music_0003", revisions["music"])
         self.assertEqual("sharing_0001", revisions["sharing"])
         self.assertEqual("settings_0002", revisions["settings"])
+        self.assertEqual("tabletop_0002", revisions["tabletop_games"])
 
     def test_settings_scope_indexes_reject_duplicate_nullable_scopes(self):
         engine = self.make_engine()
@@ -106,6 +107,7 @@ class ModuleMigrationTests(unittest.TestCase):
             index["name"]: index for index in inspector.get_indexes("tabletop_participants")
         }
         self.assertTrue(room_indexes["ix_tabletop_rooms_code"]["unique"])
+        self.assertIn("ix_tabletop_rooms_operator_share_id", room_indexes)
         self.assertTrue(participant_indexes["ix_tabletop_participants_token_hash"]["unique"])
 
     def test_disabled_installed_module_is_still_migrated(self):

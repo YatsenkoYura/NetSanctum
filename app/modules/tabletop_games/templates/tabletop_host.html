@@ -193,7 +193,12 @@ function connect() {
   const socket = new WebSocket(`${protocol}://${location.host}/tabletop/rooms/${roomId}/ws`);
   socket.onopen = () => { const status = document.getElementById('connection'); status.textContent = 'онлайн'; status.className = 'font-mono text-[8px] uppercase text-teal-400'; };
   socket.onmessage = () => loadState();
-  socket.onclose = () => { document.getElementById('connection').textContent = 'переподключение'; setTimeout(connect, 1500); };
+  socket.onclose = event => {
+    const status = document.getElementById('connection');
+    if ([4401, 4404].includes(event.code)) { status.textContent = 'доступ закрыт'; status.className = 'font-mono text-[8px] uppercase text-rose-400'; return; }
+    status.textContent = 'переподключение';
+    setTimeout(connect, 1500);
+  };
 }
 loadState();
 connect();

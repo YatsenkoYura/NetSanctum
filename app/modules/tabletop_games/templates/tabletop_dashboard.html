@@ -18,7 +18,11 @@
         <span>История</span>
       </button>
     </div>
+    {% if shared_operator %}
+    <span class="font-mono text-[8px] uppercase tracking-widest text-amber-500">Доступ по ссылке</span>
+    {% else %}
     <span class="hidden font-mono text-[9px] uppercase tracking-widest text-zinc-700 sm:block">Tabletop</span>
+    {% endif %}
   </nav>
 
   <section id="panel-games">
