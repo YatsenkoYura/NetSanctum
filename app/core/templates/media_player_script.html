@@ -2,6 +2,92 @@
     (() => {
         const AUTOPLAY_PREFIX = 'netsanctum:player:autoplay:';
         const VOLUME_KEY = 'player_volume';
+        let activeMediaSession = null;
+
+        function mediaSessionMetadata(media, options) {
+            const supplied = typeof options.metadata === 'function' ? options.metadata() : options.metadata;
+            const metadata = supplied || {};
+            const artwork = metadata.artwork || media.dataset.artwork;
+            return {
+                title: metadata.title || media.dataset.title || media.dataset.persistentTitle || document.title || 'NetSanctum',
+                artist: metadata.artist || media.dataset.artist || media.dataset.persistentChannel || '',
+                album: metadata.album || media.dataset.album || '',
+                artwork: artwork ? [{src: new URL(artwork, window.location.href).href}] : [],
+            };
+        }
+
+        function performMediaAction(action, details = {}) {
+            const controller = activeMediaSession;
+            if (!controller?.active()) return false;
+            const media = controller.media;
+            if (action === 'play') media.play().catch(() => {});
+            else if (action === 'pause') media.pause();
+            else if (action === 'nexttrack' && controller.options.onNext) controller.options.onNext();
+            else if (action === 'previoustrack' && controller.options.onPrevious) controller.options.onPrevious();
+            else if (action === 'seekbackward') controller.seek(-(details.seekOffset || 10));
+            else if (action === 'seekforward') controller.seek(details.seekOffset || 10);
+            else if (action === 'seekto' && Number.isFinite(details.seekTime)) {
+                media.currentTime = Math.max(0, Math.min(media.duration || Infinity, details.seekTime));
+            } else return false;
+            return true;
+        }
+
+        function bindMediaSession(media, options, seek, signal) {
+            const controller = {
+                media,
+                options,
+                seek,
+                active: options.active || (() => media.isConnected && !media.closest('.hidden')),
+            };
+            const sync = () => {
+                if (!controller.active()) return;
+                activeMediaSession = controller;
+                if ('mediaSession' in navigator) {
+                    try {
+                        navigator.mediaSession.metadata = new MediaMetadata(mediaSessionMetadata(media, options));
+                        navigator.mediaSession.playbackState = media.paused ? 'paused' : 'playing';
+                    } catch (error) {
+                        console.warn('Media Session metadata is unavailable.', error);
+                    }
+                }
+                document.dispatchEvent(new CustomEvent('netsanctum:mediachange', {detail: {media}}));
+            };
+            ['play', 'loadedmetadata', 'durationchange'].forEach(name => {
+                media.addEventListener(name, sync, signal ? {signal} : undefined);
+            });
+            media.addEventListener('pause', () => {
+                if (activeMediaSession === controller) sync();
+            }, signal ? {signal} : undefined);
+            return {
+                sync,
+                deactivate() {
+                    if (activeMediaSession !== controller) return;
+                    activeMediaSession = null;
+                    if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+                    document.dispatchEvent(new CustomEvent('netsanctum:mediachange', {
+                        detail: {media, active: false},
+                    }));
+                },
+            };
+        }
+
+        window.__NETSANCTUM_MEDIA_ACTION__ = (action, value) => performMediaAction(action, {
+            seekTime: action === 'seekto' ? Number(value) : undefined,
+        });
+        if ('mediaSession' in navigator) {
+            const handlers = {
+                play: () => performMediaAction('play'),
+                pause: () => performMediaAction('pause'),
+                nexttrack: () => performMediaAction('nexttrack'),
+                previoustrack: () => performMediaAction('previoustrack'),
+                seekbackward: details => performMediaAction('seekbackward', details),
+                seekforward: details => performMediaAction('seekforward', details),
+                seekto: details => performMediaAction('seekto', details),
+            };
+            Object.entries(handlers).forEach(([action, handler]) => {
+                try { navigator.mediaSession.setActionHandler(action, handler); } catch (_) {}
+            });
+        }
 
         function isDesktop() {
             return window.matchMedia('(min-width: 769px) and (hover: hover) and (pointer: fine)').matches;
@@ -96,6 +182,7 @@
                 showControls();
                 options.onSeek?.(seconds);
             };
+            const mediaSession = bindMediaSession(video, options, seek, signal);
             const setVolume = value => {
                 video.volume = Math.max(0, Math.min(1, value));
                 video.muted = video.volume === 0;
@@ -196,12 +283,13 @@
             }, {signal});
 
             if (options.onEnded) video.addEventListener('ended', options.onEnded, {signal});
-            return {abort: () => bindings.abort(), seek, setVolume};
+            return {abort: () => bindings.abort(), seek, setVolume, ...mediaSession};
         }
 
         window.NetSanctumMediaPlayer = {
             autoplayEnabled,
             bind,
+            bindMediaSession,
             isDesktop,
             setAutoplay,
             syncAutoplayControls,

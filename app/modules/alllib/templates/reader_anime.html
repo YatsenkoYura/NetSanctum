@@ -190,6 +190,7 @@
 </style>
 <script>
   var EPISODES = [{% for ch in chapters %}{ id: '{{ ch.id }}', num: '{{ ch.number }}', label: '{% if ch.name %}{{ ch.name }}{% else %}{{ _('alllib', 'episode') }} {{ ch.number }}{% endif %}', vol: '{{ ch.volume }}' },{% endfor %}];
+  var ANIME_TITLE = {{ novel.title|tojson }};
   var currentEpId = null;
 
   // ── Custom Player Logic ─────────────────────────────────
@@ -491,6 +492,8 @@
 
     const videoEl = document.getElementById('anime-video-player');
     if (videoEl) {
+        videoEl.dataset.title = ep ? `Ep.${ep.num}: ${ep.label}` : ANIME_TITLE;
+        videoEl.dataset.artist = ANIME_TITLE;
         bindVideoEvents('anime-video-player');
         videoEl.play().catch(showControlsTemporarily);
     }

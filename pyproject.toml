@@ -1,6 +1,6 @@
 [project]
 name = "netsanctum"
-version = "0.1.0"
+version = "0.1.1"
 description = "A single-user, self-hosted runtime for independent web modules."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

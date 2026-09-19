@@ -19,8 +19,24 @@ class MediaPlayerContractTests(unittest.TestCase):
         self.assertIn('button, a, [role="button"]', controller)
         self.assertIn("event.ctrlKey", controller)
         self.assertIn("htmx:beforeCleanupElement", controller)
+        self.assertIn("navigator.mediaSession.setActionHandler", controller)
+        self.assertIn("window.__NETSANCTUM_MEDIA_ACTION__", controller)
         for shortcut in ("Space", "KeyK", "KeyJ", "KeyL", "KeyM", "KeyF", "KeyI", "KeyT"):
             self.assertIn(shortcut, controller)
+
+    def test_media_sessions_expose_track_navigation_and_metadata(self):
+        base = (ROOT / "app/core/templates/base.html").read_text()
+        youtube = (ROOT / "app/modules/youtube/templates/youtube_watch.html").read_text()
+        video = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
+        anime = (ROOT / "app/modules/alllib/templates/reader_anime.html").read_text()
+
+        self.assertIn("NetSanctumMediaPlayer.bindMediaSession(this.audio", base)
+        self.assertIn("onNext: () => this.next()", base)
+        self.assertIn("onPrevious: () => this.prev()", base)
+        self.assertIn("onNext: () => playAdjacent(1)", youtube)
+        self.assertIn("onPrevious: () => playAdjacent(-1)", youtube)
+        self.assertIn("player.dataset.artwork", video)
+        self.assertIn("videoEl.dataset.title", anime)
 
     def test_players_declare_autoplay_and_desktop_only_actions(self):
         youtube = (ROOT / "app/modules/youtube/templates/youtube_watch.html").read_text()

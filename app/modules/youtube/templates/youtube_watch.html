@@ -162,6 +162,8 @@
         if (!item) return;
         player.dataset.persistentModule = 'youtube';
         player.dataset.persistentTitle = item.title || 'YouTube';
+        player.dataset.persistentChannel = item.channel_title || 'YouTube';
+        player.dataset.artwork = item.thumbnail_url || '';
         document.title = `${item.title} — NetSanctum`;
         document.getElementById('youtube-watch-title').textContent = item.title || 'YouTube';
         document.getElementById('youtube-watch-channel').textContent = item.channel_title || 'YouTube';
@@ -334,6 +336,8 @@
             document.title = `${payload.title} — NetSanctum`;
             player.dataset.persistentModule = 'youtube';
             player.dataset.persistentTitle = payload.title || 'YouTube';
+            player.dataset.persistentChannel = payload.channel_title || 'YouTube';
+            player.dataset.artwork = payload.thumbnail_url || catalogItem?.thumbnail_url || '';
             document.getElementById('youtube-watch-title').textContent = payload.title;
             document.getElementById('youtube-watch-channel').textContent = payload.channel_title || 'YouTube';
             document.getElementById('youtube-watch-channel-initial').textContent = (payload.channel_title || 'Y').charAt(0);
@@ -486,21 +490,25 @@
     document.getElementById('youtube-controls-pip').addEventListener('click', () => NetSanctumMediaPlayer.togglePiP(player));
     document.getElementById('youtube-controls-fullscreen').addEventListener('click', () => NetSanctumMediaPlayer.toggleFullscreen(playerShell));
     autoplay.addEventListener('change', () => NetSanctumMediaPlayer.setAutoplay('youtube', autoplay.checked));
+    const playAdjacent = direction => {
+        const index = queueItems.findIndex(item => item.entity_id === videoId);
+        const adjacent = queueItems[index + direction];
+        if (!adjacent) return;
+        sessionStorage.setItem('youtube:autoplay-next', adjacent.entity_id);
+        const url = queueUrl(adjacent);
+        if (!window.netSanctumNavigate?.(url)) window.location.assign(url);
+    };
     player.addEventListener('ended', () => {
         if (!autoplay.checked) return;
-        const index = queueItems.findIndex(item => item.entity_id === videoId);
-        const next = queueItems[index + 1];
-        if (next) {
-            sessionStorage.setItem('youtube:autoplay-next', next.entity_id);
-            const url = queueUrl(next);
-            if (!window.netSanctumNavigate?.(url)) window.location.assign(url);
-        }
+        playAdjacent(1);
     }, {signal: playerSignal});
     NetSanctumMediaPlayer.bind(player, {
         container: playerShell,
         active: () => player.isConnected && player.closest('#youtube-player-shell'),
         showControls: () => {},
         toggleTheater,
+        onNext: () => playAdjacent(1),
+        onPrevious: () => playAdjacent(-1),
         onVolume: video => { document.getElementById('youtube-volume').value = video.muted ? 0 : video.volume; },
     });
     NetSanctumMediaPlayer.syncDesktopActions(playerShell);

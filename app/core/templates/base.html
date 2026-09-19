@@ -336,6 +336,17 @@
                 this.audio.addEventListener('loadedmetadata', () => {
                     document.getElementById('gp-time-total').innerText = this.formatTime(this.audio.duration);
                 });
+                this.mediaSession = NetSanctumMediaPlayer.bindMediaSession(this.audio, {
+                    active: () => Boolean(this.currentSong),
+                    onNext: () => this.next(),
+                    onPrevious: () => this.prev(),
+                    metadata: () => ({
+                        title: this.currentSong?.title,
+                        artist: this.currentSong?.artist,
+                        album: this.currentSong?.playlist_name,
+                        artwork: this.currentSong?.cover_url,
+                    }),
+                }, seconds => this.seekRelative(seconds));
 
                 // Set initial mode UI
                 this.updatePlaybackModeUI();
@@ -350,6 +361,7 @@
                 this.currentSong = null;
                 this.currentQueue = [];
                 this.currentIndex = -1;
+                this.mediaSession?.deactivate();
                 document.getElementById('global-player').classList.add('translate-y-full', 'opacity-0');
                 document.getElementById('main-content').classList.remove('pb-28');
                 this.updateUI(false);
@@ -415,6 +427,10 @@
                 window.persistentVideoPlayer?.close();
                 document.querySelectorAll('video').forEach(video => video.pause());
                 this.currentSong = song;
+                this.audio.dataset.title = song.title || '';
+                this.audio.dataset.artist = song.artist || '';
+                this.audio.dataset.album = song.playlist_name || '';
+                this.audio.dataset.artwork = song.cover_url || '';
                 // Only rebuild queue when keepQueue is NOT true
                 // (keepQueue===true means we already set currentQueue above, or next/prev set it)
                 if (keepQueue !== true) {
@@ -439,6 +455,7 @@
                     this.audio.src = song.audio_url;
                 }
                 this.audio.play();
+                this.mediaSession?.sync();
                 this.updateHeaderText();
             },
             togglePlay() {

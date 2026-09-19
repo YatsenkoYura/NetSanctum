@@ -1420,6 +1420,9 @@
             player.dataset.persistentModule = 'video_archiver';
             player.dataset.persistentTitle = video.title;
             player.dataset.persistentChannel = video.channel_name || '';
+            player.dataset.artwork = video.thumbnail_path
+                ? `/api/video-archiver/videos/${pathSegment(video.id)}/thumbnail`
+                : '';
             player.dataset.persistentDuration = String(video.duration || 0);
             player.dataset.archiveOrigin = 'library';
             document.getElementById('video-entity-actions').setAttribute('data-entity-id', video.id);
@@ -2176,6 +2179,9 @@
             player.dataset.persistentModule = 'video_archiver';
             player.dataset.persistentTitle = video.title;
             player.dataset.persistentChannel = video.channel_name || '';
+            player.dataset.artwork = video.thumbnail_path
+                ? `/api/video-archiver/videos/${pathSegment(video.id)}/thumbnail`
+                : '';
             player.dataset.persistentDuration = String(video.duration || 0);
             player.dataset.archiveOrigin = 'playlist';
             player.dataset.persistentPlaylistId = String(currentPlaylist?.id || '');
