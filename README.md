@@ -124,6 +124,8 @@ Modules can use:
 - Jinja and HTMX-based server-rendered interfaces
 - shared settings and localization
 - ranged media responses for audio and video
+- versioned offline packages governed by the
+  [offline package manifest standard](OFFLINE_PACKAGE_MANIFEST_STANDARD.md)
 
 The intended boundary is simple: the core owns infrastructure; modules own product behavior.
 

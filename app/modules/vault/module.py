@@ -31,6 +31,6 @@ MODULE = ModuleSpec(
     ),
     module_cleanup="app.modules.vault.cleanup:cleanup_module",
     storage_namespaces=("vault",),
-    package_prefixes=("vault_",),
+    package_prefixes=("vault_all",),
     package_resolver="app.modules.vault.capabilities:resolve_package_resources",
 )

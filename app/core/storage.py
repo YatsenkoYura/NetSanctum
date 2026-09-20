@@ -5,9 +5,12 @@ Modules MUST NOT write to disk or S3 directly.
 They use the `get_storage()` singleton which returns the active backend.
 """
 
+import hashlib
 import io
 import os
 import secrets
+import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +23,21 @@ from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_
 
 ENCRYPTED_FILE_MAGIC = b"NSENC\x02\x00\x00"
 NONCE_SIZE = 12
+
+
+def stream_size_sha256(stream: BinaryIO, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
+    """Read a stream incrementally and return its byte length and SHA-256 digest."""
+    digest = hashlib.sha256()
+    size = 0
+    while chunk := stream.read(chunk_size):
+        size += len(chunk)
+        digest.update(chunk)
+    return size, digest.hexdigest()
+
+
+def file_size_sha256(path: str | os.PathLike[str]) -> tuple[int, str]:
+    with open(path, "rb") as stream:
+        return stream_size_sha256(stream)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +66,15 @@ class StorageInterface(ABC):
         Returns the canonical path/key where the file was stored.
         """
         ...
+
+    def save_stream(self, stream: BinaryIO, path: str) -> str:
+        """Persist a readable binary stream without requiring callers to buffer it."""
+        return self.save_file(stream.read(), path)
+
+    def save_file_from_path(self, source_path: str | os.PathLike[str], path: str) -> str:
+        """Persist a file from disk using the backend's streaming implementation."""
+        with open(source_path, "rb") as stream:
+            return self.save_stream(stream, path)
 
     def save_file_encrypted(self, data: bytes, path: str) -> str:
         """
@@ -167,10 +194,27 @@ class LocalStorage(StorageInterface):
             raise ValueError(f"Path traversal detected: {path}")
         return resolved
 
+    def local_path(self, path: str) -> Path:
+        """Return the sanitized filesystem path for local-only processing."""
+        return self._full_path(path)
+
     def save_file(self, data: bytes, path: str) -> str:
+        return self.save_stream(io.BytesIO(data), path)
+
+    def save_stream(self, stream: BinaryIO, path: str) -> str:
         full = self._full_path(path)
         full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_bytes(data)
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{full.name}.", suffix=".tmp", dir=full.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                shutil.copyfileobj(stream, output, length=1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, full)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
         return str(path)
 
     def get_file_stream(self, path: str) -> BinaryIO:
@@ -284,7 +328,17 @@ class S3Storage(StorageInterface):
         self._known_legacy_keys: tuple[bytes, ...] | None = None
 
     def save_file(self, data: bytes, path: str) -> str:
-        self._client.put_object(Bucket=self._bucket, Key=path, Body=data)
+        return self.save_stream(io.BytesIO(data), path)
+
+    def save_stream(self, stream: BinaryIO, path: str) -> str:
+        from boto3.s3.transfer import TransferConfig
+
+        self._client.upload_fileobj(
+            stream,
+            self._bucket,
+            path,
+            Config=TransferConfig(multipart_threshold=8 * 1024 * 1024, multipart_chunksize=8 * 1024 * 1024),
+        )
         return path
 
     def get_file_stream(self, path: str) -> BinaryIO:

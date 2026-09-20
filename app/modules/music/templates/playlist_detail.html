@@ -75,7 +75,7 @@
             </div>
 
             <div id="playlist-tracklist-container"
-                 hx-get="/music/ui/playlists/{{ playlist.id }}"
+                 hx-get="/music/ui/playlists/{{ playlist.id }}{% if package_id %}?package_id={{ package_id }}{% endif %}"
                  hx-select="#playlist-tracklist-container"
                  hx-trigger="reloadPlaylistDetail from:body"
                  hx-swap="outerHTML"

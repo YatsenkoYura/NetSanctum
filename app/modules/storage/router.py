@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ settings = get_settings()
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 router = APIRouter(prefix="/storage", tags=["Storage"])
+STORAGE_PACKAGE_ID = "storage_manager"
 
 
 def format_size(size_bytes: int) -> str:
@@ -180,11 +181,25 @@ async def cleanup_database_for_module(db: AsyncSession, module: str):
 
 
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
-async def storage_dashboard(request: Request, user=Depends(get_current_user)):
+async def storage_dashboard(
+    request: Request,
+    package_id: str | None = Query(None),
+    user=Depends(get_current_user),
+):
+    if package_id and package_id != STORAGE_PACKAGE_ID:
+        raise HTTPException(status_code=400, detail="Invalid Storage package ID")
     lang = request.cookies.get("lang") or "en"
     stats = await asyncio.to_thread(_get_storage_stats)
     return templates.TemplateResponse(
-        request, "storage_dashboard.html", {"user": user, "lang": lang, "stats": stats}
+        request,
+        "storage_dashboard.html",
+        {
+            "user": user,
+            "lang": lang,
+            "stats": stats,
+            "package_mode": bool(package_id),
+            "is_readonly": bool(package_id),
+        },
     )
 
 
@@ -256,18 +271,22 @@ async def clean_module(
 
 
 @router.get("/api/sync-manifest", include_in_schema=False)
-async def get_storage_sync_manifest(user=Depends(get_current_user)):
+async def get_storage_sync_manifest(
+    user=Depends(get_current_user),
+    hybrid: bool = True,
+):
     """API: Sync manifest for offline access to storage panel."""
-    from app.core.packages_router import make_package_manifest
+    from app.core.packages_router import make_hybrid_manifest, make_package_manifest
 
-    return make_package_manifest(
+    manifest = make_package_manifest(
         module_id="storage",
-        package_id="storage_manager",
+        package_id=STORAGE_PACKAGE_ID,
         package_title="Storage Manager",
-        root_url="/storage/dashboard?package_id=storage_manager",
+        root_url=f"/storage/dashboard?package_id={STORAGE_PACKAGE_ID}",
         resources=[
             {"url": "/static/tailwind.css", "type": "css"},
             {"url": "/static/htmx.min.js", "type": "js"},
-            {"url": "/storage/dashboard?package_id=storage_manager", "type": "html"},
+            {"url": f"/storage/dashboard?package_id={STORAGE_PACKAGE_ID}", "type": "html"},
         ],
     )
+    return make_hybrid_manifest(STORAGE_PACKAGE_ID, manifest) if hybrid else manifest

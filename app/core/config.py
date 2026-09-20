@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     # ── Storage ──────────────────────────────────────────
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
     LOCAL_STORAGE_ROOT: str = "./storage"
+    VIDEO_COMPRESSION_WORKDIR: str = ""
 
     # S3 settings (used when STORAGE_BACKEND=s3)
     S3_BUCKET_NAME: str = ""

@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.scheduler import celery_app
-from app.core.storage import get_storage
+from app.core.storage import file_size_sha256, get_storage
 from app.modules.alllib.api import LibParser
 from app.modules.alllib.models import LibChapter, LibMedia
 from app.modules.alllib.novelbin import NOVELBIN_SITE_ID
@@ -484,7 +484,11 @@ def download_lib_task(
                     break
 
         filtered_chapters.sort(
-            key=lambda x: (parse_int(x[0].get("volume", "0")), parse_float(x[0].get("number", "0")))
+            key=lambda x: (
+                parse_int(x[0].get("volume", "0")),
+                parse_float(x[0].get("number", "0")),
+                str(x[0].get("id", "")),
+            )
         )
 
         if media_type == "anime":
@@ -908,16 +912,10 @@ def download_lib_task(
                             ):
                                 raise Exception("Failed to retrieve episode video content.")
 
-                            is_sensitive = site_id in (2, 4)
                             storage_key = _make_storage_key(slug, site_id)
                             video_storage_path = f"alllib/anime/{storage_key}/season_{vol}_episode_{num}.mp4"
-                            if is_sensitive:
-                                video_storage_path += ".enc"
-                                with open(temp_output_path, "rb") as f:
-                                    storage.save_file_encrypted(f.read(), video_storage_path)
-                            else:
-                                with open(temp_output_path, "rb") as f:
-                                    storage.save_file(f.read(), video_storage_path)
+                            video_size, video_sha256 = file_size_sha256(temp_output_path)
+                            storage.save_file_from_path(temp_output_path, video_storage_path)
 
                             stmt_ch = select(LibChapter).where(
                                 (LibChapter.media_id == media_db_id)
@@ -928,6 +926,8 @@ def download_lib_task(
 
                             if db_chapter:
                                 db_chapter.video_path = video_storage_path
+                                db_chapter.video_size = video_size
+                                db_chapter.video_sha256 = video_sha256
                                 db_chapter.name = ch_name
                             else:
                                 new_chapter = LibChapter(
@@ -938,6 +938,8 @@ def download_lib_task(
                                     number_float=parse_float(num),
                                     name=ch_name,
                                     video_path=video_storage_path,
+                                    video_size=video_size,
+                                    video_sha256=video_sha256,
                                 )
                                 session.add(new_chapter)
                             session.commit()

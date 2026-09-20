@@ -70,8 +70,9 @@ class ModuleMigrationTests(unittest.TestCase):
                 ).scalar_one()
                 for migration in installed_migrations(registry)
             }
-        self.assertEqual("video_0004", revisions["video_archiver"])
-        self.assertEqual("music_0003", revisions["music"])
+        self.assertEqual("video_0005", revisions["video_archiver"])
+        self.assertEqual("music_0004", revisions["music"])
+        self.assertEqual("alllib_0002", revisions["alllib"])
         self.assertEqual("sharing_0001", revisions["sharing"])
         self.assertEqual("settings_0002", revisions["settings"])
         self.assertEqual("tabletop_0002", revisions["tabletop_games"])
@@ -191,7 +192,7 @@ class ModuleMigrationTests(unittest.TestCase):
                 connection.execute(text("SELECT value FROM settings WHERE key = 'sentinel'")).scalar_one(),
             )
             self.assertEqual(
-                "music_0003",
+                "music_0004",
                 connection.execute(text("SELECT version_num FROM alembic_version_music")).scalar_one(),
             )
 
@@ -372,11 +373,11 @@ class PostgresMigrationSmokeTests(unittest.TestCase):
                 connection.execute(text("SELECT value FROM settings WHERE key = 'sentinel'")).scalar_one(),
             )
             self.assertEqual(
-                "music_0003",
+                "music_0004",
                 connection.execute(text("SELECT version_num FROM alembic_version_music")).scalar_one(),
             )
             self.assertEqual(
-                "video_0004",
+                "video_0005",
                 connection.execute(
                     text("SELECT version_num FROM alembic_version_video_archiver")
                 ).scalar_one(),

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/packages", tags=["packages"])
 
 PACKAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RESOURCE_TYPES = {"binary", "container", "css", "html", "image", "js", "json", "text"}
 
 
@@ -37,7 +38,7 @@ def _validate_local_url(url: str, field: str) -> None:
 def normalize_package_resources(resources: list[dict]) -> list[dict]:
     """Validate and de-duplicate resources while preserving manifest order."""
     normalized = []
-    seen = set()
+    seen = {}
     for resource in resources:
         url = resource.get("url")
         resource_type = resource.get("type")
@@ -46,10 +47,19 @@ def normalize_package_resources(resources: list[dict]) -> list[dict]:
         _validate_local_url(url, "Package resource URL")
         if resource_type not in RESOURCE_TYPES:
             raise ValueError(f"Unsupported package resource type: {resource_type!r}")
+        size = resource.get("size")
+        sha256 = resource.get("sha256")
+        if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
+            raise ValueError(f"Package resource size must be a non-negative integer: {url!r}")
+        if sha256 is not None and (not isinstance(sha256, str) or not SHA256_PATTERN.fullmatch(sha256)):
+            raise ValueError(f"Package resource sha256 must be lowercase hexadecimal: {url!r}")
         if url in seen:
+            if seen[url] != resource:
+                raise ValueError(f"Conflicting package resource definitions: {url!r}")
             continue
-        seen.add(url)
-        normalized.append({**resource, "url": url, "type": resource_type})
+        normalized_resource = {**resource, "url": url, "type": resource_type}
+        seen[url] = normalized_resource
+        normalized.append(normalized_resource)
     return normalized
 
 

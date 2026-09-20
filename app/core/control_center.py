@@ -216,6 +216,18 @@ async def cancel_tracked_task(task_id: str) -> int:
                         matching_keys.append(key)
         if not matching_keys:
             return 0
+        cooperative_keys = []
+        for key in matching_keys:
+            raw = await client.get(key)
+            try:
+                payload = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if payload.get("cancel_mode") == "cooperative" or payload.get("type") == "video_compress":
+                cooperative_keys.append(key)
+        if cooperative_keys:
+            await client.setex(f"video_compress_cancel:{task_id}", 3600, "1")
+            return len(cooperative_keys)
         from app.core.scheduler import celery_app
 
         await asyncio.to_thread(celery_app.control.revoke, task_id, terminate=True)

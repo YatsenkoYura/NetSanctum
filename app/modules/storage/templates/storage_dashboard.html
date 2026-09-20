@@ -1,3 +1,5 @@
+{% set package_mode = package_mode|default(false) %}
+{% set is_readonly = is_readonly|default(package_mode) %}
 {% if only_stats %}
     <!-- Inner HTMX block swap -->
     <div id="storage-container" class="space-y-6 animate-fade-in">

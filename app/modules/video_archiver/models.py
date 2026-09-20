@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Table
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, Table
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -50,6 +50,12 @@ class ArchivedVideo(Base):
     duration = Column(Integer, nullable=False)  # In seconds
     resolution = Column(String, nullable=False)  # E.g., "720p", "480p"
     file_path = Column(String, nullable=True)  # Local path inside storage/video_archiver/videos/
+    file_size = Column(BigInteger, nullable=True)
+    sha256 = Column(String(64), nullable=True)
+    compression_status = Column(String(32), nullable=True)
+    compression_profile = Column(String(64), nullable=True)
+    compressed_at = Column(DateTime, nullable=True)
+    compression_error = Column(String, nullable=True)
     thumbnail_path = Column(String, nullable=True)  # Local path to cached thumbnail image
 
     status = Column(String, default="pending")  # pending, downloading, completed, failed

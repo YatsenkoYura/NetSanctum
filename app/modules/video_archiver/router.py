@@ -19,10 +19,15 @@ from app.core.module_types import IntegrationContext, IntegrationRejectedError, 
 from app.core.modules import module_registry
 from app.core.secret_values import decrypt_secret_value
 from app.core.security import get_current_user
-from app.core.storage import LocalStorage, get_storage
-from app.core.task_dispatch import dispatch_tracked_async
+from app.core.storage import LocalStorage, get_storage, stream_size_sha256
+from app.core.task_dispatch import dispatch_tracked_async, is_terminal_task_payload
 from app.core.templates import templates
 from app.modules.settings.models import Setting
+from app.modules.video_archiver.compression import (
+    COMPRESSION_LOCK_KEY,
+    COMPRESSION_LOCK_TTL,
+    COMPRESSION_TRACKER_TTL,
+)
 from app.modules.video_archiver.models import (
     ArchivedVideo,
     VideoChannel,
@@ -42,6 +47,7 @@ from app.modules.video_archiver.services import (
     VideoService,
 )
 from app.modules.video_archiver.tasks import (
+    compress_all_videos_task,
     process_video_url_task,
     sync_all_videos_task,
     sync_video_metadata_task,
@@ -173,13 +179,15 @@ async def upload_video(
     playlist = await db.get(VideoPlaylist, playlist_id) if playlist_id else None
     if playlist_id and not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
-    content = await file.read()
-    if not content:
+    await file.seek(0)
+    file_size, sha256 = await anyio.to_thread.run_sync(stream_size_sha256, file.file)
+    if not file_size:
         raise HTTPException(status_code=400, detail="Video file is empty")
+    await file.seek(0)
 
     video_id = f"upload-{uuid.uuid4().hex}"
     storage_path = f"video_archiver/videos/{video_id}{suffix}"
-    get_storage().save_file(content, storage_path)
+    await anyio.to_thread.run_sync(get_storage().save_stream, file.file, storage_path)
     channel = await db.get(VideoChannel, "local-uploads")
     if not channel:
         channel = VideoChannel(id="local-uploads", name="Local uploads", platform="upload")
@@ -194,6 +202,8 @@ async def upload_video(
         duration=0,
         resolution="Original",
         file_path=storage_path,
+        file_size=file_size,
+        sha256=sha256,
         status="completed",
         comments=[],
         subtitles={},
@@ -250,7 +260,15 @@ def _video_resources(video: ArchivedVideo, package_id: str) -> list[dict]:
         {"url": f"/api/video-archiver/videos/{video.id}?{query}", "type": "json"},
     ]
     if video.file_path:
-        resources.append({"url": f"/api/video-archiver/videos/{video.id}/stream", "type": "binary"})
+        media_resource = {
+            "url": f"/api/video-archiver/videos/{video.id}/stream",
+            "type": "binary",
+        }
+        if video.file_size is not None:
+            media_resource["size"] = video.file_size
+        if video.sha256:
+            media_resource["sha256"] = video.sha256
+        resources.append(media_resource)
     if video.thumbnail_path:
         resources.append({"url": f"/api/video-archiver/videos/{video.id}/thumbnail", "type": "image"})
     if video.channel_avatar_url:
@@ -392,6 +410,55 @@ async def sync_all(req: SyncAllRequest, user=Depends(get_current_user)):
         kwargs={"dates": req.dates},
     )
     return {"task_id": task.id, "message": "Global sync dispatched."}
+
+
+@router.post("/api/video-archiver/compress-all")
+async def compress_all(user=Depends(get_current_user)):
+    """Start one direct, globally locked video optimization batch."""
+    task_id = str(uuid.uuid4())
+    acquired = await redis_client.set(
+        COMPRESSION_LOCK_KEY,
+        task_id,
+        nx=True,
+        ex=COMPRESSION_LOCK_TTL,
+    )
+    if not acquired:
+        active_task_id = await redis_client.get(COMPRESSION_LOCK_KEY)
+        if active_task_id:
+            active_task_id = active_task_id.split(":", 1)[0]
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Оптимизация видео уже выполняется", "task_id": active_task_id},
+        )
+    tracker_key = f"video_compress:{task_id}"
+    await redis_client.setex(
+        tracker_key,
+        COMPRESSION_TRACKER_TTL,
+        json.dumps(
+            {
+                "task_id": task_id,
+                "title": "Оптимизация видео",
+                "status": "В очереди",
+                "progress": "0%",
+                "state": "queued",
+                "type": "video_compress",
+                "cancel_mode": "cooperative",
+            }
+        ),
+    )
+    try:
+        compress_all_videos_task.apply_async(task_id=task_id)
+    except Exception:
+        await redis_client.delete(tracker_key)
+        await redis_client.eval(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+            "return redis.call('del', KEYS[1]) else return 0 end",
+            1,
+            COMPRESSION_LOCK_KEY,
+            task_id,
+        )
+        raise
+    return {"task_id": task_id, "message": "Оптимизация видео запущена"}
 
 
 @router.post("/api/video-archiver/sync-all/cancel/{task_id}")
@@ -676,12 +743,15 @@ async def get_subtitle(
 async def active_downloads(user=Depends(get_current_user)):
     """Fetch active download statuses from Redis."""
     keys = [key async for key in redis_client.scan_iter(match="video_dl:*", count=100)]
+    keys.extend([key async for key in redis_client.scan_iter(match="video_compress:*", count=100)])
     tasks = []
     for k in keys:
         try:
             val = await redis_client.get(k)
             if val:
-                tasks.append(json.loads(val))
+                payload = json.loads(val)
+                if not is_terminal_task_payload(payload):
+                    tasks.append(payload)
         except Exception:
             pass
     return tasks
@@ -693,6 +763,7 @@ async def cancel_all_downloads(user=Depends(get_current_user)):
     from app.core.scheduler import celery_app
 
     keys = [key async for key in redis_client.scan_iter(match="video_dl:*", count=100)]
+    keys.extend([key async for key in redis_client.scan_iter(match="video_compress:*", count=100)])
     for k in keys:
         try:
             val = await redis_client.get(k)
@@ -700,6 +771,9 @@ async def cancel_all_downloads(user=Depends(get_current_user)):
                 data = json.loads(val)
                 task_id = data.get("task_id")
                 if task_id:
+                    if data.get("cancel_mode") == "cooperative" or data.get("type") == "video_compress":
+                        await redis_client.setex(f"video_compress_cancel:{task_id}", 3600, "1")
+                        continue
                     celery_app.control.revoke(task_id, terminate=True)
             await redis_client.delete(k)
         except Exception:
@@ -712,6 +786,10 @@ async def cancel_single_download(task_id: str, user=Depends(get_current_user)):
     """Cancel a single active download."""
     from app.core.scheduler import celery_app
 
+    compression_data = await redis_client.get(f"video_compress:{task_id}")
+    if compression_data:
+        await redis_client.setex(f"video_compress_cancel:{task_id}", 3600, "1")
+        return {"message": f"Task {task_id} cancellation requested."}
     try:
         celery_app.control.revoke(task_id, terminate=True)
     except Exception:

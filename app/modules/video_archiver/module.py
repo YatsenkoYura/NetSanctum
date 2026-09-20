@@ -113,7 +113,7 @@ MODULE = ModuleSpec(
             order=10,
         ),
     ),
-    progress_key_patterns=("video_dl:*", "video_oauth:*"),
+    progress_key_patterns=("video_dl:*", "video_oauth:*", "video_compress:*"),
     dependency_extra="video_archiver",
     system_packages=("deno", "ffmpeg"),
 )

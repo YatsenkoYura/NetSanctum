@@ -19,6 +19,7 @@ from app.core.packages_router import (
 from app.modules.alllib.capabilities import resolve_package_resources
 from app.modules.alllib.router import _package_media_id, get_media_sync_manifest
 from app.modules.video_archiver.module import MODULE as VIDEO_MODULE
+from app.modules.video_archiver.router import _video_resources
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,12 +94,83 @@ class PackageContractTests(unittest.TestCase):
                 resources=[{"url": "https://example.com/cover.jpg", "type": "image"}],
             )
 
+    def test_manifest_rejects_invalid_resource_identity(self):
+        base = {
+            "module_id": "music",
+            "package_id": "song_1",
+            "package_title": "Song: Example",
+            "root_url": "/music/dashboard?package_id=song_1",
+        }
+        invalid_resources = (
+            {"url": "/music/audio/1", "type": "binary", "size": -1, "sha256": "a" * 64},
+            {"url": "/music/audio/1", "type": "binary", "size": 10, "sha256": "A" * 64},
+        )
+        for resource in invalid_resources:
+            with self.subTest(resource=resource), self.assertRaises(ValueError):
+                make_package_manifest(**base, resources=[resource])
+
+        for legacy_resource in (
+            {"url": "/music/audio/1", "type": "binary", "size": 10},
+            {"url": "/music/audio/1", "type": "binary", "sha256": "a" * 64},
+        ):
+            with self.subTest(resource=legacy_resource):
+                manifest = make_package_manifest(**base, resources=[legacy_resource])
+                self.assertEqual([legacy_resource], manifest["resources"])
+
+    def test_manifest_rejects_conflicting_duplicate_resource_definitions(self):
+        with self.assertRaises(ValueError):
+            make_package_manifest(
+                module_id="music",
+                package_id="song_1",
+                package_title="Song: Example",
+                root_url="/music/dashboard?package_id=song_1",
+                resources=[
+                    {"url": "/music/audio/1", "type": "binary"},
+                    {"url": "/music/audio/1", "type": "image"},
+                ],
+            )
+
     def test_video_module_declares_package_provider(self):
         self.assertEqual(("video_playlist_", "video_"), VIDEO_MODULE.package_prefixes)
         self.assertEqual(
             "app.modules.video_archiver.capabilities:resolve_package_resources",
             VIDEO_MODULE.package_resolver,
         )
+
+    def test_video_manifest_resource_includes_known_media_identity(self):
+        video = SimpleNamespace(
+            id="video-id",
+            file_path="video.mp4",
+            file_size=123456,
+            sha256="a" * 64,
+            thumbnail_path=None,
+            channel_avatar_url=None,
+            subtitles=None,
+        )
+
+        resources = _video_resources(video, "video_video-id")
+        media = next(resource for resource in resources if resource["type"] == "binary")
+
+        self.assertEqual(123456, media["size"])
+        self.assertEqual("a" * 64, media["sha256"])
+
+    def test_legacy_video_manifest_resource_allows_missing_media_identity(self):
+        video = SimpleNamespace(
+            id="legacy",
+            file_path="legacy.mp4",
+            file_size=None,
+            sha256=None,
+            thumbnail_path=None,
+            channel_avatar_url=None,
+            subtitles=None,
+        )
+
+        media = next(
+            resource for resource in _video_resources(video, "video_legacy") if resource["type"] == "binary"
+        )
+
+        self.assertNotIn("size", media)
+        self.assertNotIn("sha256", media)
 
     def test_alllib_manifest_covers_package_runtime_urls(self):
         media = SimpleNamespace(

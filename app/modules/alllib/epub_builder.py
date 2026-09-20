@@ -10,6 +10,7 @@ from app.core.storage import get_storage
 from app.modules.alllib.models import LibChapter, LibMedia
 
 logger = logging.getLogger(__name__)
+ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 IMAGE_MEDIA_TYPES = {
     "avif": "image/avif",
     "gif": "image/gif",
@@ -18,6 +19,18 @@ IMAGE_MEDIA_TYPES = {
     "png": "image/png",
     "webp": "image/webp",
 }
+
+
+def _write_zip_entry(
+    archive: zipfile.ZipFile,
+    path: str,
+    data: str | bytes,
+    compression: int = zipfile.ZIP_DEFLATED,
+) -> None:
+    info = zipfile.ZipInfo(path, date_time=ZIP_TIMESTAMP)
+    info.compress_type = compression
+    info.external_attr = 0o600 << 16
+    archive.writestr(info, data)
 
 
 def _image_type_from_path(path: str) -> tuple[str, str]:
@@ -35,11 +48,12 @@ class EPUBBuilder:
         Downloads all external/proxied images and bundles them within the EPUB.
         """
         epub_io = io.BytesIO()
-        book_uuid = str(uuid.uuid4())
+        identity = f"alllib:{getattr(novel, 'site_id', '')}:{getattr(novel, 'slug', novel.title)}"
+        book_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
 
         with zipfile.ZipFile(epub_io, "w", zipfile.ZIP_DEFLATED) as epub:
             # 1. mimetype (uncompressed)
-            epub.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+            _write_zip_entry(epub, "mimetype", "application/epub+zip", zipfile.ZIP_STORED)
 
             # 2. META-INF/container.xml
             container_xml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -48,7 +62,7 @@ class EPUBBuilder:
         <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
     </rootfiles>
 </container>"""
-            epub.writestr("META-INF/container.xml", container_xml)
+            _write_zip_entry(epub, "META-INF/container.xml", container_xml)
 
             # 3. Cover
             has_cover = False
@@ -59,15 +73,20 @@ class EPUBBuilder:
                 storage = get_storage()
                 try:
                     if storage.file_exists(novel.cover_path):
-                        with storage.get_file_stream(novel.cover_path) as f:
-                            cover_bytes = f.read()
+                        stream_factory = (
+                            storage.get_file_stream_decrypted
+                            if novel.cover_path.endswith(".enc")
+                            else storage.get_file_stream
+                        )
+                        with stream_factory(novel.cover_path) as stream:
+                            cover_bytes = stream.read()
                         has_cover = True
                         cover_ext, cover_media_type = _image_type_from_path(novel.cover_path)
                 except Exception as e:
                     logger.warning(f"Failed to read cover: {e}")
 
             if has_cover and cover_bytes:
-                epub.writestr(f"OEBPS/cover.{cover_ext}", cover_bytes)
+                _write_zip_entry(epub, f"OEBPS/cover.{cover_ext}", cover_bytes)
 
             # 4. Title Page
             escaped_title = html.escape(novel.title or "")
@@ -98,7 +117,7 @@ class EPUBBuilder:
   </div>
 </body>
 </html>"""
-            epub.writestr("OEBPS/title.xhtml", title_xhtml)
+            _write_zip_entry(epub, "OEBPS/title.xhtml", title_xhtml)
 
             # 5. Chapters
             manifest_items = []
@@ -151,7 +170,7 @@ class EPUBBuilder:
                                     ext, content_type = _image_type_from_path(storage_path)
 
                                     epub_href = f"images/img_{image_counter}.{ext}"
-                                    epub.writestr(f"OEBPS/{epub_href}", content_bytes)
+                                    _write_zip_entry(epub, f"OEBPS/{epub_href}", content_bytes)
 
                                     manifest_items.append(
                                         f'<item id="img_{image_counter}" href="{epub_href}" media-type="{content_type}"/>'
@@ -185,7 +204,7 @@ class EPUBBuilder:
   </div>
 </body>
 </html>"""
-                epub.writestr(f"OEBPS/{ch_href}", ch_xhtml)
+                _write_zip_entry(epub, f"OEBPS/{ch_href}", ch_xhtml)
 
                 manifest_items.append(
                     f'<item id="{ch_id}" href="{ch_href}" media-type="application/xhtml+xml"/>'
@@ -222,7 +241,7 @@ class EPUBBuilder:
     {"\n".join(nav_points)}
   </navMap>
 </ncx>"""
-            epub.writestr("OEBPS/toc.ncx", toc_ncx)
+            _write_zip_entry(epub, "OEBPS/toc.ncx", toc_ncx)
 
             # 7. Generate content.opf
             cover_meta = '<meta name="cover" content="cover-image"/>' if has_cover else ""
@@ -243,6 +262,6 @@ class EPUBBuilder:
     {"\n    ".join(spine_items)}
   </spine>
 </package>"""
-            epub.writestr("OEBPS/content.opf", content_opf)
+            _write_zip_entry(epub, "OEBPS/content.opf", content_opf)
 
         return epub_io.getvalue()

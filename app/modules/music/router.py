@@ -3,6 +3,7 @@ Music module router.
 """
 
 import json
+import logging
 import re
 
 import anyio
@@ -17,11 +18,12 @@ from app.core.browser_client import revoke_browser_credentials
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.storage import get_storage, stream_size_sha256
 from app.core.task_dispatch import dispatch_tracked_async, is_terminal_task_payload
 from app.core.templates import templates
+from app.modules.music.models import Playlist, PlaylistSong, Song
 
 redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
-from app.modules.music.models import Playlist, Song
 from app.modules.music.schemas import DownloadRequest
 from app.modules.music.security import validate_music_url
 from app.modules.music.tasks import process_youtube_url_task
@@ -40,6 +42,62 @@ def _t(key: str, lang: str = "en") -> str:
 
 router = APIRouter(prefix="/music", tags=["music"])
 TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+MUSIC_PACKAGE_PATTERN = re.compile(r"^(song|playlist)_([1-9][0-9]*)$")
+logger = logging.getLogger(__name__)
+
+
+def _playlist_songs_query(playlist_id: int):
+    return (
+        select(Song)
+        .join(PlaylistSong)
+        .where(PlaylistSong.playlist_id == playlist_id)
+        .order_by(PlaylistSong.position.asc(), Song.id.asc())
+    )
+
+
+def _stored_audio_identity(path: str) -> tuple[int, str] | None:
+    storage = get_storage()
+    try:
+        if not storage.file_exists(path):
+            return None
+        with storage.get_file_stream(path) as stream:
+            return stream_size_sha256(stream)
+    except Exception as exc:
+        logger.warning("Could not read legacy song audio metadata for %s: %s", path, exc)
+        return None
+
+
+async def _backfill_song_audio_identity(song: Song) -> bool:
+    if song.audio_file_size is not None and song.audio_sha256:
+        return False
+    identity = await anyio.to_thread.run_sync(_stored_audio_identity, song.audio_file_id)
+    if identity is None:
+        return False
+    song.audio_file_size, song.audio_sha256 = identity
+    return True
+
+
+def _song_audio_resource(song: Song) -> dict:
+    resource = {"url": f"/music/audio/{song.id}", "type": "binary"}
+    if song.audio_file_size is not None and song.audio_sha256:
+        resource["size"] = song.audio_file_size
+        resource["sha256"] = song.audio_sha256
+    return resource
+
+
+def _delete_storage_file(storage, path: str) -> None:
+    try:
+        storage.delete_file(path)
+    except Exception as exc:
+        logger.warning("Could not delete orphaned song file %s: %s", path, exc)
+
+
+async def _ensure_playlist_cover(db: AsyncSession, playlist: Playlist) -> bool:
+    previous_path = playlist.cover_path
+    if previous_path and await anyio.to_thread.run_sync(get_storage().file_exists, previous_path):
+        return False
+    await _regenerate_playlist_cover(db, playlist)
+    return playlist.cover_path != previous_path
 
 
 async def _regenerate_playlist_cover(db: AsyncSession, playlist: Playlist) -> None:
@@ -52,7 +110,7 @@ async def _regenerate_playlist_cover(db: AsyncSession, playlist: Playlist) -> No
                 select(Song.cover_file_id)
                 .join(PlaylistSong)
                 .where(PlaylistSong.playlist_id == playlist.id, Song.cover_file_id.isnot(None))
-                .order_by(PlaylistSong.position)
+                .order_by(PlaylistSong.position, PlaylistSong.song_id)
                 .limit(9)
             )
         )
@@ -65,13 +123,10 @@ async def _regenerate_playlist_cover(db: AsyncSession, playlist: Playlist) -> No
 def _music_package_scope(package_id: str | None) -> tuple[str | None, int | None]:
     if not package_id:
         return None, None
-    for scope in ("song", "playlist"):
-        prefix = f"{scope}_"
-        if package_id.startswith(prefix):
-            raw_id = package_id.removeprefix(prefix)
-            if raw_id.isdigit() and int(raw_id) > 0:
-                return scope, int(raw_id)
-    raise HTTPException(status_code=400, detail="Invalid music package ID")
+    match = MUSIC_PACKAGE_PATTERN.fullmatch(package_id)
+    if not match:
+        raise HTTPException(status_code=400, detail="Invalid music package ID")
+    return match.group(1), int(match.group(2))
 
 
 @router.get("/api/playlists")
@@ -148,7 +203,7 @@ async def sync_playlist_source(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Refresh a source playlist and queue only tracks absent from this playlist."""
+    """Additively refresh a source playlist, preserving all existing local membership."""
     playlist = await db.get(Playlist, playlist_id)
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
@@ -177,17 +232,10 @@ async def api_list_playlist_songs(
     package_id: str | None = None,
 ):
     """API: Return all songs in a specific playlist."""
-    from app.modules.music.models import PlaylistSong
-
     scope, item_id = _music_package_scope(package_id)
     if (scope != "playlist" and scope is not None) or (scope == "playlist" and item_id != playlist_id):
         raise HTTPException(status_code=404, detail="Playlist is not part of this package")
-    result = await db.execute(
-        select(Song)
-        .join(PlaylistSong)
-        .where(PlaylistSong.playlist_id == playlist_id)
-        .order_by(PlaylistSong.position.asc())
-    )
+    result = await db.execute(_playlist_songs_query(playlist_id))
     songs = result.scalars().all()
     return [
         {
@@ -408,8 +456,8 @@ async def music_player_ui(
 async def delete_song_ui(song_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     song = await db.get(Song, song_id)
     if song:
-        from app.modules.music.models import PlaylistSong
-
+        audio_file_id = song.audio_file_id
+        cover_file_id = song.cover_file_id
         playlist_ids = (
             (await db.execute(select(PlaylistSong.playlist_id).where(PlaylistSong.song_id == song_id)))
             .scalars()
@@ -422,6 +470,16 @@ async def delete_song_ui(song_id: int, db: AsyncSession = Depends(get_db), user=
             if playlist:
                 await _regenerate_playlist_cover(db, playlist)
         await db.commit()
+        storage = get_storage()
+        for column, path in (
+            (Song.audio_file_id, audio_file_id),
+            (Song.cover_file_id, cover_file_id),
+        ):
+            if not path:
+                continue
+            remaining = await db.scalar(select(Song.id).where(column == path).limit(1))
+            if remaining is None:
+                await anyio.to_thread.run_sync(_delete_storage_file, storage, path)
     return ""
 
 
@@ -498,7 +556,12 @@ async def music_playlists_ui(
     return templates.TemplateResponse(
         request,
         "playlists.html",
-        {"playlists": playlists, "lang": lang, "package_mode": bool(package_id)},
+        {
+            "playlists": playlists,
+            "lang": lang,
+            "package_id": package_id,
+            "package_mode": bool(package_id),
+        },
     )
 
 
@@ -519,7 +582,13 @@ async def music_playlist_detail_ui(
     return templates.TemplateResponse(
         request,
         "playlist_detail.html",
-        {"playlist": playlist, "songs": songs, "lang": lang, "package_mode": bool(package_id)},
+        {
+            "playlist": playlist,
+            "songs": songs,
+            "lang": lang,
+            "package_id": package_id,
+            "package_mode": bool(package_id),
+        },
     )
 
 
@@ -798,16 +867,19 @@ async def get_song_sync_manifest(
         raise HTTPException(status_code=404, detail="Song not found")
 
     pkg_id = f"song_{song_id}"
+    identity_changed = await _backfill_song_audio_identity(song)
     resources = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": f"/music/dashboard?package_id={pkg_id}", "type": "html"},
         {"url": f"/music/ui/player?package_id={pkg_id}", "type": "html"},
         {"url": f"/music/api/songs?package_id={pkg_id}", "type": "json"},
-        {"url": f"/music/audio/{song_id}", "type": "binary"},
+        _song_audio_resource(song),
     ]
     if song.cover_file_id:
         resources.append({"url": f"/music/cover/{song_id}", "type": "image"})
+    if identity_changed:
+        await db.commit()
 
     title_str = f"Song: {song.title}" + (f" - {song.author}" if song.author else "")
     from app.core.packages_router import make_package_manifest
@@ -835,15 +907,15 @@ async def get_playlist_sync_manifest(
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    from app.modules.music.models import PlaylistSong
-
-    result = await db.execute(
-        select(Song)
-        .join(PlaylistSong)
-        .where(PlaylistSong.playlist_id == playlist_id)
-        .order_by(PlaylistSong.position.asc())
-    )
+    cover_changed = await _ensure_playlist_cover(db, playlist)
+    result = await db.execute(_playlist_songs_query(playlist_id))
     songs = result.scalars().all()
+
+    identity_changed = False
+    for song in songs:
+        identity_changed = await _backfill_song_audio_identity(song) or identity_changed
+    if cover_changed or identity_changed:
+        await db.commit()
 
     pkg_id = f"playlist_{playlist_id}"
     resources = [
@@ -859,7 +931,7 @@ async def get_playlist_sync_manifest(
     if playlist.cover_path:
         resources.append({"url": f"/music/playlists/{playlist_id}/cover", "type": "image"})
     for song in songs:
-        resources.append({"url": f"/music/audio/{song.id}", "type": "binary"})
+        resources.append(_song_audio_resource(song))
         if song.cover_file_id:
             resources.append({"url": f"/music/cover/{song.id}", "type": "image"})
 

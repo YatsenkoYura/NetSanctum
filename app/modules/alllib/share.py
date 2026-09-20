@@ -243,7 +243,7 @@ class AllLibShareProvider:
         result = await db.execute(
             select(LibChapter)
             .where(LibChapter.media_id == media_id)
-            .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc())
+            .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc(), LibChapter.id.asc())
         )
         return list(result.scalars().all())
 

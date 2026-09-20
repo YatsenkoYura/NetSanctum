@@ -29,6 +29,7 @@ from app.modules.vault.services import (
     increment_item_progress,
     list_collections,
     list_vault_items,
+    list_vault_package_items,
     resolve_soft_entity_info,
     toggle_archive_item,
     toggle_pin_item,
@@ -37,6 +38,13 @@ from app.modules.vault.services import (
 
 router = APIRouter()
 settings = get_settings()
+VAULT_PACKAGE_ID = "vault_all"
+LOCAL_IMAGE_PREFIXES = (
+    "data:image/gif;base64,",
+    "data:image/jpeg;base64,",
+    "data:image/png;base64,",
+    "data:image/webp;base64,",
+)
 
 
 async def _get_lang(request: Request) -> str:
@@ -94,6 +102,8 @@ async def get_items(
     user=Depends(get_current_user),
 ):
     """List vault items with dynamic filter parameters."""
+    if package_id and package_id != VAULT_PACKAGE_ID:
+        raise HTTPException(status_code=400, detail="Invalid Vault package ID")
     items = await list_vault_items(
         session=db,
         q=q,
@@ -111,18 +121,32 @@ async def get_items(
         limit=limit,
         offset=offset,
     )
-    if package_id and package_id != "vault_all":
-        raise HTTPException(status_code=400, detail="Invalid Vault package ID")
     if not package_id:
         return items
 
-    result = []
-    for item in items:
-        serialized = VaultItemResponse.model_validate(item).model_dump()
-        if item.og_image and item.og_image.startswith(("http://", "https://")):
-            serialized["og_image"] = f"/api/vault/items/{item.id}/preview?package_id={package_id}"
-        result.append(serialized)
-    return result
+    return [_serialize_package_item(item) for item in items]
+
+
+def _serialize_package_item(item) -> dict:
+    serialized = VaultItemResponse.model_validate(item).model_dump()
+    image = serialized.get("og_image")
+    if image and not image.lower().startswith(LOCAL_IMAGE_PREFIXES):
+        serialized["og_image"] = None
+    return serialized
+
+
+@router.get("/api/vault/package-items", response_model=list[VaultItemResponse])
+async def get_package_items(
+    package_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Return one complete and deterministic item snapshot for the Vault package."""
+    if package_id != VAULT_PACKAGE_ID:
+        raise HTTPException(status_code=400, detail="Invalid Vault package ID")
+
+    items = await list_vault_package_items(db)
+    return [_serialize_package_item(item) for item in items]
 
 
 @router.post("/api/vault/items", response_model=VaultItemResponse)
@@ -350,37 +374,17 @@ async def get_vault_sync_manifest(
     Generate a NetOutpost sync manifest for the full Vault module.
     Allows offline access to all Vault bookmarks, ratings and notes via NSP container.
     """
-    pkg_id = "vault_all"
+    pkg_id = VAULT_PACKAGE_ID
     package_query = f"package_id={pkg_id}"
 
     resources = [
         {"url": f"/vault/dashboard?{package_query}", "type": "html"},
         {"url": f"/api/vault/stats?{package_query}", "type": "json"},
         {"url": f"/api/vault/collections?{package_query}", "type": "json"},
+        {"url": f"/api/vault/package-items?{package_query}", "type": "json"},
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
     ]
-
-    # Include every page, including an empty terminal page when the count is a multiple of 500.
-    items = []
-    offset = 0
-    while True:
-        resources.append(
-            {
-                "url": (f"/api/vault/items?limit=500&offset={offset}&is_archived=false&{package_query}"),
-                "type": "json",
-            }
-        )
-        page = await list_vault_items(session=db, is_archived=False, limit=500, offset=offset)
-        items.extend(page)
-        if len(page) < 500:
-            break
-        offset += 500
-
-    # Remote bookmark images are fetched through a local, SSRF-protected endpoint.
-    for item in items:
-        if item.og_image and item.og_image.startswith(("http://", "https://")):
-            resources.append({"url": f"/api/vault/items/{item.id}/preview?{package_query}", "type": "image"})
 
     from app.core.packages_router import make_package_manifest
 

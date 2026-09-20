@@ -23,7 +23,7 @@ from app.core.database import SyncSessionLocal
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.scheduler import celery_app
 from app.core.secret_values import decrypt_secret_value
-from app.core.storage import get_storage
+from app.core.storage import file_size_sha256, get_storage
 from app.core.task_dispatch import dispatch_tracked_sync
 from app.core.ytdlp_pipeline import (
     YtDlpPipelineError,
@@ -40,6 +40,13 @@ from app.modules.settings.models import Setting
 logger = logging.getLogger(__name__)
 
 
+def _save_audio_file(storage, source_path: Path, destination: str) -> tuple[str, int, str]:
+    """Persist audio without buffering it and return its exact content identity."""
+    file_size, sha256 = file_size_sha256(source_path)
+    file_id = storage.save_file_from_path(source_path, destination)
+    return file_id, file_size, sha256
+
+
 def _regenerate_playlist_cover(session, playlist_id: int) -> None:
     from app.modules.music.covers import regenerate_playlist_cover
 
@@ -50,7 +57,7 @@ def _regenerate_playlist_cover(session, playlist_id: int) -> None:
         select(Song.cover_file_id)
         .join(PlaylistSong)
         .where(PlaylistSong.playlist_id == playlist_id, Song.cover_file_id.isnot(None))
-        .order_by(PlaylistSong.position)
+        .order_by(PlaylistSong.position, PlaylistSong.song_id)
         .limit(9)
     ).all()
     playlist.cover_path = regenerate_playlist_cover(playlist, paths)
@@ -181,6 +188,8 @@ def convert_archived_video_task(
     """Extract an archived video's audio into the Music library."""
     task_id = self.request.id
     audio_file_id = None
+    audio_file_size = None
+    audio_sha256 = None
     cover_file_id = None
     source_reference = (source_url or f"archive:{source_id}")[:255]
 
@@ -223,8 +232,9 @@ def convert_archived_video_task(
                 lambda progress: update("running", "Extracting audio", progress),
             )
             update("running", "Saving audio", 94)
-            audio_file_id = storage.save_file(
-                audio_path.read_bytes(),
+            audio_file_id, audio_file_size, audio_sha256 = _save_audio_file(
+                storage,
+                audio_path,
                 f"music/audio/archive-{task_id}.mp3",
             )
 
@@ -246,6 +256,8 @@ def convert_archived_video_task(
                 original_artist=None,
                 cover_file_id=cover_file_id,
                 audio_file_id=audio_file_id,
+                audio_file_size=audio_file_size,
+                audio_sha256=audio_sha256,
                 youtube_url=source_reference,
             )
             session.add(song)
@@ -588,6 +600,8 @@ def process_song_task(
     }
 
     audio_file_id = None
+    audio_file_size = None
+    audio_sha256 = None
     try:
         youtube = is_youtube_url(url)
         info_dict = extract_info(
@@ -610,10 +624,12 @@ def process_song_task(
         )
         if not audio_filepath:
             raise FileNotFoundError("No valid audio file found")
-        with open(audio_filepath, "rb") as audio_file:
-            audio_data = audio_file.read()
         ext = os.path.splitext(audio_filepath)[1].lower()
-        audio_file_id = get_storage().save_file(audio_data, f"music/audio/{video_id}{ext}")
+        audio_file_id, audio_file_size, audio_sha256 = _save_audio_file(
+            get_storage(),
+            Path(audio_filepath),
+            f"music/audio/{video_id}{ext}",
+        )
         os.remove(audio_filepath)
     except Exception as exc:
         message = error_status(exc)
@@ -688,6 +704,8 @@ def process_song_task(
             original_artist=music_info.original_artist,
             cover_file_id=cover_file_id,
             audio_file_id=audio_file_id,
+            audio_file_size=audio_file_size,
+            audio_sha256=audio_sha256,
             youtube_url=url,
         )
         session.add(song)

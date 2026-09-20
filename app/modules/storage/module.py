@@ -10,4 +10,6 @@ MODULE = ModuleSpec(
     router="app.modules.storage.router:router",
     templates="templates",
     i18n="app.modules.storage.i18n",
+    package_prefixes=("storage_manager",),
+    package_resolver="app.modules.storage.capabilities:resolve_package_resources",
 )

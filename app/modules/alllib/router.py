@@ -26,7 +26,7 @@ from app.core.database import get_db
 from app.core.scheduler import celery_app
 from app.core.secret_values import decrypt_secret_value
 from app.core.security import get_current_user
-from app.core.storage import get_storage
+from app.core.storage import get_storage, stream_size_sha256
 from app.core.task_dispatch import dispatch_tracked_async
 from app.core.templates import templates
 from app.modules.alllib.epub_builder import EPUBBuilder
@@ -40,6 +40,8 @@ settings = get_settings()
 redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 logger = logging.getLogger(__name__)
 PAIRING_TTL_SECONDS = 300
+EXPORT_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 ALLOWED_LIB_HOSTS = {
     "mangalib.me",
@@ -105,16 +107,10 @@ def _t(key: str, lang: str = "en") -> str:
 def _package_media_id(package_id: str | None) -> int | None:
     if not package_id:
         return None
-    try:
-        prefix, media_id = package_id.split("_", 1)
-        if prefix not in {"anime", "manga", "novel"}:
-            raise ValueError
-        parsed_id = int(media_id)
-        if parsed_id <= 0:
-            raise ValueError
-        return parsed_id
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Invalid AllLib package id") from exc
+    match = re.fullmatch(r"(?:anime|manga|novel)_([1-9][0-9]*)", package_id)
+    if not match:
+        raise HTTPException(status_code=400, detail="Invalid AllLib package id")
+    return int(match.group(1))
 
 
 def _validate_package_media(package_id: str | None, media: LibMedia) -> None:
@@ -125,6 +121,139 @@ def _validate_package_media(package_id: str | None, media: LibMedia) -> None:
     prefix = package_id.split("_", 1)[0]
     if package_media_id != media.id or prefix != media.media_type:
         raise HTTPException(status_code=404, detail="Media is not available in this package")
+
+
+def _ordered_chapters(media_id: int):
+    return (
+        select(LibChapter)
+        .where(LibChapter.media_id == media_id)
+        .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc(), LibChapter.id.asc())
+    )
+
+
+def _export_metadata(media: LibMedia) -> tuple[str, str, str]:
+    extension = "epub" if media.media_type == "novel" else "cbz"
+    media_type = "application/epub+zip" if extension == "epub" else "application/zip"
+    safe_title = "".join(
+        character for character in media.title if character.isalnum() or character in (" ", "_", "-")
+    ).strip()
+    filename = f"{safe_title.replace(' ', '_') or media.slug}.{extension}"
+    return extension, media_type, filename
+
+
+def _export_artifact_path(media: LibMedia, sha256: str) -> str:
+    extension, _, _ = _export_metadata(media)
+    path = f"alllib/exports/{media.id}/{sha256}.{extension}"
+    return f"{path}.enc" if media.site_id in (2, 4) else path
+
+
+def _write_cbz_entry(archive: zipfile.ZipFile, path: str, content: bytes) -> None:
+    info = zipfile.ZipInfo(path, date_time=ZIP_TIMESTAMP)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o600 << 16
+    archive.writestr(info, content)
+
+
+def _build_media_export(media: LibMedia, chapters: list[LibChapter]) -> tuple[bytes, str, str]:
+    _, media_type, filename = _export_metadata(media)
+    if media.media_type == "novel":
+        return EPUBBuilder.build_epub(media, chapters), media_type, filename
+
+    zip_buffer = io.BytesIO()
+    storage = get_storage()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, False) as zip_file:
+        for chapter in chapters:
+            for page_path in chapter.pages_list or []:
+                if not storage.file_exists(page_path):
+                    continue
+                try:
+                    if page_path.endswith(".enc"):
+                        content = storage.get_file_decrypted(page_path)
+                    else:
+                        with storage.get_file_stream(page_path) as stream:
+                            content = stream.read()
+                    raw_name = page_path.rsplit("/", 1)[-1].removesuffix(".enc")
+                    archive_path = f"Vol_{chapter.volume}_Ch_{chapter.number}/{raw_name}"
+                    _write_cbz_entry(zip_file, archive_path, content)
+                except Exception as exc:
+                    logger.error("Failed to add page to CBZ: %s", exc)
+    return zip_buffer.getvalue(), media_type, filename
+
+
+async def _snapshot_export(
+    media: LibMedia,
+    chapters: list[LibChapter],
+    db: AsyncSession,
+) -> dict:
+    content, _, _ = await asyncio.to_thread(_build_media_export, media, chapters)
+    sha256 = hashlib.sha256(content).hexdigest()
+    size = len(content)
+    artifact_path = _export_artifact_path(media, sha256)
+    storage = get_storage()
+
+    def save_artifact() -> None:
+        if storage.file_exists(artifact_path):
+            return
+        if artifact_path.endswith(".enc"):
+            storage.save_file_encrypted(content, artifact_path)
+        else:
+            storage.save_stream(io.BytesIO(content), artifact_path)
+
+    await asyncio.to_thread(save_artifact)
+    media.export_path = artifact_path
+    media.export_size = size
+    media.export_sha256 = sha256
+    await db.commit()
+    return {
+        "url": f"/alllib/api/novel/{media.id}/export?artifact={sha256}",
+        "type": "binary",
+        "size": size,
+        "sha256": sha256,
+    }
+
+
+async def _cached_export_resource(media: LibMedia) -> dict:
+    path = media.export_path
+    size = media.export_size
+    sha256 = media.export_sha256
+    if not path or size is None or not sha256 or not EXPORT_HASH_PATTERN.fullmatch(sha256):
+        raise ValueError("AllLib export snapshot has not been generated")
+    if path != _export_artifact_path(media, sha256):
+        raise ValueError("AllLib export snapshot metadata is inconsistent")
+    if not await asyncio.to_thread(get_storage().file_exists, path):
+        raise ValueError("AllLib export snapshot artifact is missing")
+    return {
+        "url": f"/alllib/api/novel/{media.id}/export?artifact={sha256}",
+        "type": "binary",
+        "size": size,
+        "sha256": sha256,
+    }
+
+
+async def _backfill_video_identities(chapters: list[LibChapter], db: AsyncSession) -> None:
+    storage = get_storage()
+    changed = False
+    for chapter in chapters:
+        if not chapter.video_path or (chapter.video_size is not None and chapter.video_sha256 is not None):
+            continue
+
+        video_path = chapter.video_path
+        assert video_path is not None
+
+        def calculate_identity(path: str = video_path) -> tuple[int, str]:
+            stream_factory = (
+                storage.get_file_stream_decrypted if path.endswith(".enc") else storage.get_file_stream
+            )
+            with stream_factory(path) as stream:
+                return stream_size_sha256(stream)
+
+        try:
+            chapter.video_size, chapter.video_sha256 = await asyncio.to_thread(calculate_identity)
+            changed = True
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            logger.warning("Could not backfill anime video identity for chapter %s: %s", chapter.id, exc)
+    if changed:
+        await db.commit()
 
 
 @router.get("/helper.user.js", include_in_schema=False)
@@ -374,11 +503,7 @@ async def alllib_reader(
     _validate_package_media(package_id, media)
 
     # Fetch chapters ordered by volume and chapter number
-    stmt = (
-        select(LibChapter)
-        .where(LibChapter.media_id == media_id)
-        .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc())
-    )
+    stmt = _ordered_chapters(media_id)
     result = await db.execute(stmt)
     chapters = result.scalars().all()
 
@@ -1148,73 +1273,45 @@ async def sync_media(media_id: int, db: AsyncSession = Depends(get_db), user=Dep
 
 
 @router.get("/api/novel/{media_id}/export")
-async def export_media(media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def export_media(
+    media_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    artifact: str | None = None,
+):
     """Export downloaded media to EPUB (for novels) or CBZ (for manga/hentai/comics)."""
     media = await db.get(LibMedia, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    stmt = (
-        select(LibChapter)
-        .where(LibChapter.media_id == media_id)
-        .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc())
-    )
-    res = await db.execute(stmt)
+    _, media_type, filename = _export_metadata(media)
+    if artifact is not None:
+        if not EXPORT_HASH_PATTERN.fullmatch(artifact):
+            raise HTTPException(status_code=400, detail="Invalid export artifact hash")
+        artifact_path = _export_artifact_path(media, artifact)
+        storage = get_storage()
+        if not await asyncio.to_thread(storage.file_exists, artifact_path):
+            raise HTTPException(status_code=404, detail="Export artifact not found")
+
+        from app.core.responses import serve_storage_file_chunked
+
+        response = serve_storage_file_chunked(artifact_path, media_type=media_type)
+        if artifact_path.endswith(".enc"):
+            size = await asyncio.to_thread(storage.get_encrypted_plaintext_size, artifact_path)
+        else:
+            size = await asyncio.to_thread(storage.get_file_size, artifact_path)
+        response.headers["Content-Length"] = str(size)
+        response.headers["Content-Disposition"] = f'attachment; filename="{urllib.parse.quote(filename)}"'
+        return response
+
+    res = await db.execute(_ordered_chapters(media_id))
     chapters = res.scalars().all()
-
-    if media.media_type == "novel":
-        # Export as EPUB
-        raw_epub_bytes = await asyncio.to_thread(EPUBBuilder.build_epub, media, chapters)
-        safe_title = (
-            "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-        )
-        filename = f"{safe_title or media.slug}.epub"
-
-        return Response(
-            content=raw_epub_bytes,
-            media_type="application/epub+zip",
-            headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'},
-        )
-    else:
-        # Export as CBZ
-        def build_cbz_sync():
-            zip_buffer = io.BytesIO()
-            storage = get_storage()
-
-            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                for ch in chapters:
-                    if ch.pages_list:
-                        for page_path in ch.pages_list:
-                            if storage.file_exists(page_path):
-                                try:
-                                    is_enc = page_path.endswith(".enc")
-                                    if is_enc:
-                                        content = storage.get_file_decrypted(page_path)
-                                    else:
-                                        with storage.get_file_stream(page_path) as f:
-                                            content = f.read()
-                                    # Strip .enc from the archive filename
-                                    raw_name = page_path.split("/")[-1]
-                                    if raw_name.endswith(".enc"):
-                                        raw_name = raw_name[:-4]
-                                    arc_filename = f"Vol_{ch.volume}_Ch_{ch.number}/{raw_name}"
-                                    zip_file.writestr(arc_filename, content)
-                                except Exception as e:
-                                    logger.error(f"Failed to add page to CBZ: {e}")
-            zip_buffer.seek(0)
-            return zip_buffer
-
-        zip_buffer = await asyncio.to_thread(build_cbz_sync)
-        safe_title = (
-            "".join(c for c in media.title if c.isalnum() or c in (" ", "_", "-")).strip().replace(" ", "_")
-        )
-        filename = f"{safe_title or media.slug}.cbz"
-
-        return Response(
-            content=zip_buffer.getvalue(),
-            media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
-        )
+    content, media_type, filename = await asyncio.to_thread(_build_media_export, media, chapters)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'},
+    )
 
 
 @router.get("/api/cover/{media_id}", include_in_schema=False)
@@ -1362,11 +1459,7 @@ async def get_media_json(
         raise HTTPException(status_code=404, detail="Media not found")
     _validate_package_media(request.query_params.get("package_id"), media)
 
-    stmt = (
-        select(LibChapter)
-        .where(LibChapter.media_id == media_id)
-        .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc())
-    )
+    stmt = _ordered_chapters(media_id)
     res = await db.execute(stmt)
     chapters = res.scalars().all()
 
@@ -1397,13 +1490,23 @@ async def get_media_sync_manifest(
     media_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user), hybrid: bool = True
 ):
     """API endpoint: Generates a NetOutpost sync manifest for offline caching."""
+    return await _build_media_sync_manifest(media_id, db, hybrid=hybrid, create_export_snapshot=True)
+
+
+async def _build_media_sync_manifest(
+    media_id: int,
+    db: AsyncSession,
+    *,
+    hybrid: bool,
+    create_export_snapshot: bool,
+) -> dict:
     media = await db.get(LibMedia, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
     pkg_prefix = media.media_type
     pkg_id = f"{pkg_prefix}_{media_id}"
-    resources = [
+    resources: list[dict[str, object]] = [
         {"url": "/static/tailwind.css", "type": "css"},
         {"url": "/static/htmx.min.js", "type": "js"},
         {"url": "/static/placeholder.svg", "type": "image"},
@@ -1416,25 +1519,33 @@ async def get_media_sync_manifest(
         {"url": f"/alllib/api/novel/{media_id}?package_id={pkg_id}", "type": "json"},
     ]
 
-    # Text and image titles can be exported as EPUB/CBZ; anime is streamed separately.
-    if media.media_type != "anime":
-        resources.append({"url": f"/alllib/api/novel/{media_id}/export", "type": "binary"})
-
     if media.cover_path:
         resources.append({"url": f"/alllib/api/cover/{media_id}", "type": "image"})
 
-    stmt = select(LibChapter).where(LibChapter.media_id == media_id)
-    res = await db.execute(stmt)
+    res = await db.execute(_ordered_chapters(media_id))
     chapters = res.scalars().all()
+
+    if media.media_type != "anime":
+        if hasattr(media, "export_path"):
+            export_resource = (
+                await _snapshot_export(media, chapters, db)
+                if create_export_snapshot
+                else await _cached_export_resource(media)
+            )
+            resources.append(export_resource)
+        else:
+            resources.append({"url": f"/alllib/api/novel/{media_id}/export", "type": "binary"})
+    elif chapters and hasattr(chapters[0], "video_size"):
+        await _backfill_video_identities(chapters, db)
 
     for ch in chapters:
         resources.append({"url": f"/alllib/ui/chapter/{ch.id}?package_id={pkg_id}", "type": "html"})
         if media.media_type == "novel" and ch.content_html:
             found_urls = re.findall(r'["\'](/alllib/api/proxy-image\?url=[^"\']+)["\']', ch.content_html)
-            for url_path in found_urls:
+            for url_path in sorted(set(found_urls)):
                 resources.append({"url": url_path, "type": "image"})
             found_page_urls = re.findall(r'["\'](/alllib/api/page\?path=[^"\']+)["\']', ch.content_html)
-            for url_path in found_page_urls:
+            for url_path in sorted(set(found_page_urls)):
                 resources.append({"url": url_path, "type": "image"})
         elif media.media_type == "manga" and ch.pages_list:
             for page_path in ch.pages_list:
@@ -1442,7 +1553,14 @@ async def get_media_sync_manifest(
                 resources.append({"url": f"/alllib/api/page?path={encoded_path}", "type": "image"})
         elif media.media_type == "anime" and ch.video_path:
             encoded_path = urllib.parse.quote(ch.video_path)
-            resources.append({"url": f"/alllib/api/video/stream?path={encoded_path}", "type": "binary"})
+            video_resource: dict[str, object] = {
+                "url": f"/alllib/api/video/stream?path={encoded_path}",
+                "type": "binary",
+            }
+            if getattr(ch, "video_size", None) is not None and getattr(ch, "video_sha256", None):
+                video_resource["size"] = ch.video_size
+                video_resource["sha256"] = ch.video_sha256
+            resources.append(video_resource)
 
     pkg_title = f"{media.media_type.capitalize()}: {media.title}"
     from app.core.packages_router import make_package_manifest

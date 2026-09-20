@@ -4,7 +4,7 @@ Music module database models.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -47,7 +47,7 @@ class Playlist(Base):
         "PlaylistSong",
         back_populates="playlist",
         cascade="all, delete-orphan",
-        order_by="PlaylistSong.position",
+        order_by="PlaylistSong.position, PlaylistSong.song_id",
     )
 
     def __repr__(self) -> str:
@@ -65,6 +65,8 @@ class Song(Base):
     original_artist: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cover_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     audio_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    audio_file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    audio_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cover_offset_x: Mapped[float] = mapped_column(Float, nullable=False, default=50.0, server_default="50")
     cover_offset_y: Mapped[float] = mapped_column(Float, nullable=False, default=50.0, server_default="50")

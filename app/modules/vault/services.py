@@ -272,6 +272,17 @@ async def list_vault_items(
     return list(res.scalars().all())
 
 
+async def list_vault_package_items(session: AsyncSession) -> list[VaultItem]:
+    """Return the complete, deterministically ordered offline Vault snapshot."""
+    stmt = (
+        select(VaultItem)
+        .where(VaultItem.is_archived.is_(False))
+        .order_by(VaultItem.is_pinned.desc(), VaultItem.created_at.desc(), VaultItem.id.desc())
+    )
+    res = await session.execute(stmt)
+    return list(res.scalars().all())
+
+
 async def get_vault_stats(session: AsyncSession) -> dict[str, Any]:
     """Calculate vault statistics summary."""
     stmt_all = select(VaultItem).where(not VaultItem.is_archived)

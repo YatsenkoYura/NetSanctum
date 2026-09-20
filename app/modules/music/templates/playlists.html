@@ -37,7 +37,7 @@
     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {% for playlist in playlists %}
         <div class="group relative bg-zinc-950 border border-zinc-800 hover:border-teal-500/60 p-3 flex flex-col gap-2.5 transition-all duration-200 hover:bg-zinc-900/80 cursor-pointer overflow-hidden shadow-md rounded-none"
-             hx-get="/music/ui/playlists/{{ playlist.id }}"
+             hx-get="/music/ui/playlists/{{ playlist.id }}{% if package_id %}?package_id={{ package_id }}{% endif %}"
              hx-target="#content-playlist-detail"
              onclick="switchMusicTab('playlist-detail')">
 

@@ -1,7 +1,12 @@
 {% set cover_url = cover_url|default('/alllib/api/cover/' ~ media.id) %}
 {% set detail_back_url = detail_back_url|default('/alllib/ui/library_tab') %}
 {% set reader_url = reader_url|default('/alllib/reader/' ~ media.id) %}
+{% set package_id = request.query_params.get('package_id') %}
+{% if package_id and media.export_sha256 %}
+{% set export_url = '/alllib/api/novel/' ~ media.id ~ '/export?artifact=' ~ media.export_sha256 %}
+{% else %}
 {% set export_url = export_url|default('/alllib/api/novel/' ~ media.id ~ '/export') %}
+{% endif %}
 <div class="space-y-0">
     <!-- Hero Banner with Blurred Cover -->
     <div class="relative h-40 sm:h-48 overflow-hidden border border-zinc-800 bg-zinc-950">

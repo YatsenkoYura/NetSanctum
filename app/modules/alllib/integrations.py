@@ -99,7 +99,7 @@ async def library_viewer(
         chapters_result = await context.session.execute(
             select(LibChapter)
             .where(LibChapter.media_id == media.id)
-            .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc())
+            .order_by(LibChapter.volume_int.asc(), LibChapter.number_float.asc(), LibChapter.id.asc())
         )
         chapters = list(chapters_result.scalars())
         item = _serialize_media(media).model_copy(

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import tempfile
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import redis
@@ -14,7 +15,7 @@ from app.core.database import SyncSessionLocal
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.scheduler import celery_app
 from app.core.secret_values import decrypt_secret_value
-from app.core.storage import get_storage
+from app.core.storage import file_size_sha256, get_storage
 from app.core.task_dispatch import dispatch_tracked_sync
 from app.core.ytdlp_pipeline import (
     YtDlpErrorKind,
@@ -24,6 +25,11 @@ from app.core.ytdlp_pipeline import (
     is_youtube_single_video_url,
 )
 from app.modules.settings.models import Setting
+from app.modules.video_archiver.compression import (
+    COMPRESSION_PROFILE,
+    run_compression_batch,
+    run_ffmpeg_compression,
+)
 from app.modules.video_archiver.models import (
     ArchivedVideo,
     VideoChannel,
@@ -50,6 +56,12 @@ VIDEO_IMAGE_HOSTS = frozenset(
 
 # Initialize Redis client using dynamic REDIS_URL
 redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+@celery_app.task(bind=True)
+def compress_all_videos_task(self) -> str:
+    """Optimize eligible archived videos one at a time under a global Redis lock."""
+    return run_compression_batch(self.request.id, redis_client)
 
 
 def _regenerate_playlist_cover(session, playlist_id: int) -> None:
@@ -397,52 +409,48 @@ def download_video_task(
         if not downloaded_file or not os.path.exists(downloaded_file):
             raise FileNotFoundError("Could not locate downloaded video file.")
 
+        compression_status = None
+        compression_profile = None
+        compressed_at = None
+        compression_error = None
+
         # Compress video via FFmpeg if requested
         if compress_video:
             update_redis("Compressing video (FFmpeg)", "95%", title=title)
             compressed_file = os.path.join(temp_dir, f"compressed_{video_id}.mp4")
+            compression_profile = COMPRESSION_PROFILE
             try:
-                import subprocess
-
-                cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    downloaded_file,
-                    "-vcodec",
-                    "libx264",
-                    "-crf",
-                    "28",
-                    "-preset",
-                    "fast",
-                    "-acodec",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    compressed_file,
-                ]
-                logger.info(f"Running compression command: {' '.join(cmd)}")
-                subprocess.run(cmd, capture_output=True, text=True, check=True)
+                run_ffmpeg_compression(Path(downloaded_file), Path(compressed_file), lambda: False)
                 if os.path.exists(compressed_file) and os.path.getsize(compressed_file) > 0:
-                    os.remove(downloaded_file)
-                    downloaded_file = compressed_file
-                    logger.info("FFmpeg compression completed successfully.")
+                    if os.path.getsize(compressed_file) < os.path.getsize(downloaded_file):
+                        os.remove(downloaded_file)
+                        downloaded_file = compressed_file
+                        compression_status = "completed"
+                        compressed_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+                        logger.info("FFmpeg compression completed successfully.")
+                    else:
+                        os.remove(compressed_file)
+                        compression_status = "skipped"
+                        compressed_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+                        logger.info("FFmpeg output was not smaller; keeping the downloaded file.")
                 else:
+                    compression_status = "failed"
+                    compression_error = "FFmpeg compression output was missing or empty"
                     logger.warning(
                         "FFmpeg compression output was missing or empty. Falling back to original file."
                     )
             except Exception as compress_err:
+                compression_status = "failed"
+                compression_error = str(compress_err)[:2000]
                 logger.error(
                     f"FFmpeg compression failed, falling back to original video file: {compress_err}"
                 )
 
         # Save video to storage abstraction layer
         storage = get_storage()
-        with open(downloaded_file, "rb") as f:
-            video_bytes = f.read()
-
         video_storage_path = f"video_archiver/videos/{video_id}.mp4"
-        storage.save_file(video_bytes, video_storage_path)
+        video_file_size, video_sha256 = file_size_sha256(downloaded_file)
+        storage.save_file_from_path(downloaded_file, video_storage_path)
         os.remove(downloaded_file)
 
         # Download thumbnail
@@ -510,6 +518,12 @@ def download_video_task(
             video.duration = int(info_dict.get("duration") or 0)
             video.resolution = f"{quality}p"
             video.file_path = video_storage_path
+            video.file_size = video_file_size
+            video.sha256 = video_sha256
+            video.compression_status = compression_status
+            video.compression_profile = compression_profile
+            video.compressed_at = compressed_at
+            video.compression_error = compression_error
             video.thumbnail_path = thumbnail_storage_path
             video.status = "completed"
             video.comments = video.comments or []

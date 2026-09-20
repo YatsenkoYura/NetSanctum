@@ -4,7 +4,7 @@ Database models for Lib network modules (RanobeLib, MangaLib, HentaiLib, etc.).
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from app.core.database import Base
@@ -30,6 +30,9 @@ class LibMedia(Base):
     cover_path: Mapped[str | None] = mapped_column(String(510), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(510), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    export_path: Mapped[str | None] = mapped_column(String(510), nullable=True)
+    export_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    export_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -40,7 +43,7 @@ class LibMedia(Base):
         "LibChapter",
         back_populates="media",
         cascade="all, delete-orphan",
-        order_by="LibChapter.volume_int, LibChapter.number_float",
+        order_by="LibChapter.volume_int, LibChapter.number_float, LibChapter.id",
     )
 
     def __repr__(self) -> str:
@@ -72,6 +75,8 @@ class LibChapter(Base):
 
     # Anime-specific content (path to local video file)
     video_path: Mapped[str | None] = mapped_column(String(510), nullable=True)
+    video_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    video_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     media: Mapped["LibMedia"] = relationship("LibMedia", back_populates="chapters")
     novel = synonym("media")

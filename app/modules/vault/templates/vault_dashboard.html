@@ -1561,18 +1561,11 @@ async function loadWorkspace({append = false} = {}) {
     let loadedItems;
     let hasMore = false;
     if (packageMode) {
-      packageItemsPromise ||= (async () => {
-        const items = [];
-        for (let offset = 0; ; offset += 500) {
-          const page = await requestJson(
-            packageUrl(`/api/vault/items?limit=500&offset=${offset}&is_archived=false`),
-            {},
-            'Не удалось открыть офлайн-пакет Vault'
-          );
-          items.push(...page);
-          if (page.length < 500) return items;
-        }
-      })();
+      packageItemsPromise ||= requestJson(
+        packageUrl('/api/vault/package-items'),
+        {},
+        'Не удалось открыть офлайн-пакет Vault'
+      );
       const packagedItems = await packageItemsPromise;
       const normalizedSearch = search.toLowerCase();
       const filteredItems = packagedItems.filter(item => {

@@ -50,6 +50,12 @@ class VideoResponse(BaseModel):
     duration: int
     resolution: str
     file_path: str | None
+    file_size: int | None = None
+    sha256: str | None = None
+    compression_status: str | None = None
+    compression_profile: str | None = None
+    compressed_at: datetime | None = None
+    compression_error: str | None = None
     thumbnail_path: str | None
     status: str
     comments: list[CommentSchema] | None

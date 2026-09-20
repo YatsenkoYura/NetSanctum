@@ -493,10 +493,16 @@
                     </div>
 
                     <!-- Submit Button -->
-                    <button type="submit" id="btn-form-submit"
-                            class="w-full bg-teal-400 hover:bg-teal-300 text-black border-2 border-black font-black uppercase text-sm py-4 tracking-wider transition-colors font-mono rounded-none shadow-lg">
-                        {{ _('video_archiver', 'btn_archive') }}
-                    </button>
+                    <div class="flex flex-col gap-2 sm:flex-row">
+                        <button type="submit" id="btn-form-submit"
+                                class="flex-1 bg-teal-400 hover:bg-teal-300 text-black border-2 border-black font-black uppercase text-sm py-4 tracking-wider transition-colors font-mono rounded-none shadow-lg">
+                            {{ _('video_archiver', 'btn_archive') }}
+                        </button>
+                        <button type="button" id="btn-optimize-videos" onclick="startVideoOptimization()"
+                                class="hidden flex-1 border-2 border-teal-500 bg-teal-950/30 px-4 py-4 font-mono text-xs font-black uppercase tracking-wider text-teal-300 transition-colors hover:bg-teal-400 hover:text-black">
+                            {{ _('video_archiver', 'optimize_videos') }}
+                        </button>
+                    </div>
                 </form>
             </div>
 
@@ -1072,6 +1078,7 @@
         btn_open: {{ _('video_archiver', 'btn_open')|tojson }},
         playlist_video_count: {{ _('video_archiver', 'playlist_video_count')|tojson }},
         upload_success: {{ _('video_archiver', 'upload_success')|tojson }},
+        optimization_started: {{ _('video_archiver', 'optimization_started')|tojson }},
         theater_mode: {{ _('video_archiver', 'theater_mode')|tojson }},
         show_sidebar: {{ _('video_archiver', 'show_sidebar')|tojson }},
         description_label: {{ _('video_archiver', 'description_label')|tojson }}
@@ -1818,6 +1825,13 @@
         try {
             const resp = await fetch('/api/video-archiver/tasks/active');
             const tasks = await resp.json();
+            const optimizeButton = document.getElementById('btn-optimize-videos');
+            if (optimizeButton) {
+                const optimizing = tasks.some(task => task.type === 'video_compress');
+                optimizeButton.disabled = optimizing;
+                optimizeButton.classList.toggle('opacity-50', optimizing);
+                optimizeButton.classList.toggle('cursor-not-allowed', optimizing);
+            }
 
             // Handle Global Sync
             const globalSyncTask = tasks.find(t => t.type === 'global_sync');
@@ -2347,6 +2361,7 @@
         const downloadFields = document.getElementById('download-mode-fields');
         const syncFields = document.getElementById('sync-mode-fields');
         const submitBtn = document.getElementById('btn-form-submit');
+        const optimizeBtn = document.getElementById('btn-optimize-videos');
         const urlInput = document.getElementById('download-url-input');
 
         if (mode === 'download') {
@@ -2355,6 +2370,7 @@
             downloadFields.classList.remove('hidden');
             syncFields.classList.add('hidden');
             submitBtn.innerText = "{{ _('video_archiver', 'btn_archive') }}";
+            optimizeBtn.classList.add('hidden');
             if (urlInput) urlInput.required = true;
         } else {
             btnSync.className = "flex-1 py-2.5 text-xs font-mono font-bold uppercase transition-all bg-teal-400 text-black border border-teal-400 shadow";
@@ -2362,6 +2378,7 @@
             downloadFields.classList.add('hidden');
             syncFields.classList.remove('hidden');
             submitBtn.innerText = "Обновить метаданные";
+            optimizeBtn.classList.remove('hidden');
             if (urlInput) urlInput.required = false;
         }
     };
@@ -2520,6 +2537,21 @@
             showToast(i18n.global_sync_scheduled);
         } catch (err) {
             showToast(`Sync trigger failed: ${err}`, 'error');
+        }
+    };
+
+    window.startVideoOptimization = async function() {
+        try {
+            const response = await fetch('/api/video-archiver/compress-all', {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) {
+                const detail = payload.detail?.message || payload.detail || 'Не удалось запустить оптимизацию';
+                throw new Error(detail);
+            }
+            showToast(i18n.optimization_started);
+            pollActiveTasks();
+        } catch (error) {
+            showToast(error.message, 'error');
         }
     };
 

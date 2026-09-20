@@ -24,12 +24,12 @@
             </div>
         </div>
 
-        <button hx-post="/storage/api/recalculate"
+        {% if not is_readonly %}<button hx-post="/storage/api/recalculate"
                 hx-target="#storage-container"
                 hx-swap="outerHTML"
                 class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-zinc-800 bg-zinc-900 text-teal-400 hover:border-teal-400 hover:bg-black rounded-none">
             {{ _('storage', 'recalculate') }} ↻
-        </button>
+        </button>{% endif %}
     </div>
 
     <!-- ── Capacity Statistics Grid ────────────────── -->
@@ -123,7 +123,7 @@
                     </div>
                 </div>
 
-                <div class="mt-6">
+                {% if not is_readonly %}<div class="mt-6">
                     {% if mod.file_count > 0 %}
                     <button hx-post="/storage/api/clean-module?module={{ mod.name }}"
                             hx-confirm="{{ _('storage', 'clear_module_confirm', name=mod.name) }}"
@@ -138,7 +138,7 @@
                         EMPTY
                     </button>
                     {% endif %}
-                </div>
+                </div>{% endif %}
             </div>
             {% endfor %}
         </div>
@@ -162,7 +162,7 @@
                         <th class="px-6 py-3 font-bold">Module</th>
                         <th class="px-6 py-3 font-bold">File Name / Path</th>
                         <th class="px-6 py-3 font-bold text-right">Size</th>
-                        <th class="px-6 py-3 font-bold text-center">Action</th>
+                        {% if not is_readonly %}<th class="px-6 py-3 font-bold text-center">Action</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-zinc-900">
@@ -189,7 +189,7 @@
                                 {{ file.size_human }}
                             </td>
                             <!-- Delete specific file -->
-                            <td class="px-6 py-4 text-center whitespace-nowrap">
+                            {% if not is_readonly %}<td class="px-6 py-4 text-center whitespace-nowrap">
                                 <button hx-delete="/storage/api/file?path={{ file.path }}"
                                         hx-confirm="{{ _('storage', 'delete_file_confirm') }}"
                                         hx-target="#storage-container"
@@ -197,12 +197,12 @@
                                         class="px-2.5 py-1 text-[10px] font-bold text-rose-500 border border-transparent hover:border-rose-900 hover:bg-rose-950/20 transition-all rounded-none uppercase">
                                     [Delete]
                                 </button>
-                            </td>
+                            </td>{% endif %}
                         </tr>
                         {% endfor %}
                     {% else %}
                         <tr>
-                            <td colspan="4" class="px-6 py-8 text-center text-zinc-500 font-mono italic">
+                            <td colspan="{% if is_readonly %}3{% else %}4{% endif %}" class="px-6 py-8 text-center text-zinc-500 font-mono italic">
                                 No files found in storage.
                             </td>
                         </tr>

@@ -68,7 +68,9 @@ class VideoService:
 
     @staticmethod
     async def delete_video(db: AsyncSession, video_id: str) -> dict:
-        video = await db.get(ArchivedVideo, video_id)
+        video = (
+            await db.execute(select(ArchivedVideo).where(ArchivedVideo.id == video_id).with_for_update())
+        ).scalar_one_or_none()
         if not video:
             raise HTTPException(status_code=404, detail="Video not found")
 

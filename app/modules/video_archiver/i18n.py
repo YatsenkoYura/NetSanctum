@@ -114,6 +114,8 @@ TRANSLATIONS = {
         "drop_video": "Drop a video here or choose a file",
         "video_title": "Video title",
         "upload_success": "Video uploaded",
+        "optimize_videos": "Optimize all videos",
+        "optimization_started": "Video optimization started",
     },
     "ru": {
         "module_title": "Видео Архив",
@@ -226,5 +228,7 @@ TRANSLATIONS = {
         "drop_video": "Перетащите видео сюда или выберите файл",
         "video_title": "Название видео",
         "upload_success": "Видео загружено",
+        "optimize_videos": "Оптимизировать все видео",
+        "optimization_started": "Оптимизация видео запущена",
     },
 }
