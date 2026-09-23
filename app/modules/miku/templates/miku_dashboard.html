@@ -55,6 +55,8 @@
     const input = document.getElementById('miku-input');
     const output = document.getElementById('miku-output');
     const status = document.getElementById('miku-status');
+    let socket;
+    let reconnectTimer;
 
     function line(text, tone = 'normal') {
         const row = document.createElement('p');
@@ -63,13 +65,15 @@
         output.appendChild(row);
     }
 
-    form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const message = input.value.trim();
-        if (!message) return;
-        line(`> ${message}`);
-        input.value = '';
-        status.textContent = 'Working';
+    function renderReply(payload) {
+        line(payload.text);
+        for (const item of payload.references) {
+            line(`${item.ref} · ${item.module_id} · ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ''}`);
+        }
+        for (const warning of payload.warnings) line(`Warning: ${warning}`, 'error');
+    }
+
+    async function restFallback(message) {
         try {
             const response = await fetch('/api/miku/query', {
                 method: 'POST',
@@ -78,18 +82,56 @@
             });
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || 'Request failed');
-            line(payload.text);
-            for (const item of payload.references) {
-                line(`${item.ref} · ${item.module_id} · ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ''}`);
-            }
-            for (const warning of payload.warnings) line(`Warning: ${warning}`, 'error');
+            renderReply(payload);
         } catch (error) {
             line(error.message || 'Request failed', 'error');
         } finally {
             status.textContent = 'Ready';
             input.focus();
         }
+    }
+
+    function connect() {
+        const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        socket = new WebSocket(`${scheme}://${window.location.host}/api/miku/ws`);
+        socket.addEventListener('open', () => { status.textContent = 'Connecting'; });
+        socket.addEventListener('message', (event) => {
+            const payload = JSON.parse(event.data);
+            if (payload.event === 'session.ready') status.textContent = 'Realtime';
+            if (payload.event === 'turn.started') status.textContent = 'Working';
+            if (payload.event === 'turn.result') renderReply(payload.data);
+            if (payload.event === 'turn.completed') {
+                status.textContent = 'Realtime';
+                input.focus();
+            }
+            if (payload.event === 'turn.error') {
+                line(payload.data.message || payload.data.code || 'Request failed', 'error');
+                status.textContent = 'Realtime';
+            }
+        });
+        socket.addEventListener('close', () => {
+            status.textContent = 'REST fallback';
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connect, 2000);
+        });
+    }
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+        line(`> ${message}`);
+        input.value = '';
+        status.textContent = 'Working';
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            const requestId = window.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
+            socket.send(JSON.stringify({type: 'query', request_id: requestId, message}));
+        } else {
+            restFallback(message);
+        }
     });
+
+    connect();
 })();
 </script>
 {% endblock %}

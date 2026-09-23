@@ -2,13 +2,22 @@ import asyncio
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
+from fastapi import WebSocketDisconnect
 from pydantic import ValidationError
 
 from app.core.security import get_current_user
 from app.modules.miku.module import MODULE
-from app.modules.miku.router import router
-from app.modules.miku.schemas import MikuQuery
+from app.modules.miku.router import (
+    SOCKET_MESSAGE_LIMIT,
+    _send_event,
+    miku_socket,
+    router,
+    websocket_origin_allowed,
+    websocket_owner_session,
+)
+from app.modules.miku.schemas import MikuQuery, MikuSocketMessage
 from app.modules.miku.service import MikuQueryError, capabilities, query
 
 
@@ -65,6 +74,31 @@ class StubRegistry:
         }
 
 
+class StubWebSocket:
+    def __init__(self, messages):
+        self.headers = {"origin": "https://netsanctum.local", "host": "netsanctum.local"}
+        self.cookies = {"access_token": "session-id"}
+        self.messages = iter(messages)
+        self.sent = []
+        self.accepted = False
+        self.close_code = None
+
+    async def accept(self):
+        self.accepted = True
+
+    async def close(self, code):
+        self.close_code = code
+
+    async def send_json(self, payload):
+        self.sent.append(payload)
+
+    async def receive_text(self):
+        try:
+            return next(self.messages)
+        except StopIteration as exc:
+            raise WebSocketDisconnect() from exc
+
+
 class MikuTests(unittest.TestCase):
     def test_manifest_is_read_only_integration_consumer(self):
         self.assertEqual(("library.viewer.v1",), MODULE.uses_integration_contracts)
@@ -78,6 +112,15 @@ class MikuTests(unittest.TestCase):
             MikuQuery(message="   ")
         with self.assertRaises(ValidationError):
             MikuQuery(message="x" * 501)
+
+    def test_socket_messages_are_bounded_and_typed(self):
+        message = MikuSocketMessage(type="query", request_id="turn:1", message="  help  ")
+        self.assertEqual("help", message.message)
+        self.assertLess(SOCKET_MESSAGE_LIMIT, 16 * 1024)
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(type="query", request_id="turn/1", message="help")
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(type="ping", request_id="turn:1", message="unexpected")
 
     def test_capabilities_expose_only_read_library_providers(self):
         result = capabilities(StubRegistry())
@@ -123,17 +166,55 @@ class MikuTests(unittest.TestCase):
         self.assertNotIn("innerHTML", template)
 
     def test_router_exposes_only_authenticated_read_shell_routes(self):
-        routes = {(method, route.path) for route in router.routes for method in route.methods}
+        routes = {
+            (method, route.path)
+            for route in router.routes
+            for method in (getattr(route, "methods", None) or {"WEBSOCKET"})
+        }
         self.assertEqual(
             {
                 ("GET", "/miku/dashboard"),
                 ("GET", "/api/miku/capabilities"),
                 ("POST", "/api/miku/query"),
+                ("WEBSOCKET", "/api/miku/ws"),
             },
             routes,
         )
-        for route in router.routes:
+        for route in (route for route in router.routes if getattr(route, "methods", None)):
             self.assertIn(get_current_user, {dependency.call for dependency in route.dependant.dependencies})
+
+    def test_websocket_requires_same_origin_and_owner_session(self):
+        websocket = SimpleNamespace(
+            headers={"origin": "https://netsanctum.local", "host": "netsanctum.local"},
+            cookies={"access_token": "session-id"},
+        )
+        self.assertTrue(websocket_origin_allowed(websocket))
+        websocket.headers["origin"] = "https://attacker.invalid"
+        self.assertFalse(websocket_origin_allowed(websocket))
+
+        with patch("app.modules.miku.router.redis_client.get", AsyncMock(return_value="1")) as get:
+            user = asyncio.run(websocket_owner_session(websocket))
+            self.assertIsNotNone(user)
+            assert user is not None
+            self.assertEqual(1, user.id)
+            get.assert_awaited_once_with("session:session-id")
+
+    def test_socket_events_have_a_stable_envelope(self):
+        websocket = SimpleNamespace(send_json=AsyncMock())
+        asyncio.run(_send_event(websocket, "turn.started", request_id="turn:1"))
+        websocket.send_json.assert_awaited_once_with(
+            {"event": "turn.started", "request_id": "turn:1", "data": {}}
+        )
+
+    def test_socket_negotiates_protocol_and_answers_ping(self):
+        websocket = StubWebSocket(['{"type":"ping","request_id":"ping:1"}'])
+        with patch("app.modules.miku.router.redis_client.get", AsyncMock(return_value="1")):
+            asyncio.run(miku_socket(websocket))
+
+        self.assertTrue(websocket.accepted)
+        self.assertEqual("session.ready", websocket.sent[0]["event"])
+        self.assertEqual("session.pong", websocket.sent[1]["event"])
+        self.assertEqual("ping:1", websocket.sent[1]["request_id"])
 
 
 if __name__ == "__main__":

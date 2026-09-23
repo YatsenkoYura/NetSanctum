@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class MikuQuery(BaseModel):
@@ -45,5 +45,24 @@ class MikuCapabilities(BaseModel):
     expansion: str = "Miku Is Kernel Utility"
     version: str = "0.1.0"
     mode: Literal["read-only"] = "read-only"
+    transport: Literal["rest+websocket"] = "rest+websocket"
+    protocol_version: int = 1
     commands: list[str]
     providers: list[MikuProvider]
+
+
+class MikuSocketMessage(BaseModel):
+    type: Literal["query", "ping"]
+    request_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
+    message: str | None = Field(default=None, max_length=500)
+    limit: int = Field(default=10, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_payload(self):
+        if self.type == "query":
+            self.message = (self.message or "").strip()
+            if not self.message:
+                raise ValueError("Query message must not be blank")
+        elif self.message is not None:
+            raise ValueError("Ping does not accept a message")
+        return self
