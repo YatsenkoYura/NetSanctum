@@ -14,7 +14,7 @@ from app.core.modules import module_registry
 from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
 from app.modules.miku.schemas import MikuCapabilities, MikuQuery, MikuReply, MikuSocketMessage
-from app.modules.miku.service import MikuQueryError, capabilities, query
+from app.modules.miku.service import MikuQueryError, MikuSessionContext, capabilities, query
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -104,6 +104,7 @@ async def miku_socket(websocket: WebSocket):
         data={"mode": "read-only", "protocol_version": 1},
     )
     turn_times: deque[float] = deque()
+    context = MikuSessionContext()
     try:
         while True:
             raw = await websocket.receive_text()
@@ -150,6 +151,7 @@ async def miku_socket(websocket: WebSocket):
                         db,
                         user=user,
                         registry=module_registry,
+                        context=context,
                     )
             except MikuQueryError as exc:
                 await _send_event(

@@ -1,4 +1,6 @@
-from app.modules.miku.schemas import MikuDecision
+from typing import cast
+
+from app.modules.miku.schemas import MikuCommand, MikuDecision
 
 COMMAND_ALIASES = {
     "help": "help",
@@ -11,6 +13,8 @@ COMMAND_ALIASES = {
     "search": "find",
     "найди": "find",
     "поиск": "find",
+    "repeat": "repeat",
+    "повтори": "repeat",
 }
 
 
@@ -26,6 +30,6 @@ def plan_with_rules(message: str) -> MikuDecision:
     argument = parts[1].strip() if len(parts) == 2 else ""
     if command == "find" and not argument:
         raise MikuQueryError("The find command requires search text.")
-    if command in {"help", "sources"} and argument:
+    if command in {"help", "sources", "repeat"} and argument:
         raise MikuQueryError(f"The {command} command does not accept arguments.")
-    return MikuDecision(command=command, argument=argument)
+    return MikuDecision(command=cast(MikuCommand, command), argument=argument)

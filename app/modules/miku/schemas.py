@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-MikuCommand = Literal["help", "sources", "list", "find"]
+MikuCommand = Literal["help", "sources", "list", "find", "repeat"]
 
 
 class MikuQuery(BaseModel):
@@ -91,6 +91,6 @@ class MikuDecision(BaseModel):
         self.argument = self.argument.strip()
         if self.command == "find" and not self.argument:
             raise ValueError("The find command requires search text")
-        if self.command in {"help", "sources"} and self.argument:
+        if self.command in {"help", "sources", "repeat"} and self.argument:
             raise ValueError(f"The {self.command} command does not accept arguments")
         return self

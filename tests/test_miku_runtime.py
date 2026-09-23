@@ -22,6 +22,7 @@ class MikuRuntimeTests(unittest.TestCase):
         self.assertEqual("synthwave", decision.argument)
         with self.assertRaises(MikuQueryError):
             plan_with_rules("delete everything")
+        self.assertEqual("repeat", plan_with_rules("повтори").command)
 
     def test_runtime_decision_rejects_semantically_invalid_arguments(self):
         with self.assertRaises(ValueError):

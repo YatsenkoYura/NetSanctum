@@ -23,7 +23,7 @@ from app.modules.miku.schemas import (
     MikuReply,
 )
 
-COMMANDS = ("help", "sources", "list [module]", "find <text>")
+COMMANDS = ("help", "sources", "list [module]", "find <text>", "repeat")
 FIND_SCAN_LIMIT = 50
 
 
@@ -31,6 +31,11 @@ FIND_SCAN_LIMIT = 50
 class _Provider:
     module_id: str
     integration_id: str
+
+
+@dataclass(slots=True)
+class MikuSessionContext:
+    references: list[MikuReference] | None = None
 
 
 class _Registry(Protocol):
@@ -114,6 +119,7 @@ async def query(
     user,
     registry: _Registry,
     runtime: _Planner = miku_runtime_client,
+    context: MikuSessionContext | None = None,
 ) -> MikuReply:
     decision = await runtime.decide(request.message)
     command, argument = decision.command, decision.argument
@@ -127,6 +133,14 @@ async def query(
     if command == "sources":
         names = ", ".join(provider.module_id for provider in providers) or "none"
         return MikuReply(command=command, text=f"Read-only sources: {names}.")
+    if command == "repeat":
+        if not context or not context.references:
+            raise MikuQueryError("There is no previous result to repeat.")
+        return MikuReply(
+            command=command,
+            text=f"Repeating {len(context.references)} previous item(s).",
+            references=context.references,
+        )
 
     selected = providers
     if command == "list" and argument:
@@ -169,9 +183,12 @@ async def query(
             break
 
     action = "Found" if command == "find" else "Listed"
-    return MikuReply(
+    reply = MikuReply(
         command=command,
         text=f"{action} {len(references)} item(s).",
         references=references,
         warnings=warnings,
     )
+    if context and references:
+        context.references = references
+    return reply

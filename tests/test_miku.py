@@ -18,7 +18,7 @@ from app.modules.miku.router import (
     websocket_owner_session,
 )
 from app.modules.miku.schemas import MikuDecision, MikuQuery, MikuSocketMessage
-from app.modules.miku.service import MikuQueryError, capabilities, query
+from app.modules.miku.service import MikuQueryError, MikuSessionContext, capabilities, query
 
 
 class StubRegistry:
@@ -167,6 +167,20 @@ class MikuTests(unittest.TestCase):
         )
         self.assertEqual("list", result.command)
         self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
+
+    def test_repeat_uses_only_bounded_socket_context(self):
+        registry = StubRegistry()
+        context = MikuSessionContext()
+        first = asyncio.run(query(MikuQuery(message="find neon"), None, None, registry, context=context))
+        reply = asyncio.run(query(MikuQuery(message="repeat"), None, None, registry, context=context))
+
+        self.assertEqual("repeat", reply.command)
+        self.assertEqual(first.references, reply.references)
+        self.assertEqual(1, len(registry.calls))
+
+    def test_repeat_without_socket_context_is_rejected(self):
+        with self.assertRaises(MikuQueryError):
+            asyncio.run(query(MikuQuery(message="repeat"), None, None, StubRegistry()))
 
     def test_provider_failure_is_sanitized(self):
         result = asyncio.run(query(MikuQuery(message="list"), None, None, StubRegistry(fail=True)))
