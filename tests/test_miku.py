@@ -8,6 +8,7 @@ from fastapi import WebSocketDisconnect
 from pydantic import ValidationError
 
 from app.core.security import get_current_user
+from app.modules.miku.models import MikuTurnAudit
 from app.modules.miku.module import MODULE
 from app.modules.miku.router import (
     SOCKET_MESSAGE_LIMIT,
@@ -17,8 +18,8 @@ from app.modules.miku.router import (
     websocket_origin_allowed,
     websocket_owner_session,
 )
-from app.modules.miku.schemas import MikuDecision, MikuQuery, MikuSocketMessage
-from app.modules.miku.service import MikuQueryError, MikuSessionContext, capabilities, query
+from app.modules.miku.schemas import MikuDecision, MikuQuery, MikuReference, MikuReply, MikuSocketMessage
+from app.modules.miku.service import MikuQueryError, MikuSessionContext, audit_turn, capabilities, query
 
 
 class StubRegistry:
@@ -181,6 +182,43 @@ class MikuTests(unittest.TestCase):
     def test_repeat_without_socket_context_is_rejected(self):
         with self.assertRaises(MikuQueryError):
             asyncio.run(query(MikuQuery(message="repeat"), None, None, StubRegistry()))
+
+    def test_turn_audit_contains_only_bounded_metadata(self):
+        self.assertEqual(
+            {
+                "id",
+                "user_id",
+                "request_id",
+                "transport",
+                "command",
+                "result_count",
+                "warning_count",
+                "created_at",
+            },
+            set(MikuTurnAudit.__table__.columns.keys()),
+        )
+        events = []
+        db = SimpleNamespace(add=events.append)
+        reply = MikuReply(
+            command="find",
+            text="Found 1 item(s).",
+            references=[
+                MikuReference(
+                    ref="result:1",
+                    module_id="music",
+                    item_id="7",
+                    kind="audio",
+                    title="Neon Song",
+                )
+            ],
+        )
+
+        audit_turn(db, SimpleNamespace(id=1), "turn:1", "websocket", reply)
+
+        self.assertEqual(1, events[0].user_id)
+        self.assertEqual("turn:1", events[0].request_id)
+        self.assertEqual("find", events[0].command)
+        self.assertEqual(1, events[0].result_count)
 
     def test_provider_failure_is_sanitized(self):
         result = asyncio.run(query(MikuQuery(message="list"), None, None, StubRegistry(fail=True)))

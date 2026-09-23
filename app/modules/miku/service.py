@@ -12,6 +12,7 @@ from app.core.module_types import (
     IntegrationServiceError,
     IntegrationUnavailableError,
 )
+from app.modules.miku.models import MikuTurnAudit
 from app.modules.miku.planner import MikuQueryError
 from app.modules.miku.runtime_client import miku_runtime_client
 from app.modules.miku.schemas import (
@@ -36,6 +37,19 @@ class _Provider:
 @dataclass(slots=True)
 class MikuSessionContext:
     references: list[MikuReference] | None = None
+
+
+def audit_turn(db: AsyncSession, user, request_id: str, transport: str, reply: MikuReply) -> None:
+    db.add(
+        MikuTurnAudit(
+            user_id=user.id,
+            request_id=request_id,
+            transport=transport,
+            command=reply.command,
+            result_count=len(reply.references),
+            warning_count=len(reply.warnings),
+        )
+    )
 
 
 class _Registry(Protocol):

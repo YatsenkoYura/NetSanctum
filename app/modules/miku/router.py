@@ -14,7 +14,13 @@ from app.core.modules import module_registry
 from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
 from app.modules.miku.schemas import MikuCapabilities, MikuQuery, MikuReply, MikuSocketMessage
-from app.modules.miku.service import MikuQueryError, MikuSessionContext, capabilities, query
+from app.modules.miku.service import (
+    MikuQueryError,
+    MikuSessionContext,
+    audit_turn,
+    capabilities,
+    query,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -153,6 +159,12 @@ async def miku_socket(websocket: WebSocket):
                         registry=module_registry,
                         context=context,
                     )
+                    try:
+                        audit_turn(db, user, message.request_id, "websocket", reply)
+                        await db.commit()
+                    except Exception:
+                        await db.rollback()
+                        logger.exception("MIKU turn audit failed")
             except MikuQueryError as exc:
                 await _send_event(
                     websocket,
