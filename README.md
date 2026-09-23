@@ -141,6 +141,7 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
   `app/modules/tabletop_games/games/`.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
 - **ComputerCraft** runs the NetSanctumOS controller, monitor viewers, and speaker playback.
+- **MIKU** provides a read-only command surface for the future voice assistant runtime.
 - **Auth and Settings** provide internal platform services used by the other modules.
 - **Sharing** publishes an isolated, read-only module view with optional content selection, password, and expiry.
 

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}MIKU — NetSanctum{% endblock %}
+
+{% block content %}
+<main class="mx-auto max-w-5xl space-y-6">
+    <header class="border-b-2 border-teal-400 pb-5">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+            <div>
+                <p class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-teal-400">Read-only prototype</p>
+                <h1 class="mt-2 text-4xl font-black tracking-tight text-white sm:text-6xl">MIKU</h1>
+                <p class="mt-2 font-mono text-xs text-zinc-500">Miku Is Kernel Utility</p>
+            </div>
+            <div class="border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-[10px] uppercase text-zinc-500">
+                No writes · No browser control · No autonomous loop
+            </div>
+        </div>
+    </header>
+
+    <section class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div class="border-2 border-zinc-800 bg-black">
+            <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <span class="font-mono text-xs font-bold uppercase text-zinc-300">Command channel</span>
+                <span id="miku-status" class="font-mono text-[10px] uppercase text-zinc-600">Ready</span>
+            </div>
+            <div id="miku-output" class="min-h-72 space-y-3 p-4" aria-live="polite">
+                <p class="font-mono text-sm leading-relaxed text-zinc-500">Type <span class="text-teal-400">help</span> to inspect the current command surface.</p>
+            </div>
+            <form id="miku-form" class="flex border-t-2 border-zinc-800">
+                <label for="miku-input" class="sr-only">MIKU command</label>
+                <input id="miku-input" name="message" required maxlength="500" autocomplete="off"
+                       placeholder="find blade runner"
+                       class="min-h-14 min-w-0 flex-1 bg-zinc-950 px-4 font-mono text-sm text-white outline-none placeholder:text-zinc-700 focus:bg-zinc-900">
+                <button type="submit" class="min-h-14 border-l-2 border-teal-500 px-5 font-mono text-xs font-bold uppercase text-teal-400 transition hover:bg-teal-400 hover:text-black">
+                    Send
+                </button>
+            </form>
+        </div>
+
+        <aside class="border-2 border-zinc-800 bg-zinc-950 p-4">
+            <h2 class="font-mono text-xs font-bold uppercase text-white">Protocol 0.1</h2>
+            <div class="mt-4 space-y-2 font-mono text-xs text-zinc-500">
+                <p><span class="text-teal-400">help</span> — command list</p>
+                <p><span class="text-teal-400">sources</span> — active providers</p>
+                <p><span class="text-teal-400">list [module]</span> — recent items</p>
+                <p><span class="text-teal-400">find &lt;text&gt;</span> — bounded search</p>
+            </div>
+        </aside>
+    </section>
+</main>
+
+<script>
+(() => {
+    const form = document.getElementById('miku-form');
+    const input = document.getElementById('miku-input');
+    const output = document.getElementById('miku-output');
+    const status = document.getElementById('miku-status');
+
+    function line(text, tone = 'normal') {
+        const row = document.createElement('p');
+        row.className = `font-mono text-sm leading-relaxed ${tone === 'error' ? 'text-red-400' : 'text-zinc-300'}`;
+        row.textContent = text;
+        output.appendChild(row);
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+        line(`> ${message}`);
+        input.value = '';
+        status.textContent = 'Working';
+        try {
+            const response = await fetch('/api/miku/query', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message}),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Request failed');
+            line(payload.text);
+            for (const item of payload.references) {
+                line(`${item.ref} · ${item.module_id} · ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ''}`);
+            }
+            for (const warning of payload.warnings) line(`Warning: ${warning}`, 'error');
+        } catch (error) {
+            line(error.message || 'Request failed', 'error');
+        } finally {
+            status.textContent = 'Ready';
+            input.focus();
+        }
+    });
+})();
+</script>
+{% endblock %}

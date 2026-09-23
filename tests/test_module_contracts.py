@@ -24,6 +24,7 @@ PUBLIC_MODULES = {
     "alllib",
     "auth",
     "computercraft",
+    "miku",
     "music",
     "settings",
     "sharing",
