@@ -41,7 +41,7 @@ class BrowserRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("volumes", proxy)
         self.assertEqual({"browser-proxy", "browser-egress"}, set(proxy["networks"]))
         self.assertEqual(
-            {"default", "backend", "media-control", "browser-control"},
+            {"default", "backend", "media-control", "browser-control", "miku-control"},
             set(compose["services"]["web"]["networks"]),
         )
         self.assertTrue(compose["networks"]["browser-control"]["internal"])
@@ -63,7 +63,7 @@ class BrowserRuntimeContractTests(unittest.TestCase):
         )
         start_script = Path("start.sh").read_text()
         self.assertIn("--no-browser-runtime", start_script)
-        self.assertIn("docker compose --profile browser up", start_script)
+        self.assertIn("PROFILE_ARGS+=(--profile browser)", start_script)
 
     def test_compose_isolates_and_persists_core_services(self):
         compose = yaml.safe_load(Path("docker-compose.yml").read_text())

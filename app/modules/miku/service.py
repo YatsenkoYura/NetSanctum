@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,27 +12,19 @@ from app.core.module_types import (
     IntegrationServiceError,
     IntegrationUnavailableError,
 )
-from app.modules.miku.schemas import MikuCapabilities, MikuProvider, MikuQuery, MikuReference, MikuReply
+from app.modules.miku.planner import MikuQueryError
+from app.modules.miku.runtime_client import miku_runtime_client
+from app.modules.miku.schemas import (
+    MikuCapabilities,
+    MikuDecision,
+    MikuProvider,
+    MikuQuery,
+    MikuReference,
+    MikuReply,
+)
 
-MikuCommand = Literal["help", "sources", "list", "find"]
 COMMANDS = ("help", "sources", "list [module]", "find <text>")
-COMMAND_ALIASES: dict[str, MikuCommand] = {
-    "help": "help",
-    "помощь": "help",
-    "sources": "sources",
-    "источники": "sources",
-    "list": "list",
-    "список": "list",
-    "find": "find",
-    "search": "find",
-    "найди": "find",
-    "поиск": "find",
-}
 FIND_SCAN_LIMIT = 50
-
-
-class MikuQueryError(ValueError):
-    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +44,10 @@ class _Registry(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class _Planner(Protocol):
+    async def decide(self, message: str) -> MikuDecision: ...
+
+
 def _providers(registry: _Registry) -> list[_Provider]:
     catalog = registry.integration_catalog(consumer_id="miku")
     return [
@@ -69,21 +65,6 @@ def capabilities(registry: _Registry) -> MikuCapabilities:
             for provider in _providers(registry)
         ],
     )
-
-
-def _parse(message: str) -> tuple[MikuCommand, str]:
-    parts = message.split(maxsplit=1)
-    command_text = parts[0]
-    argument = parts[1] if len(parts) == 2 else ""
-    command = COMMAND_ALIASES.get(command_text.casefold())
-    if command is None:
-        raise MikuQueryError("Unknown command. Use help to list available commands.")
-    argument = argument.strip()
-    if command == "find" and not argument:
-        raise MikuQueryError("The find command requires search text.")
-    if command in {"help", "sources"} and argument:
-        raise MikuQueryError(f"The {command} command does not accept arguments.")
-    return command, argument
 
 
 def _trim(value: Any, limit: int) -> str | None:
@@ -132,8 +113,10 @@ async def query(
     db: AsyncSession,
     user,
     registry: _Registry,
+    runtime: _Planner = miku_runtime_client,
 ) -> MikuReply:
-    command, argument = _parse(request.message)
+    decision = await runtime.decide(request.message)
+    command, argument = decision.command, decision.argument
     providers = _providers(registry)
 
     if command == "help":

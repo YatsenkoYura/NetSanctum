@@ -145,6 +145,12 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 - **Auth and Settings** provide internal platform services used by the other modules.
 - **Sharing** publishes an isolated, read-only module view with optional content selection, password, and expiry.
 
+MIKU uses an optional isolated `miku-runtime` sidecar for intent planning. The sidecar receives no
+database, Redis, storage, encryption, or owner credentials and cannot invoke module APIs. It returns
+one validated read-only decision to the MIKU module, which remains responsible for authorization,
+policy, integration invocation, and response filtering. The built-in rule planner remains available
+when the sidecar is disabled or unavailable. Use `./start.sh --no-miku-runtime` to omit it.
+
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
 ### Core browser runtime

@@ -10,6 +10,7 @@
 #   ./start.sh --down           # Stop all containers cleanly
 #   ./start.sh --logs           # Tail container logs
 #   ./start.sh --no-browser-runtime # Start without Chromium runtime/proxy
+#   ./start.sh --no-miku-runtime # Start without the MIKU sidecar
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -51,6 +52,15 @@ if grep -q '^MASTER_API_KEY=dev-api-key-change-me$' "$ENV_FILE"; then
     sed -i "s/^MASTER_API_KEY=.*/MASTER_API_KEY=$API_SECRET/" "$ENV_FILE"
 fi
 
+if ! grep -q '^MIKU_RUNTIME_TOKEN=' "$ENV_FILE" || grep -q '^MIKU_RUNTIME_TOKEN=dev-miku-runtime-token-change-me$' "$ENV_FILE"; then
+    MIKU_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    if grep -q '^MIKU_RUNTIME_TOKEN=' "$ENV_FILE"; then
+        sed -i "s/^MIKU_RUNTIME_TOKEN=.*/MIKU_RUNTIME_TOKEN=$MIKU_SECRET/" "$ENV_FILE"
+    else
+        printf '\nMIKU_RUNTIME_TOKEN=%s\n' "$MIKU_SECRET" >> "$ENV_FILE"
+    fi
+fi
+
 if ! grep -q '^REDIS_PASSWORD=' "$ENV_FILE" || grep -q '^REDIS_PASSWORD=change_me_redis_password$' "$ENV_FILE"; then
     REDIS_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
     if grep -q '^REDIS_PASSWORD=' "$ENV_FILE"; then
@@ -73,6 +83,7 @@ fi
 PORT_ARG=""
 ACTION="up"
 BROWSER_RUNTIME=1
+MIKU_RUNTIME=1
 RECREATE_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -101,13 +112,21 @@ while [[ $# -gt 0 ]]; do
             BROWSER_RUNTIME=1
             shift
             ;;
+        --no-miku-runtime)
+            MIKU_RUNTIME=0
+            shift
+            ;;
+        --miku-runtime)
+            MIKU_RUNTIME=1
+            shift
+            ;;
         *)
             if [[ "$1" =~ ^[0-9]+$ ]]; then
                 PORT_ARG="$1"
                 shift
             else
                 echo "Unknown argument: $1"
-                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime]"
+                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--no-miku-runtime]"
                 exit 1
             fi
             ;;
@@ -116,13 +135,13 @@ done
 
 if [ "$ACTION" = "down" ]; then
     echo "Stopping NetSanctum containers..."
-    docker compose --profile browser down --remove-orphans
+    docker compose --profile browser --profile miku down --remove-orphans
     echo "NetSanctum stopped."
     exit 0
 fi
 
 if [ "$ACTION" = "logs" ]; then
-    docker compose --profile browser logs -f --tail=100
+    docker compose --profile browser --profile miku logs -f --tail=100
     exit 0
 fi
 
@@ -151,6 +170,11 @@ if [ "$BROWSER_RUNTIME" = "1" ]; then
 else
     echo " Browser runtime: disabled"
 fi
+if [ "$MIKU_RUNTIME" = "1" ]; then
+    echo " MIKU runtime: enabled (rule planner)"
+else
+    echo " MIKU runtime: disabled"
+fi
 echo "========================================================"
 
 if [ "$ACTION" = "restart" ]; then
@@ -168,15 +192,21 @@ fi
 
 # Launch containers
 echo "Building and launching Docker services..."
+PROFILE_ARGS=()
 if [ "$BROWSER_RUNTIME" = "1" ]; then
-    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser build
-    BROWSER_RUNTIME_ENABLED=1 docker compose --profile browser up -d --remove-orphans "${RECREATE_ARGS[@]}"
+    PROFILE_ARGS+=(--profile browser)
 else
     docker compose --profile browser stop browser-runtime browser-proxy >/dev/null 2>&1 || true
     docker compose --profile browser rm -f browser-runtime browser-proxy >/dev/null 2>&1 || true
-    BROWSER_RUNTIME_ENABLED=0 docker compose build
-    BROWSER_RUNTIME_ENABLED=0 docker compose up -d --remove-orphans "${RECREATE_ARGS[@]}"
 fi
+if [ "$MIKU_RUNTIME" = "1" ]; then
+    PROFILE_ARGS+=(--profile miku)
+else
+    docker compose --profile miku stop miku-runtime >/dev/null 2>&1 || true
+    docker compose --profile miku rm -f miku-runtime >/dev/null 2>&1 || true
+fi
+BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" MIKU_RUNTIME_ENABLED="$MIKU_RUNTIME" docker compose "${PROFILE_ARGS[@]}" build
+BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" MIKU_RUNTIME_ENABLED="$MIKU_RUNTIME" docker compose "${PROFILE_ARGS[@]}" up -d --remove-orphans "${RECREATE_ARGS[@]}"
 
 echo ""
 echo "========================================================"

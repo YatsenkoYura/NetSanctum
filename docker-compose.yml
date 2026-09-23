@@ -150,6 +150,47 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Isolated MIKU cognition and voice runtime ──────────
+  miku-runtime:
+    profiles: ["miku"]
+    image: netsanctum-miku-runtime
+    build:
+      context: .
+      args:
+        NETSANCTUM_MODULES: miku
+        NETSANCTUM_EXTERNAL_MODULES: ""
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
+    restart: unless-stopped
+    init: true
+    environment:
+      NETSANCTUM_LOAD_DOTENV: "0"
+      MIKU_RUNTIME_TOKEN: ${MIKU_RUNTIME_TOKEN:-}
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 64
+    networks:
+      - miku-control
+    command:
+      - uvicorn
+      - app.modules.miku.runtime_worker:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8770"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8770/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── One-time storage ownership migration ───────────────
   storage-init:
     image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
@@ -265,6 +306,9 @@ services:
       YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
       BROWSER_RUNTIME_URL: http://browser-runtime:8765
       BROWSER_RUNTIME_ENABLED: ${BROWSER_RUNTIME_ENABLED:-1}
+      MIKU_RUNTIME_URL: http://miku-runtime:8770
+      MIKU_RUNTIME_ENABLED: ${MIKU_RUNTIME_ENABLED:-0}
+      MIKU_RUNTIME_TOKEN: ${MIKU_RUNTIME_TOKEN:-}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
@@ -280,6 +324,7 @@ services:
       - backend
       - media-control
       - browser-control
+      - miku-control
     read_only: true
     tmpfs:
       - /tmp:size=512m
@@ -297,6 +342,9 @@ services:
       youtube-pot:
         condition: service_healthy
       browser-runtime:
+        condition: service_healthy
+        required: false
+      miku-runtime:
         condition: service_healthy
         required: false
     command:
@@ -363,5 +411,7 @@ networks:
   browser-control:
     internal: true
   browser-proxy:
+    internal: true
+  miku-control:
     internal: true
   browser-egress:

@@ -17,7 +17,7 @@ from app.modules.miku.router import (
     websocket_origin_allowed,
     websocket_owner_session,
 )
-from app.modules.miku.schemas import MikuQuery, MikuSocketMessage
+from app.modules.miku.schemas import MikuDecision, MikuQuery, MikuSocketMessage
 from app.modules.miku.service import MikuQueryError, capabilities, query
 
 
@@ -99,6 +99,11 @@ class StubWebSocket:
             raise WebSocketDisconnect() from exc
 
 
+class StubPlanner:
+    async def decide(self, message):
+        return MikuDecision(command="list", argument="music")
+
+
 class MikuTests(unittest.TestCase):
     def test_manifest_is_read_only_integration_consumer(self):
         self.assertEqual(("library.viewer.v1",), MODULE.uses_integration_contracts)
@@ -148,6 +153,20 @@ class MikuTests(unittest.TestCase):
     def test_result_limit_is_enforced(self):
         result = asyncio.run(query(MikuQuery(message="list music", limit=1), None, None, StubRegistry()))
         self.assertEqual(1, len(result.references))
+
+    def test_query_executes_only_the_runtime_structured_decision(self):
+        registry = StubRegistry()
+        result = asyncio.run(
+            query(
+                MikuQuery(message="show something useful"),
+                None,
+                None,
+                registry,
+                runtime=StubPlanner(),
+            )
+        )
+        self.assertEqual("list", result.command)
+        self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
 
     def test_provider_failure_is_sanitized(self):
         result = asyncio.run(query(MikuQuery(message="list"), None, None, StubRegistry(fail=True)))

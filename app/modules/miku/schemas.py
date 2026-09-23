@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+MikuCommand = Literal["help", "sources", "list", "find"]
+
 
 class MikuQuery(BaseModel):
     message: str = Field(min_length=1, max_length=500)
@@ -34,7 +36,7 @@ class MikuReference(BaseModel):
 
 
 class MikuReply(BaseModel):
-    command: Literal["help", "sources", "list", "find"]
+    command: MikuCommand
     text: str
     references: list[MikuReference] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -65,4 +67,30 @@ class MikuSocketMessage(BaseModel):
                 raise ValueError("Query message must not be blank")
         elif self.message is not None:
             raise ValueError("Ping does not accept a message")
+        return self
+
+
+class MikuDecisionRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+
+    @field_validator("message")
+    @classmethod
+    def normalize_message(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message must not be blank")
+        return value
+
+
+class MikuDecision(BaseModel):
+    command: MikuCommand
+    argument: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def validate_command(self):
+        self.argument = self.argument.strip()
+        if self.command == "find" and not self.argument:
+            raise ValueError("The find command requires search text")
+        if self.command in {"help", "sources"} and self.argument:
+            raise ValueError(f"The {self.command} command does not accept arguments")
         return self
