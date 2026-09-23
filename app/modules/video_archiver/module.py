@@ -92,7 +92,11 @@ MODULE = ModuleSpec(
             handler="app.modules.video_archiver.integrations:library_viewer",
             request_model="app.contracts.library_viewer_v1:LibraryRequest",
             result_model="app.contracts.library_viewer_v1:LibraryResult",
-            description="Browse or inspect videos already downloaded into the local Video Archive.",
+            description=(
+                "Browse, show, or play videos already downloaded into the local Video Archive. "
+                "Search by video title or channel when the user provides text. Prefer this as the "
+                "default for an unspecified or random video."
+            ),
             resource_handler="app.modules.video_archiver.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),

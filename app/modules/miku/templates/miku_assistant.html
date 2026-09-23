@@ -1,0 +1,38 @@
+<button id="miku-launcher" type="button" aria-controls="miku-drawer" aria-expanded="false"
+        class="fixed bottom-5 right-5 border-2 border-teal-400 bg-black px-4 py-3 font-mono text-xs font-black uppercase tracking-widest text-teal-400 shadow-2xl hover:bg-teal-400 hover:text-black"
+        style="z-index: 70;">
+    MIKU
+</button>
+
+<aside id="miku-drawer" aria-label="MIKU assistant" aria-hidden="true"
+       class="fixed right-0 top-0 hidden h-dvh w-full border-l-2 border-teal-400 bg-black shadow-2xl sm:w-96"
+       style="z-index: 80;">
+    <div class="flex h-full flex-col">
+        <header class="flex items-center justify-between border-b-2 border-zinc-800 px-4 py-3">
+            <div>
+                <p class="font-mono text-[9px] font-bold uppercase tracking-[0.25em] text-teal-400">Live module navigator</p>
+                <h2 class="font-mono text-xl font-black text-white">MIKU</h2>
+            </div>
+            <div class="flex items-center gap-3">
+                <span id="miku-status" class="font-mono text-[9px] uppercase text-zinc-500">Ready</span>
+                <button id="miku-close" type="button" class="h-8 w-8 border border-zinc-700 text-zinc-400 hover:border-white hover:text-white" aria-label="Close MIKU">&times;</button>
+            </div>
+        </header>
+
+        <div id="miku-output" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite">
+            <p class="font-mono text-xs leading-relaxed text-zinc-500">Ask MIKU to find or open something. The target module will open here while this chat stays available.</p>
+        </div>
+
+        <div class="grid grid-cols-3 gap-px border-t border-zinc-800 bg-zinc-800">
+            <button id="miku-mic" type="button" class="min-h-10 bg-zinc-950 px-2 font-mono text-[9px] font-bold uppercase text-zinc-400 hover:text-teal-400">Push to talk</button>
+            <button id="miku-wake" type="button" class="min-h-10 bg-zinc-950 px-2 font-mono text-[9px] font-bold uppercase text-zinc-400 hover:text-teal-400">Wake: off</button>
+            <button id="miku-voice" type="button" class="min-h-10 bg-zinc-950 px-2 font-mono text-[9px] font-bold uppercase text-zinc-400 hover:text-teal-400">Voice: off</button>
+        </div>
+        <form id="miku-form" class="flex border-t-2 border-zinc-800">
+            <label for="miku-input" class="sr-only">MIKU command</label>
+            <input id="miku-input" name="message" required maxlength="500" autocomplete="off" placeholder="open a local video"
+                   class="min-h-14 min-w-0 flex-1 bg-zinc-950 px-4 font-mono text-sm text-white outline-none placeholder:text-zinc-700 focus:bg-zinc-900">
+            <button type="submit" class="min-h-14 border-l-2 border-teal-500 px-4 font-mono text-[10px] font-bold uppercase text-teal-400 hover:bg-teal-400 hover:text-black">Send</button>
+        </form>
+    </div>
+</aside>

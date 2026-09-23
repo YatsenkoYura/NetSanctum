@@ -7,12 +7,15 @@ from unittest.mock import AsyncMock, patch
 from fastapi import WebSocketDisconnect
 from pydantic import ValidationError
 
+from app.contracts.library_viewer_v1 import LibraryRequest
 from app.contracts.vault_capture_v1 import VaultCaptureRequest
+from app.contracts.video_source_catalog_v1 import VideoSourceRequest
 from app.core.module_types import IntegrationContext, IntegrationRejectedError
 from app.core.security import get_current_user
 from app.modules.miku.models import MikuTurnAudit
 from app.modules.miku.module import MODULE
 from app.modules.miku.router import (
+    REST_CONTEXT_LOCK_SECONDS,
     SOCKET_MESSAGE_LIMIT,
     _rest_context,
     _save_rest_context,
@@ -22,7 +25,13 @@ from app.modules.miku.router import (
     websocket_origin_allowed,
     websocket_owner_session,
 )
-from app.modules.miku.schemas import MikuDecision, MikuQuery, MikuReference, MikuReply, MikuSocketMessage
+from app.modules.miku.schemas import (
+    MikuDecision,
+    MikuQuery,
+    MikuReference,
+    MikuReply,
+    MikuSocketMessage,
+)
 from app.modules.miku.service import (
     MikuActionSigner,
     MikuQueryError,
@@ -33,8 +42,10 @@ from app.modules.miku.service import (
     job_status,
     query,
     resolve_resource,
+    runtime_tools,
 )
 from app.modules.vault.integrations import capture_item
+from app.modules.video_archiver.integrations import library_viewer as video_library_viewer
 
 
 class StubRegistry:
@@ -190,15 +201,21 @@ class StubWebSocket:
 
 
 class StubPlanner:
-    def __init__(self, decision=None):
+    def __init__(self, decision=None, response=None):
         self.decision = decision or MikuDecision(command="list", argument="music")
+        self.response = response
         self.tools = None
         self.context = None
+        self.response_requests = []
 
     async def decide(self, message, tools=None, context=None):
         self.tools = tools
         self.context = context
         return self.decision
+
+    async def respond(self, request):
+        self.response_requests.append(request)
+        return self.response or request.fallback
 
 
 class StubTokenStore:
@@ -239,6 +256,7 @@ class MikuTests(unittest.TestCase):
         result = capabilities(StubRegistry())
 
         self.assertEqual("guarded", result.mode)
+        self.assertEqual(3, result.protocol_version)
         self.assertEqual(
             ["music.library.viewer.v1", "youtube.video_source.v1"],
             [provider.integration_id for provider in result.providers],
@@ -279,15 +297,36 @@ class MikuTests(unittest.TestCase):
         self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
         assert planner.tools is not None
         self.assertIn("music.library.viewer.v1", [tool.integration_id for tool in planner.tools])
+        self.assertFalse(
+            next(
+                tool for tool in planner.tools if tool.integration_id == "music.library.viewer.v1"
+            ).external_io
+        )
+        self.assertNotIn("youtube.video_source.v1", [tool.integration_id for tool in planner.tools])
+        explicit_external_tools = runtime_tools(registry, "show this on youtube")
+        self.assertTrue(
+            next(
+                tool for tool in explicit_external_tools if tool.integration_id == "youtube.video_source.v1"
+            ).external_io
+        )
 
     def test_model_can_select_api_and_presentation_without_phrase_rules(self):
         registry = StubRegistry()
         planner = StubPlanner(
             MikuDecision(
                 command="invoke",
+                acknowledgement="Да, конечно. Сейчас покажу.",
+                result_action="play",
                 integration_id="music.library.viewer.v1",
-                parameters={"operation": "catalog", "limit": 1, "offset": 0},
-            )
+                parameters={
+                    "operation": "search",
+                    "item_id": None,
+                    "query": "neon",
+                    "limit": 1,
+                    "offset": 0,
+                },
+            ),
+            response="Вот один вариант: Neon Song.",
         )
         result = asyncio.run(
             query(
@@ -300,9 +339,124 @@ class MikuTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual("list", result.command)
+        self.assertEqual("play", result.command)
+        self.assertEqual("play", result.client_action)
         self.assertEqual(1, len(result.references))
         self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
+        self.assertEqual(
+            ["Да, конечно. Сейчас покажу.", "Вот один вариант: Neon Song."],
+            [segment.text for segment in result.segments],
+        )
+        self.assertFalse(result.segments[0].speak)
+        self.assertTrue(result.segments[1].speak)
+        companion_reference = planner.response_requests[0].references[0]
+        self.assertEqual("music", companion_reference.module_id)
+        self.assertNotIn("title", companion_reference.model_dump())
+
+    def test_tool_contracts_expose_conditional_requirements(self):
+        self.assertIn("allOf", LibraryRequest.model_json_schema())
+        self.assertIn("allOf", VaultCaptureRequest.model_json_schema())
+        self.assertIn("allOf", VideoSourceRequest.model_json_schema())
+        with self.assertRaises(ValidationError):
+            VideoSourceRequest(operation="search")
+        with self.assertRaises(ValidationError):
+            VideoSourceRequest(operation="channel")
+        with self.assertRaises(ValidationError):
+            LibraryRequest(operation="search")
+        search = LibraryRequest(operation="search", query="Zero Escape", limit=1)
+        self.assertEqual("Zero Escape", search.query)
+
+    def test_assistant_output_strips_emoji(self):
+        reply = MikuReply(command="respond", text="Привет \U0001f44b \u2728")
+        reference = MikuReference(
+            ref="result:1",
+            module_id="music",
+            item_id="1",
+            kind="audio",
+            title="Track \U0001f3b5",
+        )
+
+        self.assertEqual("Привет", reply.text)
+        self.assertEqual("Привет", reply.segments[0].text)
+        self.assertEqual("Track", reference.title)
+
+    def test_video_archive_library_searches_before_limiting(self):
+        video = SimpleNamespace(
+            id="video-1",
+            title="Zero Escape finale",
+            channel_name="Archive Channel",
+            description="Final episode",
+            duration=120,
+            file_path="video/file.mp4",
+        )
+        session = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: iter([video])))
+        )
+        request = LibraryRequest(
+            operation="search",
+            item_id=None,
+            query="Zero Escape",
+            limit=1,
+            offset=0,
+        )
+
+        result = asyncio.run(
+            video_library_viewer(
+                request,
+                IntegrationContext(session=session, user=None, registry=None, consumer_id="miku"),
+            )
+        )
+
+        statement = session.execute.await_args_list[0].args[0]
+        self.assertIn("%Zero Escape%", statement.compile().params.values())
+        self.assertEqual(["Zero Escape finale"], [item.title for item in result.items])
+
+    def test_direct_companion_response_does_not_invoke_module_api(self):
+        registry = StubRegistry()
+        planner = StubPlanner(MikuDecision(command="respond", argument="Я рядом. Чем займёмся?"))
+
+        result = asyncio.run(
+            query(MikuQuery(message="Привет, как ты?"), None, None, registry, runtime=planner)
+        )
+
+        self.assertEqual("respond", result.command)
+        self.assertEqual("Я рядом. Чем займёмся?", result.text)
+        self.assertEqual([], registry.calls)
+        self.assertTrue(result.segments[0].speak)
+
+    def test_external_read_requires_explicit_provider_at_server_boundary(self):
+        registry = StubRegistry()
+        planner = StubPlanner(
+            MikuDecision(
+                command="invoke",
+                integration_id="youtube.video_source.v1",
+                parameters={"operation": "recommendations"},
+            )
+        )
+
+        with self.assertRaisesRegex(MikuQueryError, "not allowed"):
+            asyncio.run(
+                query(
+                    MikuQuery(message="show me a local video"),
+                    None,
+                    None,
+                    registry,
+                    runtime=planner,
+                )
+            )
+        self.assertEqual([], registry.calls)
+
+        allowed = asyncio.run(
+            query(
+                MikuQuery(message="show me a youtube video"),
+                None,
+                None,
+                registry,
+                runtime=planner,
+            )
+        )
+        self.assertEqual("discover", allowed.command)
+        self.assertEqual("youtube.video_source.v1", registry.calls[0][0])
 
     def test_repeat_uses_only_bounded_socket_context(self):
         registry = StubRegistry()
@@ -319,6 +473,7 @@ class MikuTests(unittest.TestCase):
             asyncio.run(query(MikuQuery(message="repeat"), None, None, StubRegistry()))
 
     def test_rest_context_is_owner_scoped_bounded_and_ephemeral(self):
+        self.assertGreaterEqual(REST_CONTEXT_LOCK_SECONDS, 120)
         context = MikuSessionContext(
             references=[
                 MikuReference(
@@ -438,6 +593,7 @@ class MikuTests(unittest.TestCase):
         planner = StubPlanner(
             MikuDecision(
                 command="invoke",
+                acknowledgement="Saved it.",
                 integration_id="vault.capture.v1",
                 parameters={
                     "kind": "note",
@@ -455,6 +611,8 @@ class MikuTests(unittest.TestCase):
         assert preview.pending_action is not None
         self.assertEqual("invoke", preview.pending_action.action)
         self.assertNotIn("buy tea", preview.text.casefold())
+        self.assertEqual(["Confirm the action before I run it."], [item.text for item in preview.segments])
+        self.assertFalse(preview.segments[-1].speak)
         self.assertEqual(0, len(registry.calls))
 
     def test_vault_bookmark_rejects_non_http_urls(self):
@@ -598,9 +756,13 @@ class MikuTests(unittest.TestCase):
             asyncio.run(query(MikuQuery(message="list vault"), None, None, StubRegistry()))
 
     def test_dashboard_renders_remote_values_with_text_content(self):
-        template = Path("app/modules/miku/templates/miku_dashboard.html").read_text()
-        self.assertIn("textContent", template)
-        self.assertNotIn("innerHTML", template)
+        dashboard = Path("app/modules/miku/templates/miku_dashboard.html").read_text()
+        assistant = Path("static/miku-assistant.js").read_text()
+        self.assertIn("textContent", dashboard)
+        self.assertIn("textContent", assistant)
+        self.assertNotIn("innerHTML", assistant)
+        self.assertIn("segment.speak", assistant)
+        self.assertNotIn("miku-video", dashboard)
 
     def test_router_exposes_only_authenticated_assistant_routes(self):
         routes = {
@@ -613,6 +775,7 @@ class MikuTests(unittest.TestCase):
                 ("GET", "/miku/dashboard"),
                 ("GET", "/api/miku/capabilities"),
                 ("GET", "/api/miku/runtime"),
+                ("PUT", "/api/miku/providers"),
                 ("POST", "/api/miku/query"),
                 ("POST", "/api/miku/transcribe"),
                 ("POST", "/api/miku/speech"),

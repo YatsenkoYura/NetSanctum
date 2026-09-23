@@ -200,4 +200,29 @@
 </div>
 {% endif %}
 
+<script>
+(() => {
+    const params = new URLSearchParams(window.location.search);
+    const itemId = params.get('miku_item');
+    if (!itemId) return;
+
+    function revealRequestedSong() {
+        const song = [...document.querySelectorAll('[data-song-id]')]
+            .find(element => element.dataset.songId === itemId);
+        if (!song) return false;
+        song.scrollIntoView({behavior: 'smooth', block: 'center'});
+        song.classList.add('ring-2', 'ring-teal-400');
+        if (params.get('miku_play') === '1') song.click();
+        return true;
+    }
+
+    if (!revealRequestedSong()) {
+        const onSwap = () => {
+            if (revealRequestedSong()) document.removeEventListener('htmx:afterSwap', onSwap);
+        };
+        document.addEventListener('htmx:afterSwap', onSwap);
+    }
+})();
+</script>
+
 {% endblock %}

@@ -3,469 +3,106 @@
 {% block title %}MIKU — NetSanctum{% endblock %}
 
 {% block content %}
-<main class="mx-auto max-w-5xl space-y-6">
-    <header class="border-b-2 border-teal-400 pb-5">
-        <div class="flex flex-wrap items-end justify-between gap-4">
-            <div>
-                <p class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-teal-400">Guarded live assistant</p>
-                <h1 class="mt-2 text-4xl font-black tracking-tight text-white sm:text-6xl">MIKU</h1>
-                <p class="mt-2 font-mono text-xs text-zinc-500">Miku Is Kernel Utility</p>
-            </div>
-            <div class="border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-[10px] uppercase text-zinc-500">
-                No external writes · No browser control · No autonomous loop
-            </div>
+<main class="mx-auto max-w-6xl space-y-6">
+    <header class="flex flex-col gap-4 border-b-2 border-teal-400 pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <p class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-teal-400">Assistant control surface</p>
+            <h1 class="mt-2 text-4xl font-black tracking-tight text-white sm:text-6xl">MIKU</h1>
+            <p class="mt-2 font-mono text-xs text-zinc-500">OpenAI-compatible test providers. Keys stay encrypted in Settings.</p>
         </div>
+        <button type="button" onclick="window.mikuAssistant?.open()"
+                class="border-2 border-teal-400 px-5 py-3 font-mono text-xs font-black uppercase text-teal-400 hover:bg-teal-400 hover:text-black">
+            Open side chat
+        </button>
     </header>
 
-    <section class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div class="border-2 border-zinc-800 bg-black">
-            <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-                <span class="font-mono text-xs font-bold uppercase text-zinc-300">Command channel</span>
-                <span id="miku-status" class="font-mono text-[10px] uppercase text-zinc-600">Ready</span>
-            </div>
-            <div id="miku-output" class="min-h-72 space-y-3 p-4" aria-live="polite">
-                <p class="font-mono text-sm leading-relaxed text-zinc-500">Type <span class="text-teal-400">help</span> to inspect the current command surface.</p>
-            </div>
-            <form id="miku-form" class="flex border-t-2 border-zinc-800">
-                <label for="miku-input" class="sr-only">MIKU command</label>
-                <input id="miku-input" name="message" required maxlength="500" autocomplete="off"
-                       placeholder="find blade runner"
-                       class="min-h-14 min-w-0 flex-1 bg-zinc-950 px-4 font-mono text-sm text-white outline-none placeholder:text-zinc-700 focus:bg-zinc-900">
-                <button type="submit" class="min-h-14 border-l-2 border-teal-500 px-5 font-mono text-xs font-bold uppercase text-teal-400 transition hover:bg-teal-400 hover:text-black">
-                    Send
-                </button>
-            </form>
-            <div class="flex flex-wrap gap-px border-t border-zinc-800 bg-zinc-800">
-                <button id="miku-mic" type="button" class="min-h-10 flex-1 bg-zinc-950 px-4 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-teal-400">Push to talk</button>
-                <button id="miku-wake" type="button" class="min-h-10 flex-1 bg-zinc-950 px-4 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-teal-400">Wake: off</button>
-                <button id="miku-voice" type="button" class="min-h-10 flex-1 bg-zinc-950 px-4 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-teal-400">Voice: off</button>
-            </div>
+    <form id="miku-provider-form" class="space-y-4">
+        <div class="grid gap-4 lg:grid-cols-3">
+            {% for kind, title, hint in [
+                ('llm', 'Chat / tools', '/chat/completions'),
+                ('stt', 'Speech to text', '/audio/transcriptions'),
+                ('tts', 'Text to speech', '/audio/speech')
+            ] %}
+            {% set provider = providers | attr(kind) %}
+            <section class="border-2 border-zinc-800 bg-zinc-950 p-4">
+                <div class="flex items-start justify-between gap-3 border-b border-zinc-800 pb-3">
+                    <div>
+                        <p class="font-mono text-[9px] font-bold uppercase tracking-widest text-teal-400">{{ kind }}</p>
+                        <h2 class="mt-1 text-lg font-black text-white">{{ title }}</h2>
+                    </div>
+                    <span class="border border-zinc-700 px-2 py-1 font-mono text-[8px] uppercase text-zinc-500">{{ hint }}</span>
+                </div>
+                <div class="mt-4 space-y-3">
+                    <label class="block">
+                        <span class="font-mono text-[9px] font-bold uppercase text-zinc-500">Base URL or endpoint</span>
+                        <input name="{{ kind }}.url" type="url" value="{{ provider.url }}" placeholder="https://api.openai.com/v1"
+                               class="mt-1 w-full border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-white outline-none focus:border-teal-400">
+                    </label>
+                    <label class="block">
+                        <span class="font-mono text-[9px] font-bold uppercase text-zinc-500">Model</span>
+                        <input name="{{ kind }}.model" value="{{ provider.model }}" required
+                               class="mt-1 w-full border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-white outline-none focus:border-teal-400">
+                    </label>
+                    <label class="block">
+                        <span class="flex justify-between font-mono text-[9px] font-bold uppercase text-zinc-500">
+                            <span>API key</span>
+                            <span data-key-state="{{ kind }}" class="{{ 'text-teal-500' if provider.api_key_set else 'text-zinc-700' }}">{{ 'saved' if provider.api_key_set else 'not set' }}</span>
+                        </span>
+                        <input name="{{ kind }}.api_key" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved key"
+                               class="mt-1 w-full border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-white outline-none focus:border-teal-400">
+                    </label>
+                </div>
+            </section>
+            {% endfor %}
         </div>
 
-        <aside class="border-2 border-zinc-800 bg-zinc-950 p-4">
-            <h2 class="font-mono text-xs font-bold uppercase text-white">Protocol 0.2</h2>
-            <div class="mt-4 space-y-2 font-mono text-xs text-zinc-500">
-                <p><span class="text-teal-400">help</span> — command list</p>
-                <p><span class="text-teal-400">sources</span> — active providers</p>
-                <p><span class="text-teal-400">list [module]</span> — recent items</p>
-                <p><span class="text-teal-400">find &lt;text&gt;</span> — bounded search</p>
-                <p><span class="text-teal-400">discover &lt;text&gt;</span> — YouTube search</p>
-                <p><span class="text-teal-400">open/play result:N</span> — use result</p>
-                <p><span class="text-teal-400">archive result:N</span> — confirm job</p>
-                <p><span class="text-teal-400">note &lt;text&gt;</span> — confirm Vault note</p>
-                <p><span class="text-teal-400">bookmark &lt;url&gt;</span> — confirm Vault link</p>
-                <p><span class="text-teal-400">repeat</span> — repeat last result</p>
-            </div>
-        </aside>
-    </section>
-
-    <section id="miku-viewer" class="hidden border-2 border-zinc-800 bg-black p-4">
-        <div class="mb-3 flex items-center justify-between gap-4">
-            <h2 id="miku-viewer-title" class="font-mono text-xs font-bold uppercase text-white">Result</h2>
-            <button id="miku-viewer-close" type="button" class="font-mono text-[10px] uppercase text-zinc-500 hover:text-white">Close</button>
+        <div class="flex flex-col gap-3 border-2 border-zinc-800 bg-black p-4 sm:flex-row sm:items-center sm:justify-between">
+            <p id="miku-provider-status" class="font-mono text-[10px] text-zinc-500">Empty URL disables that provider. The MIKU runtime must be running.</p>
+            <button type="submit" class="border-2 border-teal-400 bg-teal-400 px-6 py-3 font-mono text-xs font-black uppercase text-black hover:bg-black hover:text-teal-400">Save providers</button>
         </div>
-        <audio id="miku-audio" class="hidden w-full" controls></audio>
-        <video id="miku-video" class="hidden max-h-[32rem] w-full bg-zinc-950" controls></video>
-        <pre id="miku-text" class="hidden max-h-[32rem] overflow-auto whitespace-pre-wrap font-mono text-sm text-zinc-300"></pre>
+    </form>
+
+    <section class="grid gap-px border border-zinc-800 bg-zinc-800 sm:grid-cols-3">
+        <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Navigation</p><p class="mt-2 text-sm text-zinc-300">Results open in their real module. MIKU remains in the floating side panel.</p></div>
+        <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Secrets</p><p class="mt-2 text-sm text-zinc-300">API keys are encrypted and never returned to the browser after saving.</p></div>
+        <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Fallback</p><p class="mt-2 text-sm text-zinc-300">Browser speech APIs and the guarded rule planner remain available when providers fail.</p></div>
     </section>
 </main>
 
 <script>
 (() => {
-    const form = document.getElementById('miku-form');
-    const input = document.getElementById('miku-input');
-    const output = document.getElementById('miku-output');
-    const status = document.getElementById('miku-status');
-    const micButton = document.getElementById('miku-mic');
-    const wakeButton = document.getElementById('miku-wake');
-    const voiceButton = document.getElementById('miku-voice');
-    const viewer = document.getElementById('miku-viewer');
-    const viewerTitle = document.getElementById('miku-viewer-title');
-    const viewerClose = document.getElementById('miku-viewer-close');
-    const audioPlayer = document.getElementById('miku-audio');
-    const videoPlayer = document.getElementById('miku-video');
-    const textViewer = document.getElementById('miku-text');
-    let socket;
-    let reconnectTimer;
-    let recognition;
-    let recorder;
-    let recorderStream;
-    let recording = false;
-    let recordingMode;
-    let wakeEnabled = false;
-    let voiceEnabled = false;
-    let localVoice = {llm: false, stt: false, tts: false};
-    let wakeRestartTimer;
-    let recordedBytes = 0;
-    const maxAudioBytes = 4 * 1024 * 1024;
-    const restContextId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    function line(text, tone = 'normal') {
-        const row = document.createElement('p');
-        row.className = `font-mono text-sm leading-relaxed ${tone === 'error' ? 'text-red-400' : 'text-zinc-300'}`;
-        row.textContent = text;
-        output.appendChild(row);
-    }
-
-    function actionButton(label, handler, danger = false) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = `border px-2 py-1 font-mono text-[10px] font-bold uppercase ${danger ? 'border-amber-700 text-amber-400' : 'border-zinc-700 text-teal-400'}`;
-        button.textContent = label;
-        button.addEventListener('click', handler);
-        return button;
-    }
-
-    function closeViewer() {
-        audioPlayer.pause();
-        videoPlayer.pause();
-        audioPlayer.removeAttribute('src');
-        videoPlayer.removeAttribute('src');
-        for (const element of [audioPlayer, videoPlayer, textViewer]) element.classList.add('hidden');
-        viewer.classList.add('hidden');
-    }
-
-    async function openReference(item, play = false) {
-        const target = play ? item.resource_url : (item.open_url || item.resource_url);
-        if (!target) return;
-        if (!target.startsWith('/api/miku/resources/')) {
-            window.location.assign(target);
-            return;
-        }
-        closeViewer();
-        viewerTitle.textContent = item.title;
-        viewer.classList.remove('hidden');
-        if (item.kind === 'audio') {
-            audioPlayer.src = target;
-            audioPlayer.classList.remove('hidden');
-            await audioPlayer.play();
-            return;
-        }
-        if (item.kind === 'video') {
-            videoPlayer.src = target;
-            videoPlayer.classList.remove('hidden');
-            if (play) await videoPlayer.play();
-            return;
-        }
-        const response = await fetch(target);
-        if (!response.ok) throw new Error('Resource is unavailable');
-        const payload = await response.json();
-        textViewer.textContent = payload.text || '';
-        textViewer.classList.remove('hidden');
-    }
-
-    async function confirmAction(action) {
-        const response = await fetch('/api/miku/actions/confirm', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({confirmation_token: action.confirmation_token}),
+    const form = document.getElementById('miku-provider-form');
+    const status = document.getElementById('miku-provider-status');
+    if (!form || form.dataset.bound) return;
+    form.dataset.bound = 'true';
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const data = new FormData(form);
+        const provider = kind => ({
+            url: data.get(`${kind}.url`) || '',
+            model: data.get(`${kind}.model`) || '',
+            api_key: data.get(`${kind}.api_key`) || '',
         });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || 'Action failed');
-        line(payload.message);
-        if (payload.task_id) pollJob(payload.task_id);
-    }
-
-    async function pollJob(taskId) {
+        status.textContent = 'Saving...';
         try {
-            const response = await fetch(`/api/miku/jobs/${encodeURIComponent(taskId)}`);
-            if (response.status === 404) {
-                line(`Job ${taskId} completed or expired.`);
-                return;
-            }
-            if (!response.ok) throw new Error('Job status unavailable');
-            const job = await response.json();
-            line(`Job ${job.task_id}: ${job.status}${job.progress ? ` · ${job.progress}` : ''}`);
-            window.setTimeout(() => pollJob(taskId), 3000);
-        } catch (error) {
-            line(error.message || 'Job status unavailable', 'error');
-        }
-    }
-
-    async function speak(text) {
-        if (!voiceEnabled || !text) return;
-        try {
-            if (!localVoice.tts) throw new Error('Local TTS unavailable');
-            const response = await fetch('/api/miku/speech', {
-                method: 'POST',
+            const response = await fetch('/api/miku/providers', {
+                method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({text}),
-            });
-            if (!response.ok) throw new Error('Local TTS unavailable');
-            const url = URL.createObjectURL(await response.blob());
-            const audio = new Audio(url);
-            audio.addEventListener('ended', () => URL.revokeObjectURL(url), {once: true});
-            await audio.play();
-        } catch (_error) {
-            if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-            }
-        }
-    }
-
-    function renderReply(payload) {
-        line(payload.text);
-        for (const item of payload.references) {
-            const row = document.createElement('div');
-            row.className = 'flex flex-wrap items-center gap-2 border-l-2 border-zinc-800 pl-3';
-            const text = document.createElement('span');
-            text.className = 'min-w-0 flex-1 font-mono text-sm text-zinc-300';
-            text.textContent = `${item.ref} · ${item.module_id} · ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ''}`;
-            row.appendChild(text);
-            if (item.open_url || item.resource_url) row.appendChild(actionButton('Open', () => openReference(item).catch(error => line(error.message, 'error'))));
-            if (item.playable && item.resource_url) row.appendChild(actionButton('Play', () => openReference(item, true).catch(error => line(error.message, 'error'))));
-            output.appendChild(row);
-        }
-        for (const warning of payload.warnings) line(`Warning: ${warning}`, 'error');
-        if (payload.pending_action) {
-            const action = payload.pending_action;
-            const row = document.createElement('div');
-            row.className = 'flex items-center gap-3 border border-amber-900 bg-amber-950/20 p-3';
-            const summary = document.createElement('span');
-            summary.className = 'flex-1 font-mono text-xs text-amber-200';
-            summary.textContent = action.summary;
-            row.appendChild(summary);
-            row.appendChild(actionButton('Confirm', () => confirmAction(action).catch(error => line(error.message, 'error')), true));
-            output.appendChild(row);
-        }
-        if (payload.client_action && payload.references[0]) {
-            openReference(payload.references[0], payload.client_action === 'play').catch(error => line(error.message, 'error'));
-        }
-        speak(payload.text);
-    }
-
-    async function restFallback(message) {
-        try {
-            const response = await fetch('/api/miku/query', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message, context_id: restContextId}),
+                body: JSON.stringify({llm: provider('llm'), stt: provider('stt'), tts: provider('tts')}),
             });
             const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || 'Request failed');
-            renderReply(payload);
+            if (!response.ok) throw new Error(payload.detail || 'Could not save providers');
+            for (const kind of ['llm', 'stt', 'tts']) {
+                form.elements[`${kind}.api_key`].value = '';
+                const marker = form.querySelector(`[data-key-state="${kind}"]`);
+                marker.textContent = payload[kind].api_key_set ? 'saved' : 'not set';
+                marker.className = payload[kind].api_key_set ? 'text-teal-500' : 'text-zinc-700';
+            }
+            status.textContent = 'Saved. New requests use these providers immediately.';
         } catch (error) {
-            line(error.message || 'Request failed', 'error');
-        } finally {
-            status.textContent = 'Ready';
-            input.focus();
-        }
-    }
-
-    function connect() {
-        const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        socket = new WebSocket(`${scheme}://${window.location.host}/api/miku/ws?context_id=${encodeURIComponent(restContextId)}`);
-        socket.addEventListener('open', () => { status.textContent = 'Connecting'; });
-        socket.addEventListener('message', (event) => {
-            const payload = JSON.parse(event.data);
-            if (payload.event === 'session.ready') status.textContent = 'Realtime';
-            if (payload.event === 'turn.started') status.textContent = 'Working';
-            if (payload.event === 'turn.result') renderReply(payload.data);
-            if (payload.event === 'turn.completed') {
-                status.textContent = 'Realtime';
-                input.focus();
-            }
-            if (payload.event === 'turn.error') {
-                line(payload.data.message || payload.data.code || 'Request failed', 'error');
-                status.textContent = 'Realtime';
-            }
-        });
-        socket.addEventListener('close', () => {
-            status.textContent = 'REST fallback';
-            clearTimeout(reconnectTimer);
-            reconnectTimer = setTimeout(connect, 2000);
-        });
-    }
-
-    function submitMessage(message) {
-        message = message.trim();
-        if (!message) return;
-        line(`> ${message}`);
-        input.value = '';
-        status.textContent = 'Working';
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            const requestId = window.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
-            socket.send(JSON.stringify({type: 'query', request_id: requestId, message}));
-        } else {
-            restFallback(message);
-        }
-    }
-
-    function startRecognition() {
-        if (!SpeechRecognition) return false;
-        recognition = new SpeechRecognition();
-        recognition.lang = document.documentElement.lang === 'ru' ? 'ru-RU' : 'en-US';
-        recognition.interimResults = true;
-        recognition.continuous = wakeEnabled;
-        recognition.addEventListener('result', (event) => {
-            let finalText = '';
-            let interimText = '';
-            for (let index = event.resultIndex; index < event.results.length; index += 1) {
-                const text = event.results[index][0].transcript;
-                if (event.results[index].isFinal) finalText += text;
-                else interimText += text;
-            }
-            if (interimText) status.textContent = interimText.slice(0, 48);
-            if (!finalText) return;
-            if (wakeEnabled) {
-                const match = finalText.match(/(?:miku|мику)[,\s]*(.+)/i);
-                if (match) submitMessage(match[1]);
-            } else {
-                submitMessage(finalText);
-            }
-        });
-        recognition.addEventListener('end', () => {
-            recording = false;
-            recordingMode = undefined;
-            micButton.textContent = 'Push to talk';
-            window.clearTimeout(wakeRestartTimer);
-            if (wakeEnabled) wakeRestartTimer = window.setTimeout(() => {
-                if (wakeEnabled) startRecognition();
-            }, 300);
-            else status.textContent = socket?.readyState === WebSocket.OPEN ? 'Realtime' : 'REST fallback';
-        });
-        recognition.addEventListener('error', (event) => {
-            wakeEnabled = false;
-            wakeButton.textContent = 'Wake: off';
-            status.textContent = 'Voice unavailable';
-            if (event.error !== 'aborted') line('Browser speech recognition is unavailable.', 'error');
-        });
-        recognition.start();
-        recording = true;
-        recordingMode = 'recognition';
-        return true;
-    }
-
-    async function startRecorder() {
-        const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-        recorderStream = stream;
-        try {
-            const chunks = [];
-            let timer;
-            recordedBytes = 0;
-            const currentRecorder = new MediaRecorder(stream);
-            recorder = currentRecorder;
-            currentRecorder.addEventListener('dataavailable', event => {
-                if (!event.data.size) return;
-                recordedBytes += event.data.size;
-                if (recordedBytes <= maxAudioBytes) chunks.push(event.data);
-                else if (currentRecorder.state === 'recording') currentRecorder.stop();
-            });
-            currentRecorder.addEventListener('stop', async () => {
-                window.clearTimeout(timer);
-                stream.getTracks().forEach(track => track.stop());
-                if (recordedBytes > maxAudioBytes) {
-                    line('Audio utterance is too large.', 'error');
-                    recording = false;
-                    recordingMode = undefined;
-                    recorder = undefined;
-                    recorderStream = undefined;
-                    micButton.textContent = 'Push to talk';
-                    return;
-                }
-                let browserFallback = false;
-                try {
-                    const blob = new Blob(chunks, {type: currentRecorder.mimeType || 'audio/webm'});
-                    const response = await fetch('/api/miku/transcribe', {
-                        method: 'POST',
-                        headers: {'Content-Type': blob.type},
-                        body: blob,
-                    });
-                    const payload = await response.json();
-                    if (!response.ok) throw new Error(payload.detail || 'Speech recognition failed');
-                    submitMessage(payload.text);
-                } catch (error) {
-                    line(error.message || 'Speech recognition failed', 'error');
-                    localVoice.stt = false;
-                    browserFallback = Boolean(SpeechRecognition);
-                } finally {
-                    recording = false;
-                    recordingMode = undefined;
-                    recorder = undefined;
-                    recorderStream = undefined;
-                    micButton.textContent = 'Push to talk';
-                }
-                if (browserFallback) {
-                    line('Local STT is unavailable. Repeat the command using browser recognition.');
-                    startRecognition();
-                }
-            });
-            currentRecorder.start(250);
-            timer = window.setTimeout(() => {
-                if (currentRecorder.state === 'recording') currentRecorder.stop();
-            }, 30000);
-            recording = true;
-            recordingMode = 'recorder';
-        } catch (error) {
-            stream.getTracks().forEach(track => track.stop());
-            throw error;
-        }
-    }
-
-    form.addEventListener('submit', (event) => {
-        event.preventDefault();
-        submitMessage(input.value);
-    });
-
-    micButton.addEventListener('click', async () => {
-        if (recording) {
-            if (recordingMode === 'recognition') recognition?.stop();
-            if (recordingMode === 'recorder' && recorder?.state === 'recording') recorder.stop();
-            micButton.textContent = 'Stopping';
-            return;
-        }
-        status.textContent = 'Listening';
-        micButton.textContent = 'Stop';
-        try {
-            if (localVoice.stt) await startRecorder();
-            else if (!startRecognition()) await startRecorder();
-        } catch (error) {
-            line(error.message || 'Microphone is unavailable', 'error');
-            micButton.textContent = 'Push to talk';
-            recording = false;
+            status.textContent = error.message || 'Could not save providers';
         }
     });
-
-    wakeButton.addEventListener('click', () => {
-        if (!SpeechRecognition) {
-            line('Wake word requires browser speech recognition support.', 'error');
-            return;
-        }
-        wakeEnabled = !wakeEnabled;
-        wakeButton.textContent = `Wake: ${wakeEnabled ? 'miku' : 'off'}`;
-        window.clearTimeout(wakeRestartTimer);
-        if (recordingMode === 'recorder') {
-            wakeEnabled = false;
-            wakeButton.textContent = 'Wake: off';
-            line('Stop push-to-talk before enabling the wake word.', 'error');
-            return;
-        }
-        if (recordingMode === 'recognition') {
-            recognition.stop();
-            return;
-        }
-        if (wakeEnabled) startRecognition();
-    });
-
-    voiceButton.addEventListener('click', () => {
-        voiceEnabled = !voiceEnabled;
-        voiceButton.textContent = `Voice: ${voiceEnabled ? 'on' : 'off'}`;
-        if (!voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-    });
-
-    viewerClose.addEventListener('click', closeViewer);
-
-    fetch('/api/miku/runtime')
-        .then(response => response.ok ? response.json() : Promise.reject())
-        .then(payload => {
-            localVoice = payload;
-            if (payload.llm) status.textContent = 'Realtime · LLM';
-        })
-        .catch(() => {});
-
-    connect();
 })();
 </script>
 {% endblock %}

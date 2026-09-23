@@ -10,9 +10,15 @@ from fastapi import HTTPException
 
 from app.core.config import Settings, validate_runtime_security
 from app.modules.miku.planner import MikuQueryError, plan_with_rules
+from app.modules.miku.providers import MikuProviderConfig
 from app.modules.miku.runtime_client import MikuRuntimeClient
-from app.modules.miku.runtime_worker import app, verify_runtime_token
-from app.modules.miku.schemas import MikuDecision
+from app.modules.miku.runtime_worker import (
+    _decision_from_completion,
+    _provider_endpoint,
+    app,
+    verify_runtime_token,
+)
+from app.modules.miku.schemas import MikuCompanionRequest, MikuDecision
 
 
 class MikuRuntimeTests(unittest.TestCase):
@@ -54,6 +60,103 @@ class MikuRuntimeTests(unittest.TestCase):
         decision = asyncio.run(client.decide("find neon"))
         self.assertEqual("find", decision.command)
         self.assertEqual("neon", decision.argument)
+
+    def test_runtime_client_forwards_configured_provider_only_to_runtime(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual("https://api.example/v1", request.headers["X-Miku-Provider-Url"])
+            self.assertEqual("test-model", request.headers["X-Miku-Provider-Model"])
+            self.assertEqual("test-key", request.headers["X-Miku-Provider-Key"])
+            return httpx.Response(200, json={"command": "respond", "argument": "ok"})
+
+        client = MikuRuntimeClient(
+            base_url="http://miku-runtime:8770",
+            token="secret-token",
+            enabled=True,
+            transport=httpx.MockTransport(handler),
+        )
+        provider = MikuProviderConfig("https://api.example/v1", "test-model", "test-key")
+
+        decision = asyncio.run(client.decide("hello", provider=provider))
+
+        self.assertEqual("ok", decision.argument)
+        self.assertEqual(
+            "https://api.example/v1/chat/completions",
+            _provider_endpoint(provider.url, "/chat/completions"),
+        )
+
+    def test_runtime_client_synthesizes_grounded_companion_response(self):
+        request_body = MikuCompanionRequest(
+            message="покажи ролик",
+            command="discover",
+            fallback="Вот один ролик.",
+        )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual("/v1/respond", request.url.path)
+            self.assertEqual("secret-token", request.headers["X-Miku-Runtime-Token"])
+            self.assertEqual("покажи ролик", json.loads(request.content)["message"])
+            return httpx.Response(200, json={"text": "Конечно. Вот один ролик."})
+
+        client = MikuRuntimeClient(
+            base_url="http://miku-runtime:8770",
+            token="secret-token",
+            enabled=True,
+            transport=httpx.MockTransport(handler),
+        )
+
+        self.assertEqual(
+            "Конечно. Вот один ролик.",
+            asyncio.run(client.respond(request_body)),
+        )
+
+    def test_llm_completion_supports_direct_responses_without_tool_calls(self):
+        decision = _decision_from_completion(
+            {"choices": [{"message": {"content": "Я рядом. Чем помочь?"}}]},
+            {},
+        )
+
+        self.assertEqual("respond", decision.command)
+        self.assertEqual("Я рядом. Чем помочь?", decision.argument)
+
+    def test_llm_completion_rejects_truncated_direct_response(self):
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            _decision_from_completion(
+                {"choices": [{"finish_reason": "length", "message": {"content": "An incomplete answer"}}]},
+                {},
+            )
+
+    def test_llm_completion_keeps_acknowledgement_out_of_api_arguments(self):
+        decision = _decision_from_completion(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "api_0_video",
+                                        "arguments": json.dumps(
+                                            {
+                                                "operation": "catalog",
+                                                "limit": 1,
+                                                "__miku_acknowledgement": "Да, конечно.",
+                                                "__miku_result_action": "play",
+                                            }
+                                        ),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {"api_0_video": "video_archiver.library.viewer.v1"},
+        )
+
+        self.assertEqual("invoke", decision.command)
+        self.assertEqual("Да, конечно.", decision.acknowledgement)
+        self.assertEqual("play", decision.result_action)
+        self.assertEqual({"operation": "catalog", "limit": 1}, decision.parameters)
 
     def test_runtime_client_uses_bounded_voice_contracts(self):
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -116,7 +219,7 @@ class MikuRuntimeTests(unittest.TestCase):
         self.assertIsNone(app.redoc_url)
         self.assertIsNone(app.openapi_url)
         self.assertEqual(
-            {"/health", "/v1/decide", "/v1/transcribe", "/v1/synthesize"},
+            {"/health", "/v1/decide", "/v1/respond", "/v1/transcribe", "/v1/synthesize"},
             {route.path for route in app.routes},
         )
 
@@ -143,6 +246,8 @@ class MikuRuntimeTests(unittest.TestCase):
             {
                 "command": "find",
                 "argument": "neon",
+                "acknowledgement": None,
+                "result_action": "none",
                 "integration_id": None,
                 "parameters": {},
             },
@@ -178,7 +283,8 @@ class MikuRuntimeTests(unittest.TestCase):
         self.assertNotIn("env_file", runtime)
         self.assertNotIn("volumes", runtime)
         self.assertNotIn("ports", runtime)
-        self.assertEqual(["miku-control"], runtime["networks"])
+        self.assertEqual(["miku-control", "miku-egress"], runtime["networks"])
+        self.assertNotIn("backend", runtime["networks"])
         self.assertEqual("miku", runtime["build"]["args"]["NETSANCTUM_MODULES"])
         self.assertTrue(runtime["read_only"])
         self.assertEqual(["ALL"], runtime["cap_drop"])
@@ -190,10 +296,13 @@ class MikuRuntimeTests(unittest.TestCase):
                 "MIKU_RUNTIME_TOKEN",
                 "MIKU_LLM_URL",
                 "MIKU_LLM_MODEL",
+                "MIKU_LLM_API_KEY",
                 "MIKU_STT_URL",
                 "MIKU_STT_MODEL",
+                "MIKU_STT_API_KEY",
                 "MIKU_TTS_URL",
                 "MIKU_TTS_MODEL",
+                "MIKU_TTS_API_KEY",
             },
             set(runtime["environment"]),
         )

@@ -7,7 +7,7 @@ const content = execFileSync(
 )
   .split("\0")
   .filter((path) => path.endsWith(".html") || path.endsWith(".py"));
-content.push("static/browser-runtime.js");
+content.push("static/browser-runtime.js", "static/miku-assistant.js");
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {

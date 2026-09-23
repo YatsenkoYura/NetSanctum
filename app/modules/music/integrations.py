@@ -2,7 +2,7 @@
 
 import redis.asyncio as aioredis
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.contracts.library_viewer_v1 import (
     LibraryItem,
@@ -55,9 +55,20 @@ async def library_viewer(
     request: LibraryRequest,
     context: IntegrationContext,
 ) -> LibraryResult:
-    if request.operation == "catalog":
+    if request.operation in {"catalog", "search"}:
+        query = select(Song)
+        if request.operation == "search":
+            search = (request.query or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{search}%"
+            query = query.where(
+                or_(
+                    Song.title.ilike(pattern, escape="\\"),
+                    Song.author.ilike(pattern, escape="\\"),
+                    Song.original_artist.ilike(pattern, escape="\\"),
+                )
+            )
         result = await context.session.execute(
-            select(Song).order_by(Song.created_at.desc()).offset(request.offset).limit(request.limit + 1)
+            query.order_by(Song.created_at.desc()).offset(request.offset).limit(request.limit + 1)
         )
         songs = list(result.scalars())
         return LibraryResult(

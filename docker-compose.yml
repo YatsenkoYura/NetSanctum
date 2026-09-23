@@ -168,10 +168,13 @@ services:
       MIKU_RUNTIME_TOKEN: ${MIKU_RUNTIME_TOKEN:-}
       MIKU_LLM_URL: ${MIKU_LLM_URL:-}
       MIKU_LLM_MODEL: ${MIKU_LLM_MODEL:-qwen2.5:7b}
+      MIKU_LLM_API_KEY: ${MIKU_LLM_API_KEY:-}
       MIKU_STT_URL: ${MIKU_STT_URL:-}
       MIKU_STT_MODEL: ${MIKU_STT_MODEL:-whisper-1}
+      MIKU_STT_API_KEY: ${MIKU_STT_API_KEY:-}
       MIKU_TTS_URL: ${MIKU_TTS_URL:-}
       MIKU_TTS_MODEL: ${MIKU_TTS_MODEL:-tts-1}
+      MIKU_TTS_API_KEY: ${MIKU_TTS_API_KEY:-}
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -184,6 +187,7 @@ services:
     pids_limit: 64
     networks:
       - miku-control
+      - miku-egress
     command:
       - uvicorn
       - app.modules.miku.runtime_worker:app
@@ -467,3 +471,4 @@ networks:
   miku-control:
     internal: true
   browser-egress:
+  miku-egress:

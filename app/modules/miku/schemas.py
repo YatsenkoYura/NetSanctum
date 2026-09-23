@@ -1,5 +1,6 @@
 import json
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -18,6 +19,19 @@ MikuCommand = Literal[
     "invoke",
     "respond",
 ]
+MikuResultAction = Literal["none", "open", "play"]
+
+
+def strip_emoji(value: str) -> str:
+    return "".join(
+        character
+        for character in value
+        if not (
+            0x1F000 <= ord(character) <= 0x1FAFF
+            or 0x2600 <= ord(character) <= 0x27BF
+            or ord(character) in {0x200D, 0x20E3, 0xFE0E, 0xFE0F}
+        )
+    )
 
 
 class MikuQuery(BaseModel):
@@ -54,6 +68,16 @@ class MikuReference(BaseModel):
     open_url: str | None = None
     resource_url: str | None = None
 
+    @field_validator("title", "subtitle", "summary")
+    @classmethod
+    def remove_emoji(cls, value: str | None, info):
+        if value is None:
+            return None
+        value = " ".join(strip_emoji(value).split())
+        if value:
+            return value
+        return "Untitled" if info.field_name == "title" else None
+
 
 class MikuPendingAction(BaseModel):
     action: Literal["archive", "note", "bookmark", "invoke"]
@@ -80,22 +104,53 @@ class MikuJobStatus(BaseModel):
     title: str | None = None
 
 
+class MikuReplySegment(BaseModel):
+    kind: Literal["acknowledgement", "response", "status", "confirmation"]
+    text: str = Field(min_length=1, max_length=500)
+    speak: bool = False
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        value = " ".join(strip_emoji(value).split())
+        if not value:
+            raise ValueError("Reply segment must not be blank")
+        return value
+
+
 class MikuReply(BaseModel):
     command: MikuCommand
-    text: str
+    text: str = Field(max_length=500)
+    segments: list[MikuReplySegment] = Field(default_factory=list, max_length=4)
     references: list[MikuReference] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     client_action: Literal["open", "play"] | None = None
     pending_action: MikuPendingAction | None = None
 
+    @model_validator(mode="after")
+    def populate_legacy_segment(self):
+        self.text = " ".join(strip_emoji(self.text).split())
+        if not self.text:
+            raise ValueError("Reply text must not be blank")
+        if not self.segments:
+            confirmation = self.pending_action is not None
+            self.segments = [
+                MikuReplySegment(
+                    kind="confirmation" if confirmation else "response",
+                    text=self.text,
+                    speak=not confirmation,
+                )
+            ]
+        return self
+
 
 class MikuCapabilities(BaseModel):
     name: str = "MIKU"
     expansion: str = "Miku Is Kernel Utility"
-    version: str = "0.2.0"
+    version: str = "0.3.0"
     mode: Literal["guarded"] = "guarded"
     transport: Literal["rest+websocket"] = "rest+websocket"
-    protocol_version: int = 2
+    protocol_version: int = 3
     commands: list[str]
     providers: list[MikuProvider]
 
@@ -138,7 +193,7 @@ class MikuSpeechRequest(BaseModel):
     @field_validator("text")
     @classmethod
     def normalize_text(cls, value: str) -> str:
-        value = " ".join(value.split())
+        value = " ".join(strip_emoji(value).split())
         if not value:
             raise ValueError("Speech text must not be blank")
         return value
@@ -151,11 +206,54 @@ class MikuRuntimeCapabilities(BaseModel):
     tts: bool = False
 
 
+class MikuProviderInput(BaseModel):
+    url: str = Field(default="", max_length=2048)
+    model: str = Field(default="", max_length=200)
+    api_key: str = Field(default="", max_length=4096)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return value
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Provider URL must be HTTP or HTTPS")
+        if parsed.username or parsed.password or parsed.fragment:
+            raise ValueError("Provider URL must not contain credentials or a fragment")
+        return value.rstrip("/")
+
+    @field_validator("model", "api_key")
+    @classmethod
+    def strip_provider_value(cls, value: str) -> str:
+        return value.strip()
+
+
+class MikuProviderSettingsUpdate(BaseModel):
+    llm: MikuProviderInput
+    stt: MikuProviderInput
+    tts: MikuProviderInput
+
+
+class MikuProviderStatus(BaseModel):
+    url: str = ""
+    model: str = ""
+    api_key_set: bool = False
+
+
+class MikuProviderSettingsResponse(BaseModel):
+    llm: MikuProviderStatus
+    stt: MikuProviderStatus
+    tts: MikuProviderStatus
+
+
 class MikuToolDefinition(BaseModel):
     integration_id: str = Field(max_length=128, pattern=r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
     module_id: str = Field(max_length=63, pattern=r"^[a-z][a-z0-9_]*$")
     contract: str | None = None
     effect: Literal["read", "create", "update", "delete", "execute"]
+    external_io: bool = False
     description: str = Field(max_length=300)
     input_schema: dict[str, Any]
 
@@ -171,9 +269,37 @@ class MikuContextReference(BaseModel):
     readable: bool = False
 
 
+class MikuCompanionReference(BaseModel):
+    ref: str = Field(pattern=r"^result:([1-9]|1[0-9]|20)$")
+    module_id: str = Field(max_length=63)
+
+
+class MikuCompanionRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+    command: MikuCommand
+    acknowledgement: str | None = Field(default=None, max_length=200)
+    references: list[MikuCompanionReference] = Field(default_factory=list, max_length=20)
+    warnings: list[str] = Field(default_factory=list, max_length=10)
+    fallback: str = Field(min_length=1, max_length=500)
+
+
+class MikuCompanionResponse(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        value = " ".join(strip_emoji(value).split())
+        if not value:
+            raise ValueError("Companion response must not be blank")
+        return value
+
+
 class MikuDecision(BaseModel):
     command: MikuCommand
     argument: str = Field(default="", max_length=500)
+    acknowledgement: str | None = Field(default=None, max_length=200)
+    result_action: MikuResultAction = "none"
     integration_id: str | None = Field(
         default=None,
         max_length=128,
@@ -184,7 +310,9 @@ class MikuDecision(BaseModel):
 
     @model_validator(mode="after")
     def validate_command(self):
-        self.argument = self.argument.strip()
+        self.argument = " ".join(strip_emoji(self.argument).split())
+        if self.acknowledgement is not None:
+            self.acknowledgement = " ".join(strip_emoji(self.acknowledgement).split()) or None
         if self.command in {"open", "play", "archive", "note", "bookmark", "respond"} and not self.argument:
             raise ValueError(f"The {self.command} command requires an argument")
         if self.command in {"help", "sources", "repeat"} and self.argument:
@@ -193,6 +321,10 @@ class MikuDecision(BaseModel):
             raise ValueError("The invoke command requires an integration ID")
         if self.command != "invoke" and (self.integration_id or self.parameters):
             raise ValueError(f"The {self.command} command does not select a module integration")
+        if self.command != "invoke" and self.acknowledgement:
+            raise ValueError("Only integration calls accept an acknowledgement")
+        if self.command != "invoke" and self.result_action != "none":
+            raise ValueError("Only integration calls accept a result action")
         if len(self.parameters) > 20 or len(json.dumps(self.parameters)) > 4096:
             raise ValueError("Integration parameters are too large")
         return self

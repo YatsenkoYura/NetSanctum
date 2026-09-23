@@ -27,10 +27,14 @@ from app.core.module_types import (
 )
 from app.modules.miku.models import MikuTurnAudit
 from app.modules.miku.planner import MikuQueryError
-from app.modules.miku.runtime_client import miku_runtime_client
+from app.modules.miku.providers import MikuProviderConfig, load_provider_bundle
+from app.modules.miku.runtime_client import MikuRuntimeClient, miku_runtime_client
 from app.modules.miku.schemas import (
     MikuActionResult,
     MikuCapabilities,
+    MikuCommand,
+    MikuCompanionReference,
+    MikuCompanionRequest,
     MikuContextReference,
     MikuDecision,
     MikuJobStatus,
@@ -39,6 +43,7 @@ from app.modules.miku.schemas import (
     MikuQuery,
     MikuReference,
     MikuReply,
+    MikuReplySegment,
     MikuToolDefinition,
 )
 
@@ -191,6 +196,8 @@ class _Planner(Protocol):
         context: list[MikuContextReference] | None = None,
     ) -> MikuDecision: ...
 
+    async def respond(self, request: MikuCompanionRequest) -> str: ...
+
 
 class _TokenStore(Protocol):
     async def set(self, key: str, value: str, *, ex: int, nx: bool) -> Any: ...
@@ -233,22 +240,45 @@ def capabilities(registry: _Registry) -> MikuCapabilities:
     )
 
 
-def runtime_tools(registry: _Registry) -> list[MikuToolDefinition]:
+def _explicit_external_source(message: str, module_id: str) -> bool:
+    tokens = set(re.findall(r"[a-z0-9_]+", message.casefold()))
+    return module_id.casefold() in tokens
+
+
+def runtime_tools(
+    registry: _Registry,
+    message: str = "",
+    context: list[MikuContextReference] | None = None,
+) -> list[MikuToolDefinition]:
     tools = []
     for item in registry.integration_catalog(consumer_id="miku"):
+        effects = item["effects"]
+        if (
+            effects["effect"] == "read"
+            and effects.get("external_io", False)
+            and not _explicit_external_source(message, item["module_id"])
+        ):
+            continue
         schema = item["request_schema"]
+        properties = schema.get("properties", {})
+        if effects["effect"] == "create" and "entity_id" in properties and not context:
+            continue
         compact_schema = {
-            "type": schema.get("type", "object"),
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
+            key: schema[key]
+            for key in ("type", "properties", "required", "allOf", "anyOf", "oneOf")
+            if key in schema
         }
+        compact_schema.setdefault("type", "object")
+        compact_schema.setdefault("properties", {})
+        compact_schema.setdefault("required", [])
         contract = item["contract"]
         tools.append(
             MikuToolDefinition(
                 integration_id=item["id"],
                 module_id=item["module_id"],
                 contract=contract,
-                effect=item["effects"]["effect"],
+                effect=effects["effect"],
+                external_io=effects.get("external_io", False),
                 description=item.get("description", "")
                 or (
                     f"{item['effects']['effect']} API provided by module {item['module_id']}"
@@ -287,14 +317,86 @@ def _trim(value: Any, limit: int) -> str | None:
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
 
+def _result_fallback(message: str, references: list[MikuReference]) -> str:
+    russian = bool(re.search(r"[а-яё]", message, re.IGNORECASE))
+    if not references:
+        return "Ничего подходящего не нашлось." if russian else "I could not find anything suitable."
+    if len(references) > 1:
+        return "Вот несколько подходящих вариантов." if russian else "Here are a few suitable options."
+    title = references[0].title
+    suffix = "" if title.endswith((".", "!", "?")) else "."
+    return f"Вот что удалось найти: {title}{suffix}" if russian else f"Here is what I found: {title}{suffix}"
+
+
+def _reply_segments(
+    acknowledgement: str | None,
+    text: str,
+    *,
+    confirmation: bool = False,
+) -> list[MikuReplySegment]:
+    segments = []
+    if acknowledgement and not confirmation and acknowledgement.casefold() not in text.casefold():
+        segments.append(MikuReplySegment(kind="acknowledgement", text=acknowledgement, speak=False))
+    segments.append(
+        MikuReplySegment(
+            kind="confirmation" if confirmation else "response",
+            text=text,
+            speak=not confirmation,
+        )
+    )
+    return segments
+
+
+def _confirmation_text(message: str) -> str:
+    if re.search(r"[а-яё]", message, re.IGNORECASE):
+        return "Подтвердите действие, прежде чем я его выполню."
+    return "Confirm the action before I run it."
+
+
+async def _companion_response(
+    runtime: _Planner,
+    request: MikuQuery,
+    command: MikuCommand,
+    references: list[MikuReference],
+    warnings: list[str],
+    acknowledgement: str | None,
+    provider: MikuProviderConfig | None = None,
+) -> str:
+    fallback = _result_fallback(request.message, references)
+    responder = getattr(runtime, "respond", None)
+    if not responder:
+        return fallback
+    companion_request = MikuCompanionRequest(
+        message=request.message,
+        command=command,
+        acknowledgement=acknowledgement,
+        references=[
+            MikuCompanionReference(
+                ref=item.ref,
+                module_id=item.module_id,
+            )
+            for item in references
+        ],
+        warnings=[trimmed for item in warnings if (trimmed := _trim(item, 200))][:10],
+        fallback=fallback,
+    )
+    if isinstance(runtime, MikuRuntimeClient):
+        return await responder(companion_request, provider=provider)
+    return await responder(companion_request)
+
+
 def _reference(module_id: str, item, index: int) -> MikuReference:
     resource_url = None
     open_url = None
     if module_id == "alllib":
         open_url = f"/alllib/reader/{quote(str(item.id), safe='')}"
-    elif item.playable or item.readable:
+    elif module_id == "music":
+        open_url = f"/music/dashboard?miku_item={quote(str(item.id), safe='')}"
+    elif module_id == "video_archiver":
+        open_url = f"/video-archiver/dashboard?miku_item={quote(str(item.id), safe='')}"
+    if item.playable or item.readable:
         resource_url = f"/api/miku/resources/{quote(module_id, safe='')}/{quote(str(item.id), safe='')}"
-        open_url = resource_url
+        open_url = open_url or resource_url
     return MikuReference(
         ref=f"result:{index}",
         module_id=module_id,
@@ -363,11 +465,28 @@ async def query(
     runtime: _Planner = miku_runtime_client,
     context: MikuSessionContext | None = None,
 ) -> MikuReply:
-    decision = await runtime.decide(request.message, runtime_tools(registry), _runtime_context(context))
+    runtime_context = _runtime_context(context)
+    available_tools = runtime_tools(registry, request.message, runtime_context)
+    provider_bundle = (
+        await load_provider_bundle(db, user.id)
+        if isinstance(runtime, MikuRuntimeClient) and db is not None and user is not None
+        else None
+    )
+    if isinstance(runtime, MikuRuntimeClient):
+        decision = await runtime.decide(
+            request.message,
+            available_tools,
+            runtime_context,
+            provider=provider_bundle.llm if provider_bundle else None,
+        )
+    else:
+        decision = await runtime.decide(request.message, available_tools, runtime_context)
     command, argument = decision.command, decision.argument
     providers = _providers(registry)
 
     if command == "invoke":
+        if decision.integration_id not in {tool.integration_id for tool in available_tools}:
+            raise MikuQueryError("The selected API is not allowed for this request.")
         catalog_item = next(
             (
                 item
@@ -408,9 +527,15 @@ async def query(
                     for item in current_references
                 ):
                     raise MikuQueryError("The action must target a result from the current session.")
+            confirmation_text = _confirmation_text(request.message)
             return MikuReply(
                 command=("archive" if decision.integration_id == ARCHIVE_INTEGRATION_ID else "note"),
-                text="Confirmation is required before invoking this API.",
+                text=confirmation_text,
+                segments=_reply_segments(
+                    decision.acknowledgement,
+                    confirmation_text,
+                    confirmation=True,
+                ),
                 pending_action=MikuPendingAction(
                     action="invoke",
                     label=f"Run {decision.integration_id}",
@@ -460,10 +585,28 @@ async def query(
             raise MikuQueryError("The selected API could not complete the request.") from exc
         if context is not None:
             context.references = references
+        client_action = None
+        if decision.result_action != "none" and references:
+            first = references[0]
+            target = first.resource_url if decision.result_action == "play" else first.open_url
+            if target and (decision.result_action != "play" or first.playable):
+                client_action = cast(Literal["open", "play"], decision.result_action)
+                reply_command = client_action
+        text = await _companion_response(
+            runtime,
+            request,
+            reply_command,
+            references,
+            [],
+            decision.acknowledgement,
+            provider_bundle.llm if provider_bundle else None,
+        )
         return MikuReply(
             command=reply_command,
-            text=f"Returned {len(references)} item(s) from {catalog_item['module_id']}.",
+            text=text,
+            segments=_reply_segments(decision.acknowledgement, text),
             references=references,
+            client_action=client_action,
         )
 
     if command == "help":
@@ -508,9 +651,10 @@ async def query(
             raise MikuQueryError("Video Archive is unavailable.")
         if decision.integration_id and decision.integration_id != ARCHIVE_INTEGRATION_ID:
             raise MikuQueryError("The selected API cannot archive a video.")
+        confirmation_text = _confirmation_text(request.message)
         return MikuReply(
             command=command,
-            text="Confirmation is required before starting an archive job.",
+            text=confirmation_text,
             references=[reference],
             pending_action=MikuPendingAction(
                 action="archive",
@@ -541,9 +685,10 @@ async def query(
         except ValidationError as exc:
             raise MikuQueryError(f"Invalid {command} content.") from exc
         data = capture.model_dump(mode="json")
+        confirmation_text = _confirmation_text(request.message)
         return MikuReply(
             command=command,
-            text="Confirmation is required before saving to Vault.",
+            text=confirmation_text,
             pending_action=MikuPendingAction(
                 action=cast(Literal["note", "bookmark"], command),
                 label=f"Save {command}",
@@ -586,9 +731,19 @@ async def query(
             )
             if len(references) >= request.limit:
                 break
+        text = await _companion_response(
+            runtime,
+            request,
+            command,
+            references,
+            warnings,
+            decision.acknowledgement,
+            provider_bundle.llm if provider_bundle else None,
+        )
         reply = MikuReply(
             command=command,
-            text=f"Discovered {len(references)} item(s).",
+            text=text,
+            segments=_reply_segments(decision.acknowledgement, text),
             references=references,
             warnings=warnings,
         )
@@ -640,10 +795,19 @@ async def query(
         if len(references) >= request.limit:
             break
 
-    action = "Found" if command == "find" else "Listed"
+    text = await _companion_response(
+        runtime,
+        request,
+        command,
+        references,
+        warnings,
+        decision.acknowledgement,
+        provider_bundle.llm if provider_bundle else None,
+    )
     reply = MikuReply(
         command=command,
-        text=f"{action} {len(references)} item(s).",
+        text=text,
+        segments=_reply_segments(decision.acknowledgement, text),
         references=references,
         warnings=warnings,
     )

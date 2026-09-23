@@ -5,7 +5,10 @@ import httpx
 
 from app.core.config import get_settings
 from app.modules.miku.planner import MikuQueryError, plan_with_rules
+from app.modules.miku.providers import MikuProviderConfig
 from app.modules.miku.schemas import (
+    MikuCompanionRequest,
+    MikuCompanionResponse,
     MikuContextReference,
     MikuDecision,
     MikuDecisionRequest,
@@ -42,23 +45,33 @@ class MikuRuntimeClient:
         self.enabled = settings.MIKU_RUNTIME_ENABLED if enabled is None else enabled
         self.transport = transport
 
+    def _headers(self, provider: MikuProviderConfig | None = None) -> dict[str, str]:
+        headers = {"X-Miku-Runtime-Token": self.token}
+        if provider and provider.configured:
+            headers["X-Miku-Provider-Url"] = provider.url
+            headers["X-Miku-Provider-Model"] = provider.model
+            if provider.api_key:
+                headers["X-Miku-Provider-Key"] = provider.api_key
+        return headers
+
     async def decide(
         self,
         message: str,
         tools: list[MikuToolDefinition] | None = None,
         context: list[MikuContextReference] | None = None,
+        provider: MikuProviderConfig | None = None,
     ) -> MikuDecision:
         if not self.enabled:
             return plan_with_rules(message)
         try:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
-                timeout=30,
+                timeout=65,
                 transport=self.transport,
             ) as client:
                 response = await client.post(
                     "/v1/decide",
-                    headers={"X-Miku-Runtime-Token": self.token},
+                    headers=self._headers(provider),
                     json=MikuDecisionRequest(
                         message=message,
                         tools=tools or [],
@@ -81,7 +94,39 @@ class MikuRuntimeClient:
             return plan_with_rules(message)
         return MikuDecision.model_validate(response.json())
 
-    async def capabilities(self) -> MikuRuntimeCapabilities:
+    async def respond(
+        self,
+        request: MikuCompanionRequest,
+        provider: MikuProviderConfig | None = None,
+    ) -> str:
+        if not self.enabled:
+            return request.fallback
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=35,
+                transport=self.transport,
+            ) as client:
+                response = await client.post(
+                    "/v1/respond",
+                    headers=self._headers(provider),
+                    json=request.model_dump(mode="json"),
+                )
+                response.raise_for_status()
+            return MikuCompanionResponse.model_validate(response.json()).text
+        except (httpx.HTTPError, ValueError):
+            logger.warning("MIKU response synthesis is unavailable; using the server fallback")
+            return request.fallback
+
+    async def capabilities(
+        self,
+        custom_providers: tuple[
+            MikuProviderConfig,
+            MikuProviderConfig,
+            MikuProviderConfig,
+        ]
+        | None = None,
+    ) -> MikuRuntimeCapabilities:
         if not self.enabled:
             return MikuRuntimeCapabilities(enabled=False)
         try:
@@ -91,16 +136,27 @@ class MikuRuntimeClient:
                 response = await client.get("/health")
                 response.raise_for_status()
             providers = response.json().get("providers", {})
-            return MikuRuntimeCapabilities(
+            capabilities = MikuRuntimeCapabilities(
                 enabled=True,
                 llm=providers.get("llm") is True,
                 stt=providers.get("stt") is True,
                 tts=providers.get("tts") is True,
             )
+            if custom_providers is not None:
+                llm, stt, tts = custom_providers
+                capabilities.llm = capabilities.llm or llm.configured
+                capabilities.stt = capabilities.stt or stt.configured
+                capabilities.tts = capabilities.tts or tts.configured
+            return capabilities
         except (httpx.HTTPError, TypeError, ValueError):
             return MikuRuntimeCapabilities(enabled=False)
 
-    async def transcribe(self, audio: bytes, content_type: str) -> str:
+    async def transcribe(
+        self,
+        audio: bytes,
+        content_type: str,
+        provider: MikuProviderConfig | None = None,
+    ) -> str:
         if not self.enabled:
             raise MikuRuntimeUnavailableError("Local speech recognition is not configured")
         try:
@@ -109,10 +165,7 @@ class MikuRuntimeClient:
             ) as client:
                 response = await client.post(
                     "/v1/transcribe",
-                    headers={
-                        "X-Miku-Runtime-Token": self.token,
-                        "Content-Type": content_type,
-                    },
+                    headers={**self._headers(provider), "Content-Type": content_type},
                     content=audio,
                 )
         except httpx.HTTPError as exc:
@@ -124,7 +177,12 @@ class MikuRuntimeClient:
             raise MikuRuntimeUnavailableError("Local speech recognition returned invalid text")
         return text
 
-    async def synthesize(self, text: str, voice: str = "alloy") -> MikuAudio:
+    async def synthesize(
+        self,
+        text: str,
+        voice: str = "alloy",
+        provider: MikuProviderConfig | None = None,
+    ) -> MikuAudio:
         if not self.enabled:
             raise MikuRuntimeUnavailableError("Local speech synthesis is not configured")
         try:
@@ -133,7 +191,7 @@ class MikuRuntimeClient:
             ) as client:
                 response = await client.post(
                     "/v1/synthesize",
-                    headers={"X-Miku-Runtime-Token": self.token},
+                    headers=self._headers(provider),
                     json=MikuSpeechRequest(text=text, voice=voice).model_dump(mode="json"),
                 )
         except httpx.HTTPError as exc:

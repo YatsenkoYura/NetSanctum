@@ -6,8 +6,41 @@ CONTRACT_ID = "library.viewer.v1"
 
 
 class LibraryRequest(BaseModel):
-    operation: Literal["catalog", "detail"]
-    item_id: str | None = None
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"operation": {"const": "detail"}},
+                        "required": ["operation"],
+                    },
+                    "then": {
+                        "properties": {"item_id": {"type": "string", "minLength": 1}},
+                        "required": ["item_id"],
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"operation": {"const": "search"}},
+                        "required": ["operation"],
+                    },
+                    "then": {
+                        "properties": {"query": {"type": "string", "minLength": 1}},
+                        "required": ["query"],
+                    },
+                },
+            ]
+        }
+    )
+
+    operation: Literal["catalog", "search", "detail"]
+    item_id: str | None = Field(default=None, description="Required when operation is detail")
+    query: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Case-insensitive title, author, or channel text required for search",
+    )
     limit: int = Field(default=100, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
 
@@ -15,6 +48,8 @@ class LibraryRequest(BaseModel):
     def validate_operation(self):
         if self.operation == "detail" and not self.item_id:
             raise ValueError("Detail operation requires item_id")
+        if self.operation == "search" and not self.query:
+            raise ValueError("Search operation requires query")
         return self
 
 

@@ -1,13 +1,40 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class VaultCaptureRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"kind": {"const": "note"}},
+                        "required": ["kind"],
+                    },
+                    "then": {
+                        "properties": {"content": {"type": "string", "minLength": 1}},
+                        "required": ["content"],
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"kind": {"const": "bookmark"}},
+                        "required": ["kind"],
+                    },
+                    "then": {
+                        "properties": {"url": {"type": "string", "format": "uri"}},
+                        "required": ["url"],
+                    },
+                },
+            ]
+        }
+    )
+
     kind: Literal["note", "bookmark"]
     title: str = Field(min_length=1, max_length=160)
-    content: str | None = Field(default=None, max_length=4000)
-    url: HttpUrl | None = None
+    content: str | None = Field(default=None, max_length=4000, description="Required for a note")
+    url: HttpUrl | None = Field(default=None, description="Required for a bookmark")
 
     @model_validator(mode="after")
     def validate_kind(self):

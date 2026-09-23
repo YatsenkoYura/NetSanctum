@@ -1354,7 +1354,7 @@
                     : escapeHtml(initialChar);
 
                 return `
-                    <div class="bg-zinc-950 border-2 border-zinc-800 hover:border-zinc-700 transition-colors flex flex-col group cursor-pointer" onclick="playVideoInLibrary(${videoIdArg})">
+                <div data-video-id="${escapeAttr(video.id)}" class="bg-zinc-950 border-2 border-zinc-800 hover:border-zinc-700 transition-colors flex flex-col group cursor-pointer" onclick="playVideoInLibrary(${videoIdArg})">
                         <!-- Thumbnail Area -->
                         <div class="relative aspect-video bg-black overflow-hidden border-b-2 border-zinc-800">
                             <img src="${escapeAttr(thumbnailSrc)}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="${escapeAttr(video.title)}">
@@ -1670,7 +1670,7 @@
             const videoIdArg = escapedJsArg(v.id);
             const initial = v.channel_name ? v.channel_name.charAt(0).toUpperCase() : 'C';
             return `
-                <div onclick="playVideoInLibrary(${videoIdArg})" class="border-2 ${activeBg} p-2 font-mono cursor-pointer flex gap-3 items-center transition-colors">
+                <div data-video-id="${escapeAttr(v.id)}" onclick="playVideoInLibrary(${videoIdArg})" class="border-2 ${activeBg} p-2 font-mono cursor-pointer flex gap-3 items-center transition-colors">
                     <img src="${v.thumbnail_path ? `/api/video-archiver/videos/${videoIdPath}/thumbnail` : 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\" fill=\"%2318181b\"><rect width=\"16\" height=\"9\"/><path d=\"M6 3v3l4-2z\" fill=\"%2327272a\"/></svg>'}" class="w-16 h-10 object-cover border border-zinc-800 flex-shrink-0">
                     <div class="truncate min-w-0 flex-1">
                         <div class="text-[10px] font-bold text-white truncate leading-snug">${escapeHtml(v.title)}</div>
@@ -3103,9 +3103,21 @@
     {% if not package_mode %}setInterval(pollActiveTasks, 3000);{% endif %}
 
     // Initial Load
-    function initVideoDashboard() {
+    async function initVideoDashboard() {
         restorePersistentArchivePlayer();
-        loadLibrary();
+        await loadLibrary();
+        const mikuParams = new URLSearchParams(window.location.search);
+        const mikuItem = mikuParams.get('miku_item');
+        if (mikuItem) {
+            if (mikuParams.get('miku_play') === '1') {
+                await window.playVideoInLibrary(mikuItem);
+            } else {
+                const card = [...document.querySelectorAll('[data-video-id]')]
+                    .find(element => element.dataset.videoId === mikuItem);
+                card?.scrollIntoView({behavior: 'smooth', block: 'center'});
+                card?.classList.add('ring-2', 'ring-teal-400');
+            }
+        }
         {% if not package_mode %}loadManagement();{% endif %}
         toggleCommentsInputs();
         toggleRepliesInput();

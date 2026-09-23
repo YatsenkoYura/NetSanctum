@@ -31,12 +31,19 @@ from app.core.modules import module_registry
 from app.core.responses import serve_media_stream, serve_storage_file_chunked
 from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
+from app.modules.miku.providers import (
+    load_provider_bundle,
+    provider_settings_response,
+    save_provider_settings,
+)
 from app.modules.miku.runtime_client import MikuRuntimeUnavailableError, miku_runtime_client
 from app.modules.miku.schemas import (
     MikuActionConfirmation,
     MikuActionResult,
     MikuCapabilities,
     MikuJobStatus,
+    MikuProviderSettingsResponse,
+    MikuProviderSettingsUpdate,
     MikuQuery,
     MikuReference,
     MikuReply,
@@ -63,7 +70,7 @@ SOCKET_TURN_WINDOW_SECONDS = 60
 VOICE_AUDIO_LIMIT = 4 * 1024 * 1024
 VOICE_AUDIO_TYPES = {"audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"}
 REST_CONTEXT_TTL_SECONDS = 900
-REST_CONTEXT_LOCK_SECONDS = 30
+REST_CONTEXT_LOCK_SECONDS = 180
 RELEASE_CONTEXT_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('del', KEYS[1])
@@ -163,11 +170,16 @@ async def _send_event(
 
 
 @router.get("/miku/dashboard", response_class=HTMLResponse, include_in_schema=False)
-async def miku_dashboard(request: Request, user=Depends(get_current_user)):
+async def miku_dashboard(
+    request: Request,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    providers = provider_settings_response(await load_provider_bundle(db, user.id))
     return templates.TemplateResponse(
         request,
         "miku_dashboard.html",
-        {"user": user, "lang": request.cookies.get("lang", "en")},
+        {"user": user, "lang": request.cookies.get("lang", "en"), "providers": providers},
     )
 
 
@@ -177,8 +189,22 @@ async def miku_capabilities(user=Depends(get_current_user)):
 
 
 @router.get("/api/miku/runtime", response_model=MikuRuntimeCapabilities)
-async def miku_runtime_capabilities(user=Depends(get_current_user)):
-    return await miku_runtime_client.capabilities()
+async def miku_runtime_capabilities(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    providers = await load_provider_bundle(db, user.id)
+    return await miku_runtime_client.capabilities((providers.llm, providers.stt, providers.tts))
+
+
+@router.put("/api/miku/providers", response_model=MikuProviderSettingsResponse)
+async def miku_update_providers(
+    body: MikuProviderSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    providers = await save_provider_settings(db, user.id, body)
+    return provider_settings_response(providers)
 
 
 @router.post("/api/miku/query", response_model=MikuReply)
@@ -201,7 +227,11 @@ async def miku_query(
 
 
 @router.post("/api/miku/transcribe")
-async def miku_transcribe(request: Request, user=Depends(get_current_user)):
+async def miku_transcribe(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
     content_type = request.headers.get("content-type", "").partition(";")[0].lower()
     if content_type not in VOICE_AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported audio type")
@@ -215,15 +245,21 @@ async def miku_transcribe(request: Request, user=Depends(get_current_user)):
     if not audio:
         raise HTTPException(status_code=413, detail="Audio utterance is empty")
     try:
-        return {"text": await miku_runtime_client.transcribe(audio, content_type)}
+        providers = await load_provider_bundle(db, user.id)
+        return {"text": await miku_runtime_client.transcribe(audio, content_type, provider=providers.stt)}
     except MikuRuntimeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/api/miku/speech")
-async def miku_speech(body: MikuSpeechRequest, user=Depends(get_current_user)):
+async def miku_speech(
+    body: MikuSpeechRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
     try:
-        audio = await miku_runtime_client.synthesize(body.text, body.voice)
+        providers = await load_provider_bundle(db, user.id)
+        audio = await miku_runtime_client.synthesize(body.text, body.voice, provider=providers.tts)
     except MikuRuntimeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return Response(audio.content, media_type=audio.media_type, headers={"Cache-Control": "no-store"})
@@ -301,7 +337,7 @@ async def miku_socket(websocket: WebSocket):
     await _send_event(
         websocket,
         "session.ready",
-        data={"mode": "guarded", "protocol_version": 2},
+        data={"mode": "guarded", "protocol_version": 3},
     )
     turn_times: deque[float] = deque()
     context_id = websocket.query_params.get("context_id")

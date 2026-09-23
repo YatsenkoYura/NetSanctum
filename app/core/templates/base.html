@@ -130,8 +130,9 @@
     {% block head_extra %}{% endblock %}
 </head>
 
-<body class="bg-black text-zinc-300 min-h-screen font-sans antialiased pb-24 sm:pb-6">
+    <body class="bg-black text-zinc-300 min-h-screen font-sans antialiased pb-24 sm:pb-6">
     {% set navigation_modules = active_modules() %}
+    {% set miku_enabled = navigation_modules | selectattr('name', 'equalto', 'miku') | list | length %}
 
     <!-- ── Top Navigation Bar (Mobile & Desktop Cleaned) ──────────────────────────── -->
     <nav class="bg-black border-b-2 border-zinc-800 px-3 sm:px-6 py-3">
@@ -318,6 +319,11 @@
             </div>
         </div>
     </div>
+
+    {% if user and miku_enabled and not request.query_params.get('package_id') %}
+    {% include "miku_assistant.html" %}
+    <script src="/static/miku-assistant.js?v=2" defer></script>
+    {% endif %}
 
     <script>
         // Global Music Player Logic (Preserved across HTMX navigation)
@@ -754,6 +760,7 @@
                 '/vault/dashboard',
                 '/shares/dashboard',
                 '/storage/dashboard',
+                '/miku/dashboard',
             ];
             let navigationRequest = null;
 
