@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
@@ -24,6 +25,25 @@ def _validate_object_path(path: str, label: str) -> None:
         raise ValueError(f"{label} must use 'module:attribute' syntax: {path!r}")
 
 
+class IntegrationEffect(StrEnum):
+    """Semantic effect of an integration invocation."""
+
+    READ = "read"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    EXECUTE = "execute"
+
+
+@dataclass(frozen=True, slots=True)
+class IntegrationEffects:
+    """Machine-readable safety metadata asserted by an integration provider."""
+
+    effect: IntegrationEffect = IntegrationEffect.EXECUTE
+    external_io: bool = False
+    idempotent: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class IntegrationSpec:
     """A versioned operation implemented by a module."""
@@ -35,6 +55,7 @@ class IntegrationSpec:
     contract: str | None = None
     resource_handler: str | None = None
     resource_request_model: str | None = None
+    effects: IntegrationEffects = IntegrationEffects()
 
     def __post_init__(self) -> None:
         if not INTEGRATION_ID_PATTERN.fullmatch(self.id):

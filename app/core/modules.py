@@ -565,21 +565,33 @@ class ModuleRegistry:
         consumer = self._records.get(context.consumer_id)
         if not consumer or consumer.status != ModuleStatus.ACTIVE or not consumer.spec:
             raise IntegrationUnavailableError(f"Integration consumer {context.consumer_id!r} is not active")
-        if (
-            integration.id not in consumer.spec.uses_integrations
-            and integration.contract not in consumer.spec.uses_integration_contracts
-        ):
+        if not self._integration_is_declared_by(integration, consumer.spec):
             raise IntegrationUnavailableError(
                 f"Module {context.consumer_id!r} does not declare integration {integration.id!r}"
             )
 
-    def integration_catalog(self) -> list[dict[str, Any]]:
+    @staticmethod
+    def _integration_is_declared_by(integration: IntegrationSpec, consumer: ModuleSpec) -> bool:
+        return (
+            integration.id in consumer.uses_integrations
+            or integration.contract in consumer.uses_integration_contracts
+        )
+
+    def integration_catalog(self, consumer_id: str | None = None) -> list[dict[str, Any]]:
         """Describe active integrations for API clients and diagnostics."""
+        consumer = None
+        if consumer_id:
+            record = self._records.get(consumer_id)
+            if not record or record.status != ModuleStatus.ACTIVE or not record.spec:
+                raise IntegrationUnavailableError(f"Integration consumer {consumer_id!r} is not active")
+            consumer = record.spec
         catalog = []
         for record in self.active_records():
             if not record.spec:
                 continue
             for integration in record.spec.integrations:
+                if consumer and not self._integration_is_declared_by(integration, consumer):
+                    continue
                 try:
                     request_model = self._load_object(integration.request_model)
                     result_model = self._load_object(integration.result_model)
@@ -596,6 +608,11 @@ class ModuleRegistry:
                             "request_schema": request_model.model_json_schema(),
                             "result_schema": result_model.model_json_schema(),
                             "resource_schema": resource_schema,
+                            "effects": {
+                                "effect": integration.effects.effect.value,
+                                "external_io": integration.effects.external_io,
+                                "idempotent": integration.effects.idempotent,
+                            },
                             "used_by": sorted(
                                 consumer.id
                                 for consumer in self.active_records()
@@ -611,10 +628,10 @@ class ModuleRegistry:
                     self._component_error(record, f"integration:{integration.id}", exc)
         return sorted(catalog, key=lambda item: item["id"])
 
-    def integration_contract_catalog(self) -> list[dict[str, Any]]:
+    def integration_contract_catalog(self, consumer_id: str | None = None) -> list[dict[str, Any]]:
         """Group active providers by shared versioned contract."""
         contracts: dict[str, dict[str, Any]] = {}
-        for integration in self.integration_catalog():
+        for integration in self.integration_catalog(consumer_id=consumer_id):
             contract_id = integration["contract"]
             if not contract_id:
                 continue
@@ -634,6 +651,7 @@ class ModuleRegistry:
                     "module_id": integration["module_id"],
                     "used_by": integration["used_by"],
                     "has_resources": integration["resource_schema"] is not None,
+                    "effects": integration["effects"],
                 }
             )
         return [contracts[contract_id] for contract_id in sorted(contracts)]

@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 from app.core.module_types import (
     IntegrationContext,
+    IntegrationEffect,
+    IntegrationEffects,
     IntegrationResource,
     IntegrationSpec,
     IntegrationUnavailableError,
@@ -60,6 +62,7 @@ def make_registry(status: ModuleStatus = ModuleStatus.ACTIVE) -> ModuleRegistry:
                 contract="example.contract.v1",
                 resource_handler="test_integration_contracts:example_resource_handler",
                 resource_request_model="test_integration_contracts:ExampleResourceRequest",
+                effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
             ),
         ),
         uses_integrations=("example.echo.v1",),
@@ -134,11 +137,46 @@ class IntegrationContractTests(unittest.TestCase):
         self.assertEqual(["example"], catalog[0]["used_by"])
         self.assertEqual("object", catalog[0]["request_schema"]["type"])
         self.assertEqual("object", catalog[0]["resource_schema"]["type"])
+        self.assertEqual(
+            {"effect": "read", "external_io": False, "idempotent": True},
+            catalog[0]["effects"],
+        )
 
         contracts = registry.integration_contract_catalog()
         self.assertEqual("example.contract.v1", contracts[0]["id"])
         self.assertEqual("example", contracts[0]["providers"][0]["module_id"])
         self.assertTrue(contracts[0]["providers"][0]["has_resources"])
+        self.assertEqual("read", contracts[0]["providers"][0]["effects"]["effect"])
+
+    def test_catalog_can_be_scoped_to_declared_consumer(self):
+        registry = make_registry()
+        allowed = registry.integration_catalog(consumer_id="example")
+        self.assertEqual(["example.echo.v1"], [item["id"] for item in allowed])
+
+        consumer_spec = ModuleSpec(
+            id="consumer",
+            version="1.0.0",
+            title_en="Consumer",
+            title_ru="Consumer",
+        )
+        registry._records[consumer_spec.id] = ModuleRecord(
+            package="consumer",
+            spec=consumer_spec,
+            status=ModuleStatus.ACTIVE,
+        )
+        self.assertEqual([], registry.integration_catalog(consumer_id="consumer"))
+
+    def test_integration_effects_default_to_conservative_execute(self):
+        integration = IntegrationSpec(
+            id="example.default.v1",
+            handler="test_integration_contracts:example_handler",
+            request_model="test_integration_contracts:ExampleRequest",
+            result_model="test_integration_contracts:ExampleResult",
+        )
+
+        self.assertEqual(IntegrationEffect.EXECUTE, integration.effects.effect)
+        self.assertFalse(integration.effects.external_io)
+        self.assertFalse(integration.effects.idempotent)
 
     def test_registry_resolves_internal_resource_for_declared_consumer(self):
         registry = make_registry()

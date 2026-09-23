@@ -264,6 +264,12 @@ resolve internal `IntegrationResource` objects for binary or text adapters witho
 storage paths through the public integration API. `GET /api/integrations/contracts` exposes grouped
 provider and schema metadata for diagnostics and generic clients.
 
+Integrations also declare machine-readable effect metadata: the semantic operation class, whether it
+performs external I/O, and whether repeated invocation is expected to be safe. Unknown integrations
+default to the conservative `execute` class. Automation consumers should request a catalog scoped to
+their module ID and apply their own policy before invocation; provider metadata describes behavior but
+does not grant permission or replace user confirmation.
+
 ## Quick Start
 
 Requirements:

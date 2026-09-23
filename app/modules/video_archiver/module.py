@@ -1,4 +1,6 @@
 from app.core.module_types import (
+    IntegrationEffect,
+    IntegrationEffects,
     IntegrationSpec,
     MigrationSpec,
     ModuleSpec,
@@ -92,12 +94,14 @@ MODULE = ModuleSpec(
             result_model="app.contracts.library_viewer_v1:LibraryResult",
             resource_handler="app.modules.video_archiver.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
         ),
         IntegrationSpec(
             id="media.video.archive.v1",
             handler="app.modules.video_archiver.integrations:archive_source_video",
             request_model="app.contracts.video_archive_v1:ArchiveVideoRequest",
             result_model="app.contracts.video_archive_v1:ArchiveVideoResult",
+            effects=IntegrationEffects(effect=IntegrationEffect.CREATE, external_io=True),
         ),
     ),
     uses_integrations=("media.audio.import.v1", "media.audio.playlist.import.v1"),

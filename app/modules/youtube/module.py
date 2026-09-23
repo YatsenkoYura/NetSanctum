@@ -1,4 +1,10 @@
-from app.core.module_types import BrowserPolicySpec, IntegrationSpec, ModuleSpec
+from app.core.module_types import (
+    BrowserPolicySpec,
+    IntegrationEffect,
+    IntegrationEffects,
+    IntegrationSpec,
+    ModuleSpec,
+)
 
 MODULE = ModuleSpec(
     id="youtube",
@@ -61,6 +67,11 @@ MODULE = ModuleSpec(
             handler="app.modules.youtube.integrations:video_source_catalog",
             request_model="app.contracts.video_source_catalog_v1:VideoSourceRequest",
             result_model="app.contracts.video_source_catalog_v1:VideoSourceResult",
+            effects=IntegrationEffects(
+                effect=IntegrationEffect.READ,
+                external_io=True,
+                idempotent=True,
+            ),
         ),
     ),
     uses_integrations=("media.video.archive.v1",),

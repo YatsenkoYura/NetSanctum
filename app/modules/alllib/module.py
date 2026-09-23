@@ -1,4 +1,6 @@
 from app.core.module_types import (
+    IntegrationEffect,
+    IntegrationEffects,
     IntegrationSpec,
     MigrationSpec,
     ModuleSpec,
@@ -67,6 +69,7 @@ MODULE = ModuleSpec(
             result_model="app.contracts.library_viewer_v1:LibraryResult",
             resource_handler="app.modules.alllib.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
         ),
     ),
     progress_key_patterns=("alllib_dl:*",),
