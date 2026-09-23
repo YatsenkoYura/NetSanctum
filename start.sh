@@ -11,6 +11,7 @@
 #   ./start.sh --logs           # Tail container logs
 #   ./start.sh --no-browser-runtime # Start without Chromium runtime/proxy
 #   ./start.sh --no-miku-runtime # Start without the MIKU sidecar
+#   ./start.sh --miku-local      # Start the optional local llama.cpp model
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -84,6 +85,10 @@ PORT_ARG=""
 ACTION="up"
 BROWSER_RUNTIME=1
 MIKU_RUNTIME=1
+MIKU_LOCAL=0
+if grep -q '^MIKU_LLM_URL=http://miku-llm:' "$ENV_FILE"; then
+    MIKU_LOCAL=1
+fi
 RECREATE_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -114,10 +119,20 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-miku-runtime)
             MIKU_RUNTIME=0
+            MIKU_LOCAL=0
             shift
             ;;
         --miku-runtime)
             MIKU_RUNTIME=1
+            shift
+            ;;
+        --miku-local)
+            MIKU_RUNTIME=1
+            MIKU_LOCAL=1
+            shift
+            ;;
+        --no-miku-local)
+            MIKU_LOCAL=0
             shift
             ;;
         *)
@@ -126,7 +141,7 @@ while [[ $# -gt 0 ]]; do
                 shift
             else
                 echo "Unknown argument: $1"
-                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--no-miku-runtime]"
+                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--no-miku-runtime] [--miku-local]"
                 exit 1
             fi
             ;;
@@ -135,13 +150,13 @@ done
 
 if [ "$ACTION" = "down" ]; then
     echo "Stopping NetSanctum containers..."
-    docker compose --profile browser --profile miku down --remove-orphans
+    docker compose --profile browser --profile miku --profile miku-local down --remove-orphans
     echo "NetSanctum stopped."
     exit 0
 fi
 
 if [ "$ACTION" = "logs" ]; then
-    docker compose --profile browser --profile miku logs -f --tail=100
+    docker compose --profile browser --profile miku --profile miku-local logs -f --tail=100
     exit 0
 fi
 
@@ -175,6 +190,9 @@ if [ "$MIKU_RUNTIME" = "1" ]; then
 else
     echo " MIKU runtime: disabled"
 fi
+if [ "$MIKU_LOCAL" = "1" ]; then
+    echo " MIKU local LLM: enabled (llama.cpp)"
+fi
 echo "========================================================"
 
 if [ "$ACTION" = "restart" ]; then
@@ -204,6 +222,12 @@ if [ "$MIKU_RUNTIME" = "1" ]; then
 else
     docker compose --profile miku stop miku-runtime >/dev/null 2>&1 || true
     docker compose --profile miku rm -f miku-runtime >/dev/null 2>&1 || true
+fi
+if [ "$MIKU_LOCAL" = "1" ]; then
+    PROFILE_ARGS+=(--profile miku-local)
+else
+    docker compose --profile miku-local stop miku-llm >/dev/null 2>&1 || true
+    docker compose --profile miku-local rm -f miku-llm >/dev/null 2>&1 || true
 fi
 BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" MIKU_RUNTIME_ENABLED="$MIKU_RUNTIME" docker compose "${PROFILE_ARGS[@]}" build
 BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" MIKU_RUNTIME_ENABLED="$MIKU_RUNTIME" docker compose "${PROFILE_ARGS[@]}" up -d --remove-orphans "${RECREATE_ARGS[@]}"

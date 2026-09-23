@@ -9,6 +9,7 @@ from app.core.module_types import (
     IntegrationEffect,
     IntegrationEffects,
     IntegrationResource,
+    IntegrationServiceError,
     IntegrationSpec,
     IntegrationUnavailableError,
     ModuleSpec,
@@ -33,6 +34,10 @@ async def example_handler(request: ExampleRequest, context: IntegrationContext) 
     return ExampleResult(echoed=request.value)
 
 
+async def failing_handler(request: ExampleRequest, context: IntegrationContext) -> ExampleResult:
+    raise TimeoutError("private upstream timeout")
+
+
 async def example_resource_handler(
     request: ExampleResourceRequest,
     context: IntegrationContext,
@@ -44,7 +49,10 @@ async def example_entity_resolver(session, entity_type: str, entity_id: str) -> 
     return {"type": entity_type, "id": entity_id}
 
 
-def make_registry(status: ModuleStatus = ModuleStatus.ACTIVE) -> ModuleRegistry:
+def make_registry(
+    status: ModuleStatus = ModuleStatus.ACTIVE,
+    handler: str = "test_integration_contracts:example_handler",
+) -> ModuleRegistry:
     registry = ModuleRegistry()
     spec = ModuleSpec(
         id="example",
@@ -56,7 +64,7 @@ def make_registry(status: ModuleStatus = ModuleStatus.ACTIVE) -> ModuleRegistry:
         integrations=(
             IntegrationSpec(
                 id="example.echo.v1",
-                handler="test_integration_contracts:example_handler",
+                handler=handler,
                 request_model="test_integration_contracts:ExampleRequest",
                 result_model="test_integration_contracts:ExampleResult",
                 contract="example.contract.v1",
@@ -94,6 +102,13 @@ class IntegrationContractTests(unittest.TestCase):
         result = asyncio.run(registry.invoke_integration("example.echo.v1", {"value": "ok"}, context))
 
         self.assertEqual({"echoed": "ok"}, result)
+
+    def test_registry_wraps_unexpected_provider_failures(self):
+        registry = make_registry(handler="test_integration_contracts:failing_handler")
+        context = IntegrationContext(session=None, user=None, registry=registry)
+
+        with self.assertRaisesRegex(IntegrationServiceError, "Integration 'example.echo.v1' failed"):
+            asyncio.run(registry.invoke_integration("example.echo.v1", {"value": "ok"}, context))
 
     def test_disabled_provider_is_unavailable_and_has_no_ui_action(self):
         registry = make_registry(ModuleStatus.DISABLED)

@@ -200,6 +200,12 @@ class MikuRuntimeTests(unittest.TestCase):
         start_script = Path("start.sh").read_text()
         self.assertIn("--no-miku-runtime", start_script)
         self.assertIn("--profile miku", start_script)
+        local_llm = compose["services"]["miku-llm"]
+        self.assertEqual(["miku-local"], local_llm["profiles"])
+        self.assertNotIn("ports", local_llm)
+        self.assertEqual(["miku-control"], local_llm["networks"])
+        self.assertTrue(local_llm["read_only"])
+        self.assertIn("--miku-local", start_script)
 
     def test_production_requires_runtime_token_when_enabled(self):
         settings = Settings(

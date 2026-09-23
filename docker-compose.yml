@@ -197,6 +197,52 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Optional local MIKU language model ─────────────────
+  miku-llm:
+    profiles: ["miku-local"]
+    image: ghcr.io/ggml-org/llama.cpp@sha256:e3ec7c0cd473df7dfff299a60a0f292bf5c3e6a5202286484f896819eca6d6ed
+    restart: unless-stopped
+    init: true
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - ${MIKU_MODEL_DIR:-./storage/models}:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 6g
+    cpus: 8.0
+    pids_limit: 128
+    networks:
+      - miku-control
+    command:
+      - -m
+      - /models/${MIKU_MODEL_FILE:-Qwen3-4B-Instruct-2507-Q4_K_M.gguf}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "4096"
+      - --parallel
+      - "1"
+      - --threads
+      - "8"
+      - --threads-batch
+      - "8"
+      - --batch-size
+      - "256"
+      - --ubatch-size
+      - "128"
+      - --n-gpu-layers
+      - "99"
+      - --flash-attn
+      - "on"
+
   # ── One-time storage ownership migration ───────────────
   storage-init:
     image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc

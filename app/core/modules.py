@@ -17,7 +17,10 @@ from app.core.module_config import load_enabled_module_ids
 from app.core.module_types import (
     MODULE_API_VERSION,
     IntegrationContext,
+    IntegrationNotFoundError,
+    IntegrationRejectedError,
     IntegrationResource,
+    IntegrationServiceError,
     IntegrationSpec,
     IntegrationUnavailableError,
     ModuleSpec,
@@ -679,9 +682,19 @@ class ModuleRegistry:
             raise IntegrationUnavailableError(f"Integration {integration_id!r} could not be loaded") from exc
 
         request = request_model.model_validate(payload)
-        result = handler(request, context)
-        if inspect.isawaitable(result):
-            result = await result
+        try:
+            result = handler(request, context)
+            if inspect.isawaitable(result):
+                result = await result
+        except (
+            IntegrationNotFoundError,
+            IntegrationRejectedError,
+            IntegrationServiceError,
+            IntegrationUnavailableError,
+        ):
+            raise
+        except Exception as exc:
+            raise IntegrationServiceError(f"Integration {integration_id!r} failed") from exc
         try:
             validated_result = result_model.model_validate(result)
         except ValidationError as exc:

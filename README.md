@@ -148,7 +148,8 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 
 MIKU uses an optional isolated `miku-runtime` sidecar for intent planning and local speech adapters.
 The sidecar receives no database, Redis, storage, encryption, or owner credentials and cannot invoke
-module APIs. It returns one validated decision to the MIKU module, which remains responsible for
+module APIs. It receives the consumer-scoped integration catalog and returns one validated native
+tool call to the MIKU module, which remains responsible for
 authorization, policy, integration invocation, confirmation, and response filtering. Destructive
 commands are not exposed; create actions require a short-lived, user-bound confirmation token. The
 built-in rule planner and browser speech APIs remain available when local providers are absent. Use
@@ -159,6 +160,9 @@ OpenAI-compatible endpoint URLs (chat completions, audio transcriptions, and aud
 from the internal `miku-control` network. No provider API key is accepted by the runtime. Leave them
 empty for deterministic commands plus browser-native STT/TTS. MIKU keeps only bounded, 15-minute
 result references for the active browser session and does not persist conversation history.
+
+For a local Vulkan-backed LLM, download a GGUF model into `MIKU_MODEL_DIR`, set
+`MIKU_LLM_URL=http://miku-llm:8080/v1/chat/completions`, and run `./start.sh --miku-local`.
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 
