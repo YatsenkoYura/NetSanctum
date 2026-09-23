@@ -52,6 +52,7 @@ class IntegrationSpec:
     handler: str
     request_model: str
     result_model: str
+    description: str = ""
     contract: str | None = None
     resource_handler: str | None = None
     resource_request_model: str | None = None
@@ -60,6 +61,8 @@ class IntegrationSpec:
     def __post_init__(self) -> None:
         if not INTEGRATION_ID_PATTERN.fullmatch(self.id):
             raise ValueError(f"Invalid versioned integration id: {self.id!r}")
+        if len(self.description) > 500:
+            raise ValueError("Integration description must not exceed 500 characters")
         _validate_object_path(self.handler, "Integration handler")
         _validate_object_path(self.request_model, "Integration request model")
         _validate_object_path(self.result_model, "Integration result model")

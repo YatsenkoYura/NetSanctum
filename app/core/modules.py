@@ -605,6 +605,7 @@ class ModuleRegistry:
                             "id": integration.id,
                             "contract": integration.contract,
                             "module_id": record.id,
+                            "description": integration.description,
                             "request_schema": request_model.model_json_schema(),
                             "result_schema": result_model.model_json_schema(),
                             "resource_schema": resource_schema,
@@ -686,6 +687,21 @@ class ModuleRegistry:
         except ValidationError as exc:
             raise RuntimeError(f"Integration {integration_id!r} returned an invalid result") from exc
         return validated_result.model_dump(mode="json")
+
+    def validate_integration_request(
+        self,
+        integration_id: str,
+        payload: dict[str, Any],
+        context: IntegrationContext,
+    ) -> dict[str, Any]:
+        """Validate a planned call without invoking its integration handler."""
+        provider = self.integration_provider(integration_id)
+        if not provider:
+            raise IntegrationUnavailableError(f"No active provider for integration {integration_id!r}")
+        _record, integration = provider
+        self._validate_integration_consumer(integration, context)
+        request_model = self._load_object(integration.request_model)
+        return request_model.model_validate(payload).model_dump(mode="json")
 
     async def resolve_integration_resource(
         self,

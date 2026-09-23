@@ -48,6 +48,7 @@ MODULE = ModuleSpec(
             handler="app.modules.vault.integrations:capture_item",
             request_model="app.contracts.vault_capture_v1:VaultCaptureRequest",
             result_model="app.contracts.vault_capture_v1:VaultCaptureResult",
+            description="Create a note or bookmark in Vault after explicit user confirmation.",
             effects=IntegrationEffects(effect=IntegrationEffect.CREATE),
         ),
     ),

@@ -51,30 +51,35 @@ class StubRegistry:
                 "id": "music.library.viewer.v1",
                 "contract": "library.viewer.v1",
                 "module_id": "music",
+                "request_schema": {"type": "object", "properties": {"operation": {"type": "string"}}},
                 "effects": {"effect": "read", "external_io": False, "idempotent": True},
             },
             {
                 "id": "media.audio.import.v1",
                 "contract": None,
                 "module_id": "music",
+                "request_schema": {"type": "object", "properties": {}},
                 "effects": {"effect": "create", "external_io": True, "idempotent": False},
             },
             {
                 "id": "youtube.video_source.v1",
                 "contract": "video.source.catalog.v1",
                 "module_id": "youtube",
+                "request_schema": {"type": "object", "properties": {"operation": {"type": "string"}}},
                 "effects": {"effect": "read", "external_io": True, "idempotent": True},
             },
             {
                 "id": "media.video.archive.v1",
                 "contract": None,
                 "module_id": "video_archiver",
+                "request_schema": {"type": "object", "properties": {}},
                 "effects": {"effect": "create", "external_io": True, "idempotent": False},
             },
             {
                 "id": "vault.capture.v1",
                 "contract": None,
                 "module_id": "vault",
+                "request_schema": {"type": "object", "properties": {}},
                 "effects": {"effect": "create", "external_io": False, "idempotent": False},
             },
         ]
@@ -154,6 +159,9 @@ class StubRegistry:
     def storage_owner(self, namespace):
         return "music" if namespace == "music" else None
 
+    def validate_integration_request(self, integration_id, payload, context):
+        return payload
+
 
 class StubWebSocket:
     def __init__(self, messages):
@@ -182,8 +190,15 @@ class StubWebSocket:
 
 
 class StubPlanner:
-    async def decide(self, message):
-        return MikuDecision(command="list", argument="music")
+    def __init__(self, decision=None):
+        self.decision = decision or MikuDecision(command="list", argument="music")
+        self.tools = None
+        self.context = None
+
+    async def decide(self, message, tools=None, context=None):
+        self.tools = tools
+        self.context = context
+        return self.decision
 
 
 class StubTokenStore:
@@ -250,16 +265,43 @@ class MikuTests(unittest.TestCase):
 
     def test_query_executes_only_the_runtime_structured_decision(self):
         registry = StubRegistry()
+        planner = StubPlanner()
         result = asyncio.run(
             query(
                 MikuQuery(message="show something useful"),
                 None,
                 None,
                 registry,
-                runtime=StubPlanner(),
+                runtime=planner,
             )
         )
         self.assertEqual("list", result.command)
+        self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
+        assert planner.tools is not None
+        self.assertIn("music.library.viewer.v1", [tool.integration_id for tool in planner.tools])
+
+    def test_model_can_select_api_and_presentation_without_phrase_rules(self):
+        registry = StubRegistry()
+        planner = StubPlanner(
+            MikuDecision(
+                command="invoke",
+                integration_id="music.library.viewer.v1",
+                parameters={"operation": "catalog", "limit": 1, "offset": 0},
+            )
+        )
+        result = asyncio.run(
+            query(
+                MikuQuery(message="Привет. дай мне ролик из архива какой нибудь"),
+                None,
+                None,
+                registry,
+                runtime=planner,
+                context=MikuSessionContext(),
+            )
+        )
+
+        self.assertEqual("list", result.command)
+        self.assertEqual(1, len(result.references))
         self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
 
     def test_repeat_uses_only_bounded_socket_context(self):
@@ -389,6 +431,31 @@ class MikuTests(unittest.TestCase):
                     token_store,
                 )
             )
+
+    def test_model_selected_create_api_still_requires_confirmation(self):
+        registry = StubRegistry()
+        user = SimpleNamespace(id=1)
+        planner = StubPlanner(
+            MikuDecision(
+                command="invoke",
+                integration_id="vault.capture.v1",
+                parameters={
+                    "kind": "note",
+                    "title": "Buy tea",
+                    "content": "Buy tea",
+                    "url": None,
+                },
+            )
+        )
+        preview = asyncio.run(
+            query(MikuQuery(message="remember to buy tea"), None, user, registry, runtime=planner)
+        )
+
+        self.assertIsNotNone(preview.pending_action)
+        assert preview.pending_action is not None
+        self.assertEqual("invoke", preview.pending_action.action)
+        self.assertNotIn("buy tea", preview.text.casefold())
+        self.assertEqual(0, len(registry.calls))
 
     def test_vault_bookmark_rejects_non_http_urls(self):
         for url in ("file:///etc/passwd", "https://user:secret@example.com"):

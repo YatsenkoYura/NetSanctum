@@ -92,6 +92,7 @@ MODULE = ModuleSpec(
             handler="app.modules.video_archiver.integrations:library_viewer",
             request_model="app.contracts.library_viewer_v1:LibraryRequest",
             result_model="app.contracts.library_viewer_v1:LibraryResult",
+            description="Browse or inspect videos already downloaded into the local Video Archive.",
             resource_handler="app.modules.video_archiver.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
@@ -101,6 +102,10 @@ MODULE = ModuleSpec(
             handler="app.modules.video_archiver.integrations:archive_source_video",
             request_model="app.contracts.video_archive_v1:ArchiveVideoRequest",
             result_model="app.contracts.video_archive_v1:ArchiveVideoResult",
+            description=(
+                "Create a download job for an external source video selected in the current session. "
+                "Do not use this API to browse existing archived videos."
+            ),
             effects=IntegrationEffects(effect=IntegrationEffect.CREATE, external_io=True),
         ),
     ),

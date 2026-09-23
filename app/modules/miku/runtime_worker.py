@@ -72,12 +72,90 @@ async def health():
     }
 
 
-async def _decide_with_llm(message: str) -> MikuDecision:
+async def _decide_with_llm(request: MikuDecisionRequest) -> MikuDecision:
     system = (
-        "Return one JSON object with keys command and argument. Allowed commands: help, sources, list, "
-        "find, repeat, discover, open, play, archive, note, bookmark. Use find for local library search, "
-        "discover for YouTube search, result:N for open/play/archive, note for short Vault notes, and "
-        "bookmark for one HTTP URL. Never invent other commands."
+        "Select exactly one available function that best satisfies the request. Existing module APIs are "
+        "authoritative. Prefer a catalog limit of 1 when one or any item is requested. Never invent IDs or "
+        "call unavailable functions. Mutation functions only create a preview and still require user confirmation. "
+        "Use miku_respond only for conversation or when no module API safely matches."
+    )
+    tool_names: dict[str, str] = {}
+    api_tools = []
+    for index, tool in enumerate(request.tools):
+        name = f"api_{index}_{tool.integration_id.replace('.', '_').replace('-', '_')}"
+        tool_names[name] = tool.integration_id
+        api_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"{tool.description}. API ID: {tool.integration_id}",
+                    "parameters": tool.input_schema,
+                },
+            }
+        )
+    reference_values = [item.ref for item in request.context]
+    builtins = {
+        "miku_help": "help",
+        "miku_sources": "sources",
+        "miku_repeat": "repeat",
+        "miku_use_result": "reference",
+        "miku_respond": "respond",
+    }
+    api_tools.extend(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "miku_respond",
+                    "description": "Return a short conversational response when no module API is needed or allowed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string", "maxLength": 500}},
+                        "required": ["message"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "miku_help",
+                    "description": "Explain the available assistant capabilities.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "miku_sources",
+                    "description": "List modules and APIs available to the assistant.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "miku_repeat",
+                    "description": "Repeat the current result set without calling another API.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "miku_use_result",
+                    "description": "Open or play one result from current_results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "ref": {"type": "string", "enum": reference_values or ["result:1"]},
+                            "action": {"type": "string", "enum": ["open", "play"]},
+                        },
+                        "required": ["ref", "action"],
+                    },
+                },
+            },
+        ]
     )
     async with (
         httpx.AsyncClient(timeout=30) as client,
@@ -88,18 +166,50 @@ async def _decide_with_llm(message: str) -> MikuDecision:
                 "model": LLM_MODEL,
                 "messages": [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": message},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "current_results": [item.model_dump(mode="json") for item in request.context],
+                                "request": request.message,
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    },
                 ],
                 "temperature": 0,
                 "max_tokens": 100,
-                "response_format": {"type": "json_object"},
+                "tools": api_tools,
+                "tool_choice": "required",
             },
         ) as response,
     ):
         response.raise_for_status()
         payload = json.loads(await _bounded_response_body(response, 64 * 1024))
-    content = payload["choices"][0]["message"]["content"]
-    return MikuDecision.model_validate(json.loads(content))
+    calls = payload["choices"][0]["message"]["tool_calls"]
+    if len(calls) != 1:
+        raise ValueError("Exactly one tool call is required")
+    function = calls[0]["function"]
+    name = function["name"]
+    raw_arguments = function.get("arguments") or {}
+    arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+    if not isinstance(arguments, dict):
+        raise ValueError("Tool arguments must be an object")
+    if name in tool_names:
+        return MikuDecision(
+            command="invoke",
+            integration_id=tool_names[name],
+            parameters=arguments,
+        )
+    builtin = builtins.get(name)
+    if builtin == "reference":
+        return MikuDecision.model_validate({"command": arguments["action"], "argument": arguments["ref"]})
+    if builtin == "respond":
+        return MikuDecision(command="respond", argument=str(arguments["message"])[:500])
+    if builtin:
+        return MikuDecision.model_validate({"command": builtin})
+    raise ValueError("Unknown tool call")
 
 
 @app.post("/v1/decide", response_model=MikuDecision)
@@ -110,7 +220,7 @@ async def decide(
     verify_runtime_token(runtime_token)
     if LLM_URL:
         try:
-            return await _decide_with_llm(body.message)
+            return await _decide_with_llm(body)
         except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             logger.warning("MIKU LLM provider failed validation; using rule planner")
     try:

@@ -67,6 +67,7 @@ MODULE = ModuleSpec(
             handler="app.modules.alllib.integrations:library_viewer",
             request_model="app.contracts.library_viewer_v1:LibraryRequest",
             result_model="app.contracts.library_viewer_v1:LibraryResult",
+            description="Browse novels, manga, and anime already stored in the local AllLib library.",
             resource_handler="app.modules.alllib.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),

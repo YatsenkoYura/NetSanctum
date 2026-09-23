@@ -71,6 +71,7 @@ MODULE = ModuleSpec(
             handler="app.modules.music.integrations:library_viewer",
             request_model="app.contracts.library_viewer_v1:LibraryRequest",
             result_model="app.contracts.library_viewer_v1:LibraryResult",
+            description="Browse or inspect audio already stored in the local Music library.",
             resource_handler="app.modules.music.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),

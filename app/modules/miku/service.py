@@ -31,6 +31,7 @@ from app.modules.miku.runtime_client import miku_runtime_client
 from app.modules.miku.schemas import (
     MikuActionResult,
     MikuCapabilities,
+    MikuContextReference,
     MikuDecision,
     MikuJobStatus,
     MikuPendingAction,
@@ -38,6 +39,7 @@ from app.modules.miku.schemas import (
     MikuQuery,
     MikuReference,
     MikuReply,
+    MikuToolDefinition,
 )
 
 COMMANDS = (
@@ -109,6 +111,17 @@ class MikuActionSigner:
         if payload.get("user_id") != user_id or payload.get("exp", 0) < int(time.time()):
             raise MikuQueryError("Action confirmation expired")
         action = payload.get("action")
+        if action == "invoke":
+            integration_id = payload.get("integration_id")
+            parameters = payload.get("parameters")
+            if (
+                not isinstance(integration_id, str)
+                or not re.fullmatch(r"[a-z][a-z0-9_.-]*\.v[1-9][0-9]*", integration_id)
+                or not isinstance(parameters, dict)
+                or len(parameters) > 20
+            ):
+                raise MikuQueryError("Action is not allowed")
+            return payload
         if action == "archive" and payload.get("entity_type") == "youtube_video":
             return payload
         if action in {"note", "bookmark"}:
@@ -162,9 +175,21 @@ class _Registry(Protocol):
 
     def storage_owner(self, namespace: str) -> str | None: ...
 
+    def validate_integration_request(
+        self,
+        integration_id: str,
+        payload: dict[str, Any],
+        context: IntegrationContext,
+    ) -> dict[str, Any]: ...
+
 
 class _Planner(Protocol):
-    async def decide(self, message: str) -> MikuDecision: ...
+    async def decide(
+        self,
+        message: str,
+        tools: list[MikuToolDefinition] | None = None,
+        context: list[MikuContextReference] | None = None,
+    ) -> MikuDecision: ...
 
 
 class _TokenStore(Protocol):
@@ -206,6 +231,51 @@ def capabilities(registry: _Registry) -> MikuCapabilities:
             ),
         ],
     )
+
+
+def runtime_tools(registry: _Registry) -> list[MikuToolDefinition]:
+    tools = []
+    for item in registry.integration_catalog(consumer_id="miku"):
+        schema = item["request_schema"]
+        compact_schema = {
+            "type": schema.get("type", "object"),
+            "properties": schema.get("properties", {}),
+            "required": schema.get("required", []),
+        }
+        contract = item["contract"]
+        tools.append(
+            MikuToolDefinition(
+                integration_id=item["id"],
+                module_id=item["module_id"],
+                contract=contract,
+                effect=item["effects"]["effect"],
+                description=item.get("description", "")
+                or (
+                    f"{item['effects']['effect']} API provided by module {item['module_id']}"
+                    + (f" implementing {contract}" if contract else "")
+                ),
+                input_schema=compact_schema,
+            )
+        )
+    return tools
+
+
+def _runtime_context(context: MikuSessionContext | None) -> list[MikuContextReference]:
+    if not context or not context.references:
+        return []
+    return [
+        MikuContextReference(
+            ref=item.ref,
+            module_id=item.module_id,
+            item_id=item.item_id,
+            entity_type=item.entity_type,
+            kind=item.kind,
+            title=item.title,
+            playable=item.playable,
+            readable=item.readable,
+        )
+        for item in context.references
+    ]
 
 
 def _trim(value: Any, limit: int) -> str | None:
@@ -293,15 +363,116 @@ async def query(
     runtime: _Planner = miku_runtime_client,
     context: MikuSessionContext | None = None,
 ) -> MikuReply:
-    decision = await runtime.decide(request.message)
+    decision = await runtime.decide(request.message, runtime_tools(registry), _runtime_context(context))
     command, argument = decision.command, decision.argument
     providers = _providers(registry)
+
+    if command == "invoke":
+        catalog_item = next(
+            (
+                item
+                for item in registry.integration_catalog(consumer_id="miku")
+                if item["id"] == decision.integration_id
+            ),
+            None,
+        )
+        if not catalog_item:
+            raise MikuQueryError("The selected API is unavailable.")
+        integration_context = IntegrationContext(
+            session=db,
+            user=user,
+            registry=registry,
+            consumer_id="miku",
+        )
+        try:
+            parameters = registry.validate_integration_request(
+                decision.integration_id or "",
+                decision.parameters,
+                integration_context,
+            )
+        except (
+            IntegrationNotFoundError,
+            IntegrationRejectedError,
+            IntegrationUnavailableError,
+            ValidationError,
+        ):
+            raise MikuQueryError("The selected API arguments are invalid.")
+        effect = catalog_item["effects"]["effect"]
+        if effect == "create":
+            entity_type = parameters.get("entity_type")
+            entity_id = parameters.get("entity_id")
+            if entity_type or entity_id:
+                current_references = context.references if context and context.references else []
+                if not any(
+                    item.entity_type == entity_type and item.item_id == str(entity_id)
+                    for item in current_references
+                ):
+                    raise MikuQueryError("The action must target a result from the current session.")
+            return MikuReply(
+                command=("archive" if decision.integration_id == ARCHIVE_INTEGRATION_ID else "note"),
+                text="Confirmation is required before invoking this API.",
+                pending_action=MikuPendingAction(
+                    action="invoke",
+                    label=f"Run {decision.integration_id}",
+                    summary=f"Confirm create action in {catalog_item['module_id']}",
+                    confirmation_token=action_signer.create_payload(
+                        user.id,
+                        "invoke",
+                        {"integration_id": decision.integration_id, "parameters": parameters},
+                    ),
+                ),
+            )
+        if effect != "read":
+            raise MikuQueryError("The selected API effect is not allowed.")
+        try:
+            result = await registry.invoke_integration(
+                decision.integration_id or "",
+                parameters,
+                integration_context,
+            )
+            result_limit = min(request.limit, int(parameters.get("limit", request.limit)))
+            if catalog_item["contract"] == CONTRACT_ID:
+                library = LibraryResult.model_validate(result)
+                if library.module_id != catalog_item["module_id"]:
+                    raise IntegrationRejectedError("Provider returned the wrong module ID")
+                items = library.items if library.items else ([library.item] if library.item else [])
+                references = [
+                    _reference(catalog_item["module_id"], item, index)
+                    for index, item in enumerate(items[:result_limit], 1)
+                ]
+                reply_command = "list"
+            elif catalog_item["contract"] == SOURCE_CONTRACT_ID:
+                source = VideoSourceResult.model_validate(result)
+                references = [
+                    _source_reference(catalog_item["module_id"], item, index)
+                    for index, item in enumerate(source.items[:result_limit], 1)
+                ]
+                reply_command = "discover"
+            else:
+                raise MikuQueryError("The selected read API has no assistant renderer.")
+        except (
+            IntegrationNotFoundError,
+            IntegrationRejectedError,
+            IntegrationServiceError,
+            IntegrationUnavailableError,
+            ValidationError,
+        ) as exc:
+            raise MikuQueryError("The selected API could not complete the request.") from exc
+        if context is not None:
+            context.references = references
+        return MikuReply(
+            command=reply_command,
+            text=f"Returned {len(references)} item(s) from {catalog_item['module_id']}.",
+            references=references,
+        )
 
     if command == "help":
         return MikuReply(
             command=command,
             text="Commands: help, sources, list, find, discover, open, play, archive, note, bookmark, repeat.",
         )
+    if command == "respond":
+        return MikuReply(command=command, text=_trim(argument, 500) or "I cannot answer that request.")
     if command == "sources":
         names = sorted({provider.module_id for provider in [*providers, *_source_providers(registry)]})
         return MikuReply(command=command, text=f"Available sources: {', '.join(names) or 'none'}.")
@@ -335,6 +506,8 @@ async def query(
         }
         if ARCHIVE_INTEGRATION_ID not in available:
             raise MikuQueryError("Video Archive is unavailable.")
+        if decision.integration_id and decision.integration_id != ARCHIVE_INTEGRATION_ID:
+            raise MikuQueryError("The selected API cannot archive a video.")
         return MikuReply(
             command=command,
             text="Confirmation is required before starting an archive job.",
@@ -354,6 +527,8 @@ async def query(
         }
         if VAULT_CAPTURE_INTEGRATION_ID not in available:
             raise MikuQueryError("Vault capture is unavailable.")
+        if decision.integration_id and decision.integration_id != VAULT_CAPTURE_INTEGRATION_ID:
+            raise MikuQueryError("The selected API cannot save to Vault.")
         try:
             capture = VaultCaptureRequest.model_validate(
                 {
@@ -379,6 +554,10 @@ async def query(
 
     if command == "discover":
         providers = _source_providers(registry)
+        if decision.integration_id:
+            providers = [
+                provider for provider in providers if provider.integration_id == decision.integration_id
+            ]
         if not providers:
             raise MikuQueryError("No video discovery source is available.")
         references: list[MikuReference] = []
@@ -414,11 +593,15 @@ async def query(
             warnings=warnings,
         )
         if context is not None:
-            context.references = references
+            context.references = reply.references
         return reply
 
     selected = providers
-    if command == "list" and argument:
+    if decision.integration_id:
+        selected = [provider for provider in providers if provider.integration_id == decision.integration_id]
+        if not selected:
+            raise MikuQueryError("The selected library API is unavailable.")
+    elif command == "list" and argument:
         selected = [provider for provider in providers if provider.module_id == argument.casefold()]
         if not selected:
             raise MikuQueryError(f"Unknown or unavailable source: {argument}")
@@ -482,7 +665,24 @@ async def confirm_action(
     if not await token_store.set(f"miku:action:{token_digest}", "1", ex=180, nx=True):
         raise MikuQueryError("Action confirmation was already used")
     action = payload["action"]
-    if action == "archive":
+    if action == "invoke":
+        integration_id = payload["integration_id"]
+        catalog_item = next(
+            (
+                item
+                for item in registry.integration_catalog(consumer_id="miku")
+                if item["id"] == integration_id and item["effects"]["effect"] == "create"
+            ),
+            None,
+        )
+        if not catalog_item:
+            raise MikuQueryError("The confirmed API is unavailable")
+        request = registry.validate_integration_request(
+            integration_id,
+            payload["parameters"],
+            IntegrationContext(session=db, user=user, registry=registry, consumer_id="miku"),
+        )
+    elif action == "archive":
         integration_id = ARCHIVE_INTEGRATION_ID
         request = {
             "entity_type": payload["entity_type"],

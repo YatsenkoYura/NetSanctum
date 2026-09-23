@@ -1,4 +1,5 @@
-from typing import Literal
+import json
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -14,6 +15,8 @@ MikuCommand = Literal[
     "archive",
     "note",
     "bookmark",
+    "invoke",
+    "respond",
 ]
 
 
@@ -53,7 +56,7 @@ class MikuReference(BaseModel):
 
 
 class MikuPendingAction(BaseModel):
-    action: Literal["archive", "note", "bookmark"]
+    action: Literal["archive", "note", "bookmark", "invoke"]
     label: str
     summary: str
     confirmation_token: str
@@ -116,6 +119,8 @@ class MikuSocketMessage(BaseModel):
 
 class MikuDecisionRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
+    tools: list["MikuToolDefinition"] = Field(default_factory=list, max_length=20)
+    context: list["MikuContextReference"] = Field(default_factory=list, max_length=20)
 
     @field_validator("message")
     @classmethod
@@ -146,18 +151,51 @@ class MikuRuntimeCapabilities(BaseModel):
     tts: bool = False
 
 
+class MikuToolDefinition(BaseModel):
+    integration_id: str = Field(max_length=128, pattern=r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
+    module_id: str = Field(max_length=63, pattern=r"^[a-z][a-z0-9_]*$")
+    contract: str | None = None
+    effect: Literal["read", "create", "update", "delete", "execute"]
+    description: str = Field(max_length=300)
+    input_schema: dict[str, Any]
+
+
+class MikuContextReference(BaseModel):
+    ref: str = Field(pattern=r"^result:([1-9]|1[0-9]|20)$")
+    module_id: str = Field(max_length=63)
+    item_id: str = Field(max_length=255)
+    entity_type: str | None = Field(default=None, max_length=64)
+    kind: str = Field(max_length=64)
+    title: str = Field(max_length=160)
+    playable: bool = False
+    readable: bool = False
+
+
 class MikuDecision(BaseModel):
     command: MikuCommand
     argument: str = Field(default="", max_length=500)
+    integration_id: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$",
+        description="Exact API ID from the supplied catalog, or null for assistant-only commands",
+    )
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_command(self):
         self.argument = self.argument.strip()
-        if (
-            self.command in {"find", "discover", "open", "play", "archive", "note", "bookmark"}
-            and not self.argument
-        ):
+        if self.command in {"open", "play", "archive", "note", "bookmark", "respond"} and not self.argument:
             raise ValueError(f"The {self.command} command requires an argument")
         if self.command in {"help", "sources", "repeat"} and self.argument:
             raise ValueError(f"The {self.command} command does not accept arguments")
+        if self.command == "invoke" and not self.integration_id:
+            raise ValueError("The invoke command requires an integration ID")
+        if self.command != "invoke" and (self.integration_id or self.parameters):
+            raise ValueError(f"The {self.command} command does not select a module integration")
+        if len(self.parameters) > 20 or len(json.dumps(self.parameters)) > 4096:
+            raise ValueError("Integration parameters are too large")
         return self
+
+
+MikuDecisionRequest.model_rebuild()
