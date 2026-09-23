@@ -166,6 +166,12 @@ services:
     environment:
       NETSANCTUM_LOAD_DOTENV: "0"
       MIKU_RUNTIME_TOKEN: ${MIKU_RUNTIME_TOKEN:-}
+      MIKU_LLM_URL: ${MIKU_LLM_URL:-}
+      MIKU_LLM_MODEL: ${MIKU_LLM_MODEL:-qwen2.5:7b}
+      MIKU_STT_URL: ${MIKU_STT_URL:-}
+      MIKU_STT_MODEL: ${MIKU_STT_MODEL:-whisper-1}
+      MIKU_TTS_URL: ${MIKU_TTS_URL:-}
+      MIKU_TTS_MODEL: ${MIKU_TTS_MODEL:-tts-1}
     read_only: true
     tmpfs:
       - /tmp:size=64m

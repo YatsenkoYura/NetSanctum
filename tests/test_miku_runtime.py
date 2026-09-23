@@ -2,7 +2,7 @@ import asyncio
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import yaml
@@ -52,6 +52,48 @@ class MikuRuntimeTests(unittest.TestCase):
         self.assertEqual("find", decision.command)
         self.assertEqual("neon", decision.argument)
 
+    def test_runtime_client_uses_bounded_voice_contracts(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual("secret-token", request.headers["X-Miku-Runtime-Token"])
+            if request.url.path == "/v1/transcribe":
+                self.assertEqual("audio/webm", request.headers["content-type"])
+                self.assertEqual(b"audio", request.content)
+                return httpx.Response(200, json={"text": "find neon"})
+            self.assertEqual("/v1/synthesize", request.url.path)
+            self.assertEqual({"text": "Found one item", "voice": "alloy"}, json.loads(request.content))
+            return httpx.Response(200, content=b"speech", headers={"content-type": "audio/mpeg"})
+
+        client = MikuRuntimeClient(
+            base_url="http://miku-runtime:8770",
+            token="secret-token",
+            enabled=True,
+            transport=httpx.MockTransport(handler),
+        )
+
+        self.assertEqual("find neon", asyncio.run(client.transcribe(b"audio", "audio/webm")))
+        speech = asyncio.run(client.synthesize("Found one item"))
+        self.assertEqual(b"speech", speech.content)
+        self.assertEqual("audio/mpeg", speech.media_type)
+
+    def test_runtime_capabilities_expose_booleans_not_provider_urls(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "providers": {"llm": True, "stt": False, "tts": True},
+                    "private_url": "http://local-model",
+                },
+            )
+
+        client = MikuRuntimeClient(enabled=True, transport=httpx.MockTransport(handler))
+        result = asyncio.run(client.capabilities())
+
+        self.assertTrue(result.enabled)
+        self.assertTrue(result.llm)
+        self.assertFalse(result.stt)
+        self.assertNotIn("private_url", result.model_dump())
+
     def test_runtime_failure_falls_back_to_same_rule_contract(self):
         async def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("offline", request=request)
@@ -70,7 +112,52 @@ class MikuRuntimeTests(unittest.TestCase):
         self.assertIsNone(app.docs_url)
         self.assertIsNone(app.redoc_url)
         self.assertIsNone(app.openapi_url)
-        self.assertEqual({"/health", "/v1/decide"}, {route.path for route in app.routes})
+        self.assertEqual(
+            {"/health", "/v1/decide", "/v1/transcribe", "/v1/synthesize"},
+            {route.path for route in app.routes},
+        )
+
+    def test_runtime_uses_validated_llm_decision_when_configured(self):
+        async def request_decision():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://runtime") as client:
+                return await client.post(
+                    "/v1/decide",
+                    headers={"X-Miku-Runtime-Token": "runtime-secret"},
+                    json={"message": "show me something neon"},
+                )
+
+        planned = MikuDecision(command="find", argument="neon")
+        with (
+            patch("app.modules.miku.runtime_worker.RUNTIME_TOKEN", "runtime-secret"),
+            patch("app.modules.miku.runtime_worker.LLM_URL", "http://local-llm/v1/chat/completions"),
+            patch("app.modules.miku.runtime_worker._decide_with_llm", AsyncMock(return_value=planned)),
+        ):
+            response = asyncio.run(request_decision())
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({"command": "find", "argument": "neon"}, response.json())
+
+    def test_runtime_rejects_oversized_audio_before_provider_call(self):
+        async def request_transcription():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://runtime") as client:
+                return await client.post(
+                    "/v1/transcribe",
+                    headers={
+                        "X-Miku-Runtime-Token": "runtime-secret",
+                        "Content-Type": "audio/webm",
+                    },
+                    content=b"x" * (4 * 1024 * 1024 + 1),
+                )
+
+        with (
+            patch("app.modules.miku.runtime_worker.RUNTIME_TOKEN", "runtime-secret"),
+            patch("app.modules.miku.runtime_worker.STT_URL", "http://local-stt/v1/audio/transcriptions"),
+        ):
+            response = asyncio.run(request_transcription())
+
+        self.assertEqual(413, response.status_code)
 
     def test_compose_isolates_runtime_from_data_services(self):
         compose = yaml.safe_load(Path("docker-compose.yml").read_text())
@@ -87,7 +174,16 @@ class MikuRuntimeTests(unittest.TestCase):
         self.assertNotIn("cap_add", runtime)
         self.assertTrue(compose["networks"]["miku-control"]["internal"])
         self.assertEqual(
-            {"NETSANCTUM_LOAD_DOTENV", "MIKU_RUNTIME_TOKEN"},
+            {
+                "NETSANCTUM_LOAD_DOTENV",
+                "MIKU_RUNTIME_TOKEN",
+                "MIKU_LLM_URL",
+                "MIKU_LLM_MODEL",
+                "MIKU_STT_URL",
+                "MIKU_STT_MODEL",
+                "MIKU_TTS_URL",
+                "MIKU_TTS_MODEL",
+            },
             set(runtime["environment"]),
         )
         start_script = Path("start.sh").read_text()

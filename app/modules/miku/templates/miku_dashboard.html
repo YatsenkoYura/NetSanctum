@@ -7,7 +7,7 @@
     <header class="border-b-2 border-teal-400 pb-5">
         <div class="flex flex-wrap items-end justify-between gap-4">
             <div>
-                <p class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-teal-400">Read-only prototype</p>
+                <p class="font-mono text-[10px] font-bold uppercase tracking-[0.3em] text-teal-400">Guarded live assistant</p>
                 <h1 class="mt-2 text-4xl font-black tracking-tight text-white sm:text-6xl">MIKU</h1>
                 <p class="mt-2 font-mono text-xs text-zinc-500">Miku Is Kernel Utility</p>
             </div>
@@ -35,18 +35,38 @@
                     Send
                 </button>
             </form>
+            <div class="flex flex-wrap gap-px border-t border-zinc-800 bg-zinc-800">
+                <button id="miku-mic" type="button" class="min-h-10 flex-1 bg-zinc-950 px-4 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-teal-400">Push to talk</button>
+                <button id="miku-wake" type="button" class="min-h-10 flex-1 bg-zinc-950 px-4 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-teal-400">Wake: off</button>
+                <button id="miku-voice" type="button" class="min-h-10 flex-1 bg-zinc-950 px-4 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-teal-400">Voice: off</button>
+            </div>
         </div>
 
         <aside class="border-2 border-zinc-800 bg-zinc-950 p-4">
-            <h2 class="font-mono text-xs font-bold uppercase text-white">Protocol 0.1</h2>
+            <h2 class="font-mono text-xs font-bold uppercase text-white">Protocol 0.2</h2>
             <div class="mt-4 space-y-2 font-mono text-xs text-zinc-500">
                 <p><span class="text-teal-400">help</span> — command list</p>
                 <p><span class="text-teal-400">sources</span> — active providers</p>
                 <p><span class="text-teal-400">list [module]</span> — recent items</p>
                 <p><span class="text-teal-400">find &lt;text&gt;</span> — bounded search</p>
+                <p><span class="text-teal-400">discover &lt;text&gt;</span> — YouTube search</p>
+                <p><span class="text-teal-400">open/play result:N</span> — use result</p>
+                <p><span class="text-teal-400">archive result:N</span> — confirm job</p>
+                <p><span class="text-teal-400">note &lt;text&gt;</span> — confirm Vault note</p>
+                <p><span class="text-teal-400">bookmark &lt;url&gt;</span> — confirm Vault link</p>
                 <p><span class="text-teal-400">repeat</span> — repeat last result</p>
             </div>
         </aside>
+    </section>
+
+    <section id="miku-viewer" class="hidden border-2 border-zinc-800 bg-black p-4">
+        <div class="mb-3 flex items-center justify-between gap-4">
+            <h2 id="miku-viewer-title" class="font-mono text-xs font-bold uppercase text-white">Result</h2>
+            <button id="miku-viewer-close" type="button" class="font-mono text-[10px] uppercase text-zinc-500 hover:text-white">Close</button>
+        </div>
+        <audio id="miku-audio" class="hidden w-full" controls></audio>
+        <video id="miku-video" class="hidden max-h-[32rem] w-full bg-zinc-950" controls></video>
+        <pre id="miku-text" class="hidden max-h-[32rem] overflow-auto whitespace-pre-wrap font-mono text-sm text-zinc-300"></pre>
     </section>
 </main>
 
@@ -56,8 +76,30 @@
     const input = document.getElementById('miku-input');
     const output = document.getElementById('miku-output');
     const status = document.getElementById('miku-status');
+    const micButton = document.getElementById('miku-mic');
+    const wakeButton = document.getElementById('miku-wake');
+    const voiceButton = document.getElementById('miku-voice');
+    const viewer = document.getElementById('miku-viewer');
+    const viewerTitle = document.getElementById('miku-viewer-title');
+    const viewerClose = document.getElementById('miku-viewer-close');
+    const audioPlayer = document.getElementById('miku-audio');
+    const videoPlayer = document.getElementById('miku-video');
+    const textViewer = document.getElementById('miku-text');
     let socket;
     let reconnectTimer;
+    let recognition;
+    let recorder;
+    let recorderStream;
+    let recording = false;
+    let recordingMode;
+    let wakeEnabled = false;
+    let voiceEnabled = false;
+    let localVoice = {llm: false, stt: false, tts: false};
+    let wakeRestartTimer;
+    let recordedBytes = 0;
+    const maxAudioBytes = 4 * 1024 * 1024;
+    const restContextId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     function line(text, tone = 'normal') {
         const row = document.createElement('p');
@@ -66,12 +108,132 @@
         output.appendChild(row);
     }
 
+    function actionButton(label, handler, danger = false) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `border px-2 py-1 font-mono text-[10px] font-bold uppercase ${danger ? 'border-amber-700 text-amber-400' : 'border-zinc-700 text-teal-400'}`;
+        button.textContent = label;
+        button.addEventListener('click', handler);
+        return button;
+    }
+
+    function closeViewer() {
+        audioPlayer.pause();
+        videoPlayer.pause();
+        audioPlayer.removeAttribute('src');
+        videoPlayer.removeAttribute('src');
+        for (const element of [audioPlayer, videoPlayer, textViewer]) element.classList.add('hidden');
+        viewer.classList.add('hidden');
+    }
+
+    async function openReference(item, play = false) {
+        const target = play ? item.resource_url : (item.open_url || item.resource_url);
+        if (!target) return;
+        if (!target.startsWith('/api/miku/resources/')) {
+            window.location.assign(target);
+            return;
+        }
+        closeViewer();
+        viewerTitle.textContent = item.title;
+        viewer.classList.remove('hidden');
+        if (item.kind === 'audio') {
+            audioPlayer.src = target;
+            audioPlayer.classList.remove('hidden');
+            await audioPlayer.play();
+            return;
+        }
+        if (item.kind === 'video') {
+            videoPlayer.src = target;
+            videoPlayer.classList.remove('hidden');
+            if (play) await videoPlayer.play();
+            return;
+        }
+        const response = await fetch(target);
+        if (!response.ok) throw new Error('Resource is unavailable');
+        const payload = await response.json();
+        textViewer.textContent = payload.text || '';
+        textViewer.classList.remove('hidden');
+    }
+
+    async function confirmAction(action) {
+        const response = await fetch('/api/miku/actions/confirm', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({confirmation_token: action.confirmation_token}),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || 'Action failed');
+        line(payload.message);
+        if (payload.task_id) pollJob(payload.task_id);
+    }
+
+    async function pollJob(taskId) {
+        try {
+            const response = await fetch(`/api/miku/jobs/${encodeURIComponent(taskId)}`);
+            if (response.status === 404) {
+                line(`Job ${taskId} completed or expired.`);
+                return;
+            }
+            if (!response.ok) throw new Error('Job status unavailable');
+            const job = await response.json();
+            line(`Job ${job.task_id}: ${job.status}${job.progress ? ` · ${job.progress}` : ''}`);
+            window.setTimeout(() => pollJob(taskId), 3000);
+        } catch (error) {
+            line(error.message || 'Job status unavailable', 'error');
+        }
+    }
+
+    async function speak(text) {
+        if (!voiceEnabled || !text) return;
+        try {
+            if (!localVoice.tts) throw new Error('Local TTS unavailable');
+            const response = await fetch('/api/miku/speech', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({text}),
+            });
+            if (!response.ok) throw new Error('Local TTS unavailable');
+            const url = URL.createObjectURL(await response.blob());
+            const audio = new Audio(url);
+            audio.addEventListener('ended', () => URL.revokeObjectURL(url), {once: true});
+            await audio.play();
+        } catch (_error) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+            }
+        }
+    }
+
     function renderReply(payload) {
         line(payload.text);
         for (const item of payload.references) {
-            line(`${item.ref} · ${item.module_id} · ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ''}`);
+            const row = document.createElement('div');
+            row.className = 'flex flex-wrap items-center gap-2 border-l-2 border-zinc-800 pl-3';
+            const text = document.createElement('span');
+            text.className = 'min-w-0 flex-1 font-mono text-sm text-zinc-300';
+            text.textContent = `${item.ref} · ${item.module_id} · ${item.title}${item.subtitle ? ` — ${item.subtitle}` : ''}`;
+            row.appendChild(text);
+            if (item.open_url || item.resource_url) row.appendChild(actionButton('Open', () => openReference(item).catch(error => line(error.message, 'error'))));
+            if (item.playable && item.resource_url) row.appendChild(actionButton('Play', () => openReference(item, true).catch(error => line(error.message, 'error'))));
+            output.appendChild(row);
         }
         for (const warning of payload.warnings) line(`Warning: ${warning}`, 'error');
+        if (payload.pending_action) {
+            const action = payload.pending_action;
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-3 border border-amber-900 bg-amber-950/20 p-3';
+            const summary = document.createElement('span');
+            summary.className = 'flex-1 font-mono text-xs text-amber-200';
+            summary.textContent = action.summary;
+            row.appendChild(summary);
+            row.appendChild(actionButton('Confirm', () => confirmAction(action).catch(error => line(error.message, 'error')), true));
+            output.appendChild(row);
+        }
+        if (payload.client_action && payload.references[0]) {
+            openReference(payload.references[0], payload.client_action === 'play').catch(error => line(error.message, 'error'));
+        }
+        speak(payload.text);
     }
 
     async function restFallback(message) {
@@ -79,7 +241,7 @@
             const response = await fetch('/api/miku/query', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message}),
+                body: JSON.stringify({message, context_id: restContextId}),
             });
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || 'Request failed');
@@ -94,7 +256,7 @@
 
     function connect() {
         const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        socket = new WebSocket(`${scheme}://${window.location.host}/api/miku/ws`);
+        socket = new WebSocket(`${scheme}://${window.location.host}/api/miku/ws?context_id=${encodeURIComponent(restContextId)}`);
         socket.addEventListener('open', () => { status.textContent = 'Connecting'; });
         socket.addEventListener('message', (event) => {
             const payload = JSON.parse(event.data);
@@ -117,9 +279,8 @@
         });
     }
 
-    form.addEventListener('submit', (event) => {
-        event.preventDefault();
-        const message = input.value.trim();
+    function submitMessage(message) {
+        message = message.trim();
         if (!message) return;
         line(`> ${message}`);
         input.value = '';
@@ -130,7 +291,179 @@
         } else {
             restFallback(message);
         }
+    }
+
+    function startRecognition() {
+        if (!SpeechRecognition) return false;
+        recognition = new SpeechRecognition();
+        recognition.lang = document.documentElement.lang === 'ru' ? 'ru-RU' : 'en-US';
+        recognition.interimResults = true;
+        recognition.continuous = wakeEnabled;
+        recognition.addEventListener('result', (event) => {
+            let finalText = '';
+            let interimText = '';
+            for (let index = event.resultIndex; index < event.results.length; index += 1) {
+                const text = event.results[index][0].transcript;
+                if (event.results[index].isFinal) finalText += text;
+                else interimText += text;
+            }
+            if (interimText) status.textContent = interimText.slice(0, 48);
+            if (!finalText) return;
+            if (wakeEnabled) {
+                const match = finalText.match(/(?:miku|мику)[,\s]*(.+)/i);
+                if (match) submitMessage(match[1]);
+            } else {
+                submitMessage(finalText);
+            }
+        });
+        recognition.addEventListener('end', () => {
+            recording = false;
+            recordingMode = undefined;
+            micButton.textContent = 'Push to talk';
+            window.clearTimeout(wakeRestartTimer);
+            if (wakeEnabled) wakeRestartTimer = window.setTimeout(() => {
+                if (wakeEnabled) startRecognition();
+            }, 300);
+            else status.textContent = socket?.readyState === WebSocket.OPEN ? 'Realtime' : 'REST fallback';
+        });
+        recognition.addEventListener('error', (event) => {
+            wakeEnabled = false;
+            wakeButton.textContent = 'Wake: off';
+            status.textContent = 'Voice unavailable';
+            if (event.error !== 'aborted') line('Browser speech recognition is unavailable.', 'error');
+        });
+        recognition.start();
+        recording = true;
+        recordingMode = 'recognition';
+        return true;
+    }
+
+    async function startRecorder() {
+        const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+        recorderStream = stream;
+        try {
+            const chunks = [];
+            let timer;
+            recordedBytes = 0;
+            const currentRecorder = new MediaRecorder(stream);
+            recorder = currentRecorder;
+            currentRecorder.addEventListener('dataavailable', event => {
+                if (!event.data.size) return;
+                recordedBytes += event.data.size;
+                if (recordedBytes <= maxAudioBytes) chunks.push(event.data);
+                else if (currentRecorder.state === 'recording') currentRecorder.stop();
+            });
+            currentRecorder.addEventListener('stop', async () => {
+                window.clearTimeout(timer);
+                stream.getTracks().forEach(track => track.stop());
+                if (recordedBytes > maxAudioBytes) {
+                    line('Audio utterance is too large.', 'error');
+                    recording = false;
+                    recordingMode = undefined;
+                    recorder = undefined;
+                    recorderStream = undefined;
+                    micButton.textContent = 'Push to talk';
+                    return;
+                }
+                let browserFallback = false;
+                try {
+                    const blob = new Blob(chunks, {type: currentRecorder.mimeType || 'audio/webm'});
+                    const response = await fetch('/api/miku/transcribe', {
+                        method: 'POST',
+                        headers: {'Content-Type': blob.type},
+                        body: blob,
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload.detail || 'Speech recognition failed');
+                    submitMessage(payload.text);
+                } catch (error) {
+                    line(error.message || 'Speech recognition failed', 'error');
+                    localVoice.stt = false;
+                    browserFallback = Boolean(SpeechRecognition);
+                } finally {
+                    recording = false;
+                    recordingMode = undefined;
+                    recorder = undefined;
+                    recorderStream = undefined;
+                    micButton.textContent = 'Push to talk';
+                }
+                if (browserFallback) {
+                    line('Local STT is unavailable. Repeat the command using browser recognition.');
+                    startRecognition();
+                }
+            });
+            currentRecorder.start(250);
+            timer = window.setTimeout(() => {
+                if (currentRecorder.state === 'recording') currentRecorder.stop();
+            }, 30000);
+            recording = true;
+            recordingMode = 'recorder';
+        } catch (error) {
+            stream.getTracks().forEach(track => track.stop());
+            throw error;
+        }
+    }
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitMessage(input.value);
     });
+
+    micButton.addEventListener('click', async () => {
+        if (recording) {
+            if (recordingMode === 'recognition') recognition?.stop();
+            if (recordingMode === 'recorder' && recorder?.state === 'recording') recorder.stop();
+            micButton.textContent = 'Stopping';
+            return;
+        }
+        status.textContent = 'Listening';
+        micButton.textContent = 'Stop';
+        try {
+            if (localVoice.stt) await startRecorder();
+            else if (!startRecognition()) await startRecorder();
+        } catch (error) {
+            line(error.message || 'Microphone is unavailable', 'error');
+            micButton.textContent = 'Push to talk';
+            recording = false;
+        }
+    });
+
+    wakeButton.addEventListener('click', () => {
+        if (!SpeechRecognition) {
+            line('Wake word requires browser speech recognition support.', 'error');
+            return;
+        }
+        wakeEnabled = !wakeEnabled;
+        wakeButton.textContent = `Wake: ${wakeEnabled ? 'miku' : 'off'}`;
+        window.clearTimeout(wakeRestartTimer);
+        if (recordingMode === 'recorder') {
+            wakeEnabled = false;
+            wakeButton.textContent = 'Wake: off';
+            line('Stop push-to-talk before enabling the wake word.', 'error');
+            return;
+        }
+        if (recordingMode === 'recognition') {
+            recognition.stop();
+            return;
+        }
+        if (wakeEnabled) startRecognition();
+    });
+
+    voiceButton.addEventListener('click', () => {
+        voiceEnabled = !voiceEnabled;
+        voiceButton.textContent = `Voice: ${voiceEnabled ? 'on' : 'off'}`;
+        if (!voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    });
+
+    viewerClose.addEventListener('click', closeViewer);
+
+    fetch('/api/miku/runtime')
+        .then(response => response.ok ? response.json() : Promise.reject())
+        .then(payload => {
+            localVoice = payload;
+            if (payload.llm) status.textContent = 'Realtime · LLM';
+        })
+        .catch(() => {});
 
     connect();
 })();

@@ -171,7 +171,7 @@ else
     echo " Browser runtime: disabled"
 fi
 if [ "$MIKU_RUNTIME" = "1" ]; then
-    echo " MIKU runtime: enabled (rule planner)"
+    echo " MIKU runtime: enabled (guarded voice/cognition sidecar)"
 else
     echo " MIKU runtime: disabled"
 fi

@@ -15,6 +15,20 @@ COMMAND_ALIASES = {
     "поиск": "find",
     "repeat": "repeat",
     "повтори": "repeat",
+    "discover": "discover",
+    "youtube": "discover",
+    "ютуб": "discover",
+    "open": "open",
+    "открой": "open",
+    "play": "play",
+    "играй": "play",
+    "archive": "archive",
+    "архивируй": "archive",
+    "note": "note",
+    "заметка": "note",
+    "запиши": "note",
+    "bookmark": "bookmark",
+    "закладка": "bookmark",
 }
 
 
@@ -28,8 +42,8 @@ def plan_with_rules(message: str) -> MikuDecision:
     if command is None:
         raise MikuQueryError("Unknown command. Use help to list available commands.")
     argument = parts[1].strip() if len(parts) == 2 else ""
-    if command == "find" and not argument:
-        raise MikuQueryError("The find command requires search text.")
+    if command in {"find", "discover", "open", "play", "archive", "note", "bookmark"} and not argument:
+        raise MikuQueryError(f"The {command} command requires an argument.")
     if command in {"help", "sources", "repeat"} and argument:
         raise MikuQueryError(f"The {command} command does not accept arguments.")
     return MikuDecision(command=cast(MikuCommand, command), argument=argument)

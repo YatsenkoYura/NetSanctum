@@ -1,14 +1,27 @@
+import base64
+import binascii
+import hashlib
+import hmac
+import json
+import re
+import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
+from urllib.parse import quote
 
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.library_viewer_v1 import CONTRACT_ID, LibraryResult
+from app.contracts.vault_capture_v1 import VaultCaptureRequest
+from app.contracts.video_source_catalog_v1 import VideoSourceResult
+from app.core.config import get_settings
+from app.core.control_center import tracked_tasks
 from app.core.module_types import (
     IntegrationContext,
     IntegrationNotFoundError,
     IntegrationRejectedError,
+    IntegrationResource,
     IntegrationServiceError,
     IntegrationUnavailableError,
 )
@@ -16,16 +29,35 @@ from app.modules.miku.models import MikuTurnAudit
 from app.modules.miku.planner import MikuQueryError
 from app.modules.miku.runtime_client import miku_runtime_client
 from app.modules.miku.schemas import (
+    MikuActionResult,
     MikuCapabilities,
     MikuDecision,
+    MikuJobStatus,
+    MikuPendingAction,
     MikuProvider,
     MikuQuery,
     MikuReference,
     MikuReply,
 )
 
-COMMANDS = ("help", "sources", "list [module]", "find <text>", "repeat")
+COMMANDS = (
+    "help",
+    "sources",
+    "list [module]",
+    "find <text>",
+    "discover <text>",
+    "open result:N",
+    "play result:N",
+    "archive result:N",
+    "note <text>",
+    "bookmark <url>",
+    "repeat",
+)
 FIND_SCAN_LIMIT = 50
+SOURCE_CONTRACT_ID = "video.source.catalog.v1"
+ARCHIVE_INTEGRATION_ID = "media.video.archive.v1"
+VAULT_CAPTURE_INTEGRATION_ID = "vault.capture.v1"
+REFERENCE_PATTERN = re.compile(r"^result:([1-9]|1[0-9]|20)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +69,65 @@ class _Provider:
 @dataclass(slots=True)
 class MikuSessionContext:
     references: list[MikuReference] | None = None
+
+
+class MikuActionSigner:
+    def __init__(self, secret: str | None = None, ttl_seconds: int = 120) -> None:
+        self.secret = (secret or get_settings().MASTER_API_KEY).encode()
+        self.ttl_seconds = ttl_seconds
+
+    def create(self, user_id: int, reference: MikuReference) -> str:
+        return self.create_payload(
+            user_id,
+            "archive",
+            {"entity_type": reference.entity_type, "entity_id": reference.item_id},
+        )
+
+    def create_payload(self, user_id: int, action: str, data: dict[str, Any]) -> str:
+        payload = {"action": action, "exp": int(time.time()) + self.ttl_seconds, "user_id": user_id, **data}
+        encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=")
+        signature = hmac.new(self.secret, encoded, hashlib.sha256).digest()
+        return f"{encoded.decode()}.{base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}"
+
+    def verify(self, token: str, user_id: int) -> dict[str, Any]:
+        try:
+            encoded, supplied = token.split(".", 1)
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", encoded) or not re.fullmatch(r"[A-Za-z0-9_-]+", supplied):
+                raise ValueError("Non-canonical token encoding")
+            expected = hmac.new(self.secret, encoded.encode(), hashlib.sha256).digest()
+            signature = base64.urlsafe_b64decode(supplied + "=" * (-len(supplied) % 4))
+            payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error) as exc:
+            raise MikuQueryError("Invalid action confirmation") from exc
+        if not isinstance(payload, dict):
+            raise MikuQueryError("Invalid action confirmation")
+        canonical_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+        if not hmac.compare_digest(supplied, canonical_signature) or not hmac.compare_digest(
+            signature, expected
+        ):
+            raise MikuQueryError("Invalid action confirmation")
+        if payload.get("user_id") != user_id or payload.get("exp", 0) < int(time.time()):
+            raise MikuQueryError("Action confirmation expired")
+        action = payload.get("action")
+        if action == "archive" and payload.get("entity_type") == "youtube_video":
+            return payload
+        if action in {"note", "bookmark"}:
+            try:
+                VaultCaptureRequest.model_validate(
+                    {
+                        "kind": action,
+                        "title": payload.get("title"),
+                        "content": payload.get("content"),
+                        "url": payload.get("url"),
+                    }
+                )
+            except ValidationError as exc:
+                raise MikuQueryError("Action is not allowed") from exc
+            return payload
+        raise MikuQueryError("Action is not allowed")
+
+
+action_signer = MikuActionSigner()
 
 
 def audit_turn(db: AsyncSession, user, request_id: str, transport: str, reply: MikuReply) -> None:
@@ -62,9 +153,22 @@ class _Registry(Protocol):
         context: IntegrationContext,
     ) -> dict[str, Any]: ...
 
+    async def resolve_integration_resource(
+        self,
+        integration_id: str,
+        payload: dict[str, Any],
+        context: IntegrationContext,
+    ) -> IntegrationResource: ...
+
+    def storage_owner(self, namespace: str) -> str | None: ...
+
 
 class _Planner(Protocol):
     async def decide(self, message: str) -> MikuDecision: ...
+
+
+class _TokenStore(Protocol):
+    async def set(self, key: str, value: str, *, ex: int, nx: bool) -> Any: ...
 
 
 def _providers(registry: _Registry) -> list[_Provider]:
@@ -76,12 +180,30 @@ def _providers(registry: _Registry) -> list[_Provider]:
     ]
 
 
+def _source_providers(registry: _Registry) -> list[_Provider]:
+    return [
+        _Provider(module_id=item["module_id"], integration_id=item["id"])
+        for item in registry.integration_catalog(consumer_id="miku")
+        if item["contract"] == SOURCE_CONTRACT_ID and item["effects"]["effect"] == "read"
+    ]
+
+
 def capabilities(registry: _Registry) -> MikuCapabilities:
     return MikuCapabilities(
         commands=list(COMMANDS),
         providers=[
-            MikuProvider(module_id=provider.module_id, integration_id=provider.integration_id)
-            for provider in _providers(registry)
+            *(
+                MikuProvider(module_id=provider.module_id, integration_id=provider.integration_id)
+                for provider in _providers(registry)
+            ),
+            *(
+                MikuProvider(
+                    module_id=provider.module_id,
+                    integration_id=provider.integration_id,
+                    contract=SOURCE_CONTRACT_ID,
+                )
+                for provider in _source_providers(registry)
+            ),
         ],
     )
 
@@ -96,6 +218,13 @@ def _trim(value: Any, limit: int) -> str | None:
 
 
 def _reference(module_id: str, item, index: int) -> MikuReference:
+    resource_url = None
+    open_url = None
+    if module_id == "alllib":
+        open_url = f"/alllib/reader/{quote(str(item.id), safe='')}"
+    elif item.playable or item.readable:
+        resource_url = f"/api/miku/resources/{quote(module_id, safe='')}/{quote(str(item.id), safe='')}"
+        open_url = resource_url
     return MikuReference(
         ref=f"result:{index}",
         module_id=module_id,
@@ -106,7 +235,36 @@ def _reference(module_id: str, item, index: int) -> MikuReference:
         summary=_trim(item.description, 300),
         playable=bool(item.playable),
         readable=bool(item.readable),
+        entity_type=item.kind,
+        open_url=open_url,
+        resource_url=resource_url,
     )
+
+
+def _source_reference(module_id: str, item, index: int) -> MikuReference:
+    open_url = f"/youtube/watch/{quote(item.entity_id, safe='')}" if item.kind == "video" else None
+    return MikuReference(
+        ref=f"result:{index}",
+        module_id=module_id,
+        item_id=item.entity_id,
+        kind=item.kind,
+        title=_trim(item.title, 160) or "Untitled",
+        subtitle=_trim(item.channel_title, 160),
+        summary=_trim(item.description, 300),
+        playable=item.kind == "video",
+        entity_type=item.entity_type,
+        open_url=open_url,
+    )
+
+
+def _context_reference(context: MikuSessionContext | None, value: str) -> MikuReference:
+    match = REFERENCE_PATTERN.fullmatch(value.casefold())
+    if not match or not context or not context.references:
+        raise MikuQueryError("Use a result reference from the current session, for example result:1.")
+    index = int(match.group(1)) - 1
+    if index >= len(context.references):
+        raise MikuQueryError("Result reference is unavailable in the current session.")
+    return context.references[index]
 
 
 async def _catalog(
@@ -142,11 +300,11 @@ async def query(
     if command == "help":
         return MikuReply(
             command=command,
-            text="Commands: help, sources, list [module], find <text>.",
+            text="Commands: help, sources, list, find, discover, open, play, archive, note, bookmark, repeat.",
         )
     if command == "sources":
-        names = ", ".join(provider.module_id for provider in providers) or "none"
-        return MikuReply(command=command, text=f"Read-only sources: {names}.")
+        names = sorted({provider.module_id for provider in [*providers, *_source_providers(registry)]})
+        return MikuReply(command=command, text=f"Available sources: {', '.join(names) or 'none'}.")
     if command == "repeat":
         if not context or not context.references:
             raise MikuQueryError("There is no previous result to repeat.")
@@ -155,6 +313,109 @@ async def query(
             text=f"Repeating {len(context.references)} previous item(s).",
             references=context.references,
         )
+    if command in {"open", "play"}:
+        reference = _context_reference(context, argument)
+        target = reference.resource_url if command == "play" else reference.open_url
+        if not target or (command == "play" and not reference.playable):
+            raise MikuQueryError(f"{reference.ref} cannot be {command}ed.")
+        return MikuReply(
+            command=command,
+            text=f"{command.title()}: {reference.title}",
+            references=[reference],
+            client_action=cast(Literal["open", "play"], command),
+        )
+    if command == "archive":
+        reference = _context_reference(context, argument)
+        if reference.entity_type != "youtube_video":
+            raise MikuQueryError("Only discovered YouTube videos can be archived.")
+        available = {
+            item["id"]
+            for item in registry.integration_catalog(consumer_id="miku")
+            if item["effects"]["effect"] == "create"
+        }
+        if ARCHIVE_INTEGRATION_ID not in available:
+            raise MikuQueryError("Video Archive is unavailable.")
+        return MikuReply(
+            command=command,
+            text="Confirmation is required before starting an archive job.",
+            references=[reference],
+            pending_action=MikuPendingAction(
+                action="archive",
+                label="Archive video",
+                summary=f"Archive {reference.title} at 720p",
+                confirmation_token=action_signer.create(user.id, reference),
+            ),
+        )
+    if command in {"note", "bookmark"}:
+        available = {
+            item["id"]
+            for item in registry.integration_catalog(consumer_id="miku")
+            if item["effects"]["effect"] == "create"
+        }
+        if VAULT_CAPTURE_INTEGRATION_ID not in available:
+            raise MikuQueryError("Vault capture is unavailable.")
+        try:
+            capture = VaultCaptureRequest.model_validate(
+                {
+                    "kind": command,
+                    "title": _trim(argument, 80) or command.title(),
+                    "content": argument if command == "note" else None,
+                    "url": argument if command == "bookmark" else None,
+                }
+            )
+        except ValidationError as exc:
+            raise MikuQueryError(f"Invalid {command} content.") from exc
+        data = capture.model_dump(mode="json")
+        return MikuReply(
+            command=command,
+            text="Confirmation is required before saving to Vault.",
+            pending_action=MikuPendingAction(
+                action=cast(Literal["note", "bookmark"], command),
+                label=f"Save {command}",
+                summary=f"Save {capture.title} to Vault",
+                confirmation_token=action_signer.create_payload(user.id, command, data),
+            ),
+        )
+
+    if command == "discover":
+        providers = _source_providers(registry)
+        if not providers:
+            raise MikuQueryError("No video discovery source is available.")
+        references: list[MikuReference] = []
+        warnings: list[str] = []
+        for provider in providers:
+            try:
+                result = await registry.invoke_integration(
+                    provider.integration_id,
+                    {"operation": "search", "query": argument},
+                    IntegrationContext(session=db, user=user, registry=registry, consumer_id="miku"),
+                )
+                source = VideoSourceResult.model_validate(result)
+            except (
+                IntegrationNotFoundError,
+                IntegrationRejectedError,
+                IntegrationServiceError,
+                IntegrationUnavailableError,
+                ValidationError,
+            ):
+                warnings.append(f"{provider.module_id} is unavailable")
+                continue
+            start_index = len(references) + 1
+            references.extend(
+                _source_reference(provider.module_id, item, start_index + index)
+                for index, item in enumerate(source.items[: request.limit - len(references)])
+            )
+            if len(references) >= request.limit:
+                break
+        reply = MikuReply(
+            command=command,
+            text=f"Discovered {len(references)} item(s).",
+            references=references,
+            warnings=warnings,
+        )
+        if context is not None:
+            context.references = references
+        return reply
 
     selected = providers
     if command == "list" and argument:
@@ -203,6 +464,92 @@ async def query(
         references=references,
         warnings=warnings,
     )
-    if context and references:
+    if context is not None:
         context.references = references
     return reply
+
+
+async def confirm_action(
+    token: str,
+    db: AsyncSession,
+    user,
+    registry: _Registry,
+    token_store: _TokenStore,
+    signer: MikuActionSigner = action_signer,
+) -> MikuActionResult:
+    payload = signer.verify(token, user.id)
+    token_digest = hashlib.sha256(token.encode()).hexdigest()
+    if not await token_store.set(f"miku:action:{token_digest}", "1", ex=180, nx=True):
+        raise MikuQueryError("Action confirmation was already used")
+    action = payload["action"]
+    if action == "archive":
+        integration_id = ARCHIVE_INTEGRATION_ID
+        request = {
+            "entity_type": payload["entity_type"],
+            "entity_id": payload["entity_id"],
+            "quality": "720",
+        }
+    else:
+        integration_id = VAULT_CAPTURE_INTEGRATION_ID
+        request = {
+            "kind": action,
+            "title": payload["title"],
+            "content": payload.get("content"),
+            "url": payload.get("url"),
+        }
+    result = await registry.invoke_integration(
+        integration_id,
+        request,
+        IntegrationContext(session=db, user=user, registry=registry, consumer_id="miku"),
+    )
+    return MikuActionResult(
+        status=result["status"],
+        message=_trim(result.get("message"), 300) or "Action dispatched",
+        task_id=str(result["task_id"]) if result.get("task_id") else None,
+    )
+
+
+async def job_status(task_id: str) -> MikuJobStatus | None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", task_id):
+        raise MikuQueryError("Invalid task ID")
+    task = next((item for item in await tracked_tasks() if item.get("task_id") == task_id), None)
+    if not task:
+        return None
+    return MikuJobStatus(
+        task_id=task_id,
+        module_id=str(task.get("module", "unknown"))[:63],
+        status=_trim(task.get("status"), 120) or "running",
+        progress=_trim(task.get("progress"), 32),
+        title=_trim(task.get("title"), 160),
+    )
+
+
+async def resolve_resource(
+    module_id: str,
+    item_id: str,
+    child_id: str | None,
+    page: int | None,
+    db: AsyncSession,
+    user,
+    registry: _Registry,
+) -> IntegrationResource:
+    provider = next((item for item in _providers(registry) if item.module_id == module_id), None)
+    if not provider:
+        raise MikuQueryError("Unknown or unavailable resource provider")
+    resource = await registry.resolve_integration_resource(
+        provider.integration_id,
+        {"item_id": item_id, "child_id": child_id, "page": page},
+        IntegrationContext(session=db, user=user, registry=registry, consumer_id="miku"),
+    )
+    if resource.storage_path:
+        parts = resource.storage_path.split("/")
+        if (
+            resource.storage_path.startswith("/")
+            or "\\" in resource.storage_path
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise IntegrationRejectedError("Provider returned an invalid storage resource")
+        namespace = parts[0]
+        if registry.storage_owner(namespace) != module_id:
+            raise IntegrationRejectedError("Provider returned a foreign storage resource")
+    return resource

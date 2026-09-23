@@ -141,15 +141,24 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
   `app/modules/tabletop_games/games/`.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
 - **ComputerCraft** runs the NetSanctumOS controller, monitor viewers, and speaker playback.
-- **MIKU** provides a read-only command surface for the future voice assistant runtime.
+- **MIKU** provides a guarded live assistant with text/voice input, module search, media playback,
+  and explicitly confirmed background actions.
 - **Auth and Settings** provide internal platform services used by the other modules.
 - **Sharing** publishes an isolated, read-only module view with optional content selection, password, and expiry.
 
-MIKU uses an optional isolated `miku-runtime` sidecar for intent planning. The sidecar receives no
-database, Redis, storage, encryption, or owner credentials and cannot invoke module APIs. It returns
-one validated read-only decision to the MIKU module, which remains responsible for authorization,
-policy, integration invocation, and response filtering. The built-in rule planner remains available
-when the sidecar is disabled or unavailable. Use `./start.sh --no-miku-runtime` to omit it.
+MIKU uses an optional isolated `miku-runtime` sidecar for intent planning and local speech adapters.
+The sidecar receives no database, Redis, storage, encryption, or owner credentials and cannot invoke
+module APIs. It returns one validated decision to the MIKU module, which remains responsible for
+authorization, policy, integration invocation, confirmation, and response filtering. Destructive
+commands are not exposed; create actions require a short-lived, user-bound confirmation token. The
+built-in rule planner and browser speech APIs remain available when local providers are absent. Use
+`./start.sh --no-miku-runtime` to omit the sidecar.
+
+Optional `MIKU_LLM_URL`, `MIKU_STT_URL`, and `MIKU_TTS_URL` values point to full local
+OpenAI-compatible endpoint URLs (chat completions, audio transcriptions, and audio speech) reachable
+from the internal `miku-control` network. No provider API key is accepted by the runtime. Leave them
+empty for deterministic commands plus browser-native STT/TTS. MIKU keeps only bounded, 15-minute
+result references for the active browser session and does not persist conversation history.
 
 Cross-module behavior uses explicit capabilities registered through the module manifest.
 

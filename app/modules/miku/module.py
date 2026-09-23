@@ -2,7 +2,7 @@ from app.core.module_types import MigrationSpec, ModuleSpec
 
 MODULE = ModuleSpec(
     id="miku",
-    version="0.1.0",
+    version="0.2.0",
     title_en="MIKU",
     title_ru="MIKU",
     dashboard_url="/miku/dashboard",
@@ -15,5 +15,6 @@ MODULE = ModuleSpec(
         tables=("miku_turn_audit",),
     ),
     templates="templates",
-    uses_integration_contracts=("library.viewer.v1",),
+    uses_integrations=("media.video.archive.v1", "vault.capture.v1"),
+    uses_integration_contracts=("library.viewer.v1", "video.source.catalog.v1"),
 )

@@ -1,4 +1,13 @@
-from app.core.module_types import MigrationSpec, ModuleSpec, ShareAsset, ShareRoute, ShareSpec
+from app.core.module_types import (
+    IntegrationEffect,
+    IntegrationEffects,
+    IntegrationSpec,
+    MigrationSpec,
+    ModuleSpec,
+    ShareAsset,
+    ShareRoute,
+    ShareSpec,
+)
 
 MODULE = ModuleSpec(
     id="vault",
@@ -33,4 +42,13 @@ MODULE = ModuleSpec(
     storage_namespaces=("vault",),
     package_prefixes=("vault_all",),
     package_resolver="app.modules.vault.capabilities:resolve_package_resources",
+    integrations=(
+        IntegrationSpec(
+            id="vault.capture.v1",
+            handler="app.modules.vault.integrations:capture_item",
+            request_model="app.contracts.vault_capture_v1:VaultCaptureRequest",
+            result_model="app.contracts.vault_capture_v1:VaultCaptureResult",
+            effects=IntegrationEffects(effect=IntegrationEffect.CREATE),
+        ),
+    ),
 )
