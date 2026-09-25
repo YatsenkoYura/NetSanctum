@@ -43,6 +43,46 @@ if [ "$CREATED_ENV" = "1" ]; then
     sed -i "s/dev-api-key-change-me/$API_SECRET/g" "$ENV_FILE"
 fi
 
+# An .env written before a feature branch existed is missing the settings that branch
+# added, and compose then fails inside a one-shot container with an opaque exit code:
+# the model fetcher simply exits 1 because it was told no file and no URL. Copy across
+# every documented key that is absent, before the secret pass below replaces the
+# placeholders, and never touch a value the operator has already set.
+if [ -f "$ENV_EXAMPLE" ]; then
+    BACKFILLED=""
+    while IFS= read -r EXAMPLE_LINE || [ -n "$EXAMPLE_LINE" ]; do
+        case "$EXAMPLE_LINE" in
+            ''|\#*) continue ;;
+            *=*) ;;
+            *) continue ;;
+        esac
+        EXAMPLE_KEY="${EXAMPLE_LINE%%=*}"
+        EXAMPLE_VALUE="${EXAMPLE_LINE#*=}"
+        case "$EXAMPLE_KEY" in
+            ''|*[!A-Za-z0-9_]*) continue ;;
+        esac
+        # An empty example value documents a knob rather than a default: adding it
+        # would put a blank line into a working .env and hide the value that compose
+        # or the application already defaults on its own.
+        if [ -z "$EXAMPLE_VALUE" ]; then
+            continue
+        fi
+        # Placeholders are not defaults. Copying "change_me" into a real .env would
+        # hand the deployment a published password or encryption key, so those keys
+        # are left to the secret pass below, which generates a real value.
+        case "$EXAMPLE_VALUE" in
+            *change_me*|dev-*) continue ;;
+        esac
+        if ! grep -q "^${EXAMPLE_KEY}=" "$ENV_FILE"; then
+            printf '%s\n' "$EXAMPLE_LINE" >> "$ENV_FILE"
+            BACKFILLED="$BACKFILLED $EXAMPLE_KEY"
+        fi
+    done < "$ENV_EXAMPLE"
+    if [ -n "$BACKFILLED" ]; then
+        echo "Added missing settings from .env.example:$BACKFILLED"
+    fi
+fi
+
 if grep -q 'change_me_in_production' "$ENV_FILE"; then
     DB_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
     sed -i "s/change_me_in_production/$DB_SECRET/g" "$ENV_FILE"
@@ -208,6 +248,27 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 # Launch containers
+# Fail here, with the reason, rather than inside a one-shot container that exits 1 and
+# leaves the model host without the weights it waits for.
+if [ "$MIKU_LOCAL" = "1" ] && [ "$ACTION" = "up" ]; then
+    MODEL_FILE="$(sed -n 's/^MIKU_MODEL_FILE=//p' "$ENV_FILE" | tail -1)"
+    MODEL_URL="$(sed -n 's/^MIKU_MODEL_URL=//p' "$ENV_FILE" | tail -1)"
+    MODEL_DIR="$(sed -n 's/^MIKU_MODEL_DIR=//p' "$ENV_FILE" | tail -1)"
+    MODEL_DIR="${MODEL_DIR:-./storage/models}"
+    if [ -z "$MODEL_FILE" ] || [ -z "$MODEL_URL" ]; then
+        echo "Error: the local model needs both MIKU_MODEL_FILE and MIKU_MODEL_URL in .env"
+        echo "  Either fill them in, or place the weights at $MODEL_DIR/$MODEL_FILE yourself."
+        exit 1
+    fi
+    if [ ! -s "$MODEL_DIR/$MODEL_FILE" ]; then
+        AVAILABLE="$(df -Pk "$MODEL_DIR" 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}')"
+        if [ -n "$AVAILABLE" ] && [ "$AVAILABLE" -lt 2 ]; then
+            echo "Error: $MODEL_DIR has less than 2 GB free, which is not enough for the model"
+            exit 1
+        fi
+    fi
+fi
+
 echo "Building and launching Docker services..."
 COMPOSE_FILES=(-f docker-compose.yml)
 # A GPU is opt-in: only mount /dev/dri when the host actually has one, so the same

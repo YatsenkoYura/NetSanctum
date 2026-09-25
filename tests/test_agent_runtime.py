@@ -98,6 +98,36 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         self.assertIn("AGENT_RUNTIME=1", script)
         self.assertNotIn("miku-runtime", script)
 
+    def test_env_gains_settings_a_pulled_branch_introduced(self):
+        script = START_SH.read_text()
+        # An .env written before this branch lacks MIKU_MODEL_*, and the one-shot model
+        # fetcher then exits 1 with no explanation. start.sh copies the documented
+        # defaults across so an upgrade cannot half-start the stack.
+        self.assertIn("while IFS= read -r EXAMPLE_LINE", script)
+        self.assertIn('grep -q "^${EXAMPLE_KEY}=" "$ENV_FILE"', script)
+        self.assertIn("Added missing settings from .env.example", script)
+
+    def test_env_backfill_never_copies_a_published_secret(self):
+        script = START_SH.read_text()
+        self.assertIn("*change_me*|dev-*) continue ;;", script)
+        self.assertIn('if [ -z "$EXAMPLE_VALUE" ]; then', script)
+        # The backfill has to run before the secret pass, or a copied placeholder
+        # would survive as a real password or file encryption key.
+        self.assertLess(
+            script.index("while IFS= read -r EXAMPLE_LINE"),
+            script.index("AGENT_SECRET_NAME in AGENT_RUNTIME_TOKEN"),
+        )
+
+    def test_local_model_is_checked_before_compose_runs(self):
+        script = START_SH.read_text()
+        self.assertIn("MIKU_MODEL_FILE", script)
+        self.assertIn("MIKU_MODEL_URL", script)
+        self.assertIn("has less than 2 GB free", script)
+        self.assertLess(
+            script.index("has less than 2 GB free"),
+            script.index('echo "Building and launching Docker services..."'),
+        )
+
 
 class ProviderSelectionTests(unittest.TestCase):
     def test_local_mode_serves_the_runtime_model_not_a_saved_url(self):
