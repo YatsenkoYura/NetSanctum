@@ -558,6 +558,17 @@ class MikuTests(unittest.TestCase):
         self.assertNotIn('value="{{ provider.model }}" required', dashboard)
         self.assertIn("payload.references?.length === 1", assistant)
 
+    def test_rest_calls_survive_a_dead_connection_and_report_it_readably(self):
+        assistant = Path("static/miku-assistant.js").read_text()
+        # A restart leaves the browser on a dead pooled socket, so every REST call
+        # retries once and asks for a fresh connection instead of surfacing the
+        # browser's bare "Failed to fetch" to the user.
+        self.assertIn("async function postJson(", assistant)
+        self.assertIn("cache: 'no-store'", assistant)
+        self.assertIn("Нет связи с сервером", assistant)
+        self.assertNotIn("line(error.message || 'Request failed', 'error')", assistant)
+        self.assertIn("connect();\n            return await send();", assistant)
+
     def test_video_archive_miku_link_opens_without_artificial_delay(self):
         dashboard = Path("app/modules/video_archiver/templates/video_dashboard.html").read_text()
 

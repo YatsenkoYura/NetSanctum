@@ -353,20 +353,37 @@
         }
     }
 
+    async function postJson(url, body) {
+        // A container restart leaves the browser holding a dead pooled connection.
+        // The first request on it fails before it ever reaches the server, and the
+        // browser reports that as a bare "Failed to fetch". Retrying once without
+        // the cache is enough to get through, and the caller still sees a real error.
+        const send = () => fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+            cache: 'no-store',
+        });
+        try {
+            return await send();
+        } catch (error) {
+            connect();
+            return await send();
+        }
+    }
+
     async function restFallback(message) {
         try {
-            const response = await fetch('/api/miku/query', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message, context_id: contextId}),
-            });
+            const response = await postJson('/api/miku/query', {message, context_id: contextId});
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || 'Request failed');
             renderReply(payload);
         } catch (error) {
-            line(error.message || 'Request failed', 'error');
+            const reason = error instanceof TypeError ? 'Нет связи с сервером' : error.message;
+            line(`${reason || 'Request failed'}${error instanceof TypeError ? ' — обновите страницу' : ''}`, 'error');
+            connect();
         } finally {
-            status.textContent = 'Ready';
+            status.textContent = socket?.readyState === WebSocket.OPEN ? 'Realtime' : 'REST fallback';
         }
     }
 
@@ -494,12 +511,25 @@
         }
         try {
             if (blob.size > maxAudioBytes) throw new Error('Audio utterance is too large.');
-            const response = await fetch('/api/miku/transcribe', {method: 'POST', headers: {'Content-Type': mime}, body: blob});
+            const send = () => fetch('/api/miku/transcribe', {
+                method: 'POST',
+                headers: {'Content-Type': mime},
+                body: blob,
+                cache: 'no-store',
+            });
+            let response;
+            try {
+                response = await send();
+            } catch (error) {
+                connect();
+                response = await send();
+            }
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || 'Speech recognition failed');
             submitMessage(payload.text);
         } catch (error) {
-            line(error.message || 'Speech recognition failed', 'error');
+            const reason = error instanceof TypeError ? 'Нет связи с сервером' : error.message;
+            line(reason || 'Speech recognition failed', 'error');
         }
     }
 
