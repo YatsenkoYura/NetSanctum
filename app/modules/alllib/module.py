@@ -67,9 +67,20 @@ MODULE = ModuleSpec(
             handler="app.modules.alllib.integrations:library_viewer",
             request_model="app.contracts.library_viewer_v1:LibraryRequest",
             result_model="app.contracts.library_viewer_v1:LibraryResult",
-            description="Browse novels, manga, and anime already stored in the local AllLib library.",
+            description=(
+                "Browse or search by title for novels, manga, and anime already stored in the local AllLib library."
+            ),
             resource_handler="app.modules.alllib.integrations:resolve_library_resource",
             resource_request_model="app.contracts.library_viewer_v1:LibraryResourceRequest",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
+        ),
+        IntegrationSpec(
+            id="alllib.search.documents.v1",
+            contract="search.documents.v1",
+            handler="app.modules.alllib.search:search_documents",
+            request_model="app.contracts.search_documents_v1:SearchDocumentsRequest",
+            result_model="app.contracts.search_documents_v1:SearchDocumentsResult",
+            description="Publish local books, manga, and anime metadata to the private search index.",
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
         ),
     ),

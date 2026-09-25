@@ -67,7 +67,10 @@ MODULE = ModuleSpec(
             handler="app.modules.youtube.integrations:video_source_catalog",
             request_model="app.contracts.video_source_catalog_v1:VideoSourceRequest",
             result_model="app.contracts.video_source_catalog_v1:VideoSourceResult",
-            description="Search and browse remote YouTube videos, playlists, channels, and account feeds.",
+            description=(
+                "Search and browse remote YouTube videos, playlists, channels, and account feeds. "
+                "Use when the user requests YouTube, online search, or remote content rather than a local video."
+            ),
             effects=IntegrationEffects(
                 effect=IntegrationEffect.READ,
                 external_io=True,

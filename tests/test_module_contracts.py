@@ -26,6 +26,7 @@ PUBLIC_MODULES = {
     "computercraft",
     "miku",
     "music",
+    "search",
     "settings",
     "sharing",
     "storage",

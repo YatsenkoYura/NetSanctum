@@ -102,6 +102,15 @@ MODULE = ModuleSpec(
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
         ),
         IntegrationSpec(
+            id="video_archiver.search.documents.v1",
+            contract="search.documents.v1",
+            handler="app.modules.video_archiver.search:search_documents",
+            request_model="app.contracts.search_documents_v1:SearchDocumentsRequest",
+            result_model="app.contracts.search_documents_v1:SearchDocumentsResult",
+            description="Publish archived video metadata to the private search index.",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
+        ),
+        IntegrationSpec(
             id="media.video.archive.v1",
             handler="app.modules.video_archiver.integrations:archive_source_video",
             request_model="app.contracts.video_archive_v1:ArchiveVideoRequest",

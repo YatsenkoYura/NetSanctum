@@ -37,11 +37,18 @@ class IntegrationEffect(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class IntegrationEffects:
-    """Machine-readable safety metadata asserted by an integration provider."""
+    """Machine-readable safety metadata asserted by an integration provider.
+
+    ``reversible`` tells the caller the change can be undone and ``undo_integration``
+    names the integration that performs the undo. Reversibility never blocks a call:
+    the agent may act on its own, and the application offers the undo afterwards.
+    """
 
     effect: IntegrationEffect = IntegrationEffect.EXECUTE
     external_io: bool = False
     idempotent: bool = False
+    reversible: bool = False
+    undo_integration: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

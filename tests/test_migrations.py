@@ -75,6 +75,7 @@ class ModuleMigrationTests(unittest.TestCase):
         self.assertEqual("alllib_0002", revisions["alllib"])
         self.assertEqual("sharing_0001", revisions["sharing"])
         self.assertEqual("settings_0002", revisions["settings"])
+        self.assertEqual("search_0002", revisions["search"])
         self.assertEqual("tabletop_0002", revisions["tabletop_games"])
 
     def test_settings_scope_indexes_reject_duplicate_nullable_scopes(self):
@@ -244,6 +245,7 @@ class ModuleMigrationTests(unittest.TestCase):
                 "alllib",
                 "miku",
                 "music",
+                "search",
                 "settings",
                 "sharing",
                 "tabletop_games",

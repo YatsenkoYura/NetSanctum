@@ -153,7 +153,13 @@ class IntegrationContractTests(unittest.TestCase):
         self.assertEqual("object", catalog[0]["request_schema"]["type"])
         self.assertEqual("object", catalog[0]["resource_schema"]["type"])
         self.assertEqual(
-            {"effect": "read", "external_io": False, "idempotent": True},
+            {
+                "effect": "read",
+                "external_io": False,
+                "idempotent": True,
+                "reversible": False,
+                "undo_integration": None,
+            },
             catalog[0]["effects"],
         )
 

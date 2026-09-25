@@ -79,6 +79,15 @@ MODULE = ModuleSpec(
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
         ),
         IntegrationSpec(
+            id="music.search.documents.v1",
+            contract="search.documents.v1",
+            handler="app.modules.music.search:search_documents",
+            request_model="app.contracts.search_documents_v1:SearchDocumentsRequest",
+            result_model="app.contracts.search_documents_v1:SearchDocumentsResult",
+            description="Publish local music metadata to the private search index.",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
+        ),
+        IntegrationSpec(
             id="media.audio.playlist.import.v1",
             handler="app.modules.music.integrations:import_playlist_audio",
             request_model="app.modules.music.integrations:ImportPlaylistAudioRequest",

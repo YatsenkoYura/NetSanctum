@@ -616,6 +616,8 @@ class ModuleRegistry:
                                 "effect": integration.effects.effect.value,
                                 "external_io": integration.effects.external_io,
                                 "idempotent": integration.effects.idempotent,
+                                "reversible": integration.effects.reversible,
+                                "undo_integration": integration.effects.undo_integration,
                             },
                             "used_by": sorted(
                                 consumer.id

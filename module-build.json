@@ -1,6 +1,7 @@
 {
   "format_version": 1,
   "default_modules": [
+    "search",
     "miku",
     "music",
     "video_archiver",
@@ -43,6 +44,11 @@
         "deno",
         "ffmpeg"
       ]
+    },
+    "search": {
+      "required": false,
+      "extra": null,
+      "system_packages": []
     },
     "settings": {
       "required": true,
