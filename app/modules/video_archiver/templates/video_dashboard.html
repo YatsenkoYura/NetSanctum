@@ -1482,23 +1482,20 @@
             // Render comments hierarchically
             renderComments(video.comments, 'player-detail-comments');
 
-            // 2-second Preload Delay
-            setTimeout(() => {
-                loader.classList.add('hidden');
-                document.getElementById('shared-video-container').classList.remove('hidden');
+            loader.classList.add('hidden');
+            document.getElementById('shared-video-container').classList.remove('hidden');
 
-                // Initialize custom subtitles menu
-                setupSubtitlesForCustomPlayer('shared-video-player', video.subtitles, video.id);
+            // Initialize custom subtitles menu
+            setupSubtitlesForCustomPlayer('shared-video-player', video.subtitles, video.id);
 
-                document.getElementById('shared-video-source').src = `/api/video-archiver/videos/${pathSegment(video.id)}/stream`;
-                player.load();
-                if (NetSanctumMediaPlayer.autoplayEnabled(VIDEO_ARCHIVE_AUTOPLAY_KEY)) {
-                    player.play().catch(() => showControlsFor(document.getElementById('shared-video-container'), player.id));
-                } else {
-                    showControlsFor(document.getElementById('shared-video-container'), player.id);
-                }
-                showToast(`${i18n.now_playing} ${video.title.substring(0, 30)}...`);
-            }, 2000);
+            document.getElementById('shared-video-source').src = `/api/video-archiver/videos/${pathSegment(video.id)}/stream`;
+            player.load();
+            if (NetSanctumMediaPlayer.autoplayEnabled(VIDEO_ARCHIVE_AUTOPLAY_KEY)) {
+                player.play().catch(() => showControlsFor(document.getElementById('shared-video-container'), player.id));
+            } else {
+                showControlsFor(document.getElementById('shared-video-container'), player.id);
+            }
+            showToast(`${i18n.now_playing} ${video.title.substring(0, 30)}...`);
 
         } catch (err) {
             showToast(`Error preloading video: ${err}`, 'error');
@@ -2212,24 +2209,21 @@
             // Comments
             renderComments(video.comments, 'playlist-detail-video-comments');
 
-            // 2-second Preload Delay
-            setTimeout(() => {
-                loader.classList.add('hidden');
-                document.getElementById('playlist-video-container').classList.remove('hidden');
-                detailsCard.classList.remove('hidden');
+            loader.classList.add('hidden');
+            document.getElementById('playlist-video-container').classList.remove('hidden');
+            detailsCard.classList.remove('hidden');
 
-                // Initialize custom subtitles menu
-                setupSubtitlesForCustomPlayer('playlist-video-player', video.subtitles, video.id);
+            // Initialize custom subtitles menu
+            setupSubtitlesForCustomPlayer('playlist-video-player', video.subtitles, video.id);
 
-                document.getElementById('playlist-video-source').src = `/api/video-archiver/videos/${pathSegment(video.id)}/stream`;
-                player.load();
-                if (NetSanctumMediaPlayer.autoplayEnabled(VIDEO_ARCHIVE_AUTOPLAY_KEY)) {
-                    player.play().catch(() => showControlsFor(document.getElementById('playlist-video-container'), player.id));
-                } else {
-                    showControlsFor(document.getElementById('playlist-video-container'), player.id);
-                }
-                showToast(`${i18n.now_playing} ${video.title.substring(0, 35)}...`);
-            }, 2000);
+            document.getElementById('playlist-video-source').src = `/api/video-archiver/videos/${pathSegment(video.id)}/stream`;
+            player.load();
+            if (NetSanctumMediaPlayer.autoplayEnabled(VIDEO_ARCHIVE_AUTOPLAY_KEY)) {
+                player.play().catch(() => showControlsFor(document.getElementById('playlist-video-container'), player.id));
+            } else {
+                showControlsFor(document.getElementById('playlist-video-container'), player.id);
+            }
+            showToast(`${i18n.now_playing} ${video.title.substring(0, 35)}...`);
 
         } catch (err) {
             showToast(`Could not preload video: ${err}`, 'error');
@@ -3109,14 +3103,7 @@
         const mikuParams = new URLSearchParams(window.location.search);
         const mikuItem = mikuParams.get('miku_item');
         if (mikuItem) {
-            if (mikuParams.get('miku_play') === '1') {
-                await window.playVideoInLibrary(mikuItem);
-            } else {
-                const card = [...document.querySelectorAll('[data-video-id]')]
-                    .find(element => element.dataset.videoId === mikuItem);
-                card?.scrollIntoView({behavior: 'smooth', block: 'center'});
-                card?.classList.add('ring-2', 'ring-teal-400');
-            }
+            await window.playVideoInLibrary(mikuItem);
         }
         {% if not package_mode %}loadManagement();{% endif %}
         toggleCommentsInputs();

@@ -507,7 +507,11 @@ async def alllib_reader(
     result = await db.execute(stmt)
     chapters = result.scalars().all()
 
-    first_chapter_id = chapters[0].id if chapters else None
+    requested_chapter = request.query_params.get("chapter")
+    first_chapter_id = next(
+        (chapter.id for chapter in chapters if str(chapter.id) == requested_chapter),
+        chapters[0].id if chapters else None,
+    )
 
     if media.media_type == "anime":
         template_name = "reader_anime.html"

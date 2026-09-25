@@ -1,6 +1,122 @@
 {% extends "base.html" %}
 
-{% block title %}MIKU — NetSanctum{% endblock %}
+{% block title %}MIKU — NetSanctum<script>
+(() => {
+    const memoryBody = document.getElementById('miku-memory-body');
+    const cascadesBody = document.getElementById('miku-cascades-body');
+    if (!memoryBody || memoryBody.dataset.bound) return;
+    memoryBody.dataset.bound = 'true';
+    cascadesBody.dataset.bound = 'true';
+
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[character]);
+    const text = (value, fallback) => (value === null || value === undefined || value === '' ? fallback : String(value));
+
+    async function loadMemory() {
+        memoryBody.innerHTML = '<p class="bg-zinc-950 p-4 font-mono text-xs text-zinc-600">Loading…</p>';
+        try {
+            const response = await fetch('/api/miku/memory');
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not read memory');
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            if (!items.length) {
+                memoryBody.innerHTML = '<p class="bg-zinc-950 p-4 font-mono text-xs text-zinc-500 md:col-span-2">Nothing remembered yet. MIKU stores facts and episode summaries on its own.</p>';
+                return;
+            }
+            const card = item => {
+                const heading = item.key || item.subject || item.summary;
+                const body = item.value && item.value.summary ? item.value.summary : (item.summary || '');
+                return `<article class="bg-zinc-950 p-3">
+                    <p class="font-mono text-[9px] uppercase text-teal-400">${escapeHtml(item.scope)}</p>
+                    <p class="mt-1 break-words text-sm font-bold text-white">${escapeHtml(text(heading, '—'))}</p>
+                    <p class="mt-1 break-words text-xs text-zinc-400">${escapeHtml(text(body, ''))}</p>
+                </article>`;
+            };
+            const section = (title, list) => `<div class="space-y-px">
+                <p class="bg-zinc-950 px-3 py-2 font-mono text-[9px] uppercase text-zinc-500">${escapeHtml(title)} (${list.length})</p>
+                ${list.length ? list.map(card).join('') : '<p class="bg-zinc-950 p-3 text-xs text-zinc-600">—</p>'}
+            </div>`;
+            memoryBody.innerHTML =
+                section('Facts', items.filter(item => item.scope === 'profile')) +
+                section('Episodes', items.filter(item => item.scope !== 'profile'));
+        } catch (error) {
+            memoryBody.innerHTML = `<p class="bg-zinc-950 p-4 font-mono text-xs text-rose-400 md:col-span-2">${escapeHtml(error.message || 'Could not read memory')}</p>`;
+        }
+    }
+
+    async function loadCascades() {
+        cascadesBody.innerHTML = '<p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-600">Loading…</p>';
+        try {
+            const response = await fetch('/api/miku/cascades?limit=10');
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not read the log');
+            if (!payload.length) {
+                cascadesBody.innerHTML = '<p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-500">No turns recorded yet.</p>';
+                return;
+            }
+            cascadesBody.innerHTML = payload.map(cascade => {
+                const steps = Array.isArray(cascade.steps) ? cascade.steps : [];
+                const undo = cascade.undo || {};
+                const reversible = Array.isArray(undo.reversible) ? undo.reversible : [];
+                const irreversible = Array.isArray(undo.irreversible) ? undo.irreversible : [];
+                const rows = steps.map(step => {
+                    const index = reversible.findIndex(item => item.tool === step.tool);
+                    const button = index >= 0
+                        ? `<button type="button" data-undo-cascade="${cascade.id}" data-undo-step="${index}" class="border border-rose-400 px-2 py-1 font-mono text-[10px] uppercase text-rose-400 hover:bg-rose-400 hover:text-black">Undo</button>`
+                        : '';
+                    return `<li class="flex items-start justify-between gap-3 border-t border-zinc-800 py-2">
+                        <span class="min-w-0">
+                            <span class="font-mono text-[10px] text-zinc-500">${escapeHtml(step.tool)} · ${escapeHtml(step.status)}</span>
+                            <span class="block break-words text-xs text-zinc-300">${escapeHtml(text(step.summary, ''))}</span>
+                        </span>
+                        ${button}
+                    </li>`;
+                }).join('');
+                const badge = irreversible.length
+                    ? `<span class="font-mono text-[9px] uppercase text-amber-500">not reversible: ${escapeHtml(irreversible.join(', '))}</span>`
+                    : '';
+                return `<article class="border border-zinc-800 bg-zinc-950 p-4">
+                    <div class="flex flex-wrap items-baseline justify-between gap-2">
+                        <p class="break-words text-sm font-bold text-white">${escapeHtml(text(cascade.goal, '—'))}</p>
+                        <span class="font-mono text-[9px] uppercase ${cascade.status === 'done' ? 'text-teal-400' : 'text-amber-500'}">${escapeHtml(cascade.status)}</span>
+                    </div>
+                    <p class="mt-1 font-mono text-[9px] text-zinc-600">${escapeHtml(text(cascade.created_at, ''))}</p>
+                    <ul class="mt-2">${rows || '<li class="border-t border-zinc-800 py-2 text-xs text-zinc-600">No steps.</li>'}</ul>
+                    ${badge}
+                </article>`;
+            }).join('');
+        } catch (error) {
+            cascadesBody.innerHTML = `<p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-rose-400">${escapeHtml(error.message || 'Could not read the log')}</p>`;
+        }
+    }
+
+    cascadesBody.addEventListener('click', async event => {
+        const button = event.target.closest('[data-undo-cascade]');
+        if (!button) return;
+        const cascadeId = button.dataset.undoCascade;
+        const stepIndex = button.dataset.undoStep;
+        button.disabled = true;
+        button.textContent = '…';
+        try {
+            const response = await fetch(`/api/miku/cascades/${cascadeId}/undo/${stepIndex}`, {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Undo failed');
+            await loadCascades();
+        } catch (error) {
+            button.disabled = false;
+            button.textContent = 'Undo';
+            window.alert(error.message || 'Undo failed');
+        }
+    });
+
+    document.getElementById('miku-memory-refresh')?.addEventListener('click', loadMemory);
+    document.getElementById('miku-cascades-refresh')?.addEventListener('click', loadCascades);
+    loadMemory();
+    loadCascades();
+})();
+</script>
+{% endblock %}
 
 {% block content %}
 <main class="mx-auto max-w-6xl space-y-6">
@@ -18,10 +134,10 @@
 
     <form id="miku-provider-form" class="space-y-4">
         <div class="grid gap-4 lg:grid-cols-3">
-            {% for kind, title, hint in [
-                ('llm', 'Chat / tools', '/chat/completions'),
-                ('stt', 'Speech to text', '/audio/transcriptions'),
-                ('tts', 'Text to speech', '/audio/speech')
+            {% for kind, title, hint, modes in [
+                ('llm', 'Chat / tools', '/chat/completions', ['api', 'local']),
+                ('stt', 'Speech to text', '/audio/transcriptions', ['api', 'local', 'client']),
+                ('tts', 'Text to speech', '/audio/speech', ['api', 'local', 'client'])
             ] %}
             {% set provider = providers | attr(kind) %}
             <section class="border-2 border-zinc-800 bg-zinc-950 p-4">
@@ -33,6 +149,18 @@
                     <span class="border border-zinc-700 px-2 py-1 font-mono text-[8px] uppercase text-zinc-500">{{ hint }}</span>
                 </div>
                 <div class="mt-4 space-y-3">
+                    <div>
+                        <span class="font-mono text-[9px] font-bold uppercase text-zinc-500">Mode</span>
+                        <div class="mt-1 flex gap-2" data-mode-group="{{ kind }}">
+                            {% for mode in modes %}
+                            <label data-mode-option="{{ mode }}" class="flex-1 cursor-pointer border px-2 py-1 text-center font-mono text-[9px] uppercase {{ 'border-teal-400 text-teal-400' if provider.mode == mode else 'border-zinc-800 text-zinc-600' }}">
+                                <input name="{{ kind }}.mode" type="radio" value="{{ mode }}" class="sr-only" {{ 'checked' if provider.mode == mode else '' }}>
+                                {{ mode }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <p class="mt-1 font-mono text-[8px] text-zinc-600">api: third-party · local: self-hosted URL · client: browser/device</p>
+                    </div>
                     <label class="block">
                         <span class="font-mono text-[9px] font-bold uppercase text-zinc-500">Base URL or endpoint</span>
                         <input name="{{ kind }}.url" type="url" value="{{ provider.url }}" placeholder="https://api.openai.com/v1"
@@ -40,7 +168,7 @@
                     </label>
                     <label class="block">
                         <span class="font-mono text-[9px] font-bold uppercase text-zinc-500">Model</span>
-                        <input name="{{ kind }}.model" value="{{ provider.model }}" required
+                        <input name="{{ kind }}.model" value="{{ provider.model }}"
                                class="mt-1 w-full border border-zinc-800 bg-black px-3 py-2 font-mono text-xs text-white outline-none focus:border-teal-400">
                     </label>
                     <label class="block">
@@ -62,10 +190,42 @@
         </div>
     </form>
 
+    <section class="space-y-4">
+        <div class="flex items-end justify-between border-2 border-zinc-800 bg-zinc-950 p-4">
+            <div>
+                <p class="font-mono text-[9px] font-bold uppercase tracking-widest text-teal-400">Memory</p>
+                <h2 class="mt-1 text-lg font-black text-white">What MIKU remembers</h2>
+            </div>
+            <button type="button" id="miku-memory-refresh"
+                    class="border border-zinc-700 px-3 py-1 font-mono text-[10px] uppercase text-zinc-400 hover:border-teal-400 hover:text-teal-400">
+                Refresh
+            </button>
+        </div>
+        <div id="miku-memory-body" class="grid gap-px border border-zinc-800 bg-zinc-800 md:grid-cols-2">
+            <p class="bg-zinc-950 p-4 font-mono text-xs text-zinc-600">Loading…</p>
+        </div>
+    </section>
+
+    <section class="space-y-4">
+        <div class="flex items-end justify-between border-2 border-zinc-800 bg-zinc-950 p-4">
+            <div>
+                <p class="font-mono text-[9px] font-bold uppercase tracking-widest text-teal-400">Changes</p>
+                <h2 class="mt-1 text-lg font-black text-white">What the agent did, and how to undo it</h2>
+            </div>
+            <button type="button" id="miku-cascades-refresh"
+                    class="border border-zinc-700 px-3 py-1 font-mono text-[10px] uppercase text-zinc-400 hover:border-teal-400 hover:text-teal-400">
+                Refresh
+            </button>
+        </div>
+        <div id="miku-cascades-body" class="space-y-3">
+            <p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-600">Loading…</p>
+        </div>
+    </section>
+
     <section class="grid gap-px border border-zinc-800 bg-zinc-800 sm:grid-cols-3">
         <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Navigation</p><p class="mt-2 text-sm text-zinc-300">Results open in their real module. MIKU remains in the floating side panel.</p></div>
         <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Secrets</p><p class="mt-2 text-sm text-zinc-300">API keys are encrypted and never returned to the browser after saving.</p></div>
-        <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Fallback</p><p class="mt-2 text-sm text-zinc-300">Browser speech APIs and the guarded rule planner remain available when providers fail.</p></div>
+        <div class="bg-zinc-950 p-4"><p class="font-mono text-[9px] uppercase text-zinc-600">Fallback</p><p class="mt-2 text-sm text-zinc-300">When the local model is unreachable the assistant says so instead of guessing.</p></div>
     </section>
 </main>
 
@@ -75,6 +235,22 @@
     const status = document.getElementById('miku-provider-status');
     if (!form || form.dataset.bound) return;
     form.dataset.bound = 'true';
+    const ACTIVE_MODE = ['border-teal-400', 'text-teal-400'];
+    const IDLE_MODE = ['border-zinc-800', 'text-zinc-600'];
+    function paintModeRadios() {
+        form.querySelectorAll('[data-mode-group]').forEach(group => {
+            const checked = group.querySelector('input[type="radio"]:checked');
+            group.querySelectorAll('[data-mode-option]').forEach(option => {
+                const active = checked && option.dataset.modeOption === checked.value;
+                option.classList.remove(...(active ? IDLE_MODE : ACTIVE_MODE));
+                option.classList.add(...(active ? ACTIVE_MODE : IDLE_MODE));
+            });
+        });
+    }
+    form.addEventListener('change', event => {
+        if (event.target.matches('input[type="radio"][name$=".mode"]')) paintModeRadios();
+    });
+    paintModeRadios();
     form.addEventListener('submit', async event => {
         event.preventDefault();
         const data = new FormData(form);
@@ -82,6 +258,7 @@
             url: data.get(`${kind}.url`) || '',
             model: data.get(`${kind}.model`) || '',
             api_key: data.get(`${kind}.api_key`) || '',
+            mode: data.get(`${kind}.mode`) || 'api',
         });
         status.textContent = 'Saving...';
         try {
@@ -97,12 +274,131 @@
                 const marker = form.querySelector(`[data-key-state="${kind}"]`);
                 marker.textContent = payload[kind].api_key_set ? 'saved' : 'not set';
                 marker.className = payload[kind].api_key_set ? 'text-teal-500' : 'text-zinc-700';
+                const savedMode = form.querySelector(`input[name="${kind}.mode"][value="${payload[kind].mode}"]`);
+                if (savedMode) savedMode.checked = true;
+                paintModeRadios();
             }
             status.textContent = 'Saved. New requests use these providers immediately.';
         } catch (error) {
             status.textContent = error.message || 'Could not save providers';
         }
     });
+})();
+</script>
+<script>
+(() => {
+    const memoryBody = document.getElementById('miku-memory-body');
+    const cascadesBody = document.getElementById('miku-cascades-body');
+    if (!memoryBody || memoryBody.dataset.bound) return;
+    memoryBody.dataset.bound = 'true';
+    cascadesBody.dataset.bound = 'true';
+
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[character]);
+    const text = (value, fallback) => (value === null || value === undefined || value === '' ? fallback : String(value));
+
+    async function loadMemory() {
+        memoryBody.innerHTML = '<p class="bg-zinc-950 p-4 font-mono text-xs text-zinc-600">Loading…</p>';
+        try {
+            const response = await fetch('/api/miku/memory');
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not read memory');
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            if (!items.length) {
+                memoryBody.innerHTML = '<p class="bg-zinc-950 p-4 font-mono text-xs text-zinc-500 md:col-span-2">Nothing remembered yet. MIKU stores facts and episode summaries on its own.</p>';
+                return;
+            }
+            const card = item => {
+                const heading = item.key || item.subject || item.summary;
+                const body = item.value && item.value.summary ? item.value.summary : (item.summary || '');
+                return `<article class="bg-zinc-950 p-3">
+                    <p class="font-mono text-[9px] uppercase text-teal-400">${escapeHtml(item.scope)}</p>
+                    <p class="mt-1 break-words text-sm font-bold text-white">${escapeHtml(text(heading, '—'))}</p>
+                    <p class="mt-1 break-words text-xs text-zinc-400">${escapeHtml(text(body, ''))}</p>
+                </article>`;
+            };
+            const section = (title, list) => `<div class="space-y-px">
+                <p class="bg-zinc-950 px-3 py-2 font-mono text-[9px] uppercase text-zinc-500">${escapeHtml(title)} (${list.length})</p>
+                ${list.length ? list.map(card).join('') : '<p class="bg-zinc-950 p-3 text-xs text-zinc-600">—</p>'}
+            </div>`;
+            memoryBody.innerHTML =
+                section('Facts', items.filter(item => item.scope === 'profile')) +
+                section('Episodes', items.filter(item => item.scope !== 'profile'));
+        } catch (error) {
+            memoryBody.innerHTML = `<p class="bg-zinc-950 p-4 font-mono text-xs text-rose-400 md:col-span-2">${escapeHtml(error.message || 'Could not read memory')}</p>`;
+        }
+    }
+
+    async function loadCascades() {
+        cascadesBody.innerHTML = '<p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-600">Loading…</p>';
+        try {
+            const response = await fetch('/api/miku/cascades?limit=10');
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Could not read the log');
+            if (!payload.length) {
+                cascadesBody.innerHTML = '<p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-500">No turns recorded yet.</p>';
+                return;
+            }
+            cascadesBody.innerHTML = payload.map(cascade => {
+                const steps = Array.isArray(cascade.steps) ? cascade.steps : [];
+                const undo = cascade.undo || {};
+                const reversible = Array.isArray(undo.reversible) ? undo.reversible : [];
+                const irreversible = Array.isArray(undo.irreversible) ? undo.irreversible : [];
+                const rows = steps.map(step => {
+                    const index = reversible.findIndex(item => item.tool === step.tool);
+                    const button = index >= 0
+                        ? `<button type="button" data-undo-cascade="${cascade.id}" data-undo-step="${index}" class="border border-rose-400 px-2 py-1 font-mono text-[10px] uppercase text-rose-400 hover:bg-rose-400 hover:text-black">Undo</button>`
+                        : '';
+                    return `<li class="flex items-start justify-between gap-3 border-t border-zinc-800 py-2">
+                        <span class="min-w-0">
+                            <span class="font-mono text-[10px] text-zinc-500">${escapeHtml(step.tool)} · ${escapeHtml(step.status)}</span>
+                            <span class="block break-words text-xs text-zinc-300">${escapeHtml(text(step.summary, ''))}</span>
+                        </span>
+                        ${button}
+                    </li>`;
+                }).join('');
+                const badge = irreversible.length
+                    ? `<span class="font-mono text-[9px] uppercase text-amber-500">not reversible: ${escapeHtml(irreversible.join(', '))}</span>`
+                    : '';
+                return `<article class="border border-zinc-800 bg-zinc-950 p-4">
+                    <div class="flex flex-wrap items-baseline justify-between gap-2">
+                        <p class="break-words text-sm font-bold text-white">${escapeHtml(text(cascade.goal, '—'))}</p>
+                        <span class="font-mono text-[9px] uppercase ${cascade.status === 'done' ? 'text-teal-400' : 'text-amber-500'}">${escapeHtml(cascade.status)}</span>
+                    </div>
+                    <p class="mt-1 font-mono text-[9px] text-zinc-600">${escapeHtml(text(cascade.created_at, ''))}</p>
+                    <ul class="mt-2">${rows || '<li class="border-t border-zinc-800 py-2 text-xs text-zinc-600">No steps.</li>'}</ul>
+                    ${badge}
+                </article>`;
+            }).join('');
+        } catch (error) {
+            cascadesBody.innerHTML = `<p class="border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-rose-400">${escapeHtml(error.message || 'Could not read the log')}</p>`;
+        }
+    }
+
+    cascadesBody.addEventListener('click', async event => {
+        const button = event.target.closest('[data-undo-cascade]');
+        if (!button) return;
+        const cascadeId = button.dataset.undoCascade;
+        const stepIndex = button.dataset.undoStep;
+        button.disabled = true;
+        button.textContent = '…';
+        try {
+            const response = await fetch(`/api/miku/cascades/${cascadeId}/undo/${stepIndex}`, {method: 'POST'});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Undo failed');
+            await loadCascades();
+        } catch (error) {
+            button.disabled = false;
+            button.textContent = 'Undo';
+            window.alert(error.message || 'Undo failed');
+        }
+    });
+
+    document.getElementById('miku-memory-refresh')?.addEventListener('click', loadMemory);
+    document.getElementById('miku-cascades-refresh')?.addEventListener('click', loadCascades);
+    loadMemory();
+    loadCascades();
 })();
 </script>
 {% endblock %}
