@@ -37,6 +37,11 @@ MAX_RESPONSE_BYTES = 256 * 1024
 MAX_PROSE_ANSWER = 2_000
 DEFAULT_TEMPERATURE = 0.3
 DEFAULT_MAX_TOKENS = 700
+# A reasoning model spends part of its budget thinking before it emits anything, so a
+# reply that fits a normal model can arrive with an empty answer. The retry widens the
+# budget instead of only nudging the model, otherwise the second attempt thinks itself
+# into the same wall and the turn fails as if the provider were down.
+RETRY_MAX_TOKENS = 4_096
 
 
 class OpenAICompatibleModel:
@@ -48,6 +53,7 @@ class OpenAICompatibleModel:
         api_key: str = "",
         timeout: float = 240.0,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        thinking: bool = True,
         transport: Any | None = None,
     ) -> None:
         # A saved provider URL is a base; providers speak full endpoints.
@@ -56,6 +62,7 @@ class OpenAICompatibleModel:
         self.api_key = api_key
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.thinking = thinking
         self.transport = transport
 
     def _headers(self) -> dict[str, str]:
@@ -78,7 +85,7 @@ class OpenAICompatibleModel:
         ]
 
     def _payload(self, message: str, tools: list[AgentTool], state: dict[str, Any]) -> dict[str, Any]:
-        return {
+        payload = {
             "model": self.model,
             "temperature": DEFAULT_TEMPERATURE,
             "max_tokens": self.max_tokens,
@@ -96,6 +103,12 @@ class OpenAICompatibleModel:
             "tools": self._api_tools(tools),
             "tool_choice": "required",
         }
+        if not self.thinking:
+            # A reasoning model burns its budget on hidden thinking and can return an
+            # empty answer. Local servers honour this; hosted providers never see it
+            # because they keep the default.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        return payload
 
     async def next_step(
         self,
@@ -111,6 +124,7 @@ class OpenAICompatibleModel:
             payload = self._payload(message, usable, state)
             if attempt == 2:
                 payload["messages"][0]["content"] += f"\n\n{TRUNCATION_NUDGE}"
+                payload["max_tokens"] = max(self.max_tokens * 2, RETRY_MAX_TOKENS)
             completion = await self._complete(payload)
             try:
                 return step_from_completion(completion, known)

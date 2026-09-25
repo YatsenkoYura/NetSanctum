@@ -37,6 +37,9 @@ CONSUMER_ID = os.environ.get("AGENT_CONSUMER_ID", "miku")
 LLM_URL = os.environ.get("AGENT_LLM_URL", "")
 LLM_MODEL = os.environ.get("AGENT_LLM_MODEL", "")
 LLM_API_KEY = os.environ.get("AGENT_LLM_API_KEY", "")
+# Local servers can think out loud before answering, which on a small model spends the
+# whole token budget and returns nothing. Off by default only where it is set explicitly.
+LLM_THINKING = os.environ.get("AGENT_LLM_THINKING", "1") not in {"0", "false", "False"}
 STT_URL = os.environ.get("AGENT_STT_URL", "")
 STT_MODEL = os.environ.get("AGENT_STT_MODEL", "whisper-1")
 STT_API_KEY = os.environ.get("AGENT_STT_API_KEY", "")
@@ -273,7 +276,7 @@ def build_engine(request: AgentTurnRequest) -> CascadeEngine:
     if not url:
         raise AgentBackendUnavailableError("no model configured")
     return CascadeEngine(
-        model=OpenAICompatibleModel(url, model, api_key=api_key),
+        model=OpenAICompatibleModel(url, model, api_key=api_key, thinking=LLM_THINKING),
         backend=HttpToolBackend(WEB_INTERNAL_URL, INTERNAL_KEY, consumer_id=CONSUMER_ID),
     )
 

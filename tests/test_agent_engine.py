@@ -479,6 +479,17 @@ class ModelProtocolTests(unittest.TestCase):
         self.assertEqual(2, len(calls))
         self.assertNotIn(TRUNCATION_NUDGE, calls[0]["messages"][0]["content"])
         self.assertIn(TRUNCATION_NUDGE, calls[1]["messages"][0]["content"])
+        # A retry that only nudges the model cannot help one that thinks out loud:
+        # it would spend the same budget thinking and return nothing again.
+        self.assertGreater(calls[1]["max_tokens"], calls[0]["max_tokens"])
+
+    def test_thinking_is_kept_by_default_and_can_be_turned_off(self):
+        thinking = OpenAICompatibleModel("http://local/v1", "m")
+        self.assertNotIn("chat_template_kwargs", thinking._payload("привет", TOOLS, {}))
+
+        direct = OpenAICompatibleModel("http://local/v1", "m", thinking=False)
+        payload = direct._payload("привет", TOOLS, {})
+        self.assertEqual({"enable_thinking": False}, payload["chat_template_kwargs"])
 
     def test_prose_answer_is_treated_as_the_final_answer(self):
         step = step_from_completion(
