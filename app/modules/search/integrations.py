@@ -1,7 +1,5 @@
 import asyncio
 import logging
-import re
-import unicodedata
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from uuid import uuid4
@@ -16,6 +14,7 @@ from app.core.module_types import (
     IntegrationServiceError,
     IntegrationUnavailableError,
 )
+from app.core.text_match import normalize_search_text as core_normalize_search_text, word_similarity
 from app.modules.search.models import SearchDocumentIndex, SearchRefreshOutbox, SearchSyncState
 
 DOCUMENTS_CONTRACT = "search.documents.v1"
@@ -81,10 +80,7 @@ def _postgres_search_statement(required_count: int):
 
 
 def normalize_search_text(value: str | None) -> str:
-    if not value:
-        return ""
-    normalized = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
-    return " ".join(re.findall(r"[\w]+", normalized, re.UNICODE))
+    return core_normalize_search_text(value)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -352,18 +348,7 @@ SEARCH_STOP_WORDS = {
 
 
 def _token_match(token: str, word: str) -> float:
-    if token == word:
-        return 1.0
-    len_t = len(token)
-    len_w = len(word)
-    if len_t >= 3 and len_w >= 3:
-        if token.startswith(word) or word.startswith(token):
-            return max(0.85, 0.95 - (abs(len_t - len_w) * 0.05))
-        if len_t >= 4 and len_w >= 4 and token[:4] == word[:4]:
-            sim = SequenceMatcher(None, token, word).ratio()
-            if sim >= 0.7:
-                return 0.85
-    return 0.0
+    return word_similarity(token, word)
 
 
 def _contains_required_terms(search_text: str, required_terms: list[str]) -> bool:

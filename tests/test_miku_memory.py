@@ -132,6 +132,20 @@ class MikuMemoryIntegrationTests(unittest.TestCase):
         everything = self._search(MikuMemorySearchRequest())
         self.assertEqual(2, len(everything.items))
 
+    def test_recall_survives_russian_case_endings(self):
+        self._write(MikuMemoryWriteRequest(key="food", value={"note": "люблю пиццу"}))
+        self._write(MikuMemoryWriteRequest(scope="episodic", summary="Пользователь любит аниме"))
+        for query in ("пицца", "пиццу", "ПИЦЦА", "люблю"):
+            found = self._search(MikuMemorySearchRequest(query=query))
+            self.assertTrue(found.items, f"запрос {query!r} ничего не нашёл")
+        anime = self._search(MikuMemorySearchRequest(query="аниме"))
+        self.assertEqual(["episodic"], [item.scope for item in anime.items])
+
+    def test_recall_ignores_words_that_only_look_similar(self):
+        self._write(MikuMemoryWriteRequest(key="food", value={"note": "люблю пиццу"}))
+        unrelated = self._search(MikuMemorySearchRequest(query="квантовая физика"))
+        self.assertEqual([], unrelated.items)
+
     def test_expired_profile_fact_is_not_recalled(self):
         self._write(
             MikuMemoryWriteRequest(

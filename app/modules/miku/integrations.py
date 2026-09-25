@@ -1,6 +1,5 @@
 """Memory integrations exposed to the agent as ordinary tools."""
 
-import re
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
@@ -18,10 +17,10 @@ from app.core.module_types import (
     IntegrationRejectedError,
     IntegrationUnavailableError,
 )
+from app.core.text_match import query_terms, text_matches_terms
 from app.modules.miku.models import MikuEpisodeMemory, MikuProfileMemory
 
 SCOPES = {"profile", "episodic"}
-_SEPARATORS = re.compile(r"[\W_]+", re.UNICODE)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -119,11 +118,12 @@ async def write_memory(
 
 
 def _matches(value: str, terms: list[str]) -> bool:
-    """Match on letters only, so "rezero" still finds "Re:Zero"."""
-    if not terms:
-        return True
-    haystack = _SEPARATORS.sub("", value.casefold())
-    return any(_SEPARATORS.sub("", term) in haystack for term in terms)
+    """Recall a memory from the words the user actually said.
+
+    Matching is word based and tolerant of case endings, so a fact stored as
+    "люблю пиццу" is still found by "пицца" and "rezero" still finds "Re:Zero".
+    """
+    return text_matches_terms(value, terms)
 
 
 async def search_memory(
@@ -133,7 +133,7 @@ async def search_memory(
     """Recall stored facts and episode summaries, newest and most confident first."""
     user_id = _owner_id(context)
     scopes = [scope for scope in request.scopes if scope in SCOPES] or ["profile", "episodic"]
-    terms = [term for term in (request.query or "").casefold().split() if len(term) > 2][:6]
+    terms = query_terms(request.query)
     items: list[MikuMemoryEntry] = []
     now = datetime.now(UTC)
 
