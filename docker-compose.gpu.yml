@@ -1,0 +1,43 @@
+# GPU acceleration for the local model. Not part of the default stack: a server
+# without /dev/dri must still start. Compose merges it with docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile miku-local up -d
+#
+# start.sh adds this file automatically when /dev/dri exists.
+
+services:
+  miku-llm:
+    devices:
+      - ${MIKU_GPU_DEVICE:-/dev/dri}:/dev/dri
+    # Flash attention is a GPU feature; on CPU it is skipped.
+    command:
+      - -m
+      - /models/${MIKU_MODEL_FILE:-model.gguf}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "${MIKU_LLM_CTX:-8192}"
+      - --parallel
+      - "1"
+      - --threads
+      - "${MIKU_LLM_THREADS:-4}"
+      - --threads-batch
+      - "${MIKU_LLM_THREADS:-4}"
+      - --batch-size
+      - "256"
+      - --ubatch-size
+      - "128"
+      - --fit
+      - "on"
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      - --flash-attn
+      - "on"
+      - --cache-reuse
+      - "256"
+      - --reasoning-effort
+      - low

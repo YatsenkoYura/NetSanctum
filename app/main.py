@@ -215,6 +215,7 @@ def _module_guard(module_id: str):
 for module_id, module_router in module_registry.load_routers():
     app.include_router(module_router, dependencies=[Depends(_module_guard(module_id))])
 
+from app.core.agent_router import router as agent_router
 from app.core.browser_router import router as browser_router
 from app.core.integrations_router import router as integrations_router
 from app.core.packages_router import router as packages_router
@@ -222,6 +223,7 @@ from app.core.packages_router import router as packages_router
 app.include_router(packages_router)
 app.include_router(integrations_router)
 app.include_router(browser_router)
+app.include_router(agent_router)
 
 templates.env.globals["active_modules"] = module_registry.navigation
 

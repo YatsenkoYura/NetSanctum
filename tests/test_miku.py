@@ -7,12 +7,11 @@ from unittest.mock import AsyncMock, patch
 from fastapi import WebSocketDisconnect
 from pydantic import ValidationError
 
-from app.contracts.library_viewer_v1 import LibraryRequest
 from app.contracts.vault_capture_v1 import VaultCaptureRequest
-from app.contracts.video_source_catalog_v1 import VideoSourceRequest
+from app.core.agent_client import AgentClient
 from app.core.module_types import IntegrationContext, IntegrationRejectedError
 from app.core.security import get_current_user
-from app.modules.miku.models import MikuTurnAudit
+from app.modules.miku.models import MikuEpisodeMemory, MikuProfileMemory, MikuTurnAudit
 from app.modules.miku.module import MODULE
 from app.modules.miku.router import (
     REST_CONTEXT_LOCK_SECONDS,
@@ -26,26 +25,25 @@ from app.modules.miku.router import (
     websocket_owner_session,
 )
 from app.modules.miku.schemas import (
-    MikuDecision,
+    MikuEpisodeMemoryItem,
+    MikuMemorySnapshot,
+    MikuProfileMemoryItem,
     MikuQuery,
     MikuReference,
     MikuReply,
+    MikuSessionMemory,
     MikuSocketMessage,
 )
 from app.modules.miku.service import (
-    MikuActionSigner,
-    MikuQueryError,
     MikuSessionContext,
     audit_turn,
     capabilities,
-    confirm_action,
     job_status,
     query,
     resolve_resource,
-    runtime_tools,
+    unavailable_reply,
 )
 from app.modules.vault.integrations import capture_item
-from app.modules.video_archiver.integrations import library_viewer as video_library_viewer
 
 
 class StubRegistry:
@@ -63,6 +61,7 @@ class StubRegistry:
                 "contract": "library.viewer.v1",
                 "module_id": "music",
                 "request_schema": {"type": "object", "properties": {"operation": {"type": "string"}}},
+                "resource_schema": {"type": "object", "properties": {"item_id": {"type": "string"}}},
                 "effects": {"effect": "read", "external_io": False, "idempotent": True},
             },
             {
@@ -139,27 +138,38 @@ class StubRegistry:
                 "title": payload["title"],
                 "message": f"Saved {payload['kind']} to Vault",
             }
+        items = [
+            {
+                "id": "7",
+                "kind": "audio",
+                "title": "Neon Song",
+                "subtitle": "Test Artist",
+                "description": "Synthwave track",
+                "playable": True,
+                "storage_path": "/private/music.mp3",
+            },
+            {
+                "id": "8",
+                "kind": "audio",
+                "title": "Quiet Piano",
+                "description": "Instrumental",
+            },
+        ]
+        if payload.get("operation") == "search":
+            search = payload.get("query", "").casefold()
+            items = [
+                item
+                for item in items
+                if search
+                in " ".join(
+                    str(item.get(key) or "") for key in ("title", "subtitle", "description")
+                ).casefold()
+            ]
         return {
             "module_id": "music",
             "title": "Music",
             "order": 10,
-            "items": [
-                {
-                    "id": "7",
-                    "kind": "audio",
-                    "title": "Neon Song",
-                    "subtitle": "Test Artist",
-                    "description": "Synthwave track",
-                    "playable": True,
-                    "storage_path": "/private/music.mp3",
-                },
-                {
-                    "id": "8",
-                    "kind": "audio",
-                    "title": "Quiet Piano",
-                    "description": "Instrumental",
-                },
-            ],
+            "items": items,
         }
 
     async def resolve_integration_resource(self, integration_id, payload, context):
@@ -172,6 +182,55 @@ class StubRegistry:
 
     def validate_integration_request(self, integration_id, payload, context):
         return payload
+
+
+class GlobalSearchRegistry(StubRegistry):
+    def integration_catalog(self, consumer_id=None):
+        return [
+            *super().integration_catalog(consumer_id),
+            {
+                "id": "search.global.v1",
+                "contract": "search.query.v1",
+                "module_id": "search",
+                "request_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                    "required": ["query"],
+                },
+                "effects": {"effect": "read", "external_io": False, "idempotent": True},
+            },
+        ]
+
+    async def invoke_integration(self, integration_id, payload, context):
+        if integration_id != "search.global.v1":
+            return await super().invoke_integration(integration_id, payload, context)
+        self.calls.append((integration_id, payload, context))
+        return {
+            "items": [
+                {
+                    "source_module_id": "video_archiver",
+                    "source_integration_id": "video_archiver.search.documents.v1",
+                    "document_id": "video-1",
+                    "entity_type": "video",
+                    "title": "Zero Escape finale",
+                    "subtitle": "Archive Channel",
+                    "summary": "Final episode",
+                    "open_path": "/video-archiver/dashboard?miku_item=video-1",
+                    "playable": True,
+                    "score": 0.98,
+                },
+                {
+                    "source_module_id": "vault",
+                    "source_integration_id": "vault.search.documents.v1",
+                    "document_id": "note-2",
+                    "entity_type": "note",
+                    "title": "Escape notes",
+                    "open_path": "/vault/dashboard",
+                    "score": 0.4,
+                },
+            ],
+            "warnings": [],
+        }
 
 
 class StubWebSocket:
@@ -200,24 +259,6 @@ class StubWebSocket:
             raise WebSocketDisconnect() from exc
 
 
-class StubPlanner:
-    def __init__(self, decision=None, response=None):
-        self.decision = decision or MikuDecision(command="list", argument="music")
-        self.response = response
-        self.tools = None
-        self.context = None
-        self.response_requests = []
-
-    async def decide(self, message, tools=None, context=None):
-        self.tools = tools
-        self.context = context
-        return self.decision
-
-    async def respond(self, request):
-        self.response_requests.append(request)
-        return self.response or request.fallback
-
-
 class StubTokenStore:
     def __init__(self):
         self.keys = set()
@@ -230,12 +271,33 @@ class StubTokenStore:
 
 
 class MikuTests(unittest.TestCase):
-    def test_manifest_declares_bounded_read_and_confirmed_action_integrations(self):
+    def test_manifest_declares_bounded_read_and_memory_integrations(self):
+        # library.viewer is declared for server-side resource resolution only;
+        # discovery is still exposed solely via search.global.v1 (see
+        # test_global_search_is_the_only_local_material_read_tool).
         self.assertEqual(("library.viewer.v1", "video.source.catalog.v1"), MODULE.uses_integration_contracts)
-        self.assertEqual(("media.video.archive.v1", "vault.capture.v1"), MODULE.uses_integrations)
-        self.assertEqual((), MODULE.integrations)
+        self.assertEqual(
+            (
+                "media.video.archive.v1",
+                "miku.memory.search.v1",
+                "miku.memory.undo.v1",
+                "miku.memory.write.v1",
+                "search.global.v1",
+                "vault.capture.v1",
+            ),
+            MODULE.uses_integrations,
+        )
+        # Memory is reachable as a tool, never as a hardcoded command word.
+        self.assertEqual(
+            ("miku.memory.search.v1", "miku.memory.undo.v1", "miku.memory.write.v1"),
+            tuple(sorted(item.id for item in MODULE.integrations)),
+        )
+        reversible = {
+            item.id: item.effects.undo_integration for item in MODULE.integrations if item.effects.reversible
+        }
+        self.assertEqual({"miku.memory.write.v1": "miku.memory.undo.v1"}, reversible)
         self.assertEqual((), MODULE.browser_policies)
-        self.assertIsNone(MODULE.tasks)
+        self.assertEqual("app.modules.miku.tasks", MODULE.tasks)
 
     def test_query_rejects_blank_and_overlong_messages(self):
         with self.assertRaises(ValidationError):
@@ -258,113 +320,95 @@ class MikuTests(unittest.TestCase):
         self.assertEqual("guarded", result.mode)
         self.assertEqual(3, result.protocol_version)
         self.assertEqual(
-            ["music.library.viewer.v1", "youtube.video_source.v1"],
+            ["read", "fetch", "act", "ask", "final"],
+            result.commands[:5],
+        )
+        self.assertIn("music.library.viewer.v1", result.commands)
+        self.assertIn(
+            "music.library.viewer.v1",
             [provider.integration_id for provider in result.providers],
         )
 
-    def test_find_uses_scoped_integration_and_projects_safe_fields(self):
-        registry = StubRegistry()
-        result = asyncio.run(
-            query(MikuQuery(message="найди synthwave"), None, SimpleNamespace(id=1), registry)
+    def test_query_delegates_to_the_agent_and_remembers_the_turn(self):
+        events: list[tuple[str, dict]] = []
+
+        async def on_event(phase, data):
+            events.append((phase, data))
+
+        reply = MikuReply(
+            command="find",
+            text="Нашла финал.",
+            references=[
+                MikuReference(
+                    ref="result:1", module_id="alllib", item_id="9", kind="novel", title="Re:Zero 3"
+                )
+            ],
         )
-
-        self.assertEqual("find", result.command)
-        self.assertEqual(["Neon Song"], [item.title for item in result.references])
-        self.assertEqual("result:1", result.references[0].ref)
-        self.assertNotIn("storage_path", result.references[0].model_dump())
-        integration_id, payload, context = registry.calls[0]
-        self.assertEqual("music.library.viewer.v1", integration_id)
-        self.assertEqual(50, payload["limit"])
-        self.assertEqual("miku", context.consumer_id)
-
-    def test_result_limit_is_enforced(self):
-        result = asyncio.run(query(MikuQuery(message="list music", limit=1), None, None, StubRegistry()))
-        self.assertEqual(1, len(result.references))
-
-    def test_query_executes_only_the_runtime_structured_decision(self):
-        registry = StubRegistry()
-        planner = StubPlanner()
-        result = asyncio.run(
-            query(
-                MikuQuery(message="show something useful"),
-                None,
-                None,
-                registry,
-                runtime=planner,
+        context = MikuSessionContext()
+        with patch(
+            "app.modules.miku.service.run_agent_turn",
+            AsyncMock(return_value=reply),
+        ) as run:
+            result = asyncio.run(
+                query(
+                    MikuQuery(message="найди финал"),
+                    None,
+                    SimpleNamespace(id=1),
+                    StubRegistry(),
+                    context=context,
+                    on_event=on_event,
+                )
             )
-        )
-        self.assertEqual("list", result.command)
-        self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
-        assert planner.tools is not None
-        self.assertIn("music.library.viewer.v1", [tool.integration_id for tool in planner.tools])
-        self.assertFalse(
-            next(
-                tool for tool in planner.tools if tool.integration_id == "music.library.viewer.v1"
-            ).external_io
-        )
-        self.assertNotIn("youtube.video_source.v1", [tool.integration_id for tool in planner.tools])
-        explicit_external_tools = runtime_tools(registry, "show this on youtube")
-        self.assertTrue(
-            next(
-                tool for tool in explicit_external_tools if tool.integration_id == "youtube.video_source.v1"
-            ).external_io
-        )
+        self.assertIs(result, reply)
+        self.assertIsNotNone(run.await_args)
+        self.assertEqual("найди финал", run.await_args.args[0].message)
+        self.assertIs(context, run.await_args.args[1])
+        self.assertEqual(1, len(context.history))
+        self.assertEqual("найди финал", context.history[0].user)
+        self.assertEqual("Нашла финал.", context.history[0].assistant)
+        self.assertEqual([item.ref for item in reply.references], [item.ref for item in result.references])
 
-    def test_model_can_select_api_and_presentation_without_phrase_rules(self):
-        registry = StubRegistry()
-        planner = StubPlanner(
-            MikuDecision(
-                command="invoke",
-                acknowledgement="Да, конечно. Сейчас покажу.",
-                result_action="play",
-                integration_id="music.library.viewer.v1",
-                parameters={
-                    "operation": "search",
-                    "item_id": None,
-                    "query": "neon",
-                    "limit": 1,
-                    "offset": 0,
-                },
-            ),
-            response="Вот один вариант: Neon Song.",
-        )
-        result = asyncio.run(
-            query(
-                MikuQuery(message="Привет. дай мне ролик из архива какой нибудь"),
-                None,
-                None,
-                registry,
-                runtime=planner,
-                context=MikuSessionContext(),
+    def test_history_stays_bounded_to_six_turns(self):
+        context = MikuSessionContext(history=[])
+        for index in range(9):
+            with patch(
+                "app.modules.miku.service.run_agent_turn",
+                AsyncMock(return_value=MikuReply(command="respond", text=f"ответ {index}")),
+            ):
+                asyncio.run(
+                    query(
+                        MikuQuery(message=f"вопрос {index}"),
+                        None,
+                        SimpleNamespace(id=1),
+                        StubRegistry(),
+                        context=context,
+                    )
+                )
+        self.assertEqual(6, len(context.history or []))
+        self.assertEqual("ответ 8", (context.history or [])[-1].assistant)
+
+    def test_missing_agent_runtime_says_so_instead_of_guessing(self):
+        with patch(
+            "app.modules.miku.service.run_agent_turn",
+            AsyncMock(return_value=None),
+        ):
+            result = asyncio.run(
+                query(MikuQuery(message="найди финал"), None, SimpleNamespace(id=1), StubRegistry())
             )
-        )
+        self.assertEqual("respond", result.command)
+        self.assertIn("недоступен", result.text)
+        self.assertEqual([], result.references)
+        self.assertEqual("status", result.segments[0].kind)
 
-        self.assertEqual("play", result.command)
-        self.assertEqual("play", result.client_action)
-        self.assertEqual(1, len(result.references))
-        self.assertEqual("music.library.viewer.v1", registry.calls[0][0])
-        self.assertEqual(
-            ["Да, конечно. Сейчас покажу.", "Вот один вариант: Neon Song."],
-            [segment.text for segment in result.segments],
-        )
-        self.assertFalse(result.segments[0].speak)
-        self.assertTrue(result.segments[1].speak)
-        companion_reference = planner.response_requests[0].references[0]
-        self.assertEqual("music", companion_reference.module_id)
-        self.assertNotIn("title", companion_reference.model_dump())
+    def test_unavailable_reply_is_always_speakable_and_plain(self):
+        reply = unavailable_reply()
+        self.assertTrue(reply.segments[0].speak or reply.segments[0].kind == "status")
+        self.assertNotIn("\U0001f600", reply.text)
 
-    def test_tool_contracts_expose_conditional_requirements(self):
-        self.assertIn("allOf", LibraryRequest.model_json_schema())
-        self.assertIn("allOf", VaultCaptureRequest.model_json_schema())
-        self.assertIn("allOf", VideoSourceRequest.model_json_schema())
-        with self.assertRaises(ValidationError):
-            VideoSourceRequest(operation="search")
-        with self.assertRaises(ValidationError):
-            VideoSourceRequest(operation="channel")
-        with self.assertRaises(ValidationError):
-            LibraryRequest(operation="search")
-        search = LibraryRequest(operation="search", query="Zero Escape", limit=1)
-        self.assertEqual("Zero Escape", search.query)
+    def test_capabilities_list_primitives_before_integrations(self):
+        result = capabilities(StubRegistry())
+        self.assertEqual(["read", "fetch", "act", "ask", "final"], result.commands[:5])
+        self.assertTrue(all(name.endswith(".v1") for name in result.commands[5:]))
 
     def test_assistant_output_strips_emoji(self):
         reply = MikuReply(command="respond", text="Привет \U0001f44b \u2728")
@@ -379,298 +423,6 @@ class MikuTests(unittest.TestCase):
         self.assertEqual("Привет", reply.text)
         self.assertEqual("Привет", reply.segments[0].text)
         self.assertEqual("Track", reference.title)
-
-    def test_video_archive_library_searches_before_limiting(self):
-        video = SimpleNamespace(
-            id="video-1",
-            title="Zero Escape finale",
-            channel_name="Archive Channel",
-            description="Final episode",
-            duration=120,
-            file_path="video/file.mp4",
-        )
-        session = SimpleNamespace(
-            execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: iter([video])))
-        )
-        request = LibraryRequest(
-            operation="search",
-            item_id=None,
-            query="Zero Escape",
-            limit=1,
-            offset=0,
-        )
-
-        result = asyncio.run(
-            video_library_viewer(
-                request,
-                IntegrationContext(session=session, user=None, registry=None, consumer_id="miku"),
-            )
-        )
-
-        statement = session.execute.await_args_list[0].args[0]
-        self.assertIn("%Zero Escape%", statement.compile().params.values())
-        self.assertEqual(["Zero Escape finale"], [item.title for item in result.items])
-
-    def test_direct_companion_response_does_not_invoke_module_api(self):
-        registry = StubRegistry()
-        planner = StubPlanner(MikuDecision(command="respond", argument="Я рядом. Чем займёмся?"))
-
-        result = asyncio.run(
-            query(MikuQuery(message="Привет, как ты?"), None, None, registry, runtime=planner)
-        )
-
-        self.assertEqual("respond", result.command)
-        self.assertEqual("Я рядом. Чем займёмся?", result.text)
-        self.assertEqual([], registry.calls)
-        self.assertTrue(result.segments[0].speak)
-
-    def test_external_read_requires_explicit_provider_at_server_boundary(self):
-        registry = StubRegistry()
-        planner = StubPlanner(
-            MikuDecision(
-                command="invoke",
-                integration_id="youtube.video_source.v1",
-                parameters={"operation": "recommendations"},
-            )
-        )
-
-        with self.assertRaisesRegex(MikuQueryError, "not allowed"):
-            asyncio.run(
-                query(
-                    MikuQuery(message="show me a local video"),
-                    None,
-                    None,
-                    registry,
-                    runtime=planner,
-                )
-            )
-        self.assertEqual([], registry.calls)
-
-        allowed = asyncio.run(
-            query(
-                MikuQuery(message="show me a youtube video"),
-                None,
-                None,
-                registry,
-                runtime=planner,
-            )
-        )
-        self.assertEqual("discover", allowed.command)
-        self.assertEqual("youtube.video_source.v1", registry.calls[0][0])
-
-    def test_repeat_uses_only_bounded_socket_context(self):
-        registry = StubRegistry()
-        context = MikuSessionContext()
-        first = asyncio.run(query(MikuQuery(message="find neon"), None, None, registry, context=context))
-        reply = asyncio.run(query(MikuQuery(message="repeat"), None, None, registry, context=context))
-
-        self.assertEqual("repeat", reply.command)
-        self.assertEqual(first.references, reply.references)
-        self.assertEqual(1, len(registry.calls))
-
-    def test_repeat_without_socket_context_is_rejected(self):
-        with self.assertRaises(MikuQueryError):
-            asyncio.run(query(MikuQuery(message="repeat"), None, None, StubRegistry()))
-
-    def test_rest_context_is_owner_scoped_bounded_and_ephemeral(self):
-        self.assertGreaterEqual(REST_CONTEXT_LOCK_SECONDS, 120)
-        context = MikuSessionContext(
-            references=[
-                MikuReference(
-                    ref="result:1",
-                    module_id="music",
-                    item_id="7",
-                    kind="audio",
-                    title="Neon Song",
-                )
-            ]
-        )
-        with patch("app.modules.miku.router.redis_client.setex", AsyncMock()) as setex:
-            asyncio.run(_save_rest_context("session-1", 7, context))
-        key, ttl, serialized = setex.await_args_list[0].args
-        self.assertEqual("miku:context:7:session-1", key)
-        self.assertEqual(900, ttl)
-
-        with patch("app.modules.miku.router.redis_client.get", AsyncMock(return_value=serialized)):
-            restored = asyncio.run(_rest_context("session-1", 7))
-        self.assertIsNotNone(restored)
-        assert restored is not None and restored.references is not None
-        self.assertEqual("Neon Song", restored.references[0].title)
-
-    def test_discover_preview_and_confirm_are_separate_bounded_steps(self):
-        registry = StubRegistry()
-        context = MikuSessionContext()
-        user = SimpleNamespace(id=1)
-        discovered = asyncio.run(
-            query(MikuQuery(message="discover neon"), None, user, registry, context=context)
-        )
-        preview = asyncio.run(
-            query(MikuQuery(message="archive result:1"), None, user, registry, context=context)
-        )
-
-        self.assertEqual("youtube", discovered.references[0].module_id)
-        self.assertEqual("youtube_video", discovered.references[0].entity_type)
-        self.assertEqual(["result:1", "result:2"], [item.ref for item in discovered.references])
-        self.assertIsNotNone(preview.pending_action)
-        assert preview.pending_action is not None
-        token_store = StubTokenStore()
-        result = asyncio.run(
-            confirm_action(preview.pending_action.confirmation_token, None, user, registry, token_store)
-        )
-
-        self.assertEqual("job-1", result.task_id)
-        integration_id, payload, invocation = registry.calls[-1]
-        self.assertEqual("media.video.archive.v1", integration_id)
-        self.assertEqual("youtube_video", payload["entity_type"])
-        self.assertEqual("miku", invocation.consumer_id)
-        with self.assertRaises(MikuQueryError):
-            asyncio.run(
-                confirm_action(
-                    preview.pending_action.confirmation_token,
-                    None,
-                    user,
-                    registry,
-                    token_store,
-                )
-            )
-
-    def test_action_confirmation_is_user_bound_and_tamper_evident(self):
-        reference = MikuReference(
-            ref="result:1",
-            module_id="youtube",
-            item_id="abc123",
-            kind="video",
-            title="Neon Mix",
-            entity_type="youtube_video",
-        )
-        signer = MikuActionSigner(secret="test-secret", ttl_seconds=60)
-        token = signer.create(1, reference)
-
-        self.assertEqual("abc123", signer.verify(token, 1)["entity_id"])
-        with self.assertRaises(MikuQueryError):
-            signer.verify(token, 2)
-        with self.assertRaises(MikuQueryError):
-            signer.verify(f"{token[:-1]}x", 1)
-        with self.assertRaises(MikuQueryError):
-            signer.verify(f"{token}!!!!", 1)
-
-    def test_vault_note_requires_preview_and_single_use_confirmation(self):
-        registry = StubRegistry()
-        user = SimpleNamespace(id=1)
-        preview = asyncio.run(query(MikuQuery(message="note buy tea"), None, user, registry))
-        self.assertIsNotNone(preview.pending_action)
-        assert preview.pending_action is not None
-        action = preview.pending_action
-        self.assertEqual("note", action.action)
-
-        token_store = StubTokenStore()
-        result = asyncio.run(
-            confirm_action(
-                action.confirmation_token,
-                None,
-                user,
-                registry,
-                token_store,
-            )
-        )
-        self.assertEqual("completed", result.status)
-        self.assertEqual("vault.capture.v1", registry.calls[-1][0])
-        self.assertEqual("buy tea", registry.calls[-1][1]["content"])
-        with self.assertRaises(MikuQueryError):
-            asyncio.run(
-                confirm_action(
-                    action.confirmation_token,
-                    None,
-                    user,
-                    registry,
-                    token_store,
-                )
-            )
-
-    def test_model_selected_create_api_still_requires_confirmation(self):
-        registry = StubRegistry()
-        user = SimpleNamespace(id=1)
-        planner = StubPlanner(
-            MikuDecision(
-                command="invoke",
-                acknowledgement="Saved it.",
-                integration_id="vault.capture.v1",
-                parameters={
-                    "kind": "note",
-                    "title": "Buy tea",
-                    "content": "Buy tea",
-                    "url": None,
-                },
-            )
-        )
-        preview = asyncio.run(
-            query(MikuQuery(message="remember to buy tea"), None, user, registry, runtime=planner)
-        )
-
-        self.assertIsNotNone(preview.pending_action)
-        assert preview.pending_action is not None
-        self.assertEqual("invoke", preview.pending_action.action)
-        self.assertNotIn("buy tea", preview.text.casefold())
-        self.assertEqual(["Confirm the action before I run it."], [item.text for item in preview.segments])
-        self.assertFalse(preview.segments[-1].speak)
-        self.assertEqual(0, len(registry.calls))
-
-    def test_vault_bookmark_rejects_non_http_urls(self):
-        for url in ("file:///etc/passwd", "https://user:secret@example.com"):
-            with self.subTest(url=url), self.assertRaises(MikuQueryError):
-                asyncio.run(
-                    query(
-                        MikuQuery(message=f"bookmark {url}"),
-                        None,
-                        SimpleNamespace(id=1),
-                        StubRegistry(),
-                    )
-                )
-
-    def test_vault_capture_integration_disables_remote_metadata_fetch(self):
-        created = SimpleNamespace(id=11, title="Example")
-        context = IntegrationContext(session=object(), user=None, registry=None, consumer_id="miku")
-        with patch(
-            "app.modules.vault.integrations.create_vault_item",
-            AsyncMock(return_value=created),
-        ) as create:
-            result = asyncio.run(
-                capture_item(
-                    VaultCaptureRequest.model_validate(
-                        {"kind": "bookmark", "title": "Example", "url": "https://example.com"}
-                    ),
-                    context,
-                )
-            )
-
-        item = create.await_args_list[0].args[1]
-        self.assertFalse(item.auto_fetch_og)
-        self.assertEqual("completed", result.status)
-
-    def test_open_and_play_only_use_current_session_references(self):
-        context = MikuSessionContext(
-            references=[
-                MikuReference(
-                    ref="result:1",
-                    module_id="music",
-                    item_id="7",
-                    kind="audio",
-                    title="Neon Song",
-                    playable=True,
-                    open_url="/api/miku/resources/music/7",
-                    resource_url="/api/miku/resources/music/7",
-                )
-            ]
-        )
-        reply = asyncio.run(
-            query(MikuQuery(message="play result:1"), None, None, StubRegistry(), context=context)
-        )
-
-        self.assertEqual("play", reply.client_action)
-        with self.assertRaises(MikuQueryError):
-            asyncio.run(
-                query(MikuQuery(message="open result:2"), None, None, StubRegistry(), context=context)
-            )
 
     def test_resource_resolution_stays_consumer_scoped(self):
         registry = StubRegistry()
@@ -744,16 +496,53 @@ class MikuTests(unittest.TestCase):
         self.assertEqual("find", events[0].command)
         self.assertEqual(1, events[0].result_count)
 
-    def test_provider_failure_is_sanitized(self):
-        result = asyncio.run(query(MikuQuery(message="list"), None, None, StubRegistry(fail=True)))
-        self.assertEqual(["music is unavailable"], result.warnings)
-        self.assertNotIn("private", result.model_dump_json())
+    def test_memory_schemas_split_session_profile_and_episodic_layers(self):
+        session = MikuSessionMemory(
+            summary="Обсуждали Zero Escape и Re:Zero.",
+            recent_topics=["Zero Escape", "Re:Zero"],
+            active_references=[
+                MikuReference(
+                    ref="result:1",
+                    module_id="video_archiver",
+                    item_id="video-1",
+                    kind="video",
+                    title="Zero Escape walkthrough 1",
+                    playable=True,
+                )
+            ],
+        )
+        profile = MikuProfileMemoryItem(
+            memory_key="preferences.voice.language",
+            value={"value": "ru"},
+            source="explicit",
+            confidence=1.0,
+        )
+        episodic = MikuEpisodeMemoryItem(
+            summary="User watched Zero Escape part 1.",
+            subject="Zero Escape",
+            tags=["video", "playback"],
+            source_module_id="video_archiver",
+            source_item_id="video-1",
+        )
+        snapshot = MikuMemorySnapshot(session=session, profile=[profile], episodic=[episodic])
 
-    def test_unknown_command_and_provider_are_rejected(self):
-        with self.assertRaises(MikuQueryError):
-            asyncio.run(query(MikuQuery(message="delete everything"), None, None, StubRegistry()))
-        with self.assertRaises(MikuQueryError):
-            asyncio.run(query(MikuQuery(message="list vault"), None, None, StubRegistry()))
+        self.assertEqual(900, snapshot.session.ttl_seconds)
+        self.assertEqual("preferences.voice.language", snapshot.profile[0].memory_key)
+        self.assertEqual(["video", "playback"], snapshot.episodic[0].tags)
+
+    def test_memory_models_expose_audit_profile_and_episode_tables(self):
+        self.assertEqual(
+            {
+                "miku_turn_audit",
+                "miku_profile_memory",
+                "miku_episode_memory",
+            },
+            {
+                MikuTurnAudit.__tablename__,
+                MikuProfileMemory.__tablename__,
+                MikuEpisodeMemory.__tablename__,
+            },
+        )
 
     def test_dashboard_renders_remote_values_with_text_content(self):
         dashboard = Path("app/modules/miku/templates/miku_dashboard.html").read_text()
@@ -763,6 +552,14 @@ class MikuTests(unittest.TestCase):
         self.assertNotIn("innerHTML", assistant)
         self.assertIn("segment.speak", assistant)
         self.assertNotIn("miku-video", dashboard)
+        self.assertNotIn('value="{{ provider.model }}" required', dashboard)
+        self.assertIn("payload.references?.length === 1", assistant)
+
+    def test_video_archive_miku_link_opens_without_artificial_delay(self):
+        dashboard = Path("app/modules/video_archiver/templates/video_dashboard.html").read_text()
+
+        self.assertIn("if (mikuItem) {\n            await window.playVideoInLibrary(mikuItem);", dashboard)
+        self.assertNotIn("// 2-second Preload Delay", dashboard)
 
     def test_router_exposes_only_authenticated_assistant_routes(self):
         routes = {
@@ -779,7 +576,9 @@ class MikuTests(unittest.TestCase):
                 ("POST", "/api/miku/query"),
                 ("POST", "/api/miku/transcribe"),
                 ("POST", "/api/miku/speech"),
-                ("POST", "/api/miku/actions/confirm"),
+                ("GET", "/api/miku/memory"),
+                ("GET", "/api/miku/cascades"),
+                ("POST", "/api/miku/cascades/{cascade_id}/undo/{step_index}"),
                 ("GET", "/api/miku/jobs/{task_id}"),
                 ("GET", "/api/miku/resources/{module_id}/{item_id}"),
                 ("WEBSOCKET", "/api/miku/ws"),
@@ -821,6 +620,255 @@ class MikuTests(unittest.TestCase):
         self.assertEqual("session.ready", websocket.sent[0]["event"])
         self.assertEqual("session.pong", websocket.sent[1]["event"])
         self.assertEqual("ping:1", websocket.sent[1]["request_id"])
+
+    def test_socket_cancel_message_is_typed(self):
+        message = MikuSocketMessage(type="cancel", request_id="turn:1")
+        self.assertEqual("cancel", message.type)
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(type="cancel", request_id="turn:1", message="unexpected")
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(type="ping", request_id="ping:1", message="unexpected")
+
+    def test_socket_voice_message_is_typed(self):
+        message = MikuSocketMessage(
+            type="voice",
+            request_id="turn:2",
+            audio="ZmFrZS1hdWRpbw==",
+            audio_content_type="audio/webm",
+        )
+        self.assertEqual("voice", message.type)
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(type="voice", request_id="turn:2")
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(
+                type="voice",
+                request_id="turn:2",
+                audio="ZmFrZS1hdWRpbw==",
+                audio_content_type="",
+            )
+        with self.assertRaises(ValidationError):
+            MikuSocketMessage(
+                type="query",
+                request_id="turn:3",
+                message="hello",
+                audio="ZmFrZS1hdWRpbw==",
+            )
+
+    def test_socket_cancel_without_active_turn_is_acknowledged(self):
+        websocket = StubWebSocket(['{"type":"cancel","request_id":"turn:9"}'])
+        with patch("app.modules.miku.router.redis_client.get", AsyncMock(return_value="1")):
+            asyncio.run(miku_socket(websocket))
+
+        events = [(item["event"], item["request_id"]) for item in websocket.sent]
+        self.assertIn(("session.ready", None), events)
+        self.assertIn(("turn.cancelled", "turn:9"), events)
+
+    def test_socket_turn_streams_partial_events_before_result(self):
+        class SlowDisconnectStub(StubWebSocket):
+            async def receive_text(self):
+                try:
+                    return next(self.messages)
+                except StopIteration:
+                    await asyncio.sleep(3)
+                    raise WebSocketDisconnect()
+
+        websocket = SlowDisconnectStub(['{"type":"query","request_id":"turn:1","message":"hello"}'])
+
+        async def fake_query(*args, on_event=None, **kwargs):
+            assert on_event is not None
+            await on_event("acknowledgement", {"text": "Сейчас найду!"})
+            await on_event(
+                "tool_result",
+                {"integration_id": "search.global.v1", "status": "success", "result_count": 1},
+            )
+            return MikuReply(command="respond", text="Готово.")
+
+        class _NullDB:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+            def add(self, *args, **kwargs):
+                return None
+
+        async def _redis_get(key):
+            if key.startswith("session:"):
+                return "1"
+            return None
+
+        with (
+            patch("app.modules.miku.router.redis_client.get", side_effect=_redis_get),
+            patch("app.modules.miku.router.query", fake_query),
+            patch("app.modules.miku.router._acquire_context_lock", AsyncMock(return_value=None)),
+            patch("app.modules.miku.router._release_context_lock", AsyncMock()),
+            patch("app.modules.miku.router._save_rest_context", AsyncMock()),
+            patch("app.modules.miku.router.AsyncSessionLocal", return_value=_NullDB()),
+            patch("app.modules.miku.router.audit_turn", return_value=None),
+        ):
+            asyncio.run(miku_socket(websocket))
+
+        kinds = [(item["event"], item.get("data", {}).get("phase")) for item in websocket.sent]
+        self.assertEqual("session.ready", kinds[0][0])
+        self.assertEqual("turn.started", kinds[1][0])
+        partials = [item for item in websocket.sent if item["event"] == "turn.partial"]
+        self.assertEqual(
+            ["acknowledgement", "tool_result"],
+            [item["data"]["phase"] for item in partials],
+        )
+        self.assertEqual("Сейчас найду!", partials[0]["data"]["text"])
+        result_index = next(
+            index for index, item in enumerate(websocket.sent) if item["event"] == "turn.result"
+        )
+        completed_index = next(
+            index for index, item in enumerate(websocket.sent) if item["event"] == "turn.completed"
+        )
+        self.assertLess(result_index, completed_index)
+        self.assertLess(
+            websocket.sent.index(partials[-1]),
+            result_index,
+        )
+
+    def test_socket_voice_turn_transcribes_then_runs_turn(self):
+        import base64 as stdlib_base64
+
+        class SlowDisconnectStub(StubWebSocket):
+            async def receive_text(self):
+                try:
+                    return next(self.messages)
+                except StopIteration:
+                    await asyncio.sleep(3)
+                    raise WebSocketDisconnect()
+
+        audio = stdlib_base64.b64encode(b"fake-utterance").decode()
+        websocket = SlowDisconnectStub(
+            [
+                '{"type":"voice","request_id":"turn:7","audio":"'
+                + audio
+                + '","audio_content_type":"audio/webm"}'
+            ]
+        )
+
+        async def fake_query(*args, **kwargs):
+            return MikuReply(command="respond", text="Готово.")
+
+        class _NullDB:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+            def add(self, *args, **kwargs):
+                return None
+
+        async def _redis_get(key):
+            if key.startswith("session:"):
+                return "1"
+            return None
+
+        with (
+            patch("app.modules.miku.router.redis_client.get", side_effect=_redis_get),
+            patch("app.modules.miku.router.query", fake_query),
+            patch("app.modules.miku.router._acquire_context_lock", AsyncMock(return_value=None)),
+            patch("app.modules.miku.router._release_context_lock", AsyncMock()),
+            patch("app.modules.miku.router._save_rest_context", AsyncMock()),
+            patch("app.modules.miku.router.AsyncSessionLocal", return_value=_NullDB()),
+            patch("app.modules.miku.router.audit_turn", return_value=None),
+            patch(
+                "app.modules.miku.router.load_provider_bundle",
+                AsyncMock(return_value=SimpleNamespace(stt=SimpleNamespace())),
+            ),
+            patch.object(AgentClient, "transcribe", AsyncMock(return_value="включи zero escape")),
+        ):
+            asyncio.run(miku_socket(websocket))
+
+        partials = [item for item in websocket.sent if item["event"] == "turn.partial"]
+        self.assertEqual("transcript", partials[0]["data"]["phase"])
+        self.assertEqual("включи zero escape", partials[0]["data"]["text"])
+        self.assertIn("turn.result", [item["event"] for item in websocket.sent])
+        self.assertIn("turn.completed", [item["event"] for item in websocket.sent])
+
+    def test_socket_voice_rejects_unsupported_audio(self):
+        import base64 as stdlib_base64
+
+        audio = stdlib_base64.b64encode(b"fake-utterance").decode()
+        websocket = StubWebSocket(
+            [
+                '{"type":"voice","request_id":"turn:8","audio":"'
+                + audio
+                + '","audio_content_type":"audio/bogus"}'
+            ]
+        )
+
+        async def _redis_get(key):
+            if key.startswith("session:"):
+                return "1"
+            return None
+
+        with patch("app.modules.miku.router.redis_client.get", side_effect=_redis_get):
+            asyncio.run(miku_socket(websocket))
+
+        errors = [item for item in websocket.sent if item["event"] == "turn.error"]
+        self.assertEqual("unsupported_audio", errors[0]["data"]["code"])
+
+    def test_rest_context_is_owner_scoped_bounded_and_ephemeral(self):
+        self.assertGreaterEqual(REST_CONTEXT_LOCK_SECONDS, 120)
+        context = MikuSessionContext(
+            references=[
+                MikuReference(
+                    ref="result:1",
+                    module_id="music",
+                    item_id="7",
+                    kind="audio",
+                    title="Neon Song",
+                )
+            ]
+        )
+        with patch("app.modules.miku.router.redis_client.setex", AsyncMock()) as setex:
+            asyncio.run(_save_rest_context("session-1", 7, context))
+        key, ttl, serialized = setex.await_args_list[0].args
+        self.assertEqual("miku:context:7:session-1", key)
+        self.assertEqual(900, ttl)
+
+        with patch("app.modules.miku.router.redis_client.get", AsyncMock(return_value=serialized)):
+            restored = asyncio.run(_rest_context("session-1", 7))
+        self.assertIsNotNone(restored)
+        assert restored is not None and restored.references is not None
+        self.assertEqual("Neon Song", restored.references[0].title)
+
+    def test_vault_capture_integration_disables_remote_metadata_fetch(self):
+        created = SimpleNamespace(id=11, title="Example")
+        context = IntegrationContext(session=object(), user=None, registry=None, consumer_id="miku")
+        with patch(
+            "app.modules.vault.integrations.create_vault_item",
+            AsyncMock(return_value=created),
+        ) as create:
+            result = asyncio.run(
+                capture_item(
+                    VaultCaptureRequest.model_validate(
+                        {"kind": "bookmark", "title": "Example", "url": "https://example.com"}
+                    ),
+                    context,
+                )
+            )
+
+        item = create.await_args_list[0].args[1]
+        self.assertFalse(item.auto_fetch_og)
+        self.assertEqual("completed", result.status)
 
 
 if __name__ == "__main__":

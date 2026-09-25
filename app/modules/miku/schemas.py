@@ -1,25 +1,11 @@
-import json
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-MikuCommand = Literal[
-    "help",
-    "sources",
-    "list",
-    "find",
-    "repeat",
-    "discover",
-    "open",
-    "play",
-    "archive",
-    "note",
-    "bookmark",
-    "invoke",
-    "respond",
-]
-MikuResultAction = Literal["none", "open", "play"]
+MikuCommand = Literal["respond", "open", "play", "find", "list", "discover"]
+MikuMemorySource = Literal["explicit", "derived", "imported"]
+MikuMood = Literal["neutral", "happy", "confused", "thinking", "listening"]
 
 
 def strip_emoji(value: str) -> str:
@@ -79,23 +65,6 @@ class MikuReference(BaseModel):
         return "Untitled" if info.field_name == "title" else None
 
 
-class MikuPendingAction(BaseModel):
-    action: Literal["archive", "note", "bookmark", "invoke"]
-    label: str
-    summary: str
-    confirmation_token: str
-
-
-class MikuActionConfirmation(BaseModel):
-    confirmation_token: str = Field(min_length=32, max_length=4096)
-
-
-class MikuActionResult(BaseModel):
-    status: Literal["dispatched", "completed"]
-    message: str
-    task_id: str | None = None
-
-
 class MikuJobStatus(BaseModel):
     task_id: str
     module_id: str
@@ -105,7 +74,7 @@ class MikuJobStatus(BaseModel):
 
 
 class MikuReplySegment(BaseModel):
-    kind: Literal["acknowledgement", "response", "status", "confirmation"]
+    kind: Literal["acknowledgement", "response", "status"]
     text: str = Field(min_length=1, max_length=500)
     speak: bool = False
 
@@ -121,11 +90,14 @@ class MikuReplySegment(BaseModel):
 class MikuReply(BaseModel):
     command: MikuCommand
     text: str = Field(max_length=500)
+    mood: MikuMood = "neutral"
     segments: list[MikuReplySegment] = Field(default_factory=list, max_length=4)
     references: list[MikuReference] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     client_action: Literal["open", "play"] | None = None
-    pending_action: MikuPendingAction | None = None
+    question: str | None = Field(default=None, max_length=300)
+    question_options: list[str] = Field(default_factory=list, max_length=4)
+    exhausted: bool = False
 
     @model_validator(mode="after")
     def populate_legacy_segment(self):
@@ -133,14 +105,7 @@ class MikuReply(BaseModel):
         if not self.text:
             raise ValueError("Reply text must not be blank")
         if not self.segments:
-            confirmation = self.pending_action is not None
-            self.segments = [
-                MikuReplySegment(
-                    kind="confirmation" if confirmation else "response",
-                    text=self.text,
-                    speak=not confirmation,
-                )
-            ]
+            self.segments = [MikuReplySegment(kind="response", text=self.text)]
         return self
 
 
@@ -156,34 +121,29 @@ class MikuCapabilities(BaseModel):
 
 
 class MikuSocketMessage(BaseModel):
-    type: Literal["query", "ping"]
+    type: Literal["query", "ping", "cancel", "voice", "speak"]
     request_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
     message: str | None = Field(default=None, max_length=500)
     limit: int = Field(default=10, ge=1, le=20)
+    audio: str | None = Field(default=None, max_length=6_000_000)
+    audio_content_type: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def validate_payload(self):
-        if self.type == "query":
+        if self.type in {"query", "speak"}:
             self.message = (self.message or "").strip()
             if not self.message:
                 raise ValueError("Query message must not be blank")
+        elif self.type == "voice":
+            if not self.audio:
+                raise ValueError("Voice message requires audio")
+            if not self.audio_content_type:
+                raise ValueError("Voice message requires an audio content type")
         elif self.message is not None:
-            raise ValueError("Ping does not accept a message")
+            raise ValueError("Ping and cancel do not accept a message")
+        if self.type != "voice" and (self.audio is not None or self.audio_content_type is not None):
+            raise ValueError("Only voice messages accept audio")
         return self
-
-
-class MikuDecisionRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=500)
-    tools: list["MikuToolDefinition"] = Field(default_factory=list, max_length=20)
-    context: list["MikuContextReference"] = Field(default_factory=list, max_length=20)
-
-    @field_validator("message")
-    @classmethod
-    def normalize_message(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Message must not be blank")
-        return value
 
 
 class MikuSpeechRequest(BaseModel):
@@ -199,17 +159,22 @@ class MikuSpeechRequest(BaseModel):
         return value
 
 
+MikuProviderMode = Literal["api", "local", "client"]
+
+
 class MikuRuntimeCapabilities(BaseModel):
     enabled: bool
     llm: bool = False
     stt: bool = False
     tts: bool = False
+    modes: dict[str, MikuProviderMode] = Field(default_factory=dict)
 
 
 class MikuProviderInput(BaseModel):
     url: str = Field(default="", max_length=2048)
     model: str = Field(default="", max_length=200)
     api_key: str = Field(default="", max_length=4096)
+    mode: MikuProviderMode = "api"
 
     @field_validator("url")
     @classmethod
@@ -235,11 +200,18 @@ class MikuProviderSettingsUpdate(BaseModel):
     stt: MikuProviderInput
     tts: MikuProviderInput
 
+    @model_validator(mode="after")
+    def validate_modes(self):
+        if self.llm.mode == "client":
+            raise ValueError("Chat provider cannot run on the client")
+        return self
+
 
 class MikuProviderStatus(BaseModel):
     url: str = ""
     model: str = ""
     api_key_set: bool = False
+    mode: MikuProviderMode = "api"
 
 
 class MikuProviderSettingsResponse(BaseModel):
@@ -248,86 +220,71 @@ class MikuProviderSettingsResponse(BaseModel):
     tts: MikuProviderStatus
 
 
-class MikuToolDefinition(BaseModel):
-    integration_id: str = Field(max_length=128, pattern=r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
-    module_id: str = Field(max_length=63, pattern=r"^[a-z][a-z0-9_]*$")
-    contract: str | None = None
-    effect: Literal["read", "create", "update", "delete", "execute"]
-    external_io: bool = False
-    description: str = Field(max_length=300)
-    input_schema: dict[str, Any]
+class MikuSessionMemory(BaseModel):
+    summary: str | None = Field(default=None, max_length=500)
+    recent_topics: list[str] = Field(default_factory=list, max_length=12)
+    active_references: list[MikuReference] = Field(default_factory=list, max_length=20)
+    ttl_seconds: int = Field(default=900, ge=60, le=86_400)
 
-
-class MikuContextReference(BaseModel):
-    ref: str = Field(pattern=r"^result:([1-9]|1[0-9]|20)$")
-    module_id: str = Field(max_length=63)
-    item_id: str = Field(max_length=255)
-    entity_type: str | None = Field(default=None, max_length=64)
-    kind: str = Field(max_length=64)
-    title: str = Field(max_length=160)
-    playable: bool = False
-    readable: bool = False
-
-
-class MikuCompanionReference(BaseModel):
-    ref: str = Field(pattern=r"^result:([1-9]|1[0-9]|20)$")
-    module_id: str = Field(max_length=63)
-
-
-class MikuCompanionRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=500)
-    command: MikuCommand
-    acknowledgement: str | None = Field(default=None, max_length=200)
-    references: list[MikuCompanionReference] = Field(default_factory=list, max_length=20)
-    warnings: list[str] = Field(default_factory=list, max_length=10)
-    fallback: str = Field(min_length=1, max_length=500)
-
-
-class MikuCompanionResponse(BaseModel):
-    text: str = Field(min_length=1, max_length=500)
-
-    @field_validator("text")
+    @field_validator("summary")
     @classmethod
-    def normalize_text(cls, value: str) -> str:
+    def normalize_summary(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = " ".join(strip_emoji(value).split())
+        return value or None
+
+    @field_validator("recent_topics")
+    @classmethod
+    def normalize_recent_topics(cls, values: list[str]) -> list[str]:
+        normalized = [topic for item in values if (topic := " ".join(item.split()))]
+        if any(len(topic) > 80 for topic in normalized):
+            raise ValueError("Recent topics must not exceed 80 characters")
+        return list(dict.fromkeys(normalized))
+
+
+class MikuProfileMemoryItem(BaseModel):
+    memory_key: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_.-]*$")
+    value: dict[str, Any] = Field(default_factory=dict)
+    source: MikuMemorySource = "explicit"
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    expires_at: str | None = Field(default=None, max_length=64)
+
+
+class MikuEpisodeMemoryItem(BaseModel):
+    summary: str = Field(min_length=1, max_length=500)
+    subject: str | None = Field(default=None, max_length=160)
+    tags: list[str] = Field(default_factory=list, max_length=16)
+    source_module_id: str | None = Field(default=None, max_length=63)
+    source_item_id: str | None = Field(default=None, max_length=255)
+    source: MikuMemorySource = "derived"
+    occurred_at: str | None = Field(default=None, max_length=64)
+
+    @field_validator("summary", "subject")
+    @classmethod
+    def normalize_episode_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = " ".join(strip_emoji(value).split())
         if not value:
-            raise ValueError("Companion response must not be blank")
+            return None
         return value
 
-
-class MikuDecision(BaseModel):
-    command: MikuCommand
-    argument: str = Field(default="", max_length=500)
-    acknowledgement: str | None = Field(default=None, max_length=200)
-    result_action: MikuResultAction = "none"
-    integration_id: str | None = Field(
-        default=None,
-        max_length=128,
-        pattern=r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$",
-        description="Exact API ID from the supplied catalog, or null for assistant-only commands",
-    )
-    parameters: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_command(self):
-        self.argument = " ".join(strip_emoji(self.argument).split())
-        if self.acknowledgement is not None:
-            self.acknowledgement = " ".join(strip_emoji(self.acknowledgement).split()) or None
-        if self.command in {"open", "play", "archive", "note", "bookmark", "respond"} and not self.argument:
-            raise ValueError(f"The {self.command} command requires an argument")
-        if self.command in {"help", "sources", "repeat"} and self.argument:
-            raise ValueError(f"The {self.command} command does not accept arguments")
-        if self.command == "invoke" and not self.integration_id:
-            raise ValueError("The invoke command requires an integration ID")
-        if self.command != "invoke" and (self.integration_id or self.parameters):
-            raise ValueError(f"The {self.command} command does not select a module integration")
-        if self.command != "invoke" and self.acknowledgement:
-            raise ValueError("Only integration calls accept an acknowledgement")
-        if self.command != "invoke" and self.result_action != "none":
-            raise ValueError("Only integration calls accept a result action")
-        if len(self.parameters) > 20 or len(json.dumps(self.parameters)) > 4096:
-            raise ValueError("Integration parameters are too large")
-        return self
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, values: list[str]) -> list[str]:
+        normalized = [tag for item in values if (tag := " ".join(item.split()).casefold())]
+        if any(len(tag) > 40 for tag in normalized):
+            raise ValueError("Episode memory tags must not exceed 40 characters")
+        return list(dict.fromkeys(normalized))
 
 
-MikuDecisionRequest.model_rebuild()
+class MikuMemorySnapshot(BaseModel):
+    session: MikuSessionMemory = Field(default_factory=MikuSessionMemory)
+    profile: list[MikuProfileMemoryItem] = Field(default_factory=list, max_length=64)
+    episodic: list[MikuEpisodeMemoryItem] = Field(default_factory=list, max_length=64)
+
+
+class MikuConversationTurn(BaseModel):
+    user: str = Field(min_length=1, max_length=500)
+    assistant: str = Field(min_length=1, max_length=500)

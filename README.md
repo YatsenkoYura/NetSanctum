@@ -140,6 +140,7 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
   private roles, messaging, and game-specific GM tools. Each game lives in its own package under
   `app/modules/tabletop_games/games/`.
 - **Storage Manager** displays storage usage and performs module-aware cleanup.
+- **Search** maintains a private cross-module metadata index used by MIKU for ranked local search.
 - **ComputerCraft** runs the NetSanctumOS controller, monitor viewers, and speaker playback.
 - **MIKU** provides a guarded live assistant with text/voice input, module search, media playback,
   and explicitly confirmed background actions.
@@ -148,12 +149,16 @@ The intended boundary is simple: the core owns infrastructure; modules own produ
 
 MIKU uses an optional isolated `miku-runtime` sidecar for intent planning and local speech adapters.
 The sidecar receives no database, Redis, storage, encryption, or owner credentials and cannot invoke
-module APIs. It receives the consumer-scoped integration catalog and returns one validated native
-tool call to the MIKU module, which remains responsible for
+module APIs. It receives the consumer-scoped integration catalog and returns either a direct companion
+response or one validated native tool call to the MIKU module, which remains responsible for
 authorization, policy, integration invocation, confirmation, and response filtering. Destructive
 commands are not exposed; create actions require a short-lived, user-bound confirmation token. The
 built-in rule planner and browser speech APIs remain available when local providers are absent. Use
 `./start.sh --no-miku-runtime` to omit the sidecar.
+
+Read-tool results receive a separate grounded response pass over sanitized observations, so natural
+conversation and module orchestration share one reply contract without granting the model execution
+authority. See [`app/modules/miku/ARCHITECTURE.md`](app/modules/miku/ARCHITECTURE.md).
 
 Optional `MIKU_LLM_URL`, `MIKU_STT_URL`, and `MIKU_TTS_URL` values point to full local
 OpenAI-compatible endpoint URLs (chat completions, audio transcriptions, and audio speech) reachable

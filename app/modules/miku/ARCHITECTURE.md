@@ -20,9 +20,31 @@ executes those calls.
    after checking the returned reference and its resource capability.
 7. The client renders ordered response segments and sends only segments marked `speak` to TTS.
 
+All local-material discovery uses the private `search.global.v1` integration. Module-specific
+`library.viewer.v1` APIs are hidden from the model catalog, so search, selection, opening, and
+playback cannot bypass the shared ranking path. The contract stays declared in the manifest for
+server-side resource resolution only. The per-turn tool catalog is frozen: result context never
+adds or removes tools mid-turn; compatibility is validated at execution time. The Search module
+builds its index from paginated `search.documents.v1` snapshots published by active modules, so
+MIKU does not import module models or invent entity URLs. `required_terms` is a generic exact-token
+MUST filter applied in SQL with no language knowledge. Search results carry bounded metadata and
+validated local open paths; the runtime still sees only result references during grounded response
+generation.
+
+Search result handling is an explicit bounded graph: `retrieved -> evaluate -> act|clarify -> complete`.
+Only a high-confidence result with a sufficient lead can transition to `act`; ambiguous results always
+transition to `clarify`. The graph has a hard step limit and never performs integration calls itself.
+
 Direct conversation is a one-model-call fast path. A tool-assisted answer uses a planning call and a
 grounded response call. Provider failure falls back to a bounded server-rendered response without
 changing execution policy.
+
+Each engine (chat, speech-to-text, speech-to-speech) runs in one of three modes, chosen per engine
+in provider settings: `api` (third-party OpenAI-compatible endpoint), `local` (self-hosted URL such
+as Ollama or a whisper server, no key required), or `client` (browser/Android handles it natively;
+chat is never client-side). The runtime advertises modes in capabilities, the side chat adapts its
+paths (socket voice/speech vs browser recognition/synthesis), and client-mode engines short-circuit
+server-side with `503` instead of failing obscurely.
 
 ## Trust boundaries
 
@@ -39,13 +61,18 @@ changing execution policy.
 - Titles and summaries are untrusted data and never become instructions or executable parameters.
 - Hidden reasoning is not requested, stored, or returned. The assistant may provide concise user-facing
   explanations, but not private chain-of-thought.
-- Conversation text is not persisted. Session context contains only bounded result references with a
-  short TTL; audit records contain metadata only.
+- Audit records contain metadata only; they never store user text, assistant text, or provider payloads.
 
-Natural follow-up conversation will eventually need bounded working memory. Add it as an explicit
-privacy-controlled session feature: keep only a short rolling summary or a few recent turns, expire it
-with the session, never write it to the audit log, and provide an immediate clear-memory action. Do not
-silently turn working memory into permanent chat history.
+MIKU memory now has three explicit layers:
+
+- `session`: bounded recent turns + result references in Redis, TTL-limited, used only for follow-up turns;
+- `profile`: durable user-specific preferences/facts that are either explicit (`запомни`) or system-owned;
+- `episodic`: durable compact event summaries such as what was opened, watched, or clarified.
+
+Only `session` memory may contain raw recent conversation text, and it expires with the session. `profile`
+and `episodic` memory store structured facts and short summaries only, never raw transcripts. Neither
+layer is written to the audit log. Any long-term memory feature must expose a clear-memory action and a
+reviewable representation instead of silently accumulating hidden history.
 
 ## Response contract
 
@@ -57,9 +84,18 @@ speech contract:
 - `status`: non-conversational progress information;
 - `confirmation`: a mutation preview, never spoken by default.
 
-The current transport returns segments together after the turn. A future streaming transport may emit
-the acknowledgement before tool execution without changing the reply schema or the server-side trust
-boundary.
+The socket transport streams `turn.partial` events (acknowledgement text, tool result counts) before
+the final `turn.result`/`turn.completed`, so the client feels alive without waiting for the full turn.
+A `cancel` message by `request_id` aborts the in-flight turn and a new `query` barges in over it; the
+server answers `turn.cancelled` and releases the session lock. Partial payloads carry counts and short
+texts only, never raw provider data. Push-to-talk voice arrives as a `voice` message with base64 audio
+(up to 4 MiB) and an allowlisted audio content type; the server transcribes it, emits a `transcript`
+partial, then runs the normal text turn so desktop/mobile clients need no separate voice API.
+Speech streams back as `speak`/`speech.chunk` events: the client sends full reply text, the server
+splits it into sentence chunks and synthesizes them in order, and the client plays chunks back-to-back
+so the first sentence sounds while the rest is still synthesizing. The WebView wake word (`miku`/мику)
+is continuous recognition with an 8s command window after a bare wake; TTS playback ducks the listener
+so MIKU never answers herself, and only mic-permission errors stop wake mode.
 
 ## Evolution rules
 

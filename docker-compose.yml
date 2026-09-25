@@ -150,31 +150,29 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Isolated MIKU cognition and voice runtime ──────────
-  miku-runtime:
-    profiles: ["miku"]
-    image: netsanctum-miku-runtime
-    build:
-      context: .
-      args:
-        NETSANCTUM_MODULES: miku
-        NETSANCTUM_EXTERNAL_MODULES: ""
-        APP_UID: ${PUID:-1000}
-        APP_GID: ${PGID:-1000}
+  # ── Isolated agent runtime (cascade executor) ───────────
+  agent-runtime:
+    profiles: ["agent"]
+    # Same image as web: the runtime needs the full dependency set, not the miku-only one.
+    image: netsanctum-app
     restart: unless-stopped
     init: true
     environment:
       NETSANCTUM_LOAD_DOTENV: "0"
-      MIKU_RUNTIME_TOKEN: ${MIKU_RUNTIME_TOKEN:-}
-      MIKU_LLM_URL: ${MIKU_LLM_URL:-}
-      MIKU_LLM_MODEL: ${MIKU_LLM_MODEL:-qwen2.5:7b}
-      MIKU_LLM_API_KEY: ${MIKU_LLM_API_KEY:-}
-      MIKU_STT_URL: ${MIKU_STT_URL:-}
-      MIKU_STT_MODEL: ${MIKU_STT_MODEL:-whisper-1}
-      MIKU_STT_API_KEY: ${MIKU_STT_API_KEY:-}
-      MIKU_TTS_URL: ${MIKU_TTS_URL:-}
-      MIKU_TTS_MODEL: ${MIKU_TTS_MODEL:-tts-1}
-      MIKU_TTS_API_KEY: ${MIKU_TTS_API_KEY:-}
+      AGENT_RUNTIME_TOKEN: ${AGENT_RUNTIME_TOKEN:-}
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:-}
+      AGENT_WEB_URL: http://web:8000
+      AGENT_CONSUMER_ID: ${AGENT_CONSUMER_ID:-miku}
+      # local mode points at the in-network model service unless an external API is set
+      AGENT_LLM_URL: ${MIKU_LLM_URL:-http://miku-llm:8080/v1}
+      AGENT_LLM_MODEL: ${MIKU_LLM_MODEL:-local}
+      AGENT_LLM_API_KEY: ${MIKU_LLM_API_KEY:-}
+      AGENT_STT_URL: ${MIKU_STT_URL:-}
+      AGENT_STT_MODEL: ${MIKU_STT_MODEL:-whisper-1}
+      AGENT_STT_API_KEY: ${MIKU_STT_API_KEY:-}
+      AGENT_TTS_URL: ${MIKU_TTS_URL:-}
+      AGENT_TTS_MODEL: ${MIKU_TTS_MODEL:-tts-1}
+      AGENT_TTS_API_KEY: ${MIKU_TTS_API_KEY:-}
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -182,24 +180,57 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 256m
+    mem_limit: 512m
     cpus: 1.0
     pids_limit: 64
     networks:
-      - miku-control
-      - miku-egress
+      - agent-control
+      - model-control
+      - agent-egress
     command:
       - uvicorn
-      - app.modules.miku.runtime_worker:app
+      - app.core.agent_runtime:app
       - --host
       - 0.0.0.0
       - --port
-      - "8770"
+      - "8780"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8770/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/health', timeout=2)"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ── Fetches the model on first run, then exits ────────
+  model-init:
+    profiles: ["miku-local"]
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    user: "0:0"
+    restart: "no"
+    environment:
+      MODEL_FILE: ${MIKU_MODEL_FILE:-}
+      MODEL_URL: ${MIKU_MODEL_URL:-}
+      TARGET_UID: ${PUID:-1000}
+      TARGET_GID: ${PGID:-1000}
+    volumes:
+      - ${MIKU_MODEL_DIR:-./storage/models}:/models
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        if [ -z "$$MODEL_FILE" ] || [ -z "$$MODEL_URL" ]; then
+          echo "MIKU_MODEL_FILE and MIKU_MODEL_URL must both be set to fetch a model"
+          exit 1
+        fi
+        if [ -s "/models/$$MODEL_FILE" ]; then
+          echo "model already present: $$MODEL_FILE"
+        else
+          echo "downloading $$MODEL_FILE"
+          wget -q --show-progress --continue -O "/models/$$MODEL_FILE.part" "$$MODEL_URL"
+          mv "/models/$$MODEL_FILE.part" "/models/$$MODEL_FILE"
+        fi
+        chown "$$TARGET_UID:$$TARGET_GID" "/models/$$MODEL_FILE"
+        chmod 0644 "/models/$$MODEL_FILE"
+        echo "model ready: $$MODEL_FILE"
 
   # ── Optional local MIKU language model ─────────────────
   miku-llm:
@@ -207,8 +238,11 @@ services:
     image: ghcr.io/ggml-org/llama.cpp@sha256:e3ec7c0cd473df7dfff299a60a0f292bf5c3e6a5202286484f896819eca6d6ed
     restart: unless-stopped
     init: true
-    devices:
-      - /dev/dri:/dev/dri
+    # Without a writable shader cache the Vulkan backend refuses to start and the
+    # model silently falls back to CPU, which is 20x slower. tmpfs keeps it safe.
+    environment:
+      XDG_CACHE_HOME: /tmp/.cache
+      HOME: /tmp
     volumes:
       - ${MIKU_MODEL_DIR:-./storage/models}:/models:ro
     read_only: true
@@ -219,33 +253,48 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 6g
-    cpus: 8.0
+    cpus: ${MIKU_LLM_CPUS:-4}
     pids_limit: 128
     networks:
-      - miku-control
+      - model-control
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
     command:
       - -m
-      - /models/${MIKU_MODEL_FILE:-Qwen3-4B-Instruct-2507-Q4_K_M.gguf}
+      - /models/${MIKU_MODEL_FILE:-model.gguf}
       - --host
       - 0.0.0.0
       - --port
       - "8080"
       - --ctx-size
-      - "4096"
+      - "${MIKU_LLM_CTX:-8192}"
       - --parallel
       - "1"
       - --threads
-      - "8"
+      - "${MIKU_LLM_THREADS:-4}"
       - --threads-batch
-      - "8"
+      - "${MIKU_LLM_THREADS:-4}"
       - --batch-size
       - "256"
       - --ubatch-size
       - "128"
-      - --n-gpu-layers
-      - "99"
-      - --flash-attn
+      # Let llama.cpp fit the model into whatever the device has free instead of
+      # pinning 99 layers, which aborts offload and drops the whole run to CPU.
+      - --fit
       - "on"
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      # The cascade re-sends the same system prompt and tool schemas every step;
+      # reusing the prefix KV cache is what makes a multi-step turn bearable.
+      - --cache-reuse
+      - "256"
+      # A small model spends hundreds of tokens thinking before every tool call, and
+      # the cascade already guards the loop, so reasoning is kept short on purpose.
+      - --reasoning-effort
+      - low
 
   # ── One-time storage ownership migration ───────────────
   storage-init:
@@ -362,9 +411,13 @@ services:
       YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-http://youtube-pot:4416}
       BROWSER_RUNTIME_URL: http://browser-runtime:8765
       BROWSER_RUNTIME_ENABLED: ${BROWSER_RUNTIME_ENABLED:-1}
-      MIKU_RUNTIME_URL: http://miku-runtime:8770
-      MIKU_RUNTIME_ENABLED: ${MIKU_RUNTIME_ENABLED:-0}
-      MIKU_RUNTIME_TOKEN: ${MIKU_RUNTIME_TOKEN:-}
+      AGENT_RUNTIME_ENABLED: ${AGENT_RUNTIME_ENABLED:-1}
+      AGENT_RUNTIME_URL: http://agent-runtime:8780
+      AGENT_RUNTIME_TOKEN: ${AGENT_RUNTIME_TOKEN:-}
+      AGENT_INTERNAL_KEY: ${AGENT_INTERNAL_KEY:-}
+      AGENT_CONSUMER_ID: ${AGENT_CONSUMER_ID:-miku}
+      # The agent runtime calls web by service name; host header validation must allow it.
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-localhost,127.0.0.1,testserver},web
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
@@ -380,7 +433,7 @@ services:
       - backend
       - media-control
       - browser-control
-      - miku-control
+      - agent-control
     read_only: true
     tmpfs:
       - /tmp:size=512m
@@ -400,7 +453,7 @@ services:
       browser-runtime:
         condition: service_healthy
         required: false
-      miku-runtime:
+      agent-runtime:
         condition: service_healthy
         required: false
     command:
@@ -468,7 +521,9 @@ networks:
     internal: true
   browser-proxy:
     internal: true
-  miku-control:
+  agent-control:
+    internal: true
+  model-control:
     internal: true
   browser-egress:
-  miku-egress:
+  agent-egress:

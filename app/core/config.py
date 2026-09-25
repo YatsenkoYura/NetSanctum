@@ -40,10 +40,12 @@ class Settings(BaseSettings):
     TRUSTED_HOSTS: str = "localhost,127.0.0.1,testserver"
     ALLOW_REMOTE_METADATA_FETCH: bool = False
 
-    # ── MIKU assistant runtime ────────────────────────────
-    MIKU_RUNTIME_ENABLED: bool = False
-    MIKU_RUNTIME_URL: str = "http://miku-runtime:8770"
-    MIKU_RUNTIME_TOKEN: str = ""
+    # ── Agent runtime (isolated cascade executor) ─────────
+    AGENT_RUNTIME_ENABLED: bool = False
+    AGENT_RUNTIME_URL: str = "http://agent-runtime:8780"
+    AGENT_RUNTIME_TOKEN: str = ""
+    AGENT_INTERNAL_KEY: str = ""
+    AGENT_CONSUMER_ID: str = "miku"
 
     # ── Observability ─────────────────────────────────────
     OBSERVABILITY_LOG_KEY: str = "netsanctum:logs"
@@ -124,7 +126,14 @@ def validate_runtime_security(settings: Settings | None = None) -> None:
         errors.append("database credentials still contain a known placeholder")
     if settings.PUBLIC_BASE_URL.startswith("https://") and not settings.SECURE_COOKIES:
         errors.append("SECURE_COOKIES must be enabled for an HTTPS PUBLIC_BASE_URL")
-    if settings.MIKU_RUNTIME_ENABLED and len(settings.MIKU_RUNTIME_TOKEN) < 32:
-        errors.append("MIKU_RUNTIME_TOKEN must contain at least 32 characters when the runtime is enabled")
+    if settings.AGENT_RUNTIME_ENABLED:
+        if len(settings.AGENT_RUNTIME_TOKEN) < 32:
+            errors.append(
+                "AGENT_RUNTIME_TOKEN must contain at least 32 characters when the runtime is enabled"
+            )
+        if len(settings.AGENT_INTERNAL_KEY) < 32:
+            errors.append(
+                "AGENT_INTERNAL_KEY must contain at least 32 characters when the runtime is enabled"
+            )
     if errors:
         raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))

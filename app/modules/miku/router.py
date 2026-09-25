@@ -1,3 +1,6 @@
+import asyncio
+import base64
+import binascii
 import json
 import logging
 import re
@@ -20,27 +23,30 @@ from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.contracts.miku_memory_v1 import MikuMemorySearchRequest
+from app.core.agent_client import AgentRuntimeUnavailableError
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.module_types import (
+    IntegrationContext,
     IntegrationNotFoundError,
     IntegrationRejectedError,
-    IntegrationServiceError,
     IntegrationUnavailableError,
 )
 from app.core.modules import module_registry
 from app.core.responses import serve_media_stream, serve_storage_file_chunked
 from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
+from app.modules.miku.agent_turn import agent_client, runtime_capabilities
+from app.modules.miku.cascades import list_cascades, undo_cascade_step
+from app.modules.miku.integrations import search_memory
 from app.modules.miku.providers import (
     load_provider_bundle,
     provider_settings_response,
     save_provider_settings,
 )
-from app.modules.miku.runtime_client import MikuRuntimeUnavailableError, miku_runtime_client
 from app.modules.miku.schemas import (
-    MikuActionConfirmation,
-    MikuActionResult,
     MikuCapabilities,
+    MikuConversationTurn,
     MikuJobStatus,
     MikuProviderSettingsResponse,
     MikuProviderSettingsUpdate,
@@ -56,7 +62,6 @@ from app.modules.miku.service import (
     MikuSessionContext,
     audit_turn,
     capabilities,
-    confirm_action,
     job_status,
     query,
     resolve_resource,
@@ -65,12 +70,50 @@ from app.modules.miku.service import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 SOCKET_MESSAGE_LIMIT = 4096
+SOCKET_VOICE_MESSAGE_LIMIT = 6_500_000
 SOCKET_TURN_LIMIT = 20
 SOCKET_TURN_WINDOW_SECONDS = 60
 VOICE_AUDIO_LIMIT = 4 * 1024 * 1024
 VOICE_AUDIO_TYPES = {"audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"}
 REST_CONTEXT_TTL_SECONDS = 900
-REST_CONTEXT_LOCK_SECONDS = 180
+REST_CONTEXT_LOCK_SECONDS = 300
+SPEECH_CHUNK_LIMIT = 300
+
+
+def _split_speech(text: str) -> list[str]:
+    """Split reply text into speakable sentence chunks for streaming TTS.
+
+    Each sentence becomes its own chunk so playback starts early; fragments
+    shorter than 40 characters merge forward so the provider never gets
+    one-word requests; oversized sentences hard-cut at the chunk limit.
+    """
+    sentences = [
+        fragment.strip() for fragment in re.split(r"(?<=[.!?…\n])\s+", text.strip()) if fragment.strip()
+    ]
+    chunks: list[str] = []
+    pending = ""
+    for sentence in sentences:
+        candidate = f"{pending} {sentence}".strip() if pending else sentence
+        if len(candidate) < 40:
+            pending = candidate
+            continue
+        if len(candidate) <= SPEECH_CHUNK_LIMIT:
+            chunks.append(candidate)
+            pending = ""
+            continue
+        if pending:
+            chunks.append(pending)
+            pending = ""
+        while len(sentence) > SPEECH_CHUNK_LIMIT:
+            chunks.append(sentence[:SPEECH_CHUNK_LIMIT])
+            sentence = sentence[SPEECH_CHUNK_LIMIT:]
+        if sentence:
+            chunks.append(sentence)
+    if pending:
+        chunks.append(pending)
+    return chunks
+
+
 RELEASE_CONTEXT_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('del', KEYS[1])
@@ -95,23 +138,36 @@ async def _rest_context(context_id: str | None, user_id: int) -> MikuSessionCont
     if not raw:
         return MikuSessionContext()
     try:
-        references = [MikuReference.model_validate(item) for item in json.loads(raw)]
+        payload = json.loads(raw)
+        if isinstance(payload, list):
+            references_payload = payload
+            history_payload = []
+        else:
+            references_payload = payload.get("references", [])
+            history_payload = payload.get("history", [])
+        references = [MikuReference.model_validate(item) for item in references_payload]
+        history = [MikuConversationTurn.model_validate(item) for item in history_payload]
     except (json.JSONDecodeError, TypeError, ValidationError):
         return MikuSessionContext()
-    return MikuSessionContext(references=references[:20])
+    return MikuSessionContext(references=references[:20], history=history[-6:])
 
 
 async def _save_rest_context(
     context_id: str | None, user_id: int, context: MikuSessionContext | None
 ) -> None:
-    if not context_id or not context or not context.references:
+    if not context_id or not context or (not context.references and not context.history):
         if context_id and context is not None:
             await redis_client.delete(f"miku:context:{user_id}:{context_id}")
         return
     await redis_client.setex(
         f"miku:context:{user_id}:{context_id}",
         REST_CONTEXT_TTL_SECONDS,
-        json.dumps([item.model_dump(mode="json") for item in context.references[:20]]),
+        json.dumps(
+            {
+                "references": [item.model_dump(mode="json") for item in (context.references or [])[:20]],
+                "history": [item.model_dump(mode="json") for item in (context.history or [])[-6:]],
+            }
+        ),
     )
 
 
@@ -194,7 +250,7 @@ async def miku_runtime_capabilities(
     db: AsyncSession = Depends(get_db),
 ):
     providers = await load_provider_bundle(db, user.id)
-    return await miku_runtime_client.capabilities((providers.llm, providers.stt, providers.tts))
+    return await runtime_capabilities(agent_client(), providers)
 
 
 @router.put("/api/miku/providers", response_model=MikuProviderSettingsResponse)
@@ -246,8 +302,8 @@ async def miku_transcribe(
         raise HTTPException(status_code=413, detail="Audio utterance is empty")
     try:
         providers = await load_provider_bundle(db, user.id)
-        return {"text": await miku_runtime_client.transcribe(audio, content_type, provider=providers.stt)}
-    except MikuRuntimeUnavailableError as exc:
+        return {"text": await agent_client().transcribe(audio, content_type, provider=providers.stt)}
+    except AgentRuntimeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -259,26 +315,55 @@ async def miku_speech(
 ):
     try:
         providers = await load_provider_bundle(db, user.id)
-        audio = await miku_runtime_client.synthesize(body.text, body.voice, provider=providers.tts)
-    except MikuRuntimeUnavailableError as exc:
+        audio = await agent_client().synthesize(body.text, body.voice, provider=providers.tts)
+    except AgentRuntimeUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return Response(audio.content, media_type=audio.media_type, headers={"Cache-Control": "no-store"})
 
 
-@router.post("/api/miku/actions/confirm", response_model=MikuActionResult)
-async def miku_confirm_action(
-    body: MikuActionConfirmation,
+@router.get("/api/miku/memory")
+async def miku_memory(
+    query: str | None = Query(default=None, max_length=200),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    """What the assistant currently remembers, for the owner to see and correct."""
+    request = MikuMemorySearchRequest(limit=20, **({"query": query} if query else {}))
+    context = IntegrationContext(
+        session=db,
+        user=user,
+        registry=module_registry,
+        consumer_id="miku",
+    )
+    return await search_memory(request, context)
+
+
+@router.get("/api/miku/cascades")
+async def miku_cascades(
+    limit: int = Query(default=20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """What the agent did recently, and which of its steps can be undone."""
+    return await list_cascades(db, user, limit)
+
+
+@router.post("/api/miku/cascades/{cascade_id}/undo/{step_index}")
+async def miku_undo_cascade_step(
+    cascade_id: int,
+    step_index: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Reverse one recorded step through the undo integration its provider declared."""
     try:
-        return await confirm_action(body.confirmation_token, db, user, module_registry, redis_client)
-    except MikuQueryError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except (IntegrationNotFoundError, IntegrationRejectedError, IntegrationUnavailableError) as exc:
-        raise HTTPException(status_code=422, detail="The requested action is unavailable") from exc
-    except IntegrationServiceError as exc:
-        raise HTTPException(status_code=503, detail="The requested action failed") from exc
+        return await undo_cascade_step(db, user, cascade_id, step_index, module_registry)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IndexError as exc:
+        raise HTTPException(status_code=422, detail="This step cannot be undone") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="The undo failed") from exc
 
 
 @router.get("/api/miku/jobs/{task_id}", response_model=MikuJobStatus)
@@ -344,27 +429,197 @@ async def miku_socket(websocket: WebSocket):
     if context_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", context_id):
         await websocket.close(code=4400)
         return
-    context = MikuSessionContext()
+    pending_turn: asyncio.Task | None = None
+    pending_request_id: str | None = None
+    pending_speech: asyncio.Task | None = None
+    pending_speech_id: str | None = None
+
+    async def _run_speech(request_id: str, text: str) -> None:
+        try:
+            speech_user = await websocket_owner_session(websocket)
+            if not speech_user:
+                await websocket.close(code=4401)
+                return
+        except Exception:
+            await websocket.close(code=1011)
+            return
+        try:
+            async with AsyncSessionLocal() as speech_db:
+                providers = await load_provider_bundle(speech_db, speech_user.id)
+                chunks = _split_speech(text)
+                for index, chunk in enumerate(chunks):
+                    audio = await agent_client().synthesize(chunk, "alloy", provider=providers.tts)
+                    await _send_event(
+                        websocket,
+                        "speech.chunk",
+                        request_id=request_id,
+                        data={
+                            "index": index,
+                            "audio": base64.b64encode(audio.content).decode(),
+                            "media_type": audio.media_type,
+                            "final": index == len(chunks) - 1,
+                        },
+                    )
+        except asyncio.CancelledError:
+            await _send_event(websocket, "speech.cancelled", request_id=request_id)
+            raise
+        except AgentRuntimeUnavailableError:
+            await _send_event(
+                websocket,
+                "speech.error",
+                request_id=request_id,
+                data={"code": "tts_unavailable"},
+            )
+        except Exception:
+            logger.exception("MIKU speech streaming failed")
+            await _send_event(
+                websocket,
+                "speech.error",
+                request_id=request_id,
+                data={"code": "tts_failed"},
+            )
+
+    async def _run_socket_turn(request_id: str, text: str, limit: int) -> None:
+        async def _emit_turn_partial(phase: str, data: dict) -> None:
+            await _send_event(websocket, "turn.partial", request_id=request_id, data={"phase": phase, **data})
+
+        context_lock = None
+        try:
+            turn_user = await websocket_owner_session(websocket)
+            if not turn_user:
+                await websocket.close(code=4401)
+                return
+        except Exception:
+            await websocket.close(code=1011)
+            return
+        await _send_event(websocket, "turn.started", request_id=request_id)
+        turn_context = MikuSessionContext()
+        try:
+            context_lock = await _acquire_context_lock(context_id, turn_user.id)
+            if context_id:
+                turn_context = await _rest_context(context_id, turn_user.id) or MikuSessionContext()
+            async with AsyncSessionLocal() as db:
+                reply = await query(
+                    MikuQuery(message=text, limit=limit),
+                    db,
+                    user=turn_user,
+                    registry=module_registry,
+                    context=turn_context,
+                    on_event=_emit_turn_partial,
+                )
+                await _save_rest_context(context_id, turn_user.id, turn_context)
+                try:
+                    audit_turn(db, turn_user, request_id, "websocket", reply)
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("MIKU turn audit failed")
+        except asyncio.CancelledError:
+            await _send_event(websocket, "turn.cancelled", request_id=request_id)
+            raise
+        except MikuQueryError as exc:
+            await _send_event(
+                websocket,
+                "turn.error",
+                request_id=request_id,
+                data={"code": "invalid_query", "message": str(exc)},
+            )
+            return
+        except Exception:
+            logger.exception("MIKU realtime turn failed")
+            await _send_event(
+                websocket,
+                "turn.error",
+                request_id=request_id,
+                data={"code": "internal_error"},
+            )
+            return
+        finally:
+            await _release_context_lock(context_lock)
+        await _send_event(
+            websocket,
+            "turn.result",
+            request_id=request_id,
+            data=reply.model_dump(mode="json"),
+        )
+        await _send_event(websocket, "turn.completed", request_id=request_id)
+
+    def _clear_pending(task: asyncio.Task) -> None:
+        nonlocal pending_turn, pending_request_id, pending_speech, pending_speech_id
+        if pending_turn is task:
+            pending_turn = None
+            pending_request_id = None
+        if pending_speech is task:
+            pending_speech = None
+            pending_speech_id = None
+
+    def _cancel_all() -> None:
+        if pending_turn is not None and not pending_turn.done():
+            pending_turn.cancel()
+        if pending_speech is not None and not pending_speech.done():
+            pending_speech.cancel()
+
+    async def _check_owner():
+        try:
+            owner = await websocket_owner_session(websocket)
+        except Exception:
+            await websocket.close(code=1011)
+            return None
+        if not owner:
+            await websocket.close(code=4401)
+            return None
+        return owner
+
+    def _check_rate_limit(request_id: str | None) -> bool:
+        now = time.monotonic()
+        while turn_times and now - turn_times[0] >= SOCKET_TURN_WINDOW_SECONDS:
+            turn_times.popleft()
+        if len(turn_times) >= SOCKET_TURN_LIMIT:
+            return False
+        turn_times.append(now)
+        return True
+
+    def _start_turn(request_id: str, text: str, limit: int) -> None:
+        nonlocal pending_turn, pending_request_id
+        # Barge-in: a new turn cancels the in-flight one and any speech.
+        if pending_turn is not None and not pending_turn.done():
+            pending_turn.cancel()
+        if pending_speech is not None and not pending_speech.done():
+            pending_speech.cancel()
+        pending_request_id = request_id
+        pending_turn = asyncio.create_task(_run_socket_turn(request_id, text, limit))
+        pending_turn.add_done_callback(_clear_pending)
+
     try:
         while True:
             raw = await websocket.receive_text()
-            if len(raw) > SOCKET_MESSAGE_LIMIT:
+            if len(raw) > SOCKET_VOICE_MESSAGE_LIMIT:
                 await _send_event(websocket, "turn.error", data={"code": "message_too_large"})
                 continue
             try:
-                message = MikuSocketMessage.model_validate(json.loads(raw))
+                payload = json.loads(raw)
+                message = MikuSocketMessage.model_validate(payload)
             except (json.JSONDecodeError, ValidationError):
                 await _send_event(websocket, "turn.error", data={"code": "invalid_message"})
+                continue
+            if message.type != "voice" and len(raw) > SOCKET_MESSAGE_LIMIT:
+                await _send_event(websocket, "turn.error", data={"code": "message_too_large"})
                 continue
 
             if message.type == "ping":
                 await _send_event(websocket, "session.pong", request_id=message.request_id)
                 continue
 
-            now = time.monotonic()
-            while turn_times and now - turn_times[0] >= SOCKET_TURN_WINDOW_SECONDS:
-                turn_times.popleft()
-            if len(turn_times) >= SOCKET_TURN_LIMIT:
+            if message.type == "cancel":
+                if pending_turn is not None and pending_request_id == message.request_id:
+                    pending_turn.cancel()
+                elif pending_speech is not None and pending_speech_id == message.request_id:
+                    pending_speech.cancel()
+                else:
+                    await _send_event(websocket, "turn.cancelled", request_id=message.request_id)
+                continue
+
+            if not _check_rate_limit(message.request_id):
                 await _send_event(
                     websocket,
                     "turn.error",
@@ -372,63 +627,87 @@ async def miku_socket(websocket: WebSocket):
                     data={"code": "rate_limited"},
                 )
                 continue
-            turn_times.append(now)
 
-            try:
-                user = await websocket_owner_session(websocket)
-                if not user:
-                    await websocket.close(code=4401)
-                    return
-            except Exception:
-                await websocket.close(code=1011)
+            user = await _check_owner()
+            if user is None:
                 return
 
-            await _send_event(websocket, "turn.started", request_id=message.request_id)
-            context_lock = None
-            try:
-                context_lock = await _acquire_context_lock(context_id, user.id)
-                if context_id:
-                    context = await _rest_context(context_id, user.id) or MikuSessionContext()
-                async with AsyncSessionLocal() as db:
-                    reply = await query(
-                        MikuQuery(message=message.message or "", limit=message.limit),
-                        db,
-                        user=user,
-                        registry=module_registry,
-                        context=context,
+            if message.type == "voice":
+                content_type = (message.audio_content_type or "").partition(";")[0].lower()
+                if content_type not in VOICE_AUDIO_TYPES:
+                    await _send_event(
+                        websocket,
+                        "turn.error",
+                        request_id=message.request_id,
+                        data={"code": "unsupported_audio"},
                     )
-                    await _save_rest_context(context_id, user.id, context)
-                    try:
-                        audit_turn(db, user, message.request_id, "websocket", reply)
-                        await db.commit()
-                    except Exception:
-                        await db.rollback()
-                        logger.exception("MIKU turn audit failed")
-            except MikuQueryError as exc:
+                    continue
+                try:
+                    audio = base64.b64decode(message.audio or "", validate=True)
+                except (binascii.Error, ValueError):
+                    await _send_event(
+                        websocket,
+                        "turn.error",
+                        request_id=message.request_id,
+                        data={"code": "invalid_audio"},
+                    )
+                    continue
+                if not audio or len(audio) > VOICE_AUDIO_LIMIT:
+                    await _send_event(
+                        websocket,
+                        "turn.error",
+                        request_id=message.request_id,
+                        data={"code": "audio_too_large"},
+                    )
+                    continue
+                try:
+                    async with AsyncSessionLocal() as transcribe_db:
+                        providers = await load_provider_bundle(transcribe_db, user.id)
+                        text = await agent_client().transcribe(audio, content_type, provider=providers.stt)
+                except AgentRuntimeUnavailableError:
+                    await _send_event(
+                        websocket,
+                        "turn.error",
+                        request_id=message.request_id,
+                        data={"code": "stt_unavailable"},
+                    )
+                    continue
+                except Exception:
+                    logger.exception("MIKU voice transcription failed")
+                    await _send_event(
+                        websocket,
+                        "turn.error",
+                        request_id=message.request_id,
+                        data={"code": "transcription_failed"},
+                    )
+                    continue
+                if not text:
+                    await _send_event(
+                        websocket,
+                        "turn.error",
+                        request_id=message.request_id,
+                        data={"code": "transcription_failed"},
+                    )
+                    continue
                 await _send_event(
                     websocket,
-                    "turn.error",
+                    "turn.partial",
                     request_id=message.request_id,
-                    data={"code": "invalid_query", "message": str(exc)},
+                    data={"phase": "transcript", "text": text},
                 )
+                _start_turn(message.request_id, text, message.limit)
                 continue
-            except Exception:
-                logger.exception("MIKU realtime turn failed")
-                await _send_event(
-                    websocket,
-                    "turn.error",
-                    request_id=message.request_id,
-                    data={"code": "internal_error"},
-                )
+
+            if message.type == "speak":
+                if pending_speech is not None and not pending_speech.done():
+                    pending_speech.cancel()
+                pending_speech_id = message.request_id
+                pending_speech = asyncio.create_task(_run_speech(message.request_id, message.message or ""))
+                pending_speech.add_done_callback(_clear_pending)
                 continue
-            finally:
-                await _release_context_lock(context_lock)
-            await _send_event(
-                websocket,
-                "turn.result",
-                request_id=message.request_id,
-                data=reply.model_dump(mode="json"),
-            )
-            await _send_event(websocket, "turn.completed", request_id=message.request_id)
+
+            _start_turn(message.request_id, message.message or "", message.limit)
     except WebSocketDisconnect:
-        pass
+        _cancel_all()
+    finally:
+        _cancel_all()

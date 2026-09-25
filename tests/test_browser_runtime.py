@@ -41,7 +41,13 @@ class BrowserRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("volumes", proxy)
         self.assertEqual({"browser-proxy", "browser-egress"}, set(proxy["networks"]))
         self.assertEqual(
-            {"default", "backend", "media-control", "browser-control", "miku-control"},
+            {
+                "default",
+                "backend",
+                "media-control",
+                "browser-control",
+                "agent-control",
+            },
             set(compose["services"]["web"]["networks"]),
         )
         self.assertTrue(compose["networks"]["browser-control"]["internal"])

@@ -10,7 +10,7 @@
 #   ./start.sh --down           # Stop all containers cleanly
 #   ./start.sh --logs           # Tail container logs
 #   ./start.sh --no-browser-runtime # Start without Chromium runtime/proxy
-#   ./start.sh --no-miku-runtime # Start without the MIKU sidecar
+#   ./start.sh --no-agent       # Start without the assistant runtime
 #   ./start.sh --miku-local      # Start the optional local llama.cpp model
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -53,14 +53,16 @@ if grep -q '^MASTER_API_KEY=dev-api-key-change-me$' "$ENV_FILE"; then
     sed -i "s/^MASTER_API_KEY=.*/MASTER_API_KEY=$API_SECRET/" "$ENV_FILE"
 fi
 
-if ! grep -q '^MIKU_RUNTIME_TOKEN=' "$ENV_FILE" || grep -q '^MIKU_RUNTIME_TOKEN=dev-miku-runtime-token-change-me$' "$ENV_FILE"; then
-    MIKU_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-    if grep -q '^MIKU_RUNTIME_TOKEN=' "$ENV_FILE"; then
-        sed -i "s/^MIKU_RUNTIME_TOKEN=.*/MIKU_RUNTIME_TOKEN=$MIKU_SECRET/" "$ENV_FILE"
-    else
-        printf '\nMIKU_RUNTIME_TOKEN=%s\n' "$MIKU_SECRET" >> "$ENV_FILE"
+for AGENT_SECRET_NAME in AGENT_RUNTIME_TOKEN AGENT_INTERNAL_KEY; do
+    if ! grep -q "^${AGENT_SECRET_NAME}=" "$ENV_FILE" || grep -q "^${AGENT_SECRET_NAME}=dev-${AGENT_SECRET_NAME,,}-change-me$" "$ENV_FILE"; then
+        AGENT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+        if grep -q "^${AGENT_SECRET_NAME}=" "$ENV_FILE"; then
+            sed -i "s/^${AGENT_SECRET_NAME}=.*/${AGENT_SECRET_NAME}=$AGENT_SECRET/" "$ENV_FILE"
+        else
+            printf '\n%s=%s\n' "$AGENT_SECRET_NAME" "$AGENT_SECRET" >> "$ENV_FILE"
+        fi
     fi
-fi
+done
 
 if ! grep -q '^REDIS_PASSWORD=' "$ENV_FILE" || grep -q '^REDIS_PASSWORD=change_me_redis_password$' "$ENV_FILE"; then
     REDIS_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -84,8 +86,8 @@ fi
 PORT_ARG=""
 ACTION="up"
 BROWSER_RUNTIME=1
-MIKU_RUNTIME=1
 MIKU_LOCAL=0
+AGENT_RUNTIME=1
 if grep -q '^MIKU_LLM_URL=http://miku-llm:' "$ENV_FILE"; then
     MIKU_LOCAL=1
 fi
@@ -117,22 +119,17 @@ while [[ $# -gt 0 ]]; do
             BROWSER_RUNTIME=1
             shift
             ;;
-        --no-miku-runtime)
-            MIKU_RUNTIME=0
-            MIKU_LOCAL=0
-            shift
-            ;;
-        --miku-runtime)
-            MIKU_RUNTIME=1
-            shift
-            ;;
         --miku-local)
-            MIKU_RUNTIME=1
+            AGENT_RUNTIME=1
             MIKU_LOCAL=1
             shift
             ;;
         --no-miku-local)
             MIKU_LOCAL=0
+            shift
+            ;;
+        --no-agent)
+            AGENT_RUNTIME=0
             shift
             ;;
         *)
@@ -141,7 +138,7 @@ while [[ $# -gt 0 ]]; do
                 shift
             else
                 echo "Unknown argument: $1"
-                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--no-miku-runtime] [--miku-local]"
+                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--miku-local] [--no-agent]"
                 exit 1
             fi
             ;;
@@ -150,13 +147,15 @@ done
 
 if [ "$ACTION" = "down" ]; then
     echo "Stopping NetSanctum containers..."
-    docker compose --profile browser --profile miku --profile miku-local down --remove-orphans
+    docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile browser --profile agent --profile miku-local down --remove-orphans 2>/dev/null \
+        || docker compose --profile browser --profile agent --profile miku-local down --remove-orphans
     echo "NetSanctum stopped."
     exit 0
 fi
 
 if [ "$ACTION" = "logs" ]; then
-    docker compose --profile browser --profile miku --profile miku-local logs -f --tail=100
+    docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile browser --profile agent --profile miku-local logs -f --tail=100 2>/dev/null \
+        || docker compose --profile browser --profile agent --profile miku-local logs -f --tail=100
     exit 0
 fi
 
@@ -185,13 +184,13 @@ if [ "$BROWSER_RUNTIME" = "1" ]; then
 else
     echo " Browser runtime: disabled"
 fi
-if [ "$MIKU_RUNTIME" = "1" ]; then
-    echo " MIKU runtime: enabled (guarded voice/cognition sidecar)"
+if [ "$AGENT_RUNTIME" = "1" ]; then
+    echo " Agent runtime: enabled (isolated cascade executor)"
 else
-    echo " MIKU runtime: disabled"
+    echo " Agent runtime: disabled"
 fi
 if [ "$MIKU_LOCAL" = "1" ]; then
-    echo " MIKU local LLM: enabled (llama.cpp)"
+    echo " Local model: enabled (llama.cpp)"
 fi
 echo "========================================================"
 
@@ -210,27 +209,40 @@ fi
 
 # Launch containers
 echo "Building and launching Docker services..."
+COMPOSE_FILES=(-f docker-compose.yml)
+# A GPU is opt-in: only mount /dev/dri when the host actually has one, so the same
+# stack boots on a headless server without it.
+if [ -n "$MIKU_LOCAL" ] && [ -e /dev/dri ]; then
+    COMPOSE_FILES+=(-f docker-compose.gpu.yml)
+    export MIKU_LLM_THREADS="${MIKU_LLM_THREADS:-$(nproc 2>/dev/null || echo 4)}"
+    export MIKU_LLM_CPUS="${MIKU_LLM_CPUS:-$(nproc 2>/dev/null || echo 4)}"
+    echo " GPU: detected /dev/dri, model will be served with acceleration"
+elif [ "$MIKU_LOCAL" = "1" ]; then
+    export MIKU_LLM_THREADS="${MIKU_LLM_THREADS:-$(nproc 2>/dev/null || echo 4)}"
+    export MIKU_LLM_CPUS="${MIKU_LLM_CPUS:-$(nproc 2>/dev/null || echo 4)}"
+    echo " GPU: none found, model will be served on CPU"
+fi
 PROFILE_ARGS=()
 if [ "$BROWSER_RUNTIME" = "1" ]; then
     PROFILE_ARGS+=(--profile browser)
 else
-    docker compose --profile browser stop browser-runtime browser-proxy >/dev/null 2>&1 || true
-    docker compose --profile browser rm -f browser-runtime browser-proxy >/dev/null 2>&1 || true
-fi
-if [ "$MIKU_RUNTIME" = "1" ]; then
-    PROFILE_ARGS+=(--profile miku)
-else
-    docker compose --profile miku stop miku-runtime >/dev/null 2>&1 || true
-    docker compose --profile miku rm -f miku-runtime >/dev/null 2>&1 || true
+    docker compose "${COMPOSE_FILES[@]}" --profile browser stop browser-runtime browser-proxy >/dev/null 2>&1 || true
+    docker compose "${COMPOSE_FILES[@]}" --profile browser rm -f browser-runtime browser-proxy >/dev/null 2>&1 || true
 fi
 if [ "$MIKU_LOCAL" = "1" ]; then
     PROFILE_ARGS+=(--profile miku-local)
 else
-    docker compose --profile miku-local stop miku-llm >/dev/null 2>&1 || true
-    docker compose --profile miku-local rm -f miku-llm >/dev/null 2>&1 || true
+    docker compose "${COMPOSE_FILES[@]}" --profile miku-local stop miku-llm >/dev/null 2>&1 || true
+    docker compose "${COMPOSE_FILES[@]}" --profile miku-local rm -f miku-llm model-init >/dev/null 2>&1 || true
 fi
-BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" MIKU_RUNTIME_ENABLED="$MIKU_RUNTIME" docker compose "${PROFILE_ARGS[@]}" build
-BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" MIKU_RUNTIME_ENABLED="$MIKU_RUNTIME" docker compose "${PROFILE_ARGS[@]}" up -d --remove-orphans "${RECREATE_ARGS[@]}"
+if [ "$AGENT_RUNTIME" = "1" ]; then
+    PROFILE_ARGS+=(--profile agent)
+else
+    docker compose "${COMPOSE_FILES[@]}" --profile agent stop agent-runtime >/dev/null 2>&1 || true
+    docker compose "${COMPOSE_FILES[@]}" --profile agent rm -f agent-runtime >/dev/null 2>&1 || true
+fi
+AGENT_RUNTIME_ENABLED="$AGENT_RUNTIME" BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" build
+AGENT_RUNTIME_ENABLED="$AGENT_RUNTIME" BROWSER_RUNTIME_ENABLED="$BROWSER_RUNTIME" docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" up -d --remove-orphans "${RECREATE_ARGS[@]}"
 
 echo ""
 echo "========================================================"
