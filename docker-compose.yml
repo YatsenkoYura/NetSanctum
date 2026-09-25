@@ -219,19 +219,38 @@ services:
       - -ec
       - |
         if [ -z "$$MODEL_FILE" ] || [ -z "$$MODEL_URL" ]; then
-          echo "MIKU_MODEL_FILE and MIKU_MODEL_URL must both be set to fetch a model"
-          exit 1
+            echo "MIKU_MODEL_FILE and MIKU_MODEL_URL must both be set to fetch a model"
+            exit 1
         fi
         if [ -s "/models/$$MODEL_FILE" ]; then
-          echo "model already present: $$MODEL_FILE"
+            echo "model already present: $$MODEL_FILE"
         else
-          echo "downloading $$MODEL_FILE"
-          wget -q --show-progress --continue -O "/models/$$MODEL_FILE.part" "$$MODEL_URL"
-          mv "/models/$$MODEL_FILE.part" "/models/$$MODEL_FILE"
+            echo "downloading $$MODEL_FILE from $$MODEL_URL"
+            # Not -q: a silent wget under `set -e` turns every failure into the same
+            # bare exit 1, which is indistinguishable from a full disk or a blocked
+            # network until somebody reads these logs.
+            if ! wget --show-progress --continue -O "/models/$$MODEL_FILE.part" "$$MODEL_URL"; then
+                echo "Error: the download failed."
+                echo "  url:     $$MODEL_URL"
+                echo "  target:  /models/$$MODEL_FILE"
+                echo "  check that this host can reach that url and has room for the file"
+                exit 1
+            fi
+            # A proxy or an error page can answer 200 with something that is not a
+            # model; the format starts with a fixed four byte magic.
+            if [ ! -s "/models/$$MODEL_FILE.part" ] || [ "$$(head -c 4 "/models/$$MODEL_FILE.part")" != "GGUF" ]; then
+                echo "Error: what was downloaded is not a GGUF model (first bytes: $$(head -c 4 "/models/$$MODEL_FILE.part" | od -c | head -1))"
+                rm -f "/models/$$MODEL_FILE.part"
+                exit 1
+            fi
+            mv "/models/$$MODEL_FILE.part" "/models/$$MODEL_FILE"
         fi
-        chown "$$TARGET_UID:$$TARGET_GID" "/models/$$MODEL_FILE"
-        chmod 0644 "/models/$$MODEL_FILE"
-        echo "model ready: $$MODEL_FILE"
+        # A bind mount the daemon cannot chown must not throw away a good download.
+        chown "$$TARGET_UID:$$TARGET_GID" "/models/$$MODEL_FILE" 2>/dev/null || \
+            echo "warning: could not chown the model to $$TARGET_UID:$$TARGET_GID, continuing"
+        chmod 0644 "/models/$$MODEL_FILE" 2>/dev/null || \
+            echo "warning: could not chmod the model, continuing"
+        echo "model ready: $$MODEL_FILE ($$(du -h "/models/$$MODEL_FILE" | cut -f1))"
 
   # ── Optional local MIKU language model ─────────────────
   miku-llm:
