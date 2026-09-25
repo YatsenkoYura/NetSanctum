@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+from types import SimpleNamespace
 
 import httpx
 
@@ -9,6 +10,7 @@ from app.core.agent_client import AgentClient
 from app.modules.miku.agent_turn import (
     history_for_agent,
     run_agent_turn,
+    to_agent_profile,
     to_agent_references,
     to_miku_reply,
 )
@@ -182,6 +184,19 @@ class AgentBridgeTests(unittest.TestCase):
         self.assertIsNotNone(reply)
         self.assertIn("acknowledgement", [phase for phase, _ in events])
         self.assertIn("tool_result", [phase for phase, _ in events])
+
+    def test_unusable_provider_values_never_kill_a_turn(self):
+        """A stray type in provider settings must not turn a turn into an error."""
+        broken = SimpleNamespace(url=None, model=object(), api_key=123, mode="api", server_callable=True)
+        dropped = to_agent_profile(broken)
+        self.assertEqual("", dropped.url)
+        self.assertEqual("", dropped.model)
+        self.assertEqual("", dropped.api_key)
+        usable = SimpleNamespace(url="https://x/v1", model="m", api_key="k", mode="api", server_callable=True)
+        profile = to_agent_profile(usable)
+        self.assertEqual("https://x/v1", profile.url)
+        self.assertIsNone(to_agent_profile(SimpleNamespace(server_callable=False)))
+        self.assertIsNone(to_agent_profile(None))
 
     def test_turn_is_reported_to_the_caller_after_the_reply_is_built(self):
         seen: list[tuple] = []

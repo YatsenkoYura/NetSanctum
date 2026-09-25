@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.core.agent.catalog import AgentTool
 from app.core.agent.engine import AgentStep, AgentUnavailableError
 from app.core.agent.primitives import PRIMITIVE_NAMES
+from app.core.agent.urls import CHAT_COMPLETIONS, provider_endpoint
 
 SYSTEM_PROMPT = (
     "You are the reasoning step of a personal assistant. You never answer in prose: "
@@ -49,7 +50,8 @@ class OpenAICompatibleModel:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         transport: Any | None = None,
     ) -> None:
-        self.url = url
+        # A saved provider URL is a base; providers speak full endpoints.
+        self.url = provider_endpoint(url, CHAT_COMPLETIONS)
         self.model = model
         self.api_key = api_key
         self.timeout = timeout

@@ -17,6 +17,7 @@ from app.core.agent.engine import (
 from app.core.agent.model import TRUNCATION_NUDGE, OpenAICompatibleModel, step_from_completion
 from app.core.agent.primitives import AgentStep
 from app.core.agent.references import AgentReference, project_references
+from app.core.agent.urls import provider_endpoint
 
 SEARCH_RESULT = {
     "items": [
@@ -436,6 +437,34 @@ class ModelProtocolTests(unittest.TestCase):
         ):
             with self.subTest(payload=payload), self.assertRaises(AgentUnavailableError):
                 step_from_completion(payload, known)
+
+    def test_saved_base_url_is_completed_to_the_chat_endpoint(self):
+        base = OpenAICompatibleModel("https://api.example.com/uni/v1", "gemini")
+        self.assertEqual("https://api.example.com/uni/v1/chat/completions", base.url)
+
+    def test_already_complete_url_is_left_alone(self):
+        full = OpenAICompatibleModel("https://api.example.com/uni/v1/chat/completions", "gemini")
+        self.assertEqual("https://api.example.com/uni/v1/chat/completions", full.url)
+
+    def test_local_base_url_also_reaches_the_endpoint(self):
+        local = OpenAICompatibleModel("http://miku-llm:8080/v1", "model")
+        self.assertEqual("http://miku-llm:8080/v1/chat/completions", local.url)
+
+    def test_speech_endpoints_follow_the_same_rule(self):
+        self.assertEqual(
+            "https://api.example.com/v1/audio/speech",
+            provider_endpoint("https://api.example.com/v1", "/audio/speech"),
+        )
+        self.assertEqual(
+            "https://api.example.com/v1/audio/transcriptions",
+            provider_endpoint("https://api.example.com/v1", "/audio/transcriptions"),
+        )
+
+    def test_a_bare_host_is_not_treated_as_a_path(self):
+        self.assertEqual(
+            "https://api.example.com/chat/completions",
+            provider_endpoint("https://api.example.com", "/chat/completions"),
+        )
 
     def test_truncated_reply_is_retried_once_before_failing(self):
         calls: list[dict] = []

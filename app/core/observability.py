@@ -80,6 +80,12 @@ def configure_observability(role: str, target_logger: logging.Logger | None = No
     marker = "netsanctum_queue_log_handler"
     if any(getattr(handler, marker, False) for handler in logger.handlers):
         return
+    if not any(isinstance(handler, logging.StreamHandler) for handler in logger.handlers):
+        # Mirror to stdout as well: without it, container logs show access lines only
+        # and a failure becomes invisible exactly when it needs to be read.
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(stream_handler)
     log_queue: queue.SimpleQueue = queue.SimpleQueue()
     queue_handler = logging.handlers.QueueHandler(log_queue)
     setattr(queue_handler, marker, True)

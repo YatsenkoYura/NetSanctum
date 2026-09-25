@@ -168,16 +168,29 @@ async def runtime_capabilities(
     )
 
 
+def _as_text(value: object) -> str:
+    """Provider fields are strings; a stray type is dropped, never stringified.
+
+    Dropping lets the sidecar fall back to the model it hosts, which beats sending a
+    repr of a broken value to a provider.
+    """
+    return value.strip() if isinstance(value, str) else ""
+
+
 def to_agent_profile(provider: object) -> AgentProviderProfile | None:
     """Hand the resolved per-user model settings to the sidecar for this call only."""
     if provider is None or not getattr(provider, "server_callable", False):
         return None
-    return AgentProviderProfile(
-        url=getattr(provider, "url", "") or "",
-        model=getattr(provider, "model", "") or "",
-        api_key=getattr(provider, "api_key", "") or "",
-        mode=getattr(provider, "mode", "api") or "api",
-    )
+    try:
+        return AgentProviderProfile(
+            url=_as_text(getattr(provider, "url", "")),
+            model=_as_text(getattr(provider, "model", "")),
+            api_key=_as_text(getattr(provider, "api_key", "")),
+            mode=_as_text(getattr(provider, "mode", "api")) or "api",
+        )
+    except (ValueError, TypeError):
+        logger.warning("ignoring an unusable provider profile", exc_info=True)
+        return None
 
 
 async def run_agent_turn(

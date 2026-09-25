@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +9,8 @@ from fastapi import WebSocketDisconnect
 from pydantic import ValidationError
 
 from app.contracts.vault_capture_v1 import VaultCaptureRequest
+from app.core.agent.engine import AgentTurnResult
+from app.core.agent.references import AgentReference
 from app.core.agent_client import AgentClient
 from app.core.module_types import IntegrationContext, IntegrationRejectedError
 from app.core.security import get_current_user
@@ -735,6 +738,108 @@ class MikuTests(unittest.TestCase):
             websocket.sent.index(partials[-1]),
             result_index,
         )
+
+    def test_socket_turn_runs_the_real_cascade_over_a_stored_context(self):
+        """The socket path must survive a session context restored from Redis."""
+        stored = json.dumps(
+            {
+                "references": [
+                    {
+                        "ref": "result:1",
+                        "module_id": "alllib",
+                        "item_id": "9",
+                        "kind": "novel",
+                        "title": "Re:Zero",
+                        "readable": True,
+                    }
+                ],
+                "history": [{"user": "привет", "assistant": "Привет!"}],
+            }
+        )
+
+        class SlowDisconnectStub(StubWebSocket):
+            async def receive_text(self):
+                try:
+                    return next(self.messages)
+                except StopIteration:
+                    await asyncio.sleep(3)
+                    raise WebSocketDisconnect()
+
+        websocket = SlowDisconnectStub(['{"type":"query","request_id":"turn:9","message":"что дальше?"}'])
+        seen: dict = {}
+
+        class FakeAgent:
+            enabled = True
+
+            async def turn(self, **kwargs):
+                seen.update(kwargs)
+                yield AgentTurnResult(
+                    answer="Продолжаю с третьей главы.",
+                    refs=["result:1"],
+                    references=[
+                        AgentReference(
+                            ref="result:1",
+                            module_id="alllib",
+                            item_id="9",
+                            kind="novel",
+                            title="Re:Zero",
+                            readable=True,
+                        )
+                    ],
+                )
+
+        class _NullDB:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+            async def flush(self):
+                return None
+
+            def add(self, *args, **kwargs):
+                return None
+
+        async def _redis_get(key):
+            if key.startswith("session:"):
+                return "1"
+            if key.startswith("miku:context:"):
+                return stored
+            return None
+
+        with (
+            patch("app.modules.miku.router.redis_client.get", side_effect=_redis_get),
+            patch("app.modules.miku.router.redis_client.setex", AsyncMock()),
+            patch("app.modules.miku.router._acquire_context_lock", AsyncMock(return_value=None)),
+            patch("app.modules.miku.router._release_context_lock", AsyncMock()),
+            patch("app.modules.miku.router.AsyncSessionLocal", return_value=_NullDB()),
+            patch("app.modules.miku.router.audit_turn", return_value=None),
+            patch(
+                "app.modules.miku.service.load_provider_bundle",
+                AsyncMock(return_value=SimpleNamespace(llm=None, stt=None, tts=None)),
+            ),
+            patch("app.modules.miku.agent_turn.agent_client", return_value=FakeAgent()),
+        ):
+            asyncio.run(miku_socket(websocket))
+
+        self.assertEqual(
+            [],
+            [item for item in websocket.sent if item["event"] == "turn.error"],
+            f"events: {[(i['event'], i.get('data', {}).get('code')) for i in websocket.sent]}",
+        )
+        replies = [item for item in websocket.sent if item["event"] == "turn.result"]
+        self.assertEqual(1, len(replies))
+        self.assertEqual("Продолжаю с третьей главы.", replies[0]["data"]["text"])
+        self.assertEqual("что дальше?", seen["message"])
+        self.assertEqual(1, len(seen["references"]))
+        self.assertEqual(1, len(seen["history"]))
 
     def test_socket_voice_turn_transcribes_then_runs_turn(self):
         import base64 as stdlib_base64

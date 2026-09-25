@@ -12,7 +12,6 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -23,6 +22,7 @@ from app.core.agent.engine import AgentTurnRequest, AgentTurnResult, CascadeEngi
 from app.core.agent.fetch import RemoteFetchError, fetch_public_text
 from app.core.agent.model import OpenAICompatibleModel
 from app.core.agent.primitives import AgentFetchRequest, AgentFetchResult, AgentSpeechRequest
+from app.core.agent.urls import SPEECH, TRANSCRIPTIONS, provider_endpoint
 
 MAX_AUDIO_BYTES = 4 * 1024 * 1024
 ALLOWED_AUDIO_TYPES = {"audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"}
@@ -110,14 +110,6 @@ async def tools(x_agent_runtime_token: str = Header(default="")):
     return response.json()
 
 
-def _provider_endpoint(url: str, endpoint: str) -> str:
-    parsed = urlsplit(url)
-    path = parsed.path.rstrip("/")
-    if not path.endswith(endpoint):
-        path = f"{path}{endpoint}"
-    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
-
-
 def _provider_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
@@ -180,7 +172,7 @@ async def transcribe(
     try:
         async with httpx.AsyncClient(timeout=TRANSCRIBE_TIMEOUT_SECONDS) as client:
             response = await client.post(
-                _provider_endpoint(url, "/audio/transcriptions"),
+                provider_endpoint(url, TRANSCRIPTIONS),
                 headers=_provider_headers(key),
                 files={"file": ("utterance", audio, content_type)},
                 data={"model": model},
@@ -223,7 +215,7 @@ async def synthesize(
     try:
         async with httpx.AsyncClient(timeout=SYNTHESIZE_TIMEOUT_SECONDS) as client:
             response = await client.post(
-                _provider_endpoint(url, "/audio/speech"),
+                provider_endpoint(url, SPEECH),
                 headers=_provider_headers(key),
                 json={
                     "model": model,
