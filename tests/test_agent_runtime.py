@@ -43,13 +43,17 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         agent_networks = self.compose["services"]["agent-runtime"]["networks"]
         for forbidden in ("backend", "media-control", "browser-control", "default"):
             self.assertNotIn(forbidden, agent_networks)
-        # The local model is reachable only from the services that drive it.
+        # A model is reachable only from the services that drive it. The voice models
+        # sit here too, and only the runtime ever speaks to them.
         model_clients = [
             name
             for name, service in self.compose["services"].items()
             if "model-control" in (service.get("networks") or [])
         ]
-        self.assertEqual(["agent-runtime", "miku-llm"], sorted(model_clients))
+        self.assertEqual(
+            ["agent-runtime", "miku-llm", "miku-stt", "miku-voice"],
+            sorted(model_clients),
+        )
 
     def test_only_web_reaches_the_agent_runtime(self):
         peers = [
@@ -102,6 +106,53 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         # the assistant is the product: its runtime is on unless explicitly disabled
         self.assertIn("AGENT_RUNTIME=1", script)
         self.assertNotIn("miku-runtime", script)
+
+    def test_voice_is_opt_in_and_actually_released(self):
+        # The browser does its own speech when the server is not asked to. Leaving the
+        # model loaded would make that mode cost memory it claims not to cost, so the
+        # services are stopped and removed rather than merely left unused.
+        for name in ("miku-voice", "miku-stt"):
+            service = self.compose["services"][name]
+            self.assertEqual(["voice"], service["profiles"], name)
+            # Only the runtime may reach them, so they sit on the internal model network,
+            # and they are capped so the memory budget is a fact rather than a hope.
+            self.assertEqual(["model-control"], list(service["networks"]), name)
+            self.assertTrue(service["mem_limit"], name)
+        # The one-shot fetcher needs no network at all: it only writes to the volume.
+        fetcher = self.compose["services"]["voice-init"]
+        self.assertEqual(["voice"], fetcher["profiles"])
+        self.assertNotIn("networks", fetcher)
+
+        script = START_SH.read_text()
+        self.assertIn("VOICE=0", script)
+        self.assertIn("--voice)", script)
+        self.assertIn("PROFILE_ARGS+=(--profile voice)", script)
+        stop = script.index("stop miku-voice miku-stt voice-init")
+        self.assertIn("rm -f miku-voice miku-stt voice-init", script)
+        # The release has to happen on the way past, not only inside the enabled branch.
+        self.assertLess(script.index('if [ "$VOICE" = "1" ]; then\n    PROFILE_ARGS'), stop)
+
+    def test_the_voice_profile_fetches_the_models_it_needs(self):
+        manifest = self.compose["services"]["voice-init"]["environment"]["VOICE_MANIFEST"]
+        entries = {}
+        for line in manifest.strip().splitlines():
+            if not line.strip():
+                continue
+            name, url, magic = line.split("|")
+            entries[name] = (url, magic)
+        # Recognition: the multilingual base. The English-only variant is the same
+        # container and the same size, so nothing else would notice the swap - and
+        # Russian recognition degrades badly.
+        self.assertIn("ggml-base.bin", entries)
+        self.assertNotIn("ggml-base.en.bin", entries)
+        self.assertFalse([name for name in entries if ".en." in name])
+        # Synthesis, one engine per language.
+        self.assertIn("v5_ru_ru.pt", entries)
+        self.assertIn("kokoro-v1.0.int8.onnx", entries)
+        self.assertIn("voices-v1.0.bin", entries)
+        # Every entry declares the magic its container must start with.
+        for name, (_url, magic) in entries.items():
+            self.assertIn(magic, {"GGML", "GGUF", "ONNX", "PK", "none"}, name)
 
     def test_env_gains_settings_a_pulled_branch_introduced(self):
         script = START_SH.read_text()

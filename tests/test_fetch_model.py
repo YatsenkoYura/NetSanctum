@@ -32,13 +32,21 @@ while [ $# -gt 0 ]; do
         *) shift ;;
     esac
 done
-[ -n "$SOURCE_FILE" ] || exit 1
-cat "$SOURCE_FILE" > "$out"
+# The source is whatever a real server would have sent for that url.
+src="$SRC_DIR/${url##*/}"
+[ -f "$src" ] || exit 1
+cat "$src" > "$out"
 exit 0
 """
 
 GGUF = b"GGUF" + b"\x00" * 64
 HTML = b"<!doctype html><title>404</title>"
+# An ONNX model is a protobuf whose first field is the IR version, and a TorchScript
+# checkpoint is a zip archive, which is also what a plain zip looks like.
+ONNX = b"\x08\x07" + b"\x12" * 62
+ZIP = b"PK\x03\x04" + b"\x00" * 62
+# whisper.cpp still ships the older ggml container, not GGUF.
+GGML = b"lmgg" + b"\x00" * 64
 
 
 class FetchModelTests(unittest.TestCase):
@@ -47,20 +55,26 @@ class FetchModelTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.models = Path(self.tmp.name) / "models"
         self.models.mkdir()
+        self.sources = Path(self.tmp.name) / "sources"
+        self.sources.mkdir()
         self.bin = Path(self.tmp.name) / "bin"
         self.bin.mkdir()
         (self.bin / "wget").write_text(BUSYBOX_WGET)
         (self.bin / "wget").chmod(0o755)
 
+    def serve(self, name: str, payload: bytes) -> str:
+        """Put a file where the stub server will find it for that url."""
+        (self.sources / name).write_bytes(payload)
+        return f"https://example.invalid/{name}"
+
     def run_script(self, model_file="model.gguf", source=GGUF):
         env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "MODEL_FILE": model_file,
-            "MODEL_URL": "https://example.invalid/model.gguf",
+            "MODEL_URL": self.serve("model.gguf", source),
             "MODELS_DIR": str(self.models),
-            "SOURCE_FILE": str(Path(self.tmp.name) / "source.bin"),
+            "SRC_DIR": str(self.sources),
         }
-        Path(env["SOURCE_FILE"]).write_bytes(source)
         return subprocess.run(
             ["sh", str(SCRIPT)],
             env=env,
@@ -92,7 +106,7 @@ class FetchModelTests(unittest.TestCase):
     def test_a_response_that_is_not_a_model_is_refused(self):
         result = self.run_script(source=HTML)
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("not a GGUF model", result.stderr)
+        self.assertIn("not a GGUF file", result.stderr)
         # A refused download must not leave a file the next run would trust.
         self.assertFalse((self.models / "model.gguf").exists())
         self.assertFalse((self.models / "model.gguf.part").exists())
@@ -108,6 +122,89 @@ class FetchModelTests(unittest.TestCase):
         )
         self.assertNotEqual(0, result.returncode)
         self.assertIn("MIKU_MODEL_FILE", result.stderr)
+
+    def run_manifest(self, manifest: str, sources: dict[str, bytes]):
+        env = {
+            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "MODELS_DIR": str(self.models),
+            "SRC_DIR": str(self.sources),
+            "VOICE_MANIFEST": manifest,
+        }
+        for name, payload in sources.items():
+            self.serve(name, payload)
+        return subprocess.run(
+            ["sh", str(SCRIPT), "--manifest"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    def test_a_manifest_fetches_every_kind_of_model(self):
+        # The voice stack is four different containers from four different places; the
+        # fetcher has to accept each of them and reject an error page for each.
+        result = self.run_manifest(
+            "base.bin|https://example.invalid/base.bin|GGML\n"
+            "llama.gguf|https://example.invalid/llama.gguf|GGUF\n"
+            "model.onnx|https://example.invalid/model.onnx|ONNX\n"
+            "voice.pt|https://example.invalid/voice.pt|ZIP\n",
+            {"base.bin": GGML, "llama.gguf": GGUF, "model.onnx": ONNX, "voice.pt": ZIP},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        for name, payload in (
+            ("base.bin", GGML),
+            ("llama.gguf", GGUF),
+            ("model.onnx", ONNX),
+            ("voice.pt", ZIP),
+        ):
+            self.assertEqual(payload, (self.models / name).read_bytes(), name)
+
+    def test_a_manifest_refuses_an_error_page_in_place_of_each_model(self):
+        for magic in ("GGML", "GGUF", "ONNX", "ZIP"):
+            with self.subTest(magic=magic):
+                result = self.run_manifest(
+                    f"model.bin|https://example.invalid/model.bin|{magic}",
+                    {"model.bin": HTML},
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(f"not a {magic} file", result.stderr)
+                self.assertFalse((self.models / "model.bin").exists())
+                self.assertFalse((self.models / "model.bin.part").exists())
+
+    def test_an_empty_manifest_says_so_instead_of_doing_nothing(self):
+        result = self.run_manifest("", {})
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("VOICE_MANIFEST", result.stderr)
+
+    def test_a_magic_can_be_declared_unverified(self):
+        result = self.run_manifest(
+            "model.bin|https://example.invalid/model.bin|none",
+            {"model.bin": b"whatever"},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue((self.models / "model.bin").exists())
+
+    def test_a_manifest_reports_each_model_it_fetched(self):
+        result = self.run_manifest(
+            "base.bin|https://example.invalid/base.bin|GGML\n",
+            {"base.bin": GGML},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        # The summary line names the file and its size; a silent fetch leaves an
+        # operator believing a model is in place when nothing was ever written.
+        self.assertIn("model ready: base.bin", result.stdout)
+
+    def test_a_failing_entry_fails_the_whole_manifest(self):
+        # A loop fed by a pipe runs in a subshell, so its failure used to be swallowed
+        # and the script reported success with models missing.
+        result = self.run_manifest(
+            "good.bin|https://example.invalid/good.bin|GGML\nbad.bin|https://example.invalid/bad.bin|GGML\n",
+            {"good.bin": GGML, "bad.bin": HTML},
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse((self.models / "bad.bin").exists())
+        self.assertTrue((self.models / "good.bin").exists())
 
     def test_an_existing_model_is_left_alone(self):
         (self.models / "model.gguf").write_bytes(GGUF)

@@ -168,11 +168,11 @@ services:
       AGENT_LLM_MODEL: ${MIKU_LLM_MODEL:-local}
       AGENT_LLM_API_KEY: ${MIKU_LLM_API_KEY:-}
       AGENT_LLM_THINKING: ${AGENT_LLM_THINKING:-1}
-      AGENT_STT_URL: ${MIKU_STT_URL:-}
+      AGENT_STT_URL: ${MIKU_STT_URL:-http://miku-voice:8080/v1}
       AGENT_STT_MODEL: ${MIKU_STT_MODEL:-whisper-1}
       AGENT_STT_API_KEY: ${MIKU_STT_API_KEY:-}
-      AGENT_TTS_URL: ${MIKU_TTS_URL:-}
-      AGENT_TTS_MODEL: ${MIKU_TTS_MODEL:-tts-1}
+      AGENT_TTS_URL: ${MIKU_TTS_URL:-http://miku-voice:8080/v1}
+      AGENT_TTS_MODEL: ${MIKU_TTS_MODEL:-local}
       AGENT_TTS_API_KEY: ${MIKU_TTS_API_KEY:-}
     read_only: true
     tmpfs:
@@ -283,6 +283,122 @@ services:
       # the cascade already guards the loop, so reasoning is kept short on purpose.
       - --reasoning-effort
       - low
+
+  # ── Optional server-side voice (opt-in: ./start.sh --voice) ──
+  # Recognition and synthesis live here rather than in the web process, so choosing
+  # the browser's own speech support really does cost the server nothing: the profile
+  # is stopped and removed, not merely bypassed. Both services share one network and
+  # are reachable only by the isolated agent runtime.
+  miku-voice:
+    profiles: ["voice"]
+    build:
+      context: .
+      dockerfile: docker/voice/Dockerfile
+      target: voice
+      args:
+        WHISPER_VERSION: ${WHISPER_VERSION:-v1.9.4}
+    image: netsanctum-voice:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      VOICE_MODEL_DIR: /models
+      VOICE_STT_URL: http://miku-stt:8080
+      # One model at a time keeps the stack inside its memory budget: the Russian
+      # engine needs torch, and holding both languages resident doubles it.
+      VOICE_MAX_RESIDENT: "1"
+      VOICE_LANG_DEFAULT: ru
+    volumes:
+      - ${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1200m
+    cpus: ${VOICE_CPUS:-3}
+    pids_limit: 256
+    networks:
+      - model-control
+    depends_on:
+      voice-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  miku-stt:
+    profiles: ["voice"]
+    build:
+      context: .
+      dockerfile: docker/voice/Dockerfile
+      target: stt
+      args:
+        WHISPER_VERSION: ${WHISPER_VERSION:-v1.9.4}
+    image: netsanctum-stt:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      MODEL_FILE: ${MIKU_STT_MODEL_FILE:-ggml-base.bin}
+    volumes:
+      - ${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}:/models:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 500m
+    cpus: ${VOICE_CPUS:-3}
+    pids_limit: 128
+    networks:
+      - model-control
+    depends_on:
+      voice-init:
+        condition: service_completed_successfully
+    command:
+      - /opt/whisper/bin/whisper-server
+      - --model
+      - /models/${MIKU_STT_MODEL_FILE:-ggml-base.bin}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --threads
+      - ${VOICE_THREADS:-4}
+      - --language
+      - auto
+      - --no-timestamps
+
+  # ── One-time voice model fetch, then exits ─────────────
+  voice-init:
+    profiles: ["voice"]
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    user: "0:0"
+    restart: "no"
+    environment:
+      MODELS_DIR: /models
+      # One file per line: name, url, magic. A proxy that answers with an error page
+      # instead of the model is caught by the magic check rather than installed.
+      # Recognition is the multilingual base, never the .en variant: both are the
+      # same container, and only the multilingual one is usable in Russian.
+      VOICE_MANIFEST: |
+        ggml-base.bin|https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin|GGML
+        v5_ru_ru.pt|https://models.silero.ai/models/tts/ru/v5_ru.pt|PK
+        kokoro-v1.0.int8.onnx|https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx|ONNX
+        voices-v1.0.bin|https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin|PK
+    volumes:
+      - ${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}:/models
+      - ./scripts/fetch_model.sh:/fetch-model.sh:ro
+    entrypoint:
+      - sh
+      - /fetch-model.sh
+      - --manifest
 
   # ── One-time storage ownership migration ───────────────
   storage-init:

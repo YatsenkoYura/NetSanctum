@@ -1,0 +1,31 @@
+# Synthesis engines for the voice service. Pinned exactly: these decide what a
+# reply sounds like, and a silent upgrade would change a companion's voice without
+# anything in the repository changing to record it.
+#
+# torch is CPU-only, which UV_TORCH_BACKEND=cpu in the Dockerfile enforces; the
+# synthesis service runs beside the database and has no business pulling a CUDA
+# driver stack onto the host.
+fastapi==0.121.2
+uvicorn==0.41.0
+httpx==0.28.1
+python-multipart==0.0.20
+
+# Synthesis. The English engine needs no torch at all; the Russian one ships
+# TorchScript weights, so torch comes with it and is the reason only one engine is
+# kept resident.
+kokoro-onnx==0.6.1
+misaki[en]==0.9.4
+# The English G2P runs on spaCy, and spaCy resolves a model by downloading one at
+# runtime. A service with no egress cannot do that, so the model is part of the
+# image and the version is pinned to the file it was tested against.
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+onnxruntime==1.23.2
+torch==2.9.1
+torchaudio==2.9.1
+numpy==2.2.6
+
+# The Russian model is a torch.package archive that loads its own acoustic stack and
+# reaches for scipy at import time. The silero-tts wrapper is not used: it downloads
+# a model index over the network on every construction, which a service with no
+# egress cannot do, and the archive is all the wrapper would load anyway.
+scipy==1.15.3

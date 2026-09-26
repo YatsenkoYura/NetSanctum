@@ -128,6 +128,7 @@ ACTION="up"
 BROWSER_RUNTIME=1
 MIKU_LOCAL=0
 AGENT_RUNTIME=1
+VOICE=0
 if grep -q '^MIKU_LLM_URL=http://miku-llm:' "$ENV_FILE"; then
     MIKU_LOCAL=1
 fi
@@ -168,6 +169,14 @@ while [[ $# -gt 0 ]]; do
             MIKU_LOCAL=0
             shift
             ;;
+        --voice)
+            VOICE=1
+            shift
+            ;;
+        --no-voice)
+            VOICE=0
+            shift
+            ;;
         --no-agent)
             AGENT_RUNTIME=0
             shift
@@ -178,7 +187,7 @@ while [[ $# -gt 0 ]]; do
                 shift
             else
                 echo "Unknown argument: $1"
-                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--miku-local] [--no-agent]"
+                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--miku-local] [--voice] [--no-agent]"
                 exit 1
             fi
             ;;
@@ -232,6 +241,11 @@ fi
 if [ "$MIKU_LOCAL" = "1" ]; then
     echo " Local model: enabled (llama.cpp)"
 fi
+if [ "$VOICE" = "1" ]; then
+    echo " Voice runtime: enabled (server-side recognition and synthesis)"
+else
+    echo " Voice runtime: disabled (browser speech, no server cost)"
+fi
 echo "========================================================"
 
 if [ "$ACTION" = "restart" ]; then
@@ -250,6 +264,13 @@ fi
 # Launch containers
 # Fail here, with the reason, rather than inside a one-shot container that exits 1 and
 # leaves the model host without the weights it waits for.
+VOICE_MODEL_DIR="${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}"
+if [ "$VOICE" = "1" ] && [ "$ACTION" = "up" ]; then
+    if [ ! -d "$VOICE_MODEL_DIR" ]; then
+        echo "Creating $VOICE_MODEL_DIR for the voice models"
+        mkdir -p "$VOICE_MODEL_DIR"
+    fi
+fi
 if [ "$MIKU_LOCAL" = "1" ] && [ "$ACTION" = "up" ]; then
     MODEL_FILE="$(sed -n 's/^MIKU_MODEL_FILE=//p' "$ENV_FILE" | tail -1)"
     MODEL_URL="$(sed -n 's/^MIKU_MODEL_URL=//p' "$ENV_FILE" | tail -1)"
@@ -295,6 +316,14 @@ if [ "$MIKU_LOCAL" = "1" ]; then
 else
     docker compose "${COMPOSE_FILES[@]}" --profile miku-local stop miku-llm >/dev/null 2>&1 || true
     docker compose "${COMPOSE_FILES[@]}" --profile miku-local rm -f miku-llm model-init >/dev/null 2>&1 || true
+fi
+if [ "$VOICE" = "1" ]; then
+    PROFILE_ARGS+=(--profile voice)
+else
+    # Stopped and removed, not just left unused: the point of the browser mode is
+    # that the server stops holding a speech model in memory.
+    docker compose "${COMPOSE_FILES[@]}" --profile voice stop miku-voice miku-stt voice-init >/dev/null 2>&1 || true
+    docker compose "${COMPOSE_FILES[@]}" --profile voice rm -f miku-voice miku-stt voice-init >/dev/null 2>&1 || true
 fi
 if [ "$AGENT_RUNTIME" = "1" ]; then
     PROFILE_ARGS+=(--profile agent)
