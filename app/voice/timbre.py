@@ -2,35 +2,34 @@
 
 Recognition and synthesis answer with two different voices, which is audible as a
 different person answering in a different language. Voice conversion is the stage
-that would make both come out as the same character, and it is the one part of the
-pipeline that is not built here.
+that makes both come out as the same character.
 
-That is a deliberate omission rather than a stub that pretends. The available
-options were a runtime from the original project, whose repository is no longer
-reachable, or one of the published packages, which drags in fairseq 0.12, gradio
-and audio-separator. Shipping either untested would put an unverifiable audio path
-in front of the user: the only way to tell a working conversion from a wrong one
-is by ear, and unlike every other stage here there is no measurement that shows it.
+The runtime is upstream code, MIT, vendored into the image at a pinned commit and
+called as a library; `app.voice.rvc` is the shim that adapts it to this service. It
+is not a stub: when it is asked for and cannot deliver, it refuses rather than
+passing audio through, because audio in the plain engine's voice while a character
+voice was requested looks exactly like it worked.
 
-So the stage exists, is wired into the pipeline, and reports precisely what is
-missing. When it is asked for and cannot deliver, it refuses rather than passing
-audio through: audio that sounds like the plain engine while a character voice was
-asked for is worse than an error, because it looks like it worked.
+Conversion is slow - about half real time - so the stage is opt-in twice over. It
+has to be switched on, and the model is the operator's own file rather than
+something this service ships, because whose voice a model speaks is not a decision
+that belongs in a repository.
 """
 
 from __future__ import annotations
 
-import io
+import asyncio
+import logging
 import os
-import wave
 from dataclasses import dataclass
 
-# The voice preset is a TorchScript-era RVC checkpoint, and the feature extractors
-# are published as ONNX. Named here so the fetcher, the health report and the error
-# all speak about the same files.
+logger = logging.getLogger(__name__)
+
+# Kept under the names the fetcher and the health report already speak about, so an
+# operator who set this up before still recognises them.
 VOICE_FILE = "miku_default_rvc.pth"
-HUBERT_FILE = "hubert_base_layer12_32000.onnx"
-PITCH_FILE = "rmvpe.onnx"
+HUBERT_FILE = "hubert_base"
+PITCH_FILE = "rmvpe.pt"
 
 
 class TimbreUnavailableError(RuntimeError):
@@ -46,59 +45,97 @@ class TimbreStatus:
     def describe(self) -> str:
         if not self.enabled:
             return "off"
-        if not self.missing and self.runtime:
-            return "active"
         if self.missing:
             return f"missing: {', '.join(self.missing)}"
-        return "no runtime available"
+        if not self.runtime:
+            return "no runtime available"
+        return "active"
 
 
 class Timbre:
-    """The conversion stage, present in the pipeline and honest about its state."""
+    """The conversion stage, wired into the pipeline and honest about its state."""
 
     def __init__(self, settings) -> None:
         self._settings = settings
         self.enabled = _requested()
-        # A runtime would be constructed here once one is available. Nothing is
-        # registered, so nothing claims to convert.
         self._runtime = None
+        self._reported = None
+        if self.enabled:
+            self._runtime = self._build_runtime()
+
+    def _build_runtime(self):
+        """The runtime, when it can be constructed without failing at import.
+
+        Built on the spot rather than at import so that a missing runtime is a report
+        and not an import error: the service still has to start, still has to answer
+        with a plain voice, and still has to say what is wrong with the character one.
+        """
+        try:
+            from app.voice.rvc import RvcRuntime
+
+            runtime = RvcRuntime(self._settings)
+        except Exception as error:
+            logger.warning("the character voice runtime is unavailable: %s", error)
+            return None
+        missing = runtime.missing()
+        if missing:
+            # Not an error yet: the operator may be about to place the model, and the
+            # stage is asked for only when a reply is actually spoken.
+            logger.info("character voice not ready, missing: %s", ", ".join(missing))
+        return runtime
 
     def status(self) -> TimbreStatus:
+        missing = ()
+        if self._runtime is not None:
+            missing = self._runtime.missing()
+        elif self.enabled:
+            missing = ("rvc runtime",)
         return TimbreStatus(
             enabled=self.enabled,
-            runtime=self._runtime is not None,
-            missing=self.missing_files(),
+            runtime=self._runtime is not None and not missing,
+            missing=missing,
         )
 
     def missing_files(self) -> tuple[str, ...]:
-        root = self._settings.model_dir
-        names = (VOICE_FILE, HUBERT_FILE, PITCH_FILE)
-        return tuple(name for name in names if not os.path.isfile(os.path.join(root, name)))
+        return self.status().missing
 
-    def apply(self, audio: bytes, sample_rate: int | None = None) -> bytes:
+    async def warm(self) -> None:
+        """Load the conversion models, so the first reply does not pay for it.
+
+        Left to the first request on purpose when the files are not there: paying tens
+        of seconds of startup for a model that is not installed helps nobody.
+        """
+        if not self.enabled or self._runtime is None:
+            return
+        if self._runtime.available():
+            await asyncio.to_thread(self._runtime.load)
+
+    async def apply(self, audio: bytes, sample_rate: int | None = None) -> bytes:
         """Convert a synthesised reply into the character voice.
 
         Refuses when the stage is on and cannot do the work, and passes the audio
         through untouched when it is off, so turning it on is a decision with an
-        outcome rather than a setting that quietly does nothing.
+        outcome rather than a setting that quietly does nothing. The conversion runs
+        in a thread because it is seconds of arithmetic and this is a server.
         """
         if not self.enabled:
             return audio
-        if self._runtime is None:
+        if self._runtime is None or not self._runtime.available():
             raise TimbreUnavailableError(
                 f"the character voice is switched on but not installed: {self.status().describe()}"
             )
-        return self._runtime.convert(audio, sample_rate)
+        from app.voice.rvc import ConversionError
+
+        try:
+            return await asyncio.to_thread(self._runtime.convert, audio, sample_rate)
+        except ConversionError:
+            raise
+        except Exception as error:
+            raise TimbreUnavailableError(f"the character voice failed: {error}") from error
 
 
 def _requested() -> bool:
     return os.environ.get("VOICE_TIMBRE", "0") not in {"0", "false", "False", ""}
-
-
-def wav_info(payload: bytes) -> tuple[int, int, int]:
-    """Channels, sample rate, frame count - the three things conversion must keep."""
-    with wave.open(io.BytesIO(payload), "rb") as handle:
-        return handle.getnchannels(), handle.getframerate(), handle.getnframes()
 
 
 __all__ = [
@@ -108,5 +145,4 @@ __all__ = [
     "Timbre",
     "TimbreStatus",
     "TimbreUnavailableError",
-    "wav_info",
 ]

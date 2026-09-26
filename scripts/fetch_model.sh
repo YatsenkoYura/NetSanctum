@@ -32,6 +32,9 @@ magic_matches() {
         GGML) [ "$(head -c 4 "$file")" = "lmgg" ] ;;
         ONNX) [ "$(head -c 1 "$file" | od -An -tu1 | tr -d ' ')" = "8" ] ;;
         ZIP|PK|PT) [ "$(head -c 2 "$file")" = "PK" ] ;;
+        # A JSON sidecar: the first non-whitespace byte decides, so a proxy's error
+        # page is caught the same way an error page in place of a model is.
+        JSON|json) head -c 64 "$file" | grep -qE '^[[:space:]]*[{\[]' ;;
         *) echo "Error: unknown magic '$expected' for $file" >&2; return 1 ;;
     esac
 }
@@ -42,6 +45,10 @@ fetch_one() {
     magic="${3:-GGUF}"
     target="$MODELS_DIR/$name"
     part="$target.part"
+    # A manifest entry may name a file inside a directory - the content model is three
+    # files in one - and the directory is not something the operator has to create
+    # before the fetcher can fill it.
+    mkdir -p "$(dirname "$target")"
 
     if [ -s "$target" ]; then
         echo "model already present: $name"

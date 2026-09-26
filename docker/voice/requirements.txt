@@ -36,3 +36,16 @@ miniaudio==1.71
 # a model index over the network on every construction, which a service with no
 # egress cannot do, and the archive is all the wrapper would load anyway.
 scipy==1.15.3
+
+# The voice conversion runtime. Upstream needs a Transformer implementation for its
+# content model and a vector index for its retrieval, and its audio IO is done here
+# with soundfile and librosa rather than through the ffmpeg subprocess it expects.
+# PyAV and ffmpeg-python are installed only because that code imports them at module
+# level; no system codec is installed and none is ever invoked.
+transformers==4.57.1
+faiss-cpu==1.13.1
+soundfile==0.13.1
+librosa==0.11.0
+praat-parselmouth==0.4.7
+av==16.0.1
+ffmpeg-python==0.2.0

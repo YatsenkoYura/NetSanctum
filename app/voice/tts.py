@@ -179,7 +179,9 @@ class Synthesiser:
         if self._timbre is None:
             return result
         audio, media_type = result
-        return self._timbre.apply(audio), media_type
+        # Awaited rather than called: conversion is seconds of arithmetic, and this is
+        # a server that also has to answer the next request while it happens.
+        return await self._timbre.apply(audio), media_type
 
     async def _speak_with_fallback(self, text: str, speaker: str | None, attempts):
         """Try each engine in turn and speak with whichever answers.

@@ -161,7 +161,7 @@ class FetchModelTests(unittest.TestCase):
             self.assertEqual(payload, (self.models / name).read_bytes(), name)
 
     def test_a_manifest_refuses_an_error_page_in_place_of_each_model(self):
-        for magic in ("GGML", "GGUF", "ONNX", "ZIP"):
+        for magic in ("GGML", "GGUF", "ONNX", "ZIP", "JSON"):
             with self.subTest(magic=magic):
                 result = self.run_manifest(
                     f"model.bin|https://example.invalid/model.bin|{magic}",
@@ -171,6 +171,16 @@ class FetchModelTests(unittest.TestCase):
                 self.assertIn(f"not a {magic} file", result.stderr)
                 self.assertFalse((self.models / "model.bin").exists())
                 self.assertFalse((self.models / "model.bin.part").exists())
+
+    def test_a_manifest_entry_may_name_a_file_inside_a_directory(self):
+        # The content model is three files in one directory, and the operator should
+        # not have to create that directory before the fetcher can fill it.
+        result = self.run_manifest(
+            "hubert/config.json|https://example.invalid/cfg|JSON\n",
+            {"cfg": b'{"hidden_size": 768}'},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(b'{"hidden_size": 768}', (self.models / "hubert" / "config.json").read_bytes())
 
     def test_an_empty_manifest_says_so_instead_of_doing_nothing(self):
         result = self.run_manifest("", {})
