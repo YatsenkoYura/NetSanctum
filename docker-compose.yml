@@ -430,6 +430,12 @@ services:
         if [ "$$VOICE_FETCH_TIMBRE" = "1" ]; then
             VOICE_MANIFEST="$$VOICE_TIMBRE_MANIFEST" sh /fetch-model.sh --manifest VOICE_MANIFEST
         fi
+        # Recognition runs as nobody and synthesis as uid 1001. The model volume is
+        # created by start.sh under umask 077, so without this the files are there
+        # but unreadable to the services that mount them read-only.
+        chmod 755 /models
+        find /models -type d -exec chmod 755 {} +
+        find /models -type f -exec chmod 644 {} +
 
   # ── One-time storage ownership migration ───────────────
   storage-init:

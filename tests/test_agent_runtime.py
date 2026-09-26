@@ -190,6 +190,13 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         # Every entry declares the magic its container must start with.
         for name, (_url, magic) in entries.items():
             self.assertIn(magic, {"GGML", "GGUF", "ONNX", "PK", "none"}, name)
+        entrypoint = self.compose["services"]["voice-init"]["entrypoint"][-1]
+        # The fetcher runs as root, but the services mounting /models do not. The
+        # files therefore have to be made world-readable here or STT starts with the
+        # weights physically present and still cannot open them.
+        self.assertIn("chmod 755 /models", entrypoint)
+        self.assertIn("find /models -type d -exec chmod 755 {} +", entrypoint)
+        self.assertIn("find /models -type f -exec chmod 644 {} +", entrypoint)
 
     def test_env_gains_settings_a_pulled_branch_introduced(self):
         script = START_SH.read_text()
