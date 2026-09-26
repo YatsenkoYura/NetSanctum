@@ -12,6 +12,7 @@ import os
 import tempfile
 import unittest
 import wave
+from unittest import mock
 
 from app.voice import Settings, VoiceService
 from app.voice.residency import Residency
@@ -25,13 +26,22 @@ from app.voice.tts import (
 )
 
 
-def settings_in(directory: str) -> Settings:
-    return Settings(
-        model_dir=directory,
-        stt_url="http://miku-stt:8080",
-        default_lang="ru",
-        max_resident=1,
-    )
+def settings_in(directory: str, **overrides) -> Settings:
+    """Settings for a test, with the online voice off unless a test asks for it.
+
+    Off by default so that nothing here reaches the network: a test that synthesised
+    through the online engine would depend on a third party being up, and would fail
+    for reasons that have nothing to do with the code.
+    """
+    values = {
+        "model_dir": directory,
+        "stt_url": "http://miku-stt:8080",
+        "default_lang": "ru",
+        "max_resident": 1,
+        "edge_enabled": False,
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 class LanguageRoutingTests(unittest.TestCase):
@@ -224,6 +234,144 @@ class WarmupTests(unittest.TestCase):
 
         _asyncio.run(_asyncio.sleep(0))
         self.assertIn("ru", self.warmed)
+
+
+class OnlineVoiceTests(unittest.TestCase):
+    """The online engine is asked first and the local one answers for it.
+
+    What is pinned here is the order and the refusal: a reply has to be spoken by
+    something, so a network that is down moves the voice rather than the silence.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.service = VoiceService(settings_in(self.tmp.name, edge_enabled=True))
+        self.asked: list[str] = []
+
+    def _local_model(self, spoken: list[str], fail: bool = False):
+        """A stand-in for the local engine, with the model file it insists on.
+
+        The local path checks the model is on disk before it builds an engine, so
+        the file has to exist or the test would be measuring that check instead of
+        the fallback.
+        """
+        from app.voice.tts_ru import model_file
+
+        with open(os.path.join(self.tmp.name, model_file()), "wb") as handle:
+            handle.write(b"not a real model")
+
+        class Fake:
+            speakers = ("kseniya", "xenia")
+
+            def load(self) -> None:
+                return None
+
+            async def speak(self, text, speaker=None):
+                if fail:
+                    raise SynthesisError("the model would not answer")
+                spoken.append(text)
+                return b"RIFF-local"
+
+        self.service.residency.adopt("ru", Fake())
+        return Fake
+
+    def _online(self, spoken: list[str], fail: bool = False):
+        class Fake:
+            async def speak(self, text, *, language, speaker=None):
+                if fail:
+                    raise SynthesisError("the online voice failed: timed out")
+                spoken.append(text)
+                return b"RIFF-online"
+
+        self.service.synthesiser._edge = Fake()
+
+    def test_the_online_engine_is_asked_first(self):
+        spoken: list[str] = []
+        self._online(spoken)
+        self._local_model(spoken)
+        audio, media = asyncio.run(self.service.synthesiser.synthesise("Привет"))
+        self.assertEqual(["Привет"], spoken)
+        self.assertEqual(b"RIFF-online", audio)
+        self.assertEqual("audio/wav", media)
+
+    def test_a_language_it_can_speak_needs_no_model_on_disk(self):
+        # The whole point of asking first: with no model present at all the service
+        # can still speak, and has to admit that rather than report itself unusable.
+        self.assertEqual({"ru": True, "en": True}, self.service.synthesiser.available())
+        self.assertEqual(
+            {"ru": ["edge", "silero"], "en": ["edge", "kokoro"]}, self.service.synthesiser.engines()
+        )
+
+    def test_the_local_engine_answers_when_the_network_does_not(self):
+        spoken: list[str] = []
+        self._online(spoken, fail=True)
+        self._local_model(spoken)
+        audio, _ = asyncio.run(self.service.synthesiser.synthesise("Привет"))
+        self.assertEqual(b"RIFF-local", audio)
+        self.assertEqual(["Привет"], spoken)
+
+    def test_neither_answering_is_a_refusal_that_says_why(self):
+        self._online(spoken := [], fail=True)
+        self._local_model(spoken, fail=True)
+        with self.assertRaises(SynthesisError) as caught:
+            asyncio.run(self.service.synthesiser.synthesise("Привет"))
+        # Both reasons, so the log says which of the two actually failed rather than
+        # only the one that was tried last.
+        self.assertIn("edge", str(caught.exception))
+        self.assertIn("silero", str(caught.exception))
+
+    def test_turning_it_off_leaves_only_the_local_engines(self):
+        service = VoiceService(settings_in(self.tmp.name, edge_enabled=False))
+        self.assertEqual({"ru": ["silero"], "en": ["kokoro"]}, service.synthesiser.engines())
+        self.assertEqual({"ru": False, "en": False}, service.synthesiser.available())
+
+    def test_nothing_is_warmed_while_it_can_be_asked_first(self):
+        # Warming the engine behind the online voice would spend seconds of startup
+        # and hundreds of megabytes on a fallback that normally never runs. With the
+        # online voice on there is nothing to warm, so no engine is even asked for.
+        with mock.patch.object(self.service.residency, "use") as use:
+            asyncio.run(self.service.synthesiser.warm("ru"))
+        use.assert_not_called()
+        self.assertEqual([], self.service.residency.resident())
+
+    def test_health_names_the_engine_order_and_the_voices(self):
+        health = self.service.health()
+        self.assertEqual({"ru": ["edge", "silero"], "en": ["edge", "kokoro"]}, health["engine_order"])
+        self.assertEqual("ru-RU-SvetlanaNeural", health["edge_voices"]["ru"])
+
+    def test_health_hides_the_voices_when_it_is_off(self):
+        service = VoiceService(settings_in(self.tmp.name, edge_enabled=False))
+        self.assertEqual({}, service.health()["edge_voices"])
+
+
+class VoiceNamingTests(unittest.TestCase):
+    """Which voice a reply is spoken with, and what a caller may ask for instead."""
+
+    def setUp(self):
+        from app.voice.tts_edge import EdgeVoice
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.voice = EdgeVoice(settings_in(self.tmp.name, edge_enabled=True))
+
+    def test_each_language_has_its_own_voice(self):
+        self.assertEqual("ru-RU-SvetlanaNeural", self.voice.name_for("ru"))
+        self.assertEqual("en-US-AriaNeural", self.voice.name_for("en"))
+
+    def test_a_published_name_is_honoured(self):
+        self.assertEqual(
+            "ru-RU-DmitriNeural",
+            self.voice.name_for("ru", "ru-RU-DmitriNeural"),
+        )
+
+    def test_a_local_speaker_name_is_ignored_rather_than_refused(self):
+        # The caller may be naming a Silero speaker, which the online voice has no
+        # such thing as. The reply still has to be spoken, in the default voice.
+        self.assertEqual("ru-RU-SvetlanaNeural", self.voice.name_for("ru", "kseniya"))
+
+    def test_what_would_be_asked_for_is_the_configured_voice(self):
+        self.assertEqual(["ru-RU-SvetlanaNeural"], self.voice.voices("ru"))
 
 
 class ProviderCompatibilityTests(unittest.TestCase):

@@ -16,13 +16,20 @@ python-multipart==0.0.20
 kokoro-onnx==0.6.1
 misaki[en]==0.9.4
 # The English G2P runs on spaCy, and spaCy resolves a model by downloading one at
-# runtime. A service with no egress cannot do that, so the model is part of the
-# image and the version is pinned to the file it was tested against.
+# runtime. The local engines must not depend on that: the model is part of the image
+# and the version is pinned to the file it was tested against.
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 onnxruntime==1.23.2
 torch==2.9.1
 torchaudio==2.9.1
 numpy==2.2.6
+
+# The online voice, which is the one that sounds like a person. It is a client for
+# an endpoint the Edge browser speaks to, not a documented API, so both pins matter
+# and both can be replaced by VOICE_EDGE=0. miniaudio decodes the MP3 it answers
+# with into the WAV every other engine here produces, without a system codec.
+edge-tts==7.2.8
+miniaudio==1.71
 
 # The Russian model is a torch.package archive that loads its own acoustic stack and
 # reaches for scipy at import time. The silero-tts wrapper is not used: it downloads

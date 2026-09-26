@@ -1,13 +1,18 @@
-"""Synthesis: one route, two engines, chosen by the language of the text.
+"""Synthesis: one route, three engines, chosen by the language of the text.
 
-Neither engine speaks both languages, so the choice is not a preference but a
-requirement: the English model has no Russian at all, and the Russian one has no
-English worth listening to. The language is taken from the request when the caller
+The language decides the engine rather than a preference, because no engine here
+speaks both languages well. The language is taken from the request when the caller
 knows it - the assistant knows, because it wrote the text - and guessed from the
 text itself otherwise.
 
-Both engines answer 24 kHz mono WAV, which is what the browser and any later
-voice conversion expect, so nothing downstream has to care which one spoke.
+Within a language the order is fixed by what the voice sounds like. The online
+neural voice is asked first because it is the only one that sounds like a person;
+the local engines answer when it cannot. That is a deliberate trade: the local
+engines are free, offline and private, and the online one is none of those, so it
+is a setting rather than the only option.
+
+Every engine answers 24 kHz mono WAV, which is what the browser and any later voice
+conversion expect, so nothing downstream has to care which one spoke.
 """
 
 from __future__ import annotations
@@ -60,26 +65,54 @@ class Synthesiser:
         # Optional last stage, so a reply leaves the service in one voice rather
         # than in whichever engine happened to speak it.
         self._timbre = timbre
+        self._edge = None
+
+    def _online(self):
+        """The online engine, built on first use so the setting is read once."""
+        if self._edge is None:
+            from app.voice.tts_edge import EdgeVoice
+
+            self._edge = EdgeVoice(self._settings)
+        return self._edge
 
     def available(self) -> dict:
-        """Which engines could run right now, without loading anything."""
+        """What can speak a language right now, without loading anything.
+
+        A language the online voice can answer is available even with no model on
+        disk, and that has to show here or the service would report itself
+        unusable while being able to speak.
+        """
+        online = self._settings.edge_enabled
         return {
-            "ru": _silero_ready(self._settings),
-            "en": _kokoro_ready(self._settings),
+            "ru": _silero_ready(self._settings) or online,
+            "en": _kokoro_ready(self._settings) or online,
+        }
+
+    def engines(self) -> dict:
+        """Which engine would answer each language, in the order they would try."""
+        online = "edge" if self._settings.edge_enabled else None
+        return {
+            "ru": [name for name in (online, "silero") if name],
+            "en": [name for name in (online, "kokoro") if name],
         }
 
     def speakers(self, language: str) -> list[str]:
         """What can be asked for, discovered rather than declared.
 
-        Answering this loads the engine, which is the price of listing a voice
-        honestly: the names live inside the model file. A caller that only ever
-        uses the default never pays it.
+        The online voice's name is configuration, so it is free to report. The local
+        engines carry their voices inside the model file, and answering honestly
+        means loading it - which is the price of listing a voice truthfully, paid
+        only by a caller that actually wants the list.
         """
         if language == "ru":
+            if self._settings.edge_enabled:
+                return self._online().voices("ru")
             if not _silero_ready(self._settings):
                 return []
             engine = self._residency.use("ru", lambda: _silero(self._settings))
             return [str(index) for index in engine.speakers()]
+        if self._settings.edge_enabled:
+            return self._online().voices("en")
         if not _kokoro_ready(self._settings):
             return []
         engine = self._residency.use("en", lambda: _kokoro(self._settings))
@@ -88,9 +121,17 @@ class Synthesiser:
     async def warm(self, language: str) -> None:
         """Load an engine without speaking, so the first reply does not pay for it.
 
+        Nothing is loaded while the online voice is enabled and reachable in
+        principle: it needs no loading, and pre-loading the engine behind it would
+        spend seconds of startup and hundreds of megabytes on a fallback that
+        normally never runs. The cost moves to the moment it is actually needed,
+        which is the moment worth paying it.
+
         The load is awaited: returning early would leave the model unread and the
         first request paying for it, which is the whole thing this avoids.
         """
+        if self._settings.edge_enabled:
+            return
 
         def prepare() -> object:
             engine = _silero(self._settings) if language == "ru" else _kokoro(self._settings)
@@ -140,31 +181,66 @@ class Synthesiser:
         audio, media_type = result
         return self._timbre.apply(audio), media_type
 
+    async def _speak_with_fallback(self, text: str, speaker: str | None, attempts):
+        """Try each engine in turn and speak with whichever answers.
+
+        The online voice is asked first and the local engine behind it, and a failure
+        of the first is not a failure of synthesis: the reply still has to be spoken,
+        and in the wrong voice rather than not at all. Every error is collected so
+        the refusal says why both engines passed, instead of only the last one.
+        """
+        reasons: list[str] = []
+        for name, attempt in attempts:
+            try:
+                return await attempt()
+            except Exception as error:
+                # Deliberately wide: the online engine raises the library's own
+                # errors, a timeout arrives as asyncio's, and a missing model raises
+                # something else again. None of them should end the reply, and
+                # SynthesisError is the only failure a caller is meant to see.
+                reasons.append(f"{name}: {error}")
+                logger.warning("%s could not speak; trying the next engine", name, exc_info=True)
+        raise SynthesisError("; ".join(reasons) or "no engine could answer")
+
     async def _ru_engine(self, text: str, speaker: str | None):
         from app.voice.tts_ru import SileroVoice
 
-        ready = _silero_ready(self._settings)
-        if not ready:
-            raise SynthesisError("the Russian voice is not available")
-        model = self._residency.use(
-            "ru",
-            lambda: SileroVoice(self._settings),
-        )
-        wav = await model.speak(text, speaker=speaker)
-        return wav, "audio/wav"
+        async def local():
+            if not _silero_ready(self._settings):
+                raise SynthesisError("the Russian model is not on disk")
+            model = self._residency.use(
+                "ru",
+                lambda: SileroVoice(self._settings),
+            )
+            return await model.speak(text, speaker=speaker), "audio/wav"
+
+        async def online():
+            return await self._online().speak(text, language="ru", speaker=speaker), "audio/wav"
+
+        attempts = [("edge", online)] if self._settings.edge_enabled else []
+        attempts.append(("silero", local))
+        audio, media_type = await self._speak_with_fallback(text, speaker, attempts)
+        return audio, media_type
 
     async def _en_engine(self, text: str, speaker: str | None):
         from app.voice.tts_en import KokoroVoice
 
-        ready = _kokoro_ready(self._settings)
-        if not ready:
-            raise SynthesisError("the English voice is not available")
-        model = self._residency.use(
-            "en",
-            lambda: KokoroVoice(self._settings),
-        )
-        wav = await model.speak(text, speaker=speaker)
-        return wav, "audio/wav"
+        async def local():
+            if not _kokoro_ready(self._settings):
+                raise SynthesisError("the English voice is not on disk")
+            model = self._residency.use(
+                "en",
+                lambda: KokoroVoice(self._settings),
+            )
+            return await model.speak(text, speaker=speaker), "audio/wav"
+
+        async def online():
+            return await self._online().speak(text, language="en", speaker=speaker), "audio/wav"
+
+        attempts = [("edge", online)] if self._settings.edge_enabled else []
+        attempts.append(("kokoro", local))
+        audio, media_type = await self._speak_with_fallback(text, speaker, attempts)
+        return audio, media_type
 
 
 # ── what is on disk ────────────────────────────────────────────────────────────

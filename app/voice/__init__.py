@@ -30,16 +30,42 @@ MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 2_000
 
 
+def _edge_settings():
+    from app.voice.tts_edge import edge_enabled, edge_rate, edge_timeout, edge_voices
+
+    return edge_enabled(), edge_timeout(), edge_rate(), edge_voices()
+
+
+_EDGE_ENABLED, _EDGE_TIMEOUT, _EDGE_RATE, _EDGE_VOICES = _edge_settings()
+
+
 @dataclass(frozen=True)
 class Settings:
     model_dir: str = MODEL_DIR
     stt_url: str = STT_URL
     default_lang: str = DEFAULT_LANG
     max_resident: int = MAX_RESIDENT
+    # The online voice is configured here rather than read at the point of use, so a
+    # service cannot be half-enabled: what it reports and what it does are the same
+    # setting read once.
+    edge_enabled: bool = _EDGE_ENABLED
+    edge_timeout: float = _EDGE_TIMEOUT
+    edge_rate: str = _EDGE_RATE
+    edge_voices: tuple = ()
 
     @property
     def stt_model_file(self) -> str:
         return os.environ.get("VOICE_STT_MODEL_FILE", "ggml-base.bin")
+
+    @property
+    def edge_voice_map(self) -> dict:
+        """The configured voice per language, as a mapping rather than a tuple.
+
+        A dict on a frozen dataclass is not hashable, so the field keeps the raw
+        value and this is where it is read; a frozen dataclass that could not be put
+        in a set would be a trap for whoever caches a service by its settings.
+        """
+        return dict(self.edge_voices) if self.edge_voices else dict(_EDGE_VOICES)
 
 
 def build(settings: Settings | None = None) -> VoiceService:
@@ -63,6 +89,8 @@ class VoiceService:
             "models_present": self.transcriber.models_present(),
             "resident": self.residency.resident(),
             "engines": self.synthesiser.available(),
+            "engine_order": self.synthesiser.engines(),
+            "edge_voices": self.settings.edge_voice_map if self.settings.edge_enabled else {},
             "default_lang": self.settings.default_lang,
             "timbre": self.timbre.status().describe(),
         }

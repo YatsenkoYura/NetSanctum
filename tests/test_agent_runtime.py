@@ -114,10 +114,22 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         for name in ("miku-voice", "miku-stt"):
             service = self.compose["services"][name]
             self.assertEqual(["voice"], service["profiles"], name)
-            # Only the runtime may reach them, so they sit on the internal model network,
-            # and they are capped so the memory budget is a fact rather than a hope.
-            self.assertEqual(["model-control"], list(service["networks"]), name)
+            # Capped so the memory budget is a fact rather than a hope.
             self.assertTrue(service["mem_limit"], name)
+        # Only the runtime may reach them, so they sit on the internal model network.
+        # Recognition never needs the internet and has no reason to hold a route out.
+        self.assertEqual(["model-control"], list(self.compose["services"]["miku-stt"]["networks"]))
+        # Synthesis does need one, and only because the online voice is asked before
+        # the local engines. It is a network of its own so the model network stays
+        # internal: nothing else on model-control gains a route out by this.
+        self.assertEqual(
+            ["model-control", "voice-egress"],
+            list(self.compose["services"]["miku-voice"]["networks"]),
+        )
+        self.assertTrue(self.compose["networks"]["model-control"].get("internal"))
+        # A network declared with no options parses as None, which is how every other
+        # egress network in the file is written: no internal flag means it routes out.
+        self.assertIsNone(self.compose["networks"]["voice-egress"])
         # The one-shot fetcher needs no network at all: it only writes to the volume.
         fetcher = self.compose["services"]["voice-init"]
         self.assertEqual(["voice"], fetcher["profiles"])

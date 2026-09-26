@@ -310,6 +310,15 @@ services:
       VOICE_LANG_DEFAULT: ru
       # The character voice stage. Off until a conversion runtime is installed.
       VOICE_TIMBRE: ${VOICE_TIMBRE:-0}
+      # The online neural voice, asked first because it is the only one here that
+      # sounds like a person. It is a client for the endpoint the Edge browser
+      # speaks to rather than a documented API, and every reply's text leaves this
+      # machine while it is on. Set to 0 to fall back to the local engines only,
+      # which is also the setting to use on a host with no egress at all.
+      VOICE_EDGE: ${VOICE_EDGE:-1}
+      VOICE_EDGE_VOICE_RU: ${VOICE_EDGE_VOICE_RU:-ru-RU-SvetlanaNeural}
+      VOICE_EDGE_VOICE_EN: ${VOICE_EDGE_VOICE_EN:-en-US-AriaNeural}
+      VOICE_EDGE_TIMEOUT: ${VOICE_EDGE_TIMEOUT:-30}
     volumes:
       - ${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}:/models:ro
     read_only: true
@@ -324,6 +333,10 @@ services:
     pids_limit: 256
     networks:
       - model-control
+      # Only while VOICE_EDGE is on. Kept on its own network so the model network
+      # stays internal: the fetcher has its own egress already, and nothing else on
+      # model-control gains a route to the internet by this.
+      - voice-egress
     depends_on:
       voice-init:
         condition: service_completed_successfully
@@ -647,5 +660,6 @@ networks:
     internal: true
   model-control:
     internal: true
+  voice-egress:
   browser-egress:
   agent-egress:
