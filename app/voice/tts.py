@@ -12,9 +12,12 @@ voice conversion expect, so nothing downstream has to care which one spoke.
 
 from __future__ import annotations
 
+import asyncio
 import io
+import logging
 import os
 import re
+import time
 import wave
 from array import array
 
@@ -24,6 +27,10 @@ MAX_TEXT_CHARS = 2_000
 # Below this a reply is a confirmation rather than a sentence, and loading a model
 # to say "ок" costs more than it is worth.
 MIN_SYNTHESIS_CHARS = 2
+logger = logging.getLogger(__name__)
+# Above this a reply is unusually slow and worth a look: a warm engine is well
+# under a second, and anything near this bound means a model was loaded late.
+SLOW_SYNTHESIS_SECONDS = 2.0
 
 _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
 _LATIN = re.compile(r"[A-Za-z]")
@@ -75,6 +82,21 @@ class Synthesiser:
         engine = self._residency.use("en", lambda: _kokoro(self._settings))
         return list(engine.voices())
 
+    async def warm(self, language: str) -> None:
+        """Load an engine without speaking, so the first reply does not pay for it.
+
+        The load is awaited: returning early would leave the model unread and the
+        first request paying for it, which is the whole thing this avoids.
+        """
+
+        def prepare() -> object:
+            engine = _silero(self._settings) if language == "ru" else _kokoro(self._settings)
+            # run in a thread: loading blocks for seconds and this is a server
+            engine.load()
+            return engine
+
+        return await asyncio.to_thread(self._residency.use, "ru" if language == "ru" else "en", prepare)
+
     async def synthesise(
         self,
         text: str,
@@ -95,7 +117,22 @@ class Synthesiser:
             engine = self._ru_engine
         else:
             engine = self._en_engine
-        return await engine(text, speaker)
+        # The gap between a request arriving and the first sample of it existing is
+        # the number the person waiting actually feels, so it is measured rather
+        # than assumed: a cold model here is seconds, a warm one is fractions.
+        started = time.perf_counter()
+        result = await engine(text, speaker)
+        elapsed = time.perf_counter() - started
+        if elapsed > SLOW_SYNTHESIS_SECONDS:
+            logger.warning(
+                "synthesis took %.2f s for %d characters in %s",
+                elapsed,
+                len(text),
+                lang,
+            )
+        else:
+            logger.info("synthesised %d characters in %s in %.2f s", len(text), lang, elapsed)
+        return result
 
     async def _ru_engine(self, text: str, speaker: str | None):
         from app.voice.tts_ru import SileroVoice

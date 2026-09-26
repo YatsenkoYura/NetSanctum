@@ -10,20 +10,83 @@ path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from app.voice import build
+from app.voice import VoiceService, build
 from app.voice.stt import TranscriptionError
 from app.voice.tts import MAX_TEXT_CHARS, SUPPORTED_LANGUAGES, SynthesisError
 
+# The service's own timings are the only way to see where a slow reply went, and
+# uvicorn configures logging for itself alone, so this has to be set up explicitly.
+logging.basicConfig(
+    level=os.environ.get("VOICE_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
+_BACKGROUND: set[asyncio.Task] = set()
 
-app = FastAPI(title="NetSanctum voice", docs_url=None, redoc_url=None)
+# How long to wait for the first engine before serving anyway. Loading it is worth
+# seconds of the first reply; refusing to serve because of it is not.
+WARM_TIMEOUT_SECONDS = 120.0
+SYNTHESIS_WARNING_SECONDS = 2.0
+
 _service = build()
+
+
+async def _warm(service: VoiceService) -> None:
+    """Load the default engine before the first request asks for it.
+
+    Cold, the first Russian reply costs eight seconds and the first English one
+    twenty-five, all of it spent loading a model. Paying that during startup moves
+    the cost off the first thing anybody says. The other language follows in the
+    background, because it is the rarer one and must not delay the common case.
+    """
+    primary = service.settings.default_lang
+    started = time.perf_counter()
+    try:
+        await asyncio.wait_for(service.synthesiser.warm(primary), timeout=WARM_TIMEOUT_SECONDS)
+        logger.info("voice engine %s ready in %.1f s", primary, time.perf_counter() - started)
+    except Exception:
+        logger.exception("could not warm the %s engine; it will load on first use", primary)
+    # Only pre-load the other language when there is room for it. Warming it into a
+    # full slot would evict the language that was just warmed, so the first reply in
+    # the common language would pay the load the warm-up was meant to avoid.
+    for language in SUPPORTED_LANGUAGES:
+        if language == primary or len(service.residency.resident()) >= service.settings.max_resident:
+            continue
+        # Held in a module set so the task is not collected mid-flight, and so a
+        # shutdown has something to wait on rather than an orphan.
+        _BACKGROUND.add(asyncio.create_task(_warm_quietly(service, language)))
+
+
+async def _warm_quietly(service: VoiceService, language: str) -> None:
+    try:
+        started = time.perf_counter()
+        await service.synthesiser.warm(language)
+        logger.info("voice engine %s ready in %.1f s", language, time.perf_counter() - started)
+    except Exception:
+        # A language that cannot be preloaded is not a reason to refuse requests.
+        logger.warning("could not pre-load the %s engine", language, exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await _warm(_service)
+    try:
+        yield
+    finally:
+        for task in list(_BACKGROUND):
+            task.cancel()
+
+
+app = FastAPI(title="NetSanctum voice", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 class SpeechRequest(BaseModel):

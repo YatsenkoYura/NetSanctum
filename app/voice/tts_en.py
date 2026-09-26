@@ -45,6 +45,16 @@ class KokoroVoice:
         self._g2p = en.G2P(trf=G2P_TRANSFORMER, british=False, fallback=None)
         return self._kokoro
 
+    def load(self) -> None:
+        """Open the model and the voice file, without speaking anything.
+
+        Kept apart from construction so a warm-up that reports ready has actually
+        done the work the first reply would otherwise pay for.
+        """
+        with self._lock:
+            if self._kokoro is None:
+                self._load()
+
     def voices(self) -> list[str]:
         """The names the voice file actually carries.
 
@@ -67,9 +77,8 @@ class KokoroVoice:
 
         from app.voice.tts import to_wav
 
+        self.load()
         with self._lock:
-            if self._kokoro is None:
-                self._load()
             available = self.voices()
             phonemes, _tokens = self._g2p(text)
             # is_phonemes tells the engine the text is already phonemised. Without

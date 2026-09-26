@@ -148,6 +148,84 @@ class TranscriberTests(unittest.TestCase):
             asyncio.run(Transcriber(self.settings).transcribe(b""))
 
 
+class WarmupTests(unittest.TestCase):
+    """A warm-up that does not load the model is worse than none at all.
+
+    It reports the service ready while the first reply still pays for the load, and
+    the timings it prints then describe nothing.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.service = VoiceService(settings_in(self.tmp.name))
+        self.warmed: list[str] = []
+
+    def _stub_synthesiser(self):
+        service = self.service
+        warmed = self.warmed
+
+        class Stub:
+            async def warm(self, language):
+                warmed.append(language)
+                service.residency.adopt(language, object())
+
+            async def synthesise(self, text, language=None, speaker=None):
+                return b"RIFF", "audio/wav"
+
+        return Stub()
+
+    def test_warming_loads_the_engine_rather_than_just_constructing_it(self):
+        loaded: list[str] = []
+        residency = self.service.residency
+
+        class Engine:
+            def load(self):
+                loaded.append("ru")
+
+        def loader():
+            engine = Engine()
+            engine.load()
+            return engine
+
+        residency.use("ru", loader)
+        self.assertEqual(["ru"], loaded)
+        self.assertEqual(["ru"], residency.resident())
+
+    def test_the_default_language_is_warmed_before_the_service_serves(self):
+        from app.voice.service import _warm
+
+        self.service.synthesiser = self._stub_synthesiser()
+        asyncio.run(_warm(self.service))
+        self.assertEqual("ru", self.warmed[0])
+
+    def test_a_full_slot_is_not_filled_with_the_other_language(self):
+        # Warming the rarer language into a full slot would drop the one just
+        # warmed, and the first common reply would pay the load after all.
+        from app.voice.service import _warm
+
+        self.service.synthesiser = self._stub_synthesiser()
+        asyncio.run(_warm(self.service))
+        # One slot, filled by the default language, and left alone.
+        self.assertEqual(["ru"], self.warmed)
+        self.assertEqual(1, self.service.settings.max_resident)
+
+    def test_with_room_for_both_the_other_language_is_warmed_too(self):
+        from app.voice.service import _warm
+
+        self.service.settings = settings_in(self.tmp.name).__class__(
+            model_dir=self.tmp.name, stt_url="http://miku-stt:8080", default_lang="ru", max_resident=2
+        )
+        self.service.residency = Residency(limit=2)
+        self.service.synthesiser = self._stub_synthesiser()
+        asyncio.run(_warm(self.service))
+        # The background task is scheduled rather than awaited, so let it run.
+        import asyncio as _asyncio
+
+        _asyncio.run(_asyncio.sleep(0))
+        self.assertIn("ru", self.warmed)
+
+
 class ProviderCompatibilityTests(unittest.TestCase):
     """The voice service has to be a drop-in for a configured speech provider.
 

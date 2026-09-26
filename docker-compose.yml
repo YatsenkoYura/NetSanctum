@@ -304,8 +304,9 @@ services:
       VOICE_MODEL_DIR: /models
       VOICE_STT_URL: http://miku-stt:8080
       # One model at a time keeps the stack inside its memory budget: the Russian
-      # engine needs torch, and holding both languages resident doubles it.
-      VOICE_MAX_RESIDENT: "1"
+      # engine needs torch, and holding both languages resident doubles it. Raising
+      # this to 2 pre-loads the second language too, for roughly 200 MB more.
+      VOICE_MAX_RESIDENT: ${VOICE_MAX_RESIDENT:-1}
       VOICE_LANG_DEFAULT: ru
     volumes:
       - ${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}:/models:ro
