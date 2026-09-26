@@ -264,11 +264,32 @@ fi
 # Launch containers
 # Fail here, with the reason, rather than inside a one-shot container that exits 1 and
 # leaves the model host without the weights it waits for.
+
+# Said here rather than left to mkdir, which reports "Permission denied" without
+# saying which directory, which user, or what to do about it - and the voice profile
+# cannot start without these weights, so the message is the whole diagnosis.
+voice_model_dir_unusable() {
+    echo "Error: $VOICE_MODEL_DIR is not usable by the user running this script."
+    echo "  user:   $(id -un) (uid $(id -u))"
+    echo "  path:   $VOICE_MODEL_DIR"
+    [ -e "$VOICE_MODEL_DIR" ] && echo "  owner:  $(stat -c '%U:%G (mode %a)' "$VOICE_MODEL_DIR" 2>/dev/null || echo unknown)"
+    echo "  The voice models are about a gigabyte and have to land somewhere writable."
+    echo "  Either hand the directory to that user:"
+    echo "    sudo chown -R \"\$(id -u):\$(id -g)\" $VOICE_MODEL_DIR"
+    echo "  or point the models at a path you already own, in .env:"
+    echo "    MIKU_VOICE_MODEL_DIR=\$HOME/netsanctum-voice-models"
+    exit 1
+}
+
 VOICE_MODEL_DIR="${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}"
 if [ "$VOICE" = "1" ] && [ "$ACTION" = "up" ]; then
-    if [ ! -d "$VOICE_MODEL_DIR" ]; then
-        echo "Creating $VOICE_MODEL_DIR for the voice models"
-        mkdir -p "$VOICE_MODEL_DIR"
+    if [ ! -d "$VOICE_MODEL_DIR" ] && ! mkdir -p "$VOICE_MODEL_DIR" 2>/dev/null; then
+        voice_model_dir_unusable
+    elif [ -d "$VOICE_MODEL_DIR" ] && [ ! -w "$VOICE_MODEL_DIR" ]; then
+        # The directory is there but belongs to someone else, which is what a stack
+        # first started with sudo leaves behind. Creating it would have succeeded, so
+        # this case is the one a bare mkdir never reports.
+        voice_model_dir_unusable
     fi
 fi
 if [ "$MIKU_LOCAL" = "1" ] && [ "$ACTION" = "up" ]; then
