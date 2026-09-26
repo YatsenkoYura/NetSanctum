@@ -19,6 +19,31 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.compose = yaml.safe_load(COMPOSE.read_text())
 
+    def test_storage_can_be_handed_back_without_root(self):
+        """A locked storage directory has to have a way out that needs no root.
+
+        The stack hands ./storage to a uid and then locks it to that uid, so a host
+        whose user is a different number is left unable to read its own data. The
+        repair runs as a root container of its own, which is the only thing here
+        allowed to do that, and it must not bring the stack up on the way.
+        """
+        script = START_SH.read_text()
+        self.assertIn("--chown-abort|chown-abort)", script)
+        self.assertIn('ACTION="chown-abort"', script)
+        # Root, and only for the one-shot: a repair that quietly started the stack
+        # would rebuild images on a machine that is asking for a permission fix.
+        self.assertIn("--user 0:0", script)
+        block = script[script.index('if [ "$ACTION" = "chown-abort" ]') :]
+        block = block[: block.index("exit 0")]
+        self.assertNotIn("docker compose up", block)
+        # Both halves of the repair, or the directory comes back owned by the user
+        # and still unreadable by anyone else who has to inspect it.
+        self.assertIn("chown -R", block)
+        self.assertIn("chmod -R a+rwX", block)
+        # And the argument is reachable: the flag has to be in the usage line, since
+        # a repair nobody can find is not a way out.
+        self.assertIn("--chown-abort", script.split("Usage: ./start.sh")[-1][:200])
+
     def test_agent_runtime_is_opt_in_and_hardened(self):
         service = self.compose["services"]["agent-runtime"]
         self.assertEqual(["agent"], service["profiles"])

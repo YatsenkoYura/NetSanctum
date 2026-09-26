@@ -12,6 +12,7 @@
 #   ./start.sh --no-browser-runtime # Start without Chromium runtime/proxy
 #   ./start.sh --no-agent       # Start without the assistant runtime
 #   ./start.sh --miku-local      # Start the optional local llama.cpp model
+#   ./start.sh --chown-abort     # Hand ./storage back to you, access restored
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -169,6 +170,10 @@ while [[ $# -gt 0 ]]; do
             ACTION="restart"
             shift
             ;;
+        --chown-abort|chown-abort)
+            ACTION="chown-abort"
+            shift
+            ;;
         --no-browser-runtime)
             BROWSER_RUNTIME=0
             shift
@@ -204,7 +209,7 @@ while [[ $# -gt 0 ]]; do
                 shift
             else
                 echo "Unknown argument: $1"
-                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--no-browser-runtime] [--miku-local] [--voice] [--no-agent]"
+                echo "Usage: ./start.sh [PORT] [-p PORT] [--down] [--logs] [--restart] [--chown-abort] [--no-browser-runtime] [--miku-local] [--voice] [--no-agent]"
                 exit 1
             fi
             ;;
@@ -222,6 +227,38 @@ fi
 if [ "$ACTION" = "logs" ]; then
     docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile browser --profile agent --profile miku-local logs -f --tail=100 2>/dev/null \
         || docker compose --profile browser --profile agent --profile miku-local logs -f --tail=100
+    exit 0
+fi
+
+if [ "$ACTION" = "chown-abort" ]; then
+    # A repair, not a start. The storage directory is handed to a uid read from
+    # .env and then locked to that uid alone, so a host whose user is not that
+    # number - or one that has since changed - is left unable to read its own data
+    # with no way back in short of root. The fix is the one the stack already has
+    # the means to make, run on its own: a container started as root, changing the
+    # ownership the containers themselves would have set.
+    REPAIR_IMAGE="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+    TARGET_DIR="${MIKU_STORAGE_DIR:-./storage}"
+    case "$TARGET_DIR" in
+        /*) ABS_DIR="$TARGET_DIR" ;;
+        *) ABS_DIR="$PROJECT_DIR/${TARGET_DIR#./}" ;;
+    esac
+    if [ ! -d "$ABS_DIR" ]; then
+        mkdir -p "$ABS_DIR"
+    fi
+    echo "Restoring access to $TARGET_DIR for $(id -un) (uid $(id -u))..."
+    echo "  This hands the directory back to you and reopens it to every local user,"
+    echo "  which includes the admin token hash and the browser session snapshots."
+    echo "  It is a deliberate loosening, and ./start.sh will not undo it afterwards."
+    docker run --rm --user 0:0 \
+        -e TARGET_UID="$(id -u)" -e TARGET_GID="$(id -g)" \
+        -v "$ABS_DIR:/target" \
+        "$REPAIR_IMAGE" sh -ec 'chown -R "$TARGET_UID:$TARGET_GID" /target && chmod -R a+rwX /target'
+    if [ $? -ne 0 ]; then
+        echo "Error: could not change $TARGET_DIR. Check that the docker daemon is running."
+        exit 1
+    fi
+    echo "Done. $(ls -ld "$ABS_DIR" | awk '{print $1, $3":"$4}')"
     exit 0
 fi
 
@@ -289,12 +326,21 @@ voice_model_dir_unusable() {
     echo "Error: $VOICE_MODEL_DIR is not usable by the user running this script."
     echo "  user:   $(id -un) (uid $(id -u))"
     echo "  path:   $VOICE_MODEL_DIR"
-    [ -e "$VOICE_MODEL_DIR" ] && echo "  owner:  $(stat -c '%U:%G (mode %a)' "$VOICE_MODEL_DIR" 2>/dev/null || echo unknown)"
+    if [ -L "./storage" ]; then
+        # The shape that reports the parent rather than the child: storage is a
+        # symlink, so the refusal is about wherever it points, and it is invisible
+        # in the path above.
+        echo "  note:   ./storage is a symlink to $(readlink -f ./storage 2>/dev/null || echo an unresolvable target)"
+    fi
+    if [ -e "$VOICE_MODEL_DIR" ]; then
+        echo "  owner:  $(stat -c '%U:%G (mode %a)' "$VOICE_MODEL_DIR" 2>/dev/null || echo unknown)"
+    fi
     echo "  The voice models are about a gigabyte and have to land somewhere writable."
     echo "  Either hand the directory to that user:"
-    echo "    sudo chown -R \"\$(id -u):\$(id -g)\" $VOICE_MODEL_DIR"
-    echo "  or point the models at a path you already own, in .env:"
-    echo "    MIKU_VOICE_MODEL_DIR=\$HOME/netsanctum-voice-models"
+    echo "    sudo chown -R \"\$(id -u):\$(id -g)\" \"$VOICE_MODEL_DIR\""
+    echo "  or point the models at a path you already own, in .env. Write it out in"
+    echo "  full: compose reads this file literally and does not expand ~ :"
+    echo "    MIKU_VOICE_MODEL_DIR=$HOME/netsanctum-voice-models"
     exit 1
 }
 
