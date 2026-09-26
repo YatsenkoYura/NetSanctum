@@ -11,6 +11,10 @@
     const micButton = document.getElementById('miku-mic');
     const wakeButton = document.getElementById('miku-wake');
     const voiceButton = document.getElementById('miku-voice');
+    const conversationSelect = document.getElementById('miku-conversation');
+    const conversationNew = document.getElementById('miku-conversation-new');
+    const conversationRename = document.getElementById('miku-conversation-rename');
+    const conversationDelete = document.getElementById('miku-conversation-delete');
     if (!drawer || !form) return;
 
     let socket;
@@ -82,6 +86,122 @@
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const contextId = sessionStorage.getItem('miku-context-id') || window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     sessionStorage.setItem('miku-context-id', contextId);
+
+    // A thread is stored on the server, so it survives a reload and can be reopened
+    // later; what the model reads from it is only the most recent turns.
+    let conversationId = null;
+    let conversations = [];
+
+    async function conversationRequest(path, options = {}) {
+        const response = await fetch(path, {cache: 'no-store', ...options});
+        if (response.status === 204) return null;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+    }
+
+    function renderConversationOptions() {
+        conversationSelect.textContent = '';
+        for (const item of conversations) {
+            const option = document.createElement('option');
+            option.value = String(item.id);
+            option.textContent = item.title || 'New chat';
+            conversationSelect.append(option);
+        }
+        if (conversationId === null && conversations.length) {
+            conversationId = conversations[0].id;
+        }
+        if (conversationId !== null) conversationSelect.value = String(conversationId);
+    }
+
+    async function loadConversations() {
+        try {
+            const payload = await conversationRequest('/api/miku/conversations');
+            conversations = payload.items || [];
+            if (conversationId !== null && !conversations.some(item => item.id === conversationId)) {
+                conversationId = null;
+            }
+            renderConversationOptions();
+        } catch (_error) {
+            // The switcher is a convenience: a turn still works without it.
+        }
+    }
+
+    async function openConversation(id) {
+        conversationId = id;
+        sessionStorage.setItem('miku-conversation-id', String(id));
+        renderConversationOptions();
+        output.textContent = '';
+        restoringTranscript = true;
+        try {
+            const payload = await conversationRequest(`/api/miku/conversations/${id}`);
+            for (const item of payload.messages || []) {
+                const row = document.createElement('p');
+                row.className = `font-mono text-xs leading-relaxed ${item.role === 'user' ? 'text-teal-300' : 'text-zinc-300'}`;
+                row.textContent = item.role === 'user' ? `> ${item.content}` : item.content;
+                output.append(row);
+            }
+            output.scrollTop = output.scrollHeight;
+        } catch (_error) {
+            line('Could not load this conversation', 'error');
+        } finally {
+            restoringTranscript = false;
+        }
+    }
+
+    async function createConversation() {
+        try {
+            const created = await conversationRequest('/api/miku/conversations', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({title: ''}),
+            });
+            await loadConversations();
+            await openConversation(created.id);
+        } catch (_error) {
+            line('Could not start a conversation', 'error');
+        }
+    }
+
+    async function renameSelectedConversation() {
+        if (conversationId === null) return;
+        const current = conversations.find(item => item.id === conversationId);
+        const title = window.prompt('Conversation name', current?.title || '');
+        if (title === null) return;
+        try {
+            await conversationRequest(`/api/miku/conversations/${conversationId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({title}),
+            });
+            await loadConversations();
+        } catch (_error) {
+            line('Could not rename this conversation', 'error');
+        }
+    }
+
+    async function deleteSelectedConversation() {
+        if (conversationId === null) return;
+        const current = conversations.find(item => item.id === conversationId);
+        if (!window.confirm(`Delete "${current?.title || 'this chat'}"?`)) return;
+        try {
+            await conversationRequest(`/api/miku/conversations/${conversationId}`, {method: 'DELETE'});
+            conversationId = null;
+            sessionStorage.removeItem('miku-conversation-id');
+            await loadConversations();
+            if (conversationId !== null) {
+                await openConversation(conversationId);
+            } else {
+                output.textContent = '';
+            }
+        } catch (_error) {
+            line('Could not delete this conversation', 'error');
+        }
+    }
+
+    conversationSelect?.addEventListener('change', () => openConversation(Number(conversationSelect.value)));
+    conversationNew?.addEventListener('click', createConversation);
+    conversationRename?.addEventListener('click', renameSelectedConversation);
+    conversationDelete?.addEventListener('click', deleteSelectedConversation);
 
     function setOpen(open) {
         drawer.classList.toggle('hidden', !open);
@@ -374,7 +494,11 @@
 
     async function restFallback(message) {
         try {
-            const response = await postJson('/api/miku/query', {message, context_id: contextId});
+            const response = await postJson('/api/miku/query', {
+                message,
+                context_id: contextId,
+                conversation_id: conversationId,
+            });
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.detail || 'Request failed');
             renderReply(payload);
@@ -458,7 +582,12 @@
             }
             const requestId = window.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
             activeRequestId = requestId;
-            socket.send(JSON.stringify({type: 'query', request_id: requestId, message}));
+            socket.send(JSON.stringify({
+                type: 'query',
+                request_id: requestId,
+                message,
+                conversation_id: conversationId,
+            }));
         } else {
             restFallback(message);
         }
@@ -498,6 +627,7 @@
                     request_id: requestId,
                     audio,
                     audio_content_type: mime,
+                    conversation_id: conversationId,
                 }));
             } catch (error) {
                 line(error.message || 'Voice message failed', 'error');
@@ -763,7 +893,12 @@
     window.mikuAssistant = {open: () => setOpen(true), close: () => setOpen(false), submit: submitMessage};
     fetch('/api/miku/runtime').then(response => response.ok ? response.json() : Promise.reject()).then(payload => { runtime = payload; }).catch(() => {});
     applyPersistedToggles();
+    // The stored thread is the source of truth for what was said, so the locally
+    // cached transcript only fills in until the server copy arrives.
     restoreTranscript();
+    const rememberedConversation = Number(sessionStorage.getItem('miku-conversation-id')) || null;
+    if (rememberedConversation) conversationId = rememberedConversation;
+    loadConversations().then(() => (conversationId !== null ? openConversation(conversationId) : null));
     connect();
     // Resume always-listening quietly after navigation; failures stay silent
     // here since the user already opted in on a previous page.

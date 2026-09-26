@@ -57,6 +57,9 @@ class AsyncSessionAdapter:
     def add(self, instance):
         self.session.add(instance)
 
+    async def delete(self, instance):
+        self.session.delete(instance)
+
 
 class MikuMemoryIntegrationTests(unittest.TestCase):
     def setUp(self):

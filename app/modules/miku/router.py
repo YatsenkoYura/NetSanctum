@@ -7,6 +7,7 @@ import re
 import secrets
 import time
 from collections import deque
+from datetime import UTC
 from urllib.parse import urlparse
 
 from fastapi import (
@@ -21,6 +22,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contracts.miku_memory_v1 import MikuMemorySearchRequest
@@ -38,7 +40,16 @@ from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
 from app.modules.miku.agent_turn import agent_client, runtime_capabilities
 from app.modules.miku.cascades import list_cascades, undo_cascade_step
+from app.modules.miku.conversations import (
+    create_conversation,
+    delete_conversation,
+    get_conversation,
+    list_conversations,
+    list_messages,
+    rename_conversation,
+)
 from app.modules.miku.integrations import search_memory
+from app.modules.miku.models import MikuConversationNote
 from app.modules.miku.providers import (
     load_provider_bundle,
     provider_settings_response,
@@ -46,6 +57,13 @@ from app.modules.miku.providers import (
 )
 from app.modules.miku.schemas import (
     MikuCapabilities,
+    MikuConversationCreate,
+    MikuConversationDetail,
+    MikuConversationList,
+    MikuConversationNoteItem,
+    MikuConversationNoteList,
+    MikuConversationRename,
+    MikuConversationSummary,
     MikuConversationTurn,
     MikuJobStatus,
     MikuProviderSettingsResponse,
@@ -56,6 +74,7 @@ from app.modules.miku.schemas import (
     MikuRuntimeCapabilities,
     MikuSocketMessage,
     MikuSpeechRequest,
+    MikuStoredMessage,
 )
 from app.modules.miku.service import (
     MikuQueryError,
@@ -270,11 +289,16 @@ async def miku_query(
     user=Depends(get_current_user),
 ):
     lock = None
+    # Two turns in one thread must not interleave, so the lock is keyed by whichever
+    # identity the request carries: a stored conversation, or the session context.
+    lock_key = str(body.conversation_id) if body.conversation_id else body.context_id
     try:
-        lock = await _acquire_context_lock(body.context_id, user.id)
+        lock = await _acquire_context_lock(lock_key, user.id)
         context = await _rest_context(body.context_id, user.id)
         reply = await query(body, db, user, module_registry, context=context)
-        await _save_rest_context(body.context_id, user.id, context)
+        if body.context_id and not body.conversation_id:
+            await _save_rest_context(body.context_id, user.id, context)
+        await db.commit()
         return reply
     except MikuQueryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -336,6 +360,126 @@ async def miku_memory(
         consumer_id="miku",
     )
     return await search_memory(request, context)
+
+
+def _summary(conversation, message_count: int = 0) -> MikuConversationSummary:
+    return MikuConversationSummary(
+        id=conversation.id,
+        title=conversation.title or "Новый диалог",
+        message_count=message_count,
+        created_at=_iso(conversation.created_at),
+        updated_at=_iso(conversation.updated_at),
+    )
+
+
+def _iso(value) -> str:
+    moment = value if value.tzinfo else value.replace(tzinfo=UTC)
+    return moment.isoformat()
+
+
+@router.get("/api/miku/conversations", response_model=MikuConversationList)
+async def miku_conversations(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Every thread the owner has, most recently touched first."""
+    rows = await list_conversations(db, user.id, limit=limit)
+    return MikuConversationList(items=[_summary(conversation, count) for conversation, count in rows])
+
+
+@router.post("/api/miku/conversations", response_model=MikuConversationSummary, status_code=201)
+async def miku_conversation_create(
+    body: MikuConversationCreate | None = None,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Start a new thread. The title is filled in from the first message."""
+    conversation = await create_conversation(db, user.id, title=(body.title if body else ""))
+    await db.commit()
+    return _summary(conversation)
+
+
+@router.get("/api/miku/conversations/{conversation_id}", response_model=MikuConversationDetail)
+async def miku_conversation_detail(
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """One thread with its full transcript, oldest message first."""
+    conversation = await get_conversation(db, user.id, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="No such conversation")
+    messages = await list_messages(db, conversation.id)
+    return MikuConversationDetail(
+        conversation=_summary(conversation, len(messages)),
+        messages=[
+            MikuStoredMessage(
+                id=item.id,
+                role=item.role,
+                content=item.content,
+                command=item.command,
+                created_at=_iso(item.created_at),
+            )
+            for item in messages
+        ],
+    )
+
+
+@router.put("/api/miku/conversations/{conversation_id}", response_model=MikuConversationSummary)
+async def miku_conversation_rename(
+    conversation_id: int,
+    body: MikuConversationRename,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    conversation = await get_conversation(db, user.id, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="No such conversation")
+    await rename_conversation(db, conversation, body.title)
+    await db.commit()
+    return _summary(conversation)
+
+
+@router.delete("/api/miku/conversations/{conversation_id}", status_code=204)
+async def miku_conversation_delete(
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    conversation = await get_conversation(db, user.id, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="No such conversation")
+    await delete_conversation(db, conversation)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/api/miku/conversations/{conversation_id}/notes", response_model=MikuConversationNoteList)
+async def miku_conversation_notes(
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """What the agent decided to carry forward in this thread."""
+    conversation = await get_conversation(db, user.id, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="No such conversation")
+    rows = await db.scalars(
+        select(MikuConversationNote)
+        .where(MikuConversationNote.conversation_id == conversation.id)
+        .order_by(MikuConversationNote.id.desc())
+    )
+    return MikuConversationNoteList(
+        items=[
+            MikuConversationNoteItem(
+                key=item.note_key,
+                value=dict(item.value_json or {}),
+                updated_at=_iso(item.updated_at),
+            )
+            for item in rows
+        ]
+    )
 
 
 @router.get("/api/miku/cascades")
@@ -479,7 +623,7 @@ async def miku_socket(websocket: WebSocket):
                 data={"code": "tts_failed"},
             )
 
-    async def _run_socket_turn(request_id: str, text: str, limit: int) -> None:
+    async def _run_socket_turn(request_id: str, text: str, limit: int, conversation_id: int | None) -> None:
         async def _emit_turn_partial(phase: str, data: dict) -> None:
             await _send_event(websocket, "turn.partial", request_id=request_id, data={"phase": phase, **data})
 
@@ -495,19 +639,21 @@ async def miku_socket(websocket: WebSocket):
         await _send_event(websocket, "turn.started", request_id=request_id)
         turn_context = MikuSessionContext()
         try:
-            context_lock = await _acquire_context_lock(context_id, turn_user.id)
-            if context_id:
+            lock_key = str(conversation_id) if conversation_id else context_id
+            context_lock = await _acquire_context_lock(lock_key, turn_user.id)
+            if context_id and not conversation_id:
                 turn_context = await _rest_context(context_id, turn_user.id) or MikuSessionContext()
             async with AsyncSessionLocal() as db:
                 reply = await query(
-                    MikuQuery(message=text, limit=limit),
+                    MikuQuery(message=text, limit=limit, conversation_id=conversation_id),
                     db,
                     user=turn_user,
                     registry=module_registry,
                     context=turn_context,
                     on_event=_emit_turn_partial,
                 )
-                await _save_rest_context(context_id, turn_user.id, turn_context)
+                if context_id and not conversation_id:
+                    await _save_rest_context(context_id, turn_user.id, turn_context)
                 try:
                     audit_turn(db, turn_user, request_id, "websocket", reply)
                     await db.commit()
@@ -579,7 +725,7 @@ async def miku_socket(websocket: WebSocket):
         turn_times.append(now)
         return True
 
-    def _start_turn(request_id: str, text: str, limit: int) -> None:
+    def _start_turn(request_id: str, text: str, limit: int, conversation_id: int | None = None) -> None:
         nonlocal pending_turn, pending_request_id
         # Barge-in: a new turn cancels the in-flight one and any speech.
         if pending_turn is not None and not pending_turn.done():
@@ -587,7 +733,7 @@ async def miku_socket(websocket: WebSocket):
         if pending_speech is not None and not pending_speech.done():
             pending_speech.cancel()
         pending_request_id = request_id
-        pending_turn = asyncio.create_task(_run_socket_turn(request_id, text, limit))
+        pending_turn = asyncio.create_task(_run_socket_turn(request_id, text, limit, conversation_id))
         pending_turn.add_done_callback(_clear_pending)
 
     try:
@@ -695,7 +841,7 @@ async def miku_socket(websocket: WebSocket):
                     request_id=message.request_id,
                     data={"phase": "transcript", "text": text},
                 )
-                _start_turn(message.request_id, text, message.limit)
+                _start_turn(message.request_id, text, message.limit, message.conversation_id)
                 continue
 
             if message.type == "speak":
@@ -706,7 +852,12 @@ async def miku_socket(websocket: WebSocket):
                 pending_speech.add_done_callback(_clear_pending)
                 continue
 
-            _start_turn(message.request_id, message.message or "", message.limit)
+            _start_turn(
+                message.request_id,
+                message.message or "",
+                message.limit,
+                message.conversation_id,
+            )
     except WebSocketDisconnect:
         _cancel_all()
     finally:

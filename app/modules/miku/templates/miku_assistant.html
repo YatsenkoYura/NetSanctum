@@ -19,6 +19,19 @@
             </div>
         </header>
 
+        <div class="border-b border-zinc-800 bg-zinc-950">
+            <div class="flex items-stretch">
+                <select id="miku-conversation" aria-label="Conversation"
+                        class="min-h-9 min-w-0 flex-1 border-r border-zinc-800 bg-zinc-950 px-3 font-mono text-[11px] text-zinc-300 outline-none focus:bg-zinc-900"></select>
+                <button id="miku-conversation-new" type="button" title="New conversation"
+                        class="min-h-9 border-r border-zinc-800 px-3 font-mono text-[10px] font-bold uppercase text-teal-400 hover:bg-teal-400 hover:text-black">New</button>
+                <button id="miku-conversation-rename" type="button" title="Rename conversation"
+                        class="min-h-9 border-r border-zinc-800 px-3 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-white">Rename</button>
+                <button id="miku-conversation-delete" type="button" title="Delete conversation"
+                        class="min-h-9 px-3 font-mono text-[10px] font-bold uppercase text-zinc-400 hover:text-red-400">Del</button>
+            </div>
+        </div>
+
         <div id="miku-output" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite">
             <p class="font-mono text-xs leading-relaxed text-zinc-500">Ask MIKU to find or open something. The target module will open here while this chat stays available.</p>
         </div>

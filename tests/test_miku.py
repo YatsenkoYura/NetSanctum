@@ -282,6 +282,8 @@ class MikuTests(unittest.TestCase):
         self.assertEqual(
             (
                 "media.video.archive.v1",
+                "miku.conversation.note.search.v1",
+                "miku.conversation.note.write.v1",
                 "miku.memory.search.v1",
                 "miku.memory.undo.v1",
                 "miku.memory.write.v1",
@@ -290,15 +292,29 @@ class MikuTests(unittest.TestCase):
             ),
             MODULE.uses_integrations,
         )
-        # Memory is reachable as a tool, never as a hardcoded command word.
+        # Memory is reachable as a tool, never as a hardcoded command word. So are the
+        # notes the agent keeps inside one conversation.
         self.assertEqual(
-            ("miku.memory.search.v1", "miku.memory.undo.v1", "miku.memory.write.v1"),
+            (
+                "miku.conversation.note.search.v1",
+                "miku.conversation.note.undo.v1",
+                "miku.conversation.note.write.v1",
+                "miku.memory.search.v1",
+                "miku.memory.undo.v1",
+                "miku.memory.write.v1",
+            ),
             tuple(sorted(item.id for item in MODULE.integrations)),
         )
         reversible = {
             item.id: item.effects.undo_integration for item in MODULE.integrations if item.effects.reversible
         }
-        self.assertEqual({"miku.memory.write.v1": "miku.memory.undo.v1"}, reversible)
+        self.assertEqual(
+            {
+                "miku.conversation.note.write.v1": "miku.conversation.note.undo.v1",
+                "miku.memory.write.v1": "miku.memory.undo.v1",
+            },
+            reversible,
+        )
         self.assertEqual((), MODULE.browser_policies)
         self.assertEqual("app.modules.miku.tasks", MODULE.tasks)
 
@@ -569,6 +585,22 @@ class MikuTests(unittest.TestCase):
         self.assertNotIn("line(error.message || 'Request failed', 'error')", assistant)
         self.assertIn("connect();\n            return await send();", assistant)
 
+    def test_the_drawer_offers_the_stored_conversations(self):
+        assistant = Path("static/miku-assistant.js").read_text()
+        markup = Path("app/modules/miku/templates/miku_assistant.html").read_text()
+        for element in (
+            'id="miku-conversation"',
+            'id="miku-conversation-new"',
+            'id="miku-conversation-rename"',
+            'id="miku-conversation-delete"',
+        ):
+            self.assertIn(element, markup)
+        # Both transports have to name the thread, or a turn is stored nowhere.
+        self.assertEqual(3, assistant.count("conversation_id: conversationId"))
+        self.assertIn("/api/miku/conversations", assistant)
+        # Remote text is rendered as text, never as markup.
+        self.assertIn("row.textContent = item.role === 'user'", assistant)
+
     def test_video_archive_miku_link_opens_without_artificial_delay(self):
         dashboard = Path("app/modules/video_archiver/templates/video_dashboard.html").read_text()
 
@@ -595,6 +627,12 @@ class MikuTests(unittest.TestCase):
                 ("POST", "/api/miku/cascades/{cascade_id}/undo/{step_index}"),
                 ("GET", "/api/miku/jobs/{task_id}"),
                 ("GET", "/api/miku/resources/{module_id}/{item_id}"),
+                ("GET", "/api/miku/conversations"),
+                ("POST", "/api/miku/conversations"),
+                ("GET", "/api/miku/conversations/{conversation_id}"),
+                ("PUT", "/api/miku/conversations/{conversation_id}"),
+                ("DELETE", "/api/miku/conversations/{conversation_id}"),
+                ("GET", "/api/miku/conversations/{conversation_id}/notes"),
                 ("WEBSOCKET", "/api/miku/ws"),
             },
             routes,

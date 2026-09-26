@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -117,6 +117,76 @@ class MikuTask(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
     last_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class MikuConversation(Base):
+    """A named dialogue thread.
+
+    The transcript lives here rather than in a session store so a conversation
+    survives a restart and can be reopened days later. The window the model sees
+    is a separate, much shorter thing: see MikuConversationNote.
+    """
+
+    __tablename__ = "miku_conversation"
+    __table_args__ = (Index("ix_miku_conversation_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    archived: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class MikuConversationMessage(Base):
+    """One message in a conversation, exactly as it was shown to the user."""
+
+    __tablename__ = "miku_conversation_message"
+    __table_args__ = (Index("ix_miku_conversation_message_thread", "conversation_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("miku_conversation.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    command: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    cascade_id: Mapped[int | None] = mapped_column(
+        ForeignKey("miku_cascade_log.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class MikuConversationNote(Base):
+    """Something the agent decided was worth carrying further inside one conversation.
+
+    The model is given a short window of recent turns, not the whole transcript:
+    re-sending everything makes the prompt grow without bound and dilutes what the
+    model attends to. So the agent writes down what still matters here and reads it
+    back on the next step, and decides for itself what is worth keeping.
+    """
+
+    __tablename__ = "miku_conversation_note"
+    __table_args__ = (Index("ix_miku_conversation_note_conversation", "conversation_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("miku_conversation.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    note_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    value_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

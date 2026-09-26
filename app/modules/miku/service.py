@@ -25,6 +25,13 @@ from app.core.module_types import (
 )
 from app.modules.miku.agent_turn import run_agent_turn
 from app.modules.miku.cascades import open_task, record_cascade, reply_outcome, steps_from_result
+from app.modules.miku.conversations import (
+    MESSAGE_ROLE_ASSISTANT,
+    MESSAGE_ROLE_USER,
+    append_message,
+    get_conversation,
+    model_window,
+)
 from app.modules.miku.models import MikuTurnAudit
 from app.modules.miku.providers import load_provider_bundle
 from app.modules.miku.schemas import (
@@ -56,6 +63,11 @@ class MikuQueryError(ValueError):
 class MikuSessionContext:
     references: list[MikuReference] | None = None
     history: list[Any] | None = None
+    # Set when the turn belongs to a stored thread: the id travels to the runtime so
+    # the agent's notes are scoped to that conversation, and the transcript is what
+    # the history above was rebuilt from.
+    session_id: str = ""
+    conversation_id: int | None = None
 
 
 class _Registry(Protocol):
@@ -156,6 +168,27 @@ async def query(
     providers = await load_provider_bundle(db, user.id) if db is not None and user is not None else None
     effects = _catalog_effects(registry)
 
+    conversation = None
+    if db is not None and user is not None and request.conversation_id:
+        conversation = await get_conversation(db, user.id, request.conversation_id)
+        if conversation is None:
+            raise MikuQueryError("No such conversation")
+        if context is None:
+            context = MikuSessionContext()
+        # What the model reads is a short window rebuilt from the stored transcript,
+        # not the whole thing: a long thread replayed in full grows the prompt without
+        # bound. Whatever falls outside the window is the agent's own notes to carry.
+        window = await model_window(db, conversation.id)
+        context.history = [MikuConversationTurn(user=u, assistant=a) for u, a in window]
+        context.session_id = str(conversation.id)
+        context.conversation_id = conversation.id
+        await append_message(
+            db,
+            conversation,
+            MESSAGE_ROLE_USER,
+            request.message,
+        )
+
     async def _store(turn, reply) -> None:
         await record_cascade(
             db,
@@ -181,8 +214,18 @@ async def query(
         on_turn=_store if db is not None else None,
     )
     if reply is None:
-        return unavailable_reply()
-    return _remember(context, request, reply) if remember else reply
+        reply = unavailable_reply()
+    elif conversation is not None and db is not None:
+        await append_message(
+            db,
+            conversation,
+            MESSAGE_ROLE_ASSISTANT,
+            reply.text,
+            command=reply.command,
+        )
+    if remember:
+        reply = _remember(context, request, reply)
+    return reply
 
 
 def _catalog_effects(registry: _Registry) -> dict[str, dict[str, Any]]:

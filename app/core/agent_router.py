@@ -38,6 +38,7 @@ class AgentInvokeRequest(BaseModel):
     integration_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_.-]*\.v[1-9][0-9]*$")
     parameters: dict[str, Any] = Field(default_factory=dict)
     consumer_id: str = Field(default=DEFAULT_CONSUMER, max_length=63, pattern=r"^[a-z][a-z0-9_]*$")
+    scope_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_:-]*$")
 
 
 class AgentInvokeResponse(BaseModel):
@@ -60,8 +61,14 @@ async def require_agent_key(x_agent_key: str = Header(default="")) -> OwnerUser:
     return OwnerUser()
 
 
-def _context(db: AsyncSession, user, consumer_id: str) -> IntegrationContext:
-    return IntegrationContext(session=db, user=user, registry=module_registry, consumer_id=consumer_id)
+def _context(db: AsyncSession, user, consumer_id: str, scope_id: str = "") -> IntegrationContext:
+    return IntegrationContext(
+        session=db,
+        user=user,
+        registry=module_registry,
+        consumer_id=consumer_id,
+        scope_id=scope_id or None,
+    )
 
 
 def _clip(text: str, max_chars: int) -> tuple[str, bool]:
@@ -99,11 +106,14 @@ async def agent_invoke(
     user=Depends(require_agent_key),
 ):
     """Call a declared integration with a validated request payload."""
+    # One context for both steps: a scope that validation could see but the call
+    # could not would leave a tool unable to tell which conversation it is in.
+    context = _context(db, user, body.consumer_id, body.scope_id)
     try:
         parameters = module_registry.validate_integration_request(
             body.integration_id,
             body.parameters,
-            _context(db, user, body.consumer_id),
+            context,
         )
     except (
         IntegrationNotFoundError,
@@ -118,7 +128,7 @@ async def agent_invoke(
         result = await module_registry.invoke_integration(
             body.integration_id,
             parameters,
-            _context(db, user, body.consumer_id),
+            context,
         )
     except (
         IntegrationRejectedError,

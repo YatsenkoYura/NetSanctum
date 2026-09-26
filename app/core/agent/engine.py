@@ -36,7 +36,9 @@ FREE_FORM_STEPS = 3
 STAGNATION_STEPS = 2
 MAX_STATE_REFERENCES = 6
 STATE_TITLE_LIMIT = 60
-HISTORY_TURNS = 4
+# Recent turns shown to the model verbatim. The full transcript is stored and can be
+# far longer; anything older is expected to live in what the agent wrote down.
+HISTORY_TURNS = 6
 
 
 class AgentBudget(BaseModel):

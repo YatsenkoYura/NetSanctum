@@ -177,6 +177,10 @@ class IntegrationContext:
     user: Any
     registry: Any
     consumer_id: str | None = None
+    # Opaque identifier of what the turn is about, set by the runtime from the
+    # request rather than by the model, so a tool can scope its work to one
+    # conversation without the model being able to choose or forge it.
+    scope_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

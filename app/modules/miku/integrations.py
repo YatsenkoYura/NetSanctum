@@ -4,6 +4,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
 
+from app.contracts.miku_conversation_note_v1 import (
+    MikuNoteEntry,
+    MikuNoteSearchRequest,
+    MikuNoteSearchResult,
+    MikuNoteWriteRequest,
+    MikuNoteWriteResult,
+)
 from app.contracts.miku_memory_v1 import (
     MikuMemoryEntry,
     MikuMemorySearchRequest,
@@ -18,7 +25,12 @@ from app.core.module_types import (
     IntegrationUnavailableError,
 )
 from app.core.text_match import query_terms, text_matches_terms
-from app.modules.miku.models import MikuEpisodeMemory, MikuProfileMemory
+from app.modules.miku.models import (
+    MikuConversation,
+    MikuConversationNote,
+    MikuEpisodeMemory,
+    MikuProfileMemory,
+)
 
 SCOPES = {"profile", "episodic"}
 
@@ -184,6 +196,108 @@ async def search_memory(
             )
 
     return MikuMemorySearchResult(items=items[: request.limit])
+
+
+async def _conversation_id(context: IntegrationContext) -> int:
+    """The conversation this turn belongs to, taken from the request, not the model.
+
+    The thread is resolved against the owner as well: a scope the runtime passes is
+    not a licence to write into somebody else's conversation, and an id that matches
+    no thread has to be refused rather than leaving a note nothing will ever read.
+    """
+    raw = str(context.scope_id or "")
+    if not raw.isdigit():
+        raise IntegrationUnavailableError("Notes are only available inside a conversation")
+    conversation_id = int(raw)
+    owned = await context.session.scalar(
+        select(MikuConversation.id).where(
+            MikuConversation.id == conversation_id,
+            MikuConversation.user_id == _owner_id(context),
+        )
+    )
+    if owned is None:
+        raise IntegrationUnavailableError("No such conversation")
+    return conversation_id
+
+
+async def write_note(
+    request: MikuNoteWriteRequest,
+    context: IntegrationContext,
+) -> MikuNoteWriteResult:
+    """Keep or drop one note in the conversation the agent is working in."""
+    conversation_id = await _conversation_id(context)
+    if request.op == "delete":
+        result = await context.session.execute(
+            delete(MikuConversationNote).where(
+                MikuConversationNote.conversation_id == conversation_id,
+                MikuConversationNote.note_key == request.key,
+            )
+        )
+        return MikuNoteWriteResult(
+            status="deleted" if result.rowcount else "missing",
+            key=request.key,
+        )
+    existing = await context.session.scalar(
+        select(MikuConversationNote).where(
+            MikuConversationNote.conversation_id == conversation_id,
+            MikuConversationNote.note_key == request.key,
+        )
+    )
+    if existing is None:
+        context.session.add(
+            MikuConversationNote(
+                conversation_id=conversation_id,
+                note_key=str(request.key),
+                value_json=request.value,
+            )
+        )
+    else:
+        existing.value_json = request.value
+        existing.updated_at = datetime.now(UTC)
+    return MikuNoteWriteResult(status="written", key=request.key)
+
+
+async def search_notes(
+    request: MikuNoteSearchRequest,
+    context: IntegrationContext,
+) -> MikuNoteSearchResult:
+    """Read back what the agent decided to carry forward in this conversation."""
+    conversation_id = await _conversation_id(context)
+    statement = (
+        select(MikuConversationNote)
+        .where(MikuConversationNote.conversation_id == conversation_id)
+        .order_by(MikuConversationNote.id.desc())
+        .limit(request.limit)
+    )
+    terms = query_terms(request.query)
+    items: list[MikuNoteEntry] = []
+    for record in await context.session.scalars(statement):
+        if not _matches(f"{record.note_key} {record.value_json}", terms):
+            continue
+        items.append(MikuNoteEntry(key=record.note_key, value=dict(record.value_json or {})))
+    return MikuNoteSearchResult(items=items)
+
+
+async def undo_note_write(
+    request: UndoRequest,
+    context: IntegrationContext,
+) -> UndoResult:
+    """Forget the note a write added, addressed by the arguments of that write."""
+    conversation_id = await _conversation_id(context)
+    key = request.arguments.get("key")
+    if not key:
+        return UndoResult(status="missing", detail="The note had no key")
+    result = await context.session.execute(
+        delete(MikuConversationNote).where(
+            MikuConversationNote.conversation_id == conversation_id,
+            MikuConversationNote.note_key == str(key)[:64],
+        )
+    )
+    await context.session.flush()
+    return UndoResult(
+        status="undone" if result.rowcount else "missing",
+        detail="Forgot the note",
+    )
 
 
 async def undo_memory_write(

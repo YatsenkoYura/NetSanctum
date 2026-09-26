@@ -24,6 +24,9 @@ MODULE = ModuleSpec(
             "miku_episode_memory",
             "miku_cascade_log",
             "miku_task",
+            "miku_conversation",
+            "miku_conversation_message",
+            "miku_conversation_note",
         ),
     ),
     templates="templates",
@@ -72,9 +75,56 @@ MODULE = ModuleSpec(
                 idempotent=True,
             ),
         ),
+        # What still matters inside the current conversation. The model only sees a
+        # short window of turns, so this is how it carries the rest forward itself.
+        IntegrationSpec(
+            id="miku.conversation.note.write.v1",
+            handler="app.modules.miku.integrations:write_note",
+            request_model="app.contracts.miku_conversation_note_v1:MikuNoteWriteRequest",
+            result_model="app.contracts.miku_conversation_note_v1:MikuNoteWriteResult",
+            description=(
+                "Keep one note in the current conversation, or drop it. Use it to carry "
+                "forward what still matters: the subject being discussed, a preference the "
+                "user stated, a decision already made."
+            ),
+            effects=IntegrationEffects(
+                effect=IntegrationEffect.UPDATE,
+                external_io=False,
+                idempotent=False,
+                reversible=True,
+                undo_integration="miku.conversation.note.undo.v1",
+            ),
+        ),
+        IntegrationSpec(
+            id="miku.conversation.note.search.v1",
+            handler="app.modules.miku.integrations:search_notes",
+            request_model="app.contracts.miku_conversation_note_v1:MikuNoteSearchRequest",
+            result_model="app.contracts.miku_conversation_note_v1:MikuNoteSearchResult",
+            description="Read back the notes kept in the current conversation.",
+            effects=IntegrationEffects(
+                effect=IntegrationEffect.READ,
+                external_io=False,
+                idempotent=True,
+            ),
+        ),
+        IntegrationSpec(
+            id="miku.conversation.note.undo.v1",
+            handler="app.modules.miku.integrations:undo_note_write",
+            request_model="app.contracts.undo_v1:UndoRequest",
+            result_model="app.contracts.undo_v1:UndoResult",
+            description="Forget one note that a previous write added to this conversation.",
+            contract="undo.v1",
+            effects=IntegrationEffects(
+                effect=IntegrationEffect.DELETE,
+                external_io=False,
+                idempotent=True,
+            ),
+        ),
     ),
     uses_integrations=(
         "media.video.archive.v1",
+        "miku.conversation.note.search.v1",
+        "miku.conversation.note.write.v1",
         "miku.memory.search.v1",
         "miku.memory.undo.v1",
         "miku.memory.write.v1",

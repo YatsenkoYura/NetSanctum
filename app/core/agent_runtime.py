@@ -277,7 +277,14 @@ def build_engine(request: AgentTurnRequest) -> CascadeEngine:
         raise AgentBackendUnavailableError("no model configured")
     return CascadeEngine(
         model=OpenAICompatibleModel(url, model, api_key=api_key, thinking=LLM_THINKING),
-        backend=HttpToolBackend(WEB_INTERNAL_URL, INTERNAL_KEY, consumer_id=CONSUMER_ID),
+        # The session travels with every call so a tool can scope itself to the
+        # conversation it was asked about.
+        backend=HttpToolBackend(
+            WEB_INTERNAL_URL,
+            INTERNAL_KEY,
+            consumer_id=CONSUMER_ID,
+            scope_id=request.session_id,
+        ),
     )
 
 

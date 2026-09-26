@@ -24,6 +24,9 @@ class MikuQuery(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     limit: int = Field(default=10, ge=1, le=20)
     context_id: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    # A stored thread. When present the transcript is the history the model is given
+    # and both sides of the exchange are written back to it.
+    conversation_id: int | None = Field(default=None, ge=1)
 
     @field_validator("message")
     @classmethod
@@ -127,6 +130,7 @@ class MikuSocketMessage(BaseModel):
     limit: int = Field(default=10, ge=1, le=20)
     audio: str | None = Field(default=None, max_length=6_000_000)
     audio_content_type: str | None = Field(default=None, max_length=64)
+    conversation_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_payload(self):
@@ -288,3 +292,46 @@ class MikuMemorySnapshot(BaseModel):
 class MikuConversationTurn(BaseModel):
     user: str = Field(min_length=1, max_length=500)
     assistant: str = Field(min_length=1, max_length=500)
+
+
+class MikuConversationCreate(BaseModel):
+    title: str = Field(default="", max_length=120)
+
+
+class MikuConversationRename(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
+class MikuConversationSummary(BaseModel):
+    id: int
+    title: str
+    message_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class MikuConversationList(BaseModel):
+    items: list[MikuConversationSummary] = Field(default_factory=list, max_length=100)
+
+
+class MikuStoredMessage(BaseModel):
+    id: int
+    role: str
+    content: str
+    command: str | None = None
+    created_at: str
+
+
+class MikuConversationDetail(BaseModel):
+    conversation: MikuConversationSummary
+    messages: list[MikuStoredMessage] = Field(default_factory=list, max_length=200)
+
+
+class MikuConversationNoteItem(BaseModel):
+    key: str
+    value: dict = Field(default_factory=dict)
+    updated_at: str
+
+
+class MikuConversationNoteList(BaseModel):
+    items: list[MikuConversationNoteItem] = Field(default_factory=list, max_length=50)

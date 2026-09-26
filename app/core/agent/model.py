@@ -27,6 +27,11 @@ SYSTEM_PROMPT = (
     "After act succeeds, call final straight away: the user already sees the media.\n"
     "The failed_steps list holds tools that already failed: never call them again, "
     "choose a different tool or answer with what you have.\n"
+    "The history holds only the most recent turns, not the whole conversation. When "
+    "something still matters after those turns scroll away - the subject being "
+    "discussed, a preference the user stated, a decision already made - write it down "
+    "with the conversation note tool instead of relying on remembering it, and read the "
+    "notes back when you need it.\n"
     "Reason in at most one short sentence, then call exactly one tool.\n"
     "Keep the final answer to at most four short sentences."
 )

@@ -41,11 +41,13 @@ class HttpToolBackend:
         internal_key: str,
         *,
         consumer_id: str = "miku",
+        scope_id: str = "",
         transport: Any | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.internal_key = internal_key
         self.consumer_id = consumer_id
+        self.scope_id = scope_id
         self.transport = transport
 
     def _headers(self) -> dict[str, str]:
@@ -75,6 +77,7 @@ class HttpToolBackend:
                         "integration_id": integration_id,
                         "parameters": parameters,
                         "consumer_id": self.consumer_id,
+                        "scope_id": self.scope_id,
                     },
                 )
         except httpx.HTTPError as exc:
