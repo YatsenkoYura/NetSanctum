@@ -79,7 +79,12 @@ class MikuJobStatus(BaseModel):
 class MikuReplySegment(BaseModel):
     kind: Literal["acknowledgement", "response", "status"]
     text: str = Field(min_length=1, max_length=500)
-    speak: bool = False
+    # Opt-out, not opt-in: a segment is spoken unless something decides otherwise.
+    # Defaulting this to False silenced every reply, because nothing in the codebase
+    # ever set it and the client reads the flag rather than assuming speech - the
+    # segments it invents for itself default to True, so the two sides disagreed and
+    # the server's answer won. Anything that should only be shown says so here.
+    speak: bool = True
 
     @field_validator("text")
     @classmethod

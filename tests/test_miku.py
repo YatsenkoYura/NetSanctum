@@ -34,6 +34,7 @@ from app.modules.miku.schemas import (
     MikuQuery,
     MikuReference,
     MikuReply,
+    MikuReplySegment,
     MikuSessionMemory,
     MikuSocketMessage,
 )
@@ -421,8 +422,27 @@ class MikuTests(unittest.TestCase):
 
     def test_unavailable_reply_is_always_speakable_and_plain(self):
         reply = unavailable_reply()
-        self.assertTrue(reply.segments[0].speak or reply.segments[0].kind == "status")
+        # Said plainly, and without the "or kind == status" escape this assertion
+        # used to carry: that made it pass for a segment that is never spoken, which
+        # is exactly the bug where the whole assistant fell silent.
+        self.assertTrue(reply.segments[0].speak)
         self.assertNotIn("\U0001f600", reply.text)
+
+    def test_a_reply_is_spoken_unless_a_segment_opts_out(self):
+        # The client reads this flag rather than assuming speech, so a segment that
+        # defaults to False silences the reply without a single error anywhere.
+        spoken = MikuReply(
+            command="respond",
+            text="Готова.",
+            segments=[MikuReplySegment(kind="response", text="Готова.")],
+        )
+        self.assertTrue(spoken.segments[0].speak)
+        quiet = MikuReply(
+            command="respond",
+            text="Готова.",
+            segments=[MikuReplySegment(kind="status", text="Готова.", speak=False)],
+        )
+        self.assertFalse(quiet.segments[0].speak)
 
     def test_capabilities_list_primitives_before_integrations(self):
         result = capabilities(StubRegistry())
