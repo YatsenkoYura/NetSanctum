@@ -389,27 +389,21 @@ def _flaky_transport(calls: list[dict]):
     return handler
 
 
-def _flaky_transport(calls: list[dict]):
-    """First reply is cut off mid-reasoning, the second one is a real tool call."""
+def _empty_arguments_transport(calls: list[dict]):
+    """First reply names the right tool with no arguments, the second one fills them."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         calls.append(payload)
-        if len(calls) == 1:
-            body = {"choices": [{"finish_reason": "length", "message": {"reasoning_content": "thinking"}}]}
-        else:
-            body = {
-                "choices": [
-                    {
-                        "finish_reason": "tool_calls",
-                        "message": {
-                            "tool_calls": [
-                                {"function": {"name": "final", "arguments": '{"answer":"готово"}'}}
-                            ]
-                        },
-                    }
-                ]
-            }
+        arguments = "{}" if len(calls) == 1 else '{"answer":"готово"}'
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {"tool_calls": [{"function": {"name": "final", "arguments": arguments}}]},
+                }
+            ]
+        }
         return httpx.Response(200, json=body, request=request)
 
     return handler
@@ -490,6 +484,21 @@ class ModelProtocolTests(unittest.TestCase):
         direct = OpenAICompatibleModel("http://local/v1", "m", thinking=False)
         payload = direct._payload("привет", TOOLS, {})
         self.assertEqual({"enable_thinking": False}, payload["chat_template_kwargs"])
+
+    def test_a_tool_call_with_empty_arguments_is_retried(self):
+        calls: list[dict] = []
+
+        model = OpenAICompatibleModel(
+            "http://local/v1/chat/completions",
+            "m",
+            transport=httpx.MockTransport(_empty_arguments_transport(calls)),
+        )
+        step = asyncio.run(model.next_step("привет", TOOLS, {"goal": "привет", "executed": []}))
+        # A small model names the right tool and hands back {}; that is a recoverable
+        # reply, not a dead provider, so the turn must survive it.
+        self.assertEqual("final", step.tool)
+        self.assertEqual("готово", step.arguments["answer"])
+        self.assertEqual(2, len(calls))
 
     def test_prose_answer_is_treated_as_the_final_answer(self):
         step = step_from_completion(

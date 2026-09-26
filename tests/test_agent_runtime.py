@@ -67,10 +67,15 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         self.assertIsNotNone(init, "the model must be fetched automatically")
         self.assertEqual(["miku-local"], init["profiles"])
         self.assertEqual("no", init["restart"])
-        body = " ".join(init["entrypoint"])
-        self.assertIn("wget", body)
-        self.assertIn("chown", body)
-        self.assertIn("already present", body)
+        # The fetch lives in a script so it can be tested without Docker: the Alpine
+        # image only offers BusyBox tools, and a flag it does not know aborts the
+        # download before a single byte moves.
+        script = (START_SH.parent / "scripts" / "fetch_model.sh").read_text()
+        self.assertIn("wget", script)
+        self.assertIn("chown", script)
+        self.assertIn("already present", script)
+        self.assertEqual(["sh", "/fetch-model.sh"], init["entrypoint"])
+        self.assertIn("./scripts/fetch_model.sh:/fetch-model.sh:ro", init["volumes"])
         self.assertNotIn("read_only", init)
         model = self.compose["services"]["miku-llm"]
         depends = model["depends_on"]

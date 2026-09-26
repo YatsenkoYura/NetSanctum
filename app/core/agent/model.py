@@ -31,7 +31,16 @@ SYSTEM_PROMPT = (
     "Keep the final answer to at most four short sentences."
 )
 TRUNCATION_NUDGE = (
-    "Your previous reply was cut off before the tool call. Do not explain: call exactly one tool right now."
+    "Your previous reply was cut off before the tool call. Do not explain: call exactly one tool right now. "
+    "A tool call is not complete until its arguments carry the values: an empty {} is rejected."
+)
+# A model that produced something unusable gets one more try. A small local model
+# commonly names the right tool and then hands back empty or unparsable arguments,
+# which is no more a provider failure than running out of budget mid-sentence is.
+RETRYABLE_REPLIES = (
+    "neither a tool call nor an answer",
+    "tool arguments were empty",
+    "tool arguments were not JSON",
 )
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_PROSE_ANSWER = 2_000
@@ -130,7 +139,7 @@ class OpenAICompatibleModel:
                 return step_from_completion(completion, known)
             except AgentUnavailableError as exc:
                 # A reasoning model can spend the whole budget thinking and send nothing.
-                if "neither a tool call nor an answer" in str(exc) and attempt == 1:
+                if attempt == 1 and any(reason in str(exc) for reason in RETRYABLE_REPLIES):
                     continue
                 raise
         raise AgentUnavailableError("the model did not return a usable tool call")
