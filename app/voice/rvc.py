@@ -240,8 +240,14 @@ def _build(model_dir: str, workspace: str):
     # dependency for everything else, so the decode is done here instead.
     audio_module.load_audio = _load_audio
     loadable, weight_root = _prepare_checkpoint(os.path.join(model_dir, checkpoint_file()), workspace)
-    # Upstream resolves a model name against this directory rather than taking a path.
+    # Upstream resolves models and its pitch model through directories in the
+    # environment rather than through arguments, and reads two of them while loading.
+    # Set here, or loading fails on a missing variable rather than on anything to do
+    # with the model - which is a much harder thing to read a log about.
     os.environ["weight_root"] = weight_root
+    os.environ["rmvpe_root"] = model_dir
+    os.environ["index_root"] = model_dir
+    os.environ["outside_index_root"] = model_dir
     controller = VC(Config())
     controller.get_vc(os.path.basename(loadable))
     return controller
