@@ -115,11 +115,28 @@ if ! grep -q '^REDIS_PASSWORD=' "$ENV_FILE" || grep -q '^REDIS_PASSWORD=change_m
 fi
 
 chmod 600 "$ENV_FILE"
+# Which host user the containers hand ./storage to. Filled in rather than shipped as
+# a value because a wrong number here is invisible until the storage directory stops
+# belonging to the person running the script, and a number copied from an example
+# file is wrong on every host whose user is not the first one created.
 if ! grep -q '^PUID=' "$ENV_FILE"; then
     echo "PUID=$(id -u)" >> "$ENV_FILE"
 fi
 if ! grep -q '^PGID=' "$ENV_FILE"; then
     echo "PGID=$(id -g)" >> "$ENV_FILE"
+fi
+# A .env written before these were filled in can carry a uid that is not this user's,
+# and the symptom is not a message about users: the storage directory simply stops
+# belonging to the person running the script. Said here, where the cause is known.
+CONFIGURED_PUID="$(sed -n 's/^PUID=//p' "$ENV_FILE" | tail -1)"
+CONFIGURED_PGID="$(sed -n 's/^PGID=//p' "$ENV_FILE" | tail -1)"
+if [ "$CONFIGURED_PUID" != "$(id -u)" ] || [ "$CONFIGURED_PGID" != "$(id -g)" ]; then
+    echo "WARNING: $ENV_FILE says PUID=$CONFIGURED_PUID PGID=$CONFIGURED_PGID,"
+    echo "         but you are $(id -un) (uid $(id -u), gid $(id -g))."
+    echo "         The containers hand ./storage to that uid, so it may not be yours to write."
+    echo "         To fix it, replace those two lines in $ENV_FILE with:"
+    echo "           PUID=$(id -u)"
+    echo "           PGID=$(id -g)"
 fi
 
 # Parse CLI arguments
