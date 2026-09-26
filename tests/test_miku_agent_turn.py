@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from app.core.agent.engine import AgentTurnResult
+from app.core.agent.engine import HISTORY_TURNS as AGENT_HISTORY_TURNS, AgentTurnRequest, AgentTurnResult
 from app.core.agent_client import AgentClient
 from app.modules.miku.agent_turn import (
     history_for_agent,
@@ -150,6 +150,22 @@ class AgentBridgeTests(unittest.TestCase):
             [("найди Re:Zero", "Нашла.")],
             [(turn.user, turn.assistant) for turn in history_for_agent(context)],
         )
+
+    def test_history_never_exceeds_what_the_runtime_contract_accepts(self):
+        # The session keeps more turns than the contract allows. Building the request
+        # from all of them raised a validation error inside the turn, so the user got a
+        # traceback instead of an answer.
+        context = MikuSessionContext(
+            history=[MikuConversationTurn(user=f"вопрос {i}", assistant=f"ответ {i}") for i in range(12)]
+        )
+        history = history_for_agent(context)
+        self.assertLessEqual(len(history), AGENT_HISTORY_TURNS)
+        # The contract itself is the assertion: building the request must not raise.
+        request = AgentTurnRequest(message="привет", history=history)
+        self.assertEqual(len(history), len(request.history))
+        # The most recent turns are the ones worth keeping.
+        self.assertEqual("вопрос 11", request.history[-1].user)
+        self.assertEqual("ответ 11", request.history[-1].assistant)
 
     def test_turn_streams_progress_before_the_result(self):
         client = self._client(self._handler(turn_stream()))

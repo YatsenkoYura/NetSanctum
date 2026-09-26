@@ -9,7 +9,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from app.core.agent.engine import AgentHistoryTurn, AgentProviderProfile, AgentTurnResult
+from pydantic import ValidationError
+
+from app.core.agent.engine import (
+    HISTORY_TURNS as AGENT_HISTORY_TURNS,
+    AgentHistoryTurn,
+    AgentProviderProfile,
+    AgentTurnResult,
+)
 from app.core.agent.references import AgentReference
 from app.core.agent_client import AgentClient, AgentRuntimeUnavailableError, AgentTurnProgress
 from app.modules.miku.schemas import (
@@ -121,6 +128,12 @@ def to_miku_reply(result: AgentTurnResult, *, command: MikuCommand = "respond") 
 
 
 def history_for_agent(context: "MikuSessionContext | None") -> list[AgentHistoryTurn]:
+    """The session keeps more turns than the runtime contract accepts, so trim here.
+
+    The bound comes from the contract rather than a number of its own: a session that
+    grew past it used to raise a validation error while building the request, which
+    surfaced as a traceback and a dead turn instead of a shorter conversation.
+    """
     if not context or not context.history:
         return []
     return [
@@ -128,8 +141,8 @@ def history_for_agent(context: "MikuSessionContext | None") -> list[AgentHistory
             user=turn.user[:HISTORY_TEXT_LIMIT],
             assistant=turn.assistant[:HISTORY_TEXT_LIMIT],
         )
-        for turn in context.history[-6:]
-    ]
+        for turn in context.history[-AGENT_HISTORY_TURNS:]
+    ][:AGENT_HISTORY_TURNS]
 
 
 async def runtime_capabilities(
@@ -265,6 +278,11 @@ async def run_agent_turn(
             return reply
     except AgentRuntimeUnavailableError as exc:
         logger.warning("agent runtime unavailable, falling back: %s", exc)
+        return None
+    except ValidationError as exc:
+        # Our own payload did not satisfy the contract we publish. That is our bug,
+        # not the user's, and it must not reach them as a traceback over the socket.
+        logger.error("agent turn request rejected by the contract: %s", str(exc)[:300])
         return None
     return None
 
