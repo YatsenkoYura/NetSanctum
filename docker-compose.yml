@@ -308,6 +308,8 @@ services:
       # this to 2 pre-loads the second language too, for roughly 200 MB more.
       VOICE_MAX_RESIDENT: ${VOICE_MAX_RESIDENT:-1}
       VOICE_LANG_DEFAULT: ru
+      # The character voice stage. Off until a conversion runtime is installed.
+      VOICE_TIMBRE: ${VOICE_TIMBRE:-0}
     volumes:
       - ${MIKU_VOICE_MODEL_DIR:-./storage/voice-models}:/models:ro
     read_only: true
@@ -384,6 +386,15 @@ services:
     restart: "no"
     environment:
       MODELS_DIR: /models
+      VOICE_FETCH_TIMBRE: ${VOICE_FETCH_TIMBRE:-0}
+      # The character voice: 1 GB of weights for a stage with no conversion
+      # runtime installed, so it is fetched only when asked for. The preset is
+      # published inside the zip rather than as a separate file, hence the archive
+      # name and the member the service reads.
+      VOICE_TIMBRE_MANIFEST: |
+        miku_default_rvc.zip|https://huggingface.co/aple/HatsuneMikuRVC/resolve/main/miku_default_rvc.zip|PK
+        hubert_base_layer12_32000.onnx|https://huggingface.co/ohnoitsaninja/rvc-base-onnx/resolve/main/onnx/hubert_base_layer12_32000.onnx|ONNX
+        rmvpe.onnx|https://huggingface.co/ohnoitsaninja/rvc-base-onnx/resolve/main/assets/rmvpe.onnx|ONNX
       # One file per line: name, url, magic. A proxy that answers with an error page
       # instead of the model is caught by the magic check rather than installed.
       # Recognition is the multilingual base, never the .en variant: both are the
@@ -398,8 +409,14 @@ services:
       - ./scripts/fetch_model.sh:/fetch-model.sh:ro
     entrypoint:
       - sh
-      - /fetch-model.sh
-      - --manifest
+      - -c
+      - |
+        sh /fetch-model.sh --manifest VOICE_MANIFEST
+        # A missing character voice is not a failed startup: the stage is off by
+        # default and the service reports that it is off.
+        if [ "$$VOICE_FETCH_TIMBRE" = "1" ]; then
+            VOICE_MANIFEST="$$VOICE_TIMBRE_MANIFEST" sh /fetch-model.sh --manifest VOICE_MANIFEST
+        fi
 
   # ── One-time storage ownership migration ───────────────
   storage-init:

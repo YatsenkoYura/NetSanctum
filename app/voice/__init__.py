@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from app.voice.residency import Residency
 from app.voice.stt import Transcriber
+from app.voice.timbre import Timbre
 from app.voice.tts import Synthesiser
 
 MODEL_DIR = os.environ.get("VOICE_MODEL_DIR", "/models")
@@ -52,7 +53,8 @@ class VoiceService:
         self.settings = settings
         self.residency = Residency(limit=settings.max_resident)
         self.transcriber = Transcriber(settings)
-        self.synthesiser = Synthesiser(settings, self.residency)
+        self.timbre = Timbre(settings)
+        self.synthesiser = Synthesiser(settings, self.residency, self.timbre)
 
     def health(self) -> dict:
         return {
@@ -62,4 +64,5 @@ class VoiceService:
             "resident": self.residency.resident(),
             "engines": self.synthesiser.available(),
             "default_lang": self.settings.default_lang,
+            "timbre": self.timbre.status().describe(),
         }

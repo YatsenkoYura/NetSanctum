@@ -54,9 +54,12 @@ def guess_language(text: str, default: str = "ru") -> str:
 
 
 class Synthesiser:
-    def __init__(self, settings, residency) -> None:
+    def __init__(self, settings, residency, timbre=None) -> None:
         self._settings = settings
         self._residency = residency
+        # Optional last stage, so a reply leaves the service in one voice rather
+        # than in whichever engine happened to speak it.
+        self._timbre = timbre
 
     def available(self) -> dict:
         """Which engines could run right now, without loading anything."""
@@ -132,7 +135,10 @@ class Synthesiser:
             )
         else:
             logger.info("synthesised %d characters in %s in %.2f s", len(text), lang, elapsed)
-        return result
+        if self._timbre is None:
+            return result
+        audio, media_type = result
+        return self._timbre.apply(audio), media_type
 
     async def _ru_engine(self, text: str, speaker: str | None):
         from app.voice.tts_ru import SileroVoice

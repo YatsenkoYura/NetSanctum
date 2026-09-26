@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.voice import VoiceService, build
 from app.voice.stt import TranscriptionError
+from app.voice.timbre import TimbreUnavailableError
 from app.voice.tts import MAX_TEXT_CHARS, SUPPORTED_LANGUAGES, SynthesisError
 
 # The service's own timings are the only way to see where a slow reply went, and
@@ -139,6 +140,10 @@ async def speech(body: SpeechRequest) -> Response:
             speaker=body.voice,
         )
     except SynthesisError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TimbreUnavailableError as exc:
+        # Asked for a voice this service cannot produce. Saying so beats returning
+        # audio in the plain engine's voice while the report claims a character.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return Response(
         content=audio,
