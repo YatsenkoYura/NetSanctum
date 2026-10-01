@@ -25,6 +25,7 @@ from app.core.agent.engine import (
     CascadeEngine,
 )
 from app.core.agent.primitives import AgentStep
+from app.core.agent.references import AgentReference
 
 SEARCH_CATALOG = [
     {
@@ -171,6 +172,7 @@ class Scenario:
     chapter: str = CHAPTER_TEXT
     supported: bool = True
     gap: str = ""
+    references: list[AgentReference] | None = None
 
 
 SCENARIOS: list[Scenario] = [
@@ -315,6 +317,22 @@ SCENARIOS: list[Scenario] = [
         steps=[search("Zero Escape")],
         expect=Expect(answer_contains="Пустой ответ"),
     ),
+    Scenario(
+        name="chatter_with_session_context_claims_nothing",
+        message="привет",
+        steps=[],
+        references=[
+            AgentReference(
+                ref="result:1",
+                module_id="video_archiver",
+                item_id="video-1",
+                kind="video",
+                title="Zero Escape finale",
+                playable=True,
+            )
+        ],
+        expect=Expect(answer_contains="Пустой ответ", refs=[], invocations=0),
+    ),
 ]
 
 
@@ -325,6 +343,7 @@ def run_scenario(scenario: Scenario) -> dict[str, Any]:
     request = AgentTurnRequest(
         message=scenario.message,
         budget=scenario.budget or AgentBudget(),
+        references=list(scenario.references or []),
     )
     try:
         result = asyncio.run(CascadeEngine(model, backend).run(request))

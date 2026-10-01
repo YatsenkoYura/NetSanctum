@@ -78,7 +78,7 @@ class MikuJobStatus(BaseModel):
 
 class MikuReplySegment(BaseModel):
     kind: Literal["acknowledgement", "response", "status"]
-    text: str = Field(min_length=1, max_length=500)
+    text: str = Field(min_length=1, max_length=2000)
     # Opt-out, not opt-in: a segment is spoken unless something decides otherwise.
     # Defaulting this to False silenced every reply, because nothing in the codebase
     # ever set it and the client reads the flag rather than assuming speech - the
@@ -89,7 +89,8 @@ class MikuReplySegment(BaseModel):
     @field_validator("text")
     @classmethod
     def normalize_text(cls, value: str) -> str:
-        value = " ".join(strip_emoji(value).split())
+        # Chat text may carry one emoji (persona); titles stay plain elsewhere.
+        value = " ".join(value.split())
         if not value:
             raise ValueError("Reply segment must not be blank")
         return value
@@ -97,23 +98,29 @@ class MikuReplySegment(BaseModel):
 
 class MikuReply(BaseModel):
     command: MikuCommand
-    text: str = Field(max_length=500)
+    text: str = Field(max_length=2000)
     mood: MikuMood = "neutral"
-    segments: list[MikuReplySegment] = Field(default_factory=list, max_length=4)
+    segments: list[MikuReplySegment] = Field(default_factory=list, max_length=6)
     references: list[MikuReference] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     client_action: Literal["open", "play"] | None = None
+    # Single result the client should open itself without asking. True only when
+    # there is exactly one referenced result and it is the one the agent acted on.
+    # The chat must not render Open/Play buttons for it again.
+    auto_open: bool = False
     question: str | None = Field(default=None, max_length=300)
     question_options: list[str] = Field(default_factory=list, max_length=4)
     exhausted: bool = False
 
     @model_validator(mode="after")
     def populate_legacy_segment(self):
-        self.text = " ".join(strip_emoji(self.text).split())
+        self.text = " ".join(self.text.split())
         if not self.text:
             raise ValueError("Reply text must not be blank")
+        if self.mood not in ("neutral", "happy", "confused", "thinking", "listening"):
+            self.mood = "neutral"
         if not self.segments:
-            self.segments = [MikuReplySegment(kind="response", text=self.text)]
+            self.segments = [MikuReplySegment(kind="response", text=self.text[:2000])]
         return self
 
 

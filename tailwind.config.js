@@ -7,7 +7,7 @@ const content = execFileSync(
 )
   .split("\0")
   .filter((path) => path.endsWith(".html") || path.endsWith(".py"));
-content.push("static/browser-runtime.js", "static/miku-assistant.js");
+content.push("static/browser-runtime.js", "static/miku-assistant.js", "static/miku-dashboard.js");
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {
@@ -52,7 +52,11 @@ module.exports = {
     "bg-amber-400",
     "bg-red-500",
     "bg-rose-500",
-    "text-emerald-500"
+    "text-emerald-500",
+    "border-rose-400",
+    "hover:bg-rose-400",
+    "hover:text-black",
+    "text-rose-400"
   ],
   theme: {
     extend: {

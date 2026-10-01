@@ -162,7 +162,22 @@ class CascadeEngineTests(unittest.TestCase):
         )
         result = run(CascadeEngine(model, StubBackend()))
         self.assertEqual("play", result.client_action)
+        self.assertEqual("result:1", result.client_ref)
         self.assertEqual("success", result.steps[1].status)
+
+    def test_first_act_wins_and_final_refs_point_at_it(self):
+        model = ScriptedModel(
+            [
+                search("Zero Escape"),
+                AgentStep(kind="tool", tool="act", arguments={"ref": "result:1", "action": "play"}),
+                AgentStep(kind="tool", tool="act", arguments={"ref": "result:2", "action": "open"}),
+                AgentStep(kind="final", tool="final", arguments={"answer": "Готово."}),
+            ]
+        )
+        result = run(CascadeEngine(model, StubBackend()))
+        self.assertEqual("play", result.client_action)
+        self.assertEqual("result:1", result.client_ref)
+        self.assertEqual(["result:1"], result.refs)
 
     def test_act_on_unplayable_result_is_reported_not_guessed(self):
         model = ScriptedModel(
@@ -410,6 +425,12 @@ def _empty_arguments_transport(calls: list[dict]):
 
 
 class ModelProtocolTests(unittest.TestCase):
+    def test_tool_choice_is_auto_for_chatter(self):
+        model = OpenAICompatibleModel("https://api.example.com/v1", "gemini")
+        payload = model._payload("привет", [], {})
+        self.assertEqual("auto", payload["tool_choice"])
+        self.assertTrue(payload["tools"] is not None)
+
     def test_completion_must_contain_exactly_one_known_tool(self):
         known = {"final", "read"}
         good = {
@@ -639,6 +660,162 @@ class ReferenceProjectionTests(unittest.TestCase):
         ]
         references = project_references("search.query.v1", "search", {"items": items})
         self.assertEqual(20, len(references))
+
+    def test_search_projection_prefers_snippet_and_keeps_score(self):
+        result = {
+            "items": [
+                {
+                    "source_module_id": "vault",
+                    "source_integration_id": "vault.search.documents.v1",
+                    "document_id": "note-1",
+                    "entity_type": "note",
+                    "title": "Zero Escape notes",
+                    "summary": "Long body text here",
+                    "matched_snippet": "notes about zero escape",
+                    "open_path": "/vault/dashboard",
+                    "score": 0.91,
+                }
+            ]
+        }
+        references = project_references("search.query.v1", "search", result)
+        self.assertEqual("notes about zero escape", references[0].summary)
+        self.assertAlmostEqual(0.91, references[0].score)
+
+
+class ToolCatalogTests(unittest.TestCase):
+    def test_property_hints_survive_schema_stripping(self):
+        tools = build_tool_catalog(
+            [
+                {
+                    "id": "search.global.v1",
+                    "contract": "search.query.v1",
+                    "module_id": "search",
+                    "description": "Search every indexed module",
+                    "request_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search terms and titles"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["query"],
+                    },
+                    "effects": {"effect": "read", "external_io": False, "idempotent": True},
+                }
+            ]
+        )
+        search_tool = next(item for item in tools if item.name == "search_global_v1")
+        self.assertIn("Search terms", search_tool.parameters["properties"]["query"]["description"])
+
+    def test_local_reads_come_before_remote_writes(self):
+        tools = build_tool_catalog(
+            [
+                {
+                    "id": "media.video.archive.v1",
+                    "module_id": "video_archiver",
+                    "description": "Queue a remote download",
+                    "request_schema": {"type": "object", "properties": {}},
+                    "effects": {"effect": "create", "external_io": True, "idempotent": False},
+                },
+                {
+                    "id": "search.global.v1",
+                    "contract": "search.query.v1",
+                    "module_id": "search",
+                    "description": "Search every indexed module",
+                    "request_schema": {"type": "object", "properties": {}},
+                    "effects": {"effect": "read", "external_io": False, "idempotent": True},
+                },
+            ]
+        )
+        names = [tool.name for tool in tools if tool.kind == "integration"]
+        self.assertEqual(["search_global_v1", "media_video_archive_v1"], names)
+
+    def test_unknown_argument_fails_with_a_hint(self):
+        from app.core.agent.engine import _validate
+
+        tools = build_tool_catalog(
+            [
+                {
+                    "id": "search.global.v1",
+                    "contract": "search.query.v1",
+                    "module_id": "search",
+                    "description": "Search",
+                    "request_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                    "effects": {"effect": "read", "external_io": False, "idempotent": True},
+                }
+            ]
+        )
+        search_tool = next(item for item in tools if item.name == "search_global_v1")
+        with self.assertRaises(ValueError) as raised:
+            _validate(search_tool, {"query": "x", "modulle_ids": ["music"]})
+        self.assertIn("unknown argument", str(raised.exception))
+        self.assertIn("query", str(raised.exception))
+
+    def test_unknown_reference_does_not_ban_read_and_act(self):
+        model = ScriptedModel(
+            [
+                # Batched guess: read before search ran. Must not ban the tool.
+                AgentStep(kind="tool", tool="read", arguments={"ref": "result:9"}),
+                search("Zero Escape"),
+                AgentStep(kind="tool", tool="read", arguments={"ref": "result:2"}),
+                final("Прочитала.", "result:2"),
+            ]
+        )
+        backend = StubBackend()
+        result = run(CascadeEngine(model, backend))
+        self.assertEqual("Прочитала.", result.answer)
+        self.assertEqual([["alllib", "chapter-3"]], [list(item) for item in backend.reads])
+        state_with_failure = (
+            next(state for state in model.seen_states if state["failed_steps"])
+            if any(state["failed_steps"] for state in model.seen_states)
+            else None
+        )
+        self.assertIsNone(state_with_failure)
+
+    def test_prose_only_turn_claims_no_references(self):
+        # Chatter under tool_choice=auto: the model answers directly, no tool ran.
+        # Session references travel along for transparency but must not be presented
+        # as the answer's subject.
+        model = ScriptedModel([final("Привет! Чем помочь?")])
+        backend = StubBackend()
+        request = AgentTurnRequest(
+            message="привет",
+            references=[
+                AgentReference(
+                    ref="result:1",
+                    module_id="video_archiver",
+                    item_id="video-1",
+                    kind="video",
+                    title="Zero Escape finale",
+                    playable=True,
+                )
+            ],
+        )
+        result = run(CascadeEngine(model, backend), request)
+        self.assertEqual("Привет! Чем помочь?", result.answer)
+        self.assertEqual([], result.refs)
+        self.assertEqual([], backend.invocations)
+        self.assertEqual(1, len(result.references))
+
+    def test_compact_state_shows_summary_and_score(self):
+        from app.core.agent.engine import _compact_reference
+
+        reference = AgentReference(
+            ref="result:1",
+            module_id="vault",
+            item_id="note-1",
+            kind="note",
+            title="Zero Escape notes",
+            summary="notes about zero escape",
+            score=0.91,
+            readable=True,
+        )
+        compacted = _compact_reference(reference)
+        self.assertEqual("notes about zero escape", compacted["summary"])
+        self.assertAlmostEqual(0.91, compacted["score"])
 
 
 if __name__ == "__main__":

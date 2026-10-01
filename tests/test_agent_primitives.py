@@ -109,7 +109,9 @@ class AgentPrimitiveTests(unittest.TestCase):
         self.assertIn("required_terms", schema["properties"])
         self.assertEqual(["query"], schema["required"])
         self.assertNotIn("title", schema)
-        self.assertNotIn("description", schema["properties"]["query"])
+        # One short hint per property survives so the model knows what each
+        # argument means; long prose (titles, maxLength) is still dropped.
+        self.assertLessEqual(len(schema["properties"]["query"]["description"]), 120)
         self.assertNotIn("maxLength", schema["properties"]["query"])
 
     def test_primitive_schemas_match_their_models(self):

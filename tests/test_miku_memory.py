@@ -149,6 +149,13 @@ class MikuMemoryIntegrationTests(unittest.TestCase):
         unrelated = self._search(MikuMemorySearchRequest(query="квантовая физика"))
         self.assertEqual([], unrelated.items)
 
+    def test_recall_finds_a_match_past_the_first_page(self):
+        self._write(MikuMemoryWriteRequest(key="old_pizza", value={"note": "люблю пиццу"}))
+        for index in range(30):
+            self._write(MikuMemoryWriteRequest(key=f"fact_{index:02d}", value={"note": "проходной факт"}))
+        found = self._search(MikuMemorySearchRequest(query="пиццу", limit=5))
+        self.assertTrue([item for item in found.items if item.key == "old_pizza"])
+
     def test_expired_profile_fact_is_not_recalled(self):
         self._write(
             MikuMemoryWriteRequest(

@@ -239,8 +239,35 @@
         return button;
     }
 
+    // Allowed navigation targets, mirroring app/modules/miku/deep_link.py.
+    // Anything else never becomes a link: a renamed dashboard route must not
+    // turn the chat's Open buttons into 404s or open redirects.
+    const OPEN_PATH_PREFIXES = {
+        alllib: ['/alllib/reader/', '/alllib/dashboard'],
+        music: ['/music/dashboard'],
+        vault: ['/vault/dashboard'],
+        video_archiver: ['/video-archiver/dashboard'],
+        youtube: ['/youtube/watch/', '/youtube/dashboard'],
+    };
+
+    function allowedOpenUrl(moduleId, openUrl) {
+        if (!openUrl) return null;
+        let path;
+        try {
+            const url = new URL(openUrl, window.location.href);
+            if (url.origin !== window.location.origin) return null;
+            path = url.pathname + url.search;
+        } catch (_error) {
+            return null;
+        }
+        const prefixes = OPEN_PATH_PREFIXES[moduleId];
+        if (!prefixes || !prefixes.some(prefix => path.startsWith(prefix))) return null;
+        return path;
+    }
+
     function moduleTarget(item) {
-        if (item.open_url) return item.open_url;
+        const openUrl = allowedOpenUrl(item.module_id, item.open_url);
+        if (openUrl) return openUrl;
         const dashboards = {
             music: '/music/dashboard',
             video_archiver: '/video-archiver/dashboard',
@@ -260,24 +287,10 @@
         if (!window.netSanctumNavigate?.(href)) window.location.assign(url.href);
     }
 
-    async function confirmAction(action, button) {
-        button.disabled = true;
-        button.textContent = 'Confirming...';
-        const response = await fetch('/api/miku/actions/confirm', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({confirmation_token: action.confirmation_token}),
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-            button.disabled = false;
-            button.textContent = 'Confirm';
-            throw new Error(payload.detail || 'Action failed');
-        }
-        button.textContent = 'Confirmed';
-        line(payload.message);
-        if (payload.task_id) pollJob(payload.task_id);
-    }
+    // NOTE: server-side action confirmation (/api/miku/actions/confirm) does not
+    // exist. Mutating steps are undone via /api/miku/cascades/{id}/undo/{step}
+    // from the dashboard. This block is intentionally gone: no dead endpoint.
+
 
     async function pollJob(taskId) {
         try {
@@ -410,6 +423,10 @@
 
     function renderReply(payload, opts = {}) {
         const silent = !!opts.silent;
+        if (payload.mood) {
+            launcher.dataset.mood = payload.mood;
+            launcher.textContent = payload.mood === 'neutral' ? 'MIKU' : `MIKU · ${payload.mood}`;
+        }
         const segments = payload.segments?.length ? payload.segments : [{text: payload.text, speak: true}];
         if (!silent) {
             transcript.push({
@@ -427,31 +444,25 @@
         } finally {
             restoringTranscript = stash;
         }
+        // Single auto-opened result needs no buttons: it is already on screen.
+        const autoOpened = !silent && !!payload.auto_open && (payload.references || []).length === 1;
         (payload.references || []).forEach((item, index) => {
             const row = document.createElement('div');
             row.className = 'flex flex-wrap items-center gap-2 border-l-2 border-zinc-800 py-1 pl-3';
             const text = document.createElement('span');
             text.className = 'min-w-0 flex-1 font-mono text-xs text-zinc-300';
             const details = [item.module_id, item.subtitle].filter(Boolean).join(' · ');
-            text.textContent = `${index + 1}. ${item.title}${details ? `\n${details}` : ''}\nresult:${index + 1}`;
+            text.textContent = `${index + 1}. ${item.title}${details ? `\n${details}` : ''}\nresult:${index + 1}${autoOpened && index === 0 ? '\n(opened)' : ''}`;
             text.classList.add('whitespace-pre-line');
             row.appendChild(text);
-            if (moduleTarget(item)) row.appendChild(actionButton('Open', () => openReference(item)));
-            if (item.playable) row.appendChild(actionButton('Play', () => openReference(item, true)));
+            if (!autoOpened) {
+                if (moduleTarget(item)) row.appendChild(actionButton('Open', () => openReference(item)));
+                if (item.playable) row.appendChild(actionButton('Play', () => openReference(item, true)));
+            }
             output.appendChild(row);
         });
         for (const warning of payload.warnings || []) line(`Warning: ${warning}`, 'error');
-        if (payload.pending_action) {
-            const row = document.createElement('div');
-            row.className = 'flex items-center gap-3 border border-amber-900 bg-amber-950/20 p-3';
-            const summary = document.createElement('span');
-            summary.className = 'flex-1 font-mono text-[10px] text-amber-200';
-            summary.textContent = `${payload.pending_action.label}: ${payload.pending_action.summary}`;
-            const confirm = actionButton('Confirm', () => confirmAction(payload.pending_action, confirm).catch(error => line(error.message, 'error')), true);
-            row.append(summary, confirm);
-            output.appendChild(row);
-        }
-        if (!silent && payload.client_action && payload.references?.length === 1) {
+        if (!silent && payload.auto_open && payload.client_action && payload.references?.length === 1) {
             openReference(payload.references[0], payload.client_action === 'play');
         }
         if (!silent) speak(segments.filter(segment => segment.speak).map(segment => segment.text).join(' '));
@@ -508,6 +519,22 @@
             connect();
         } finally {
             status.textContent = socket?.readyState === WebSocket.OPEN ? 'Realtime' : 'REST fallback';
+        }
+    }
+
+    async function pollNotifications() {
+        if (pageSuspended) return;
+        try {
+            const response = await fetch('/api/miku/notifications', {cache: 'no-store'});
+            if (!response.ok) return;
+            const payload = await response.json();
+            for (const item of payload.items || []) {
+                line(`MIKU: ${item.text}`);
+            }
+        } catch (_error) {
+            // Notifications are best effort; the next poll retries.
+        } finally {
+            window.setTimeout(pollNotifications, 30000);
         }
     }
 
@@ -900,6 +927,7 @@
     if (rememberedConversation) conversationId = rememberedConversation;
     loadConversations().then(() => (conversationId !== null ? openConversation(conversationId) : null));
     connect();
+    window.setTimeout(pollNotifications, 10000);
     // Resume always-listening quietly after navigation; failures stay silent
     // here since the user already opted in on a previous page.
     if (wakeEnabled && SpeechRecognition && !recording) {

@@ -61,7 +61,7 @@ WHERE
         OR word_similarity(:query_norm, d.normalized_title) >= 0.60
     )
 __REQUIRED_FILTER__
-ORDER BY calculated_score DESC, d.source_module_id, d.normalized_title, d.document_id
+ORDER BY calculated_score DESC, d.normalized_title, d.document_id
 LIMIT :limit;
 """
 
@@ -351,6 +351,67 @@ def _token_match(token: str, word: str) -> float:
     return word_similarity(token, word)
 
 
+PLAY_VERBS = frozenset(
+    {
+        "включи",
+        "включить",
+        "слушай",
+        "слушать",
+        "смотри",
+        "смотреть",
+        "покажи",
+        "play",
+        "listen",
+        "watch",
+        "поставь",
+    }
+)
+READ_VERBS = frozenset(
+    {
+        "прочитай",
+        "прочитать",
+        "читай",
+        "открой",
+        "открыть",
+        "покажи",
+        "read",
+        "open",
+        "show",
+    }
+)
+
+
+def _capability_boost(query: str, *, playable: bool, readable: bool) -> float:
+    """Small relevance nudge so 'включи' prefers playable and 'прочитай' readable."""
+    words = set(core_normalize_search_text(query).split())
+    if playable and words & PLAY_VERBS:
+        return 0.05
+    if readable and words & READ_VERBS:
+        return 0.05
+    return 0.0
+
+
+def _snippet(title: str | None, subtitle: str | None, body: str | None, query: str) -> str | None:
+    """Best fragment showing why the document matched, for the model to choose by."""
+    terms = [term for term in core_normalize_search_text(query).split() if len(term) >= 3]
+    if not terms:
+        return None
+    for source in (title, subtitle, body):
+        if not source:
+            continue
+        lowered = source.casefold()
+        for term in terms:
+            stem = term[:4] if len(term) >= 4 else term
+            hit = lowered.find(term)
+            if hit < 0:
+                hit = lowered.find(stem)
+            if hit >= 0:
+                start = max(0, hit - 40)
+                fragment = " ".join(source[start : hit + 120].split())
+                return fragment[:200] or None
+    return None
+
+
 def _contains_required_terms(search_text: str, required_terms: list[str]) -> bool:
     words = set(search_text.split())
     return all(normalize_search_text(term) in words for term in required_terms)
@@ -431,8 +492,13 @@ async def global_search(
 ) -> GlobalSearchResult:
     if context.consumer_id != "miku":
         raise IntegrationUnavailableError("Global search is currently scoped to MIKU")
-    async with refresh_lock:
-        warnings = await refresh_index(context)
+    if refresh_lock.locked():
+        # Another turn is already syncing the index. Searching the current snapshot
+        # beats queueing every turn behind one lock.
+        warnings = ["search index refresh is running"]
+    else:
+        async with refresh_lock:
+            warnings = await refresh_index(context)
 
     queries = list(dict.fromkeys([request.query, *request.alternate_queries]))
     normalized_queries = [normalize_search_text(query) for query in queries]
@@ -478,6 +544,11 @@ async def global_search(
                 existing = merged.get(key)
                 if existing and existing.score >= score:
                     continue
+                snippet = _snippet(row.title, row.subtitle, row.body, raw_query)
+                score = min(
+                    score + _capability_boost(request.query, playable=row.playable, readable=row.readable),
+                    1.0,
+                )
                 merged[key] = GlobalSearchHit(
                     source_module_id=row.source_module_id,
                     source_integration_id=row.source_integration_id,
@@ -485,7 +556,8 @@ async def global_search(
                     entity_type=row.entity_type,
                     title=row.title,
                     subtitle=row.subtitle,
-                    summary=(row.body[:300] if row.body else None),
+                    summary=(snippet or (row.body[:300] if row.body else None)),
+                    matched_snippet=snippet,
                     open_path=row.open_path,
                     playable=row.playable,
                     readable=row.readable,
@@ -493,7 +565,7 @@ async def global_search(
                 )
         hits = sorted(
             merged.values(),
-            key=lambda item: (-item.score, item.source_module_id, item.title, item.document_id),
+            key=lambda item: (-item.score, item.title, item.document_id),
         )[: request.limit]
         return GlobalSearchResult(items=hits, stale=bool(warnings), warnings=warnings)
 
@@ -524,7 +596,6 @@ async def global_search(
         ),
         key=lambda item: (
             -item[0],
-            item[1].source_module_id,
             item[1].normalized_title,
             item[1].document_id,
         ),
@@ -533,6 +604,11 @@ async def global_search(
     for score, document in ranked:
         if score < 0.20:
             continue
+        snippet = _snippet(document.title, document.subtitle, document.body, request.query)
+        score = min(
+            score + _capability_boost(request.query, playable=document.playable, readable=document.readable),
+            1.0,
+        )
         hits.append(
             GlobalSearchHit(
                 source_module_id=document.source_module_id,
@@ -541,7 +617,8 @@ async def global_search(
                 entity_type=document.entity_type,
                 title=document.title,
                 subtitle=document.subtitle,
-                summary=(document.body[:300] if document.body else None),
+                summary=(snippet or (document.body[:300] if document.body else None)),
+                matched_snippet=snippet,
                 open_path=document.open_path,
                 playable=document.playable,
                 readable=document.readable,

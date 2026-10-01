@@ -148,13 +148,16 @@ async def search_memory(
     terms = query_terms(request.query)
     items: list[MikuMemoryEntry] = []
     now = datetime.now(UTC)
+    # Overscan: the match happens in Python, so the SQL limit must be wider than
+    # the requested one — otherwise a match past the first N rows is lost.
+    overscan = max(request.limit * 5, 50)
 
     if "profile" in scopes:
         statement = (
             select(MikuProfileMemory)
             .where(MikuProfileMemory.user_id == user_id)
             .order_by(MikuProfileMemory.updated_at.desc())
-            .limit(request.limit)
+            .limit(overscan)
         )
         for record in await context.session.scalars(statement):
             expires_at = _aware(record.expires_at)
@@ -179,7 +182,7 @@ async def search_memory(
             select(MikuEpisodeMemory)
             .where(MikuEpisodeMemory.user_id == user_id)
             .order_by(MikuEpisodeMemory.occurred_at.desc())
-            .limit(request.limit)
+            .limit(overscan)
         )
         for record in await context.session.scalars(statement):
             if not _matches(f"{record.summary} {record.subject or ''}", terms):
@@ -263,11 +266,12 @@ async def search_notes(
 ) -> MikuNoteSearchResult:
     """Read back what the agent decided to carry forward in this conversation."""
     conversation_id = await _conversation_id(context)
+    overscan = max(request.limit * 5, 50)
     statement = (
         select(MikuConversationNote)
         .where(MikuConversationNote.conversation_id == conversation_id)
         .order_by(MikuConversationNote.id.desc())
-        .limit(request.limit)
+        .limit(overscan)
     )
     terms = query_terms(request.query)
     items: list[MikuNoteEntry] = []
@@ -275,6 +279,8 @@ async def search_notes(
         if not _matches(f"{record.note_key} {record.value_json}", terms):
             continue
         items.append(MikuNoteEntry(key=record.note_key, value=dict(record.value_json or {})))
+        if len(items) >= request.limit:
+            break
     return MikuNoteSearchResult(items=items)
 
 

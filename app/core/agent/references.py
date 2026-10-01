@@ -31,6 +31,8 @@ class AgentReference(BaseModel):
     playable: bool = False
     readable: bool = False
     open_url: str | None = Field(default=None, max_length=1000)
+    # Search relevance 0..1. The model picks by this instead of guessing from titles.
+    score: float = Field(default=0.0, ge=0, le=1)
 
     @property
     def resource_endpoint(self) -> str | None:
@@ -65,11 +67,12 @@ def project_references(
                     kind=str(item.get("entity_type") or "item")[:64],
                     title=_clip(item.get("title"), MAX_TITLE_LENGTH) or "Untitled",
                     subtitle=_clip(item.get("subtitle"), MAX_TITLE_LENGTH),
-                    summary=_clip(item.get("summary"), MAX_SUMMARY_LENGTH),
+                    summary=_clip(item.get("matched_snippet") or item.get("summary"), MAX_SUMMARY_LENGTH),
                     entity_type=_clip(item.get("entity_type"), 64),
                     playable=bool(item.get("playable")),
                     readable=bool(item.get("readable")),
                     open_url=_clip(item.get("open_path"), 1000),
+                    score=float(item.get("score") or 0.0),
                 )
             )
         return references

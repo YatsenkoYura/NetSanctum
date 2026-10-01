@@ -85,6 +85,7 @@ class AgentTurnResult(BaseModel):
     mood: str = Field(default="neutral", max_length=16)
     refs: list[str] = Field(default_factory=list, max_length=20)
     client_action: str | None = Field(default=None, max_length=8)
+    client_ref: str | None = Field(default=None, max_length=12)
     question: str | None = Field(default=None, max_length=300)
     question_options: list[str] = Field(default_factory=list, max_length=4)
     steps: list[AgentStepRecord] = Field(default_factory=list, max_length=MAX_EXECUTED_STEPS)
@@ -164,6 +165,7 @@ class CascadeEngine:
         final_from_model = False
         question: AgentAskRequest | None = None
         client_action: str | None = None
+        client_ref: str | None = None
 
         for index in range(request.budget.max_steps):
             if time.monotonic() - started > request.budget.wall_clock_seconds:
@@ -188,7 +190,11 @@ class CascadeEngine:
                 await progress("error", {"reason": str(exc)[:200]})
                 break
             if step.queued and not closing:
-                pending.extend(step.queued)
+                # Drain at most a few queued calls: a model that batches search +
+                # read + act in one reply guesses refs before search ran. Let it
+                # re-plan on fresh state instead of failing blind calls in a row.
+                pending.extend(step.queued[:4])
+                del pending[4:]
             if step.scratchpad and not skeleton:
                 skeleton = self._skeleton_from_scratchpad(step.scratchpad)
             if step.kind == "final":
@@ -265,11 +271,17 @@ class CascadeEngine:
                 },
             )
             if outcome.get("client_action"):
-                client_action = str(outcome["client_action"])
+                # First successful act wins: later acts must not silently
+                # redirect the client to a different result.
+                if client_action is None:
+                    client_action = str(outcome["client_action"])
+                    client_ref = str(outcome.get("ref") or "") or None
             # A step is only progress if it brought back something the model has not seen.
             # Progress means the model learned something it did not already have.
             learned.append(added > 0 or bool(outcome.get("text")))
-            if outcome.get("status") == "error":
+            if outcome.get("status") == "error" and "Unknown reference" not in str(
+                outcome.get("error") or ""
+            ):
                 failed.add(tool.name)
 
         if final is None and question is None:
@@ -280,13 +292,22 @@ class CascadeEngine:
 
         # Only attach results the model itself did not mention when the model spoke:
         # an engine-generated message must not claim to be about them.
+        # When the model acted on one result but forgot to reference it, attach
+        # exactly that result instead of the first three. A prose-only turn (no
+        # executed steps, e.g. chatter under tool_choice=auto) claims nothing:
+        # attaching session references to it would present unmentioned results
+        # as the answer's subject.
         if final is not None and final_from_model and not final.refs:
-            final.refs = [reference.ref for reference in references[:3]]
+            if client_ref and any(reference.ref == client_ref for reference in references):
+                final.refs = [client_ref]
+            elif executed:
+                final.refs = [reference.ref for reference in references[:3]]
 
         return AgentTurnResult(
             answer=final.answer if final else "",
             refs=list(final.refs) if final else [],
             client_action=client_action,
+            client_ref=client_ref,
             question=question.question if question else None,
             question_options=list(question.options) if question else [],
             steps=records,
@@ -405,7 +426,10 @@ class CascadeEngine:
         request = AgentReadRequest.model_validate(arguments)
         reference = _find_reference(request.ref, references)
         if reference is None:
-            raise ValueError(f"Unknown reference {request.ref}")
+            raise ValueError(
+                f"Unknown reference {request.ref}: it came from a step that has not run yet "
+                "or a result that was never returned. Search first, then use a ref from state."
+            )
         payload = await self.backend.read(reference.module_id, reference.item_id, request.max_chars)
         text = str(payload.get("text") or "")[:STEP_RESULT_TEXT_LIMIT]
         kind = str(payload.get("kind") or "text")
@@ -493,7 +517,10 @@ class CascadeEngine:
         request = AgentActRequest.model_validate(arguments)
         reference = _find_reference(request.ref, references)
         if reference is None:
-            raise ValueError(f"Unknown reference {request.ref}")
+            raise ValueError(
+                f"Unknown reference {request.ref}: it came from a step that has not run yet "
+                "or a result that was never returned. Search first, then use a ref from state."
+            )
         target = reference.open_url
         if request.action == "play" and not reference.playable:
             raise ValueError("This result cannot be played")
@@ -532,6 +559,8 @@ def _compact_reference(reference: AgentReference) -> dict[str, Any]:
         "id": reference.item_id,
         "kind": reference.kind,
         "title": reference.title[:STATE_TITLE_LIMIT],
+        "summary": (reference.summary or "")[:120],
+        "score": round(reference.score, 2),
         "playable": reference.playable,
         "readable": reference.readable,
     }
@@ -549,9 +578,15 @@ def _validate(tool: AgentTool, arguments: dict[str, Any]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"missing arguments: {', '.join(missing[:3])}")
     properties = schema.get("properties") or {}
+    additional = schema.get("additionalProperties")
     for name, value in arguments.items():
         expected = properties.get(name)
         if not expected:
+            # Hallucinated parameters must fail here with a hint, not deep inside
+            # the integration as a 422 the model cannot map back to its call.
+            if additional is not True:
+                known = ", ".join(sorted(properties)[:6]) or "no arguments"
+                raise ValueError(f"unknown argument {name!r} for {tool.name}; known: {known}")
             continue
         expected_type = expected.get("type")
         if expected_type == "string" and not isinstance(value, str):

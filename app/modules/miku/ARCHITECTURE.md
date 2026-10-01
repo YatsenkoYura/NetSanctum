@@ -12,13 +12,19 @@ executes those calls.
    interact with system data are still tool requests.
 3. NetSanctum validates the selected integration, input schema, effect, consumer scope, and current
    result references.
-4. Read calls execute immediately. Create calls stop at a signed, single-use confirmation preview.
+4. Read calls execute immediately. Create calls execute through their integration
+   and are recorded with an undo plan; the owner reverses them from the cascade log.
    Update, delete, and execute effects are not available to the companion.
 5. After a read call, the runtime receives only sanitized observations and writes a short grounded
    response. It cannot invoke another API during this phase.
 6. A read plan may request `open` or `play` for its first result. NetSanctum applies that action only
-   after checking the returned reference and its resource capability.
+   after checking the returned reference and its resource capability. The client auto-opens
+   exactly once: a single referenced result that the agent acted on (`auto_open`). Multiple
+   results never auto-open; the owner picks via buttons or a clarifying question. Every
+   navigation target is validated against the `deep_link` allowlist, so a renamed dashboard
+   route cannot turn Open buttons into 404s or open redirects.
 7. The client renders ordered response segments and sends only segments marked `speak` to TTS.
+   The reply carries `mood` (neutral/happy/confused/thinking/listening); the launcher reflects it.
 
 All local-material discovery uses the private `search.global.v1` integration. Module-specific
 `library.viewer.v1` APIs are hidden from the model catalog, so search, selection, opening, and
@@ -37,7 +43,12 @@ transition to `clarify`. The graph has a hard step limit and never performs inte
 
 Direct conversation is a one-model-call fast path. A tool-assisted answer uses a planning call and a
 grounded response call. Provider failure falls back to a bounded server-rendered response without
-changing execution policy.
+changing execution policy. The wire format uses `tool_choice=auto`: chatter that needs no tools
+is answered in prose (grounded as the final answer with no references attached), while anything
+needing facts still goes through tool calls per the system prompt — forcing a call on every step
+made even greetings burn a search. A prose-only turn never inherits session references; the
+`final` tool instruction carries the MIKU voice rules (brief, warm, at most one emoji, never
+narrate an action the client performs), mirroring `persona.md`.
 
 Each engine (chat, speech-to-text, speech-to-speech) runs in one of three modes, chosen per engine
 in provider settings: `api` (third-party OpenAI-compatible endpoint), `local` (self-hosted URL such
@@ -72,17 +83,41 @@ MIKU memory now has three explicit layers:
 Only `session` memory may contain raw recent conversation text, and it expires with the session. `profile`
 and `episodic` memory store structured facts and short summaries only, never raw transcripts. Neither
 layer is written to the audit log. Any long-term memory feature must expose a clear-memory action and a
-reviewable representation instead of silently accumulating hidden history.
+reviewable representation instead of silently accumulating hidden history. Forgetting is a first-class
+right: `DELETE /api/miku/memory` removes one fact or episode. A background pass consolidates stale
+threads (>24h) into extractive episodic summaries, idempotently and without an LLM.
+
+## Initiative
+
+The worker cannot reach open sockets, so background notices wait in Redis per owner
+(`miku:notify:{user_id}`) and the side chat polls `GET /api/miku/notifications`; reading clears
+the queue. Finished and failed background tasks notify once and stop. `GET /api/miku/briefing`
+gathers open tasks, recent episodes, and recent turns into a bounded fact list the chat turns
+into prose on request.
+
+Provider settings are cached per owner for 60s (invalidated on save); every turn logs
+`providers_ms` and `turn_ms` with command and result count, never text.
+
+## File layout
+
+- `router.py`: HTTP + WebSocket endpoints only. Session state lives in `context_store.py`,
+  speech chunking and voice bounds in `speech.py`.
+- `deep_link.py`: the only navigation targets the chat may use, with a test pinning every
+  module's published `open_path`.
+- `persona.md`: voice, mood mapping, and initiative rules the grounded answer follows.
 
 ## Response contract
 
-`MikuReply.text` remains the final text for compatibility. `MikuReply.segments` is the presentation and
-speech contract:
+`MikuReply.text` remains the final text for compatibility (up to 2000 chars; chat text may
+carry persona emoji, titles stay plain). `MikuReply.segments` is the presentation and
+speech contract (up to 6 segments):
 
 - `acknowledgement`: a natural pre-tool phrase;
 - `response`: the grounded final answer;
-- `status`: non-conversational progress information;
-- `confirmation`: a mutation preview, never spoken by default.
+- `status`: non-conversational progress information.
+
+Mutation previews are not separate segments: mutating steps are recorded in the
+cascade log and undone via `/api/miku/cascades/{id}/undo/{step}`.
 
 The socket transport streams `turn.partial` events (acknowledgement text, tool result counts) before
 the final `turn.result`/`turn.completed`, so the client feels alive without waiting for the full turn.

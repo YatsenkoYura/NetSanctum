@@ -25,6 +25,8 @@ TOOL_NAME_PATTERN = re.compile(r"[^a-z0-9_]+")
 # A small model pays for every token of the catalog, on every single step.
 MAX_TOOL_DESCRIPTION = 200
 MAX_ENUM_VALUES = 8
+# Property help the model actually needs to pick arguments. Kept short on purpose.
+MAX_PROPERTY_DESCRIPTION = 120
 
 PRIMITIVE_DESCRIPTIONS: dict[str, str] = {
     "read": (
@@ -34,7 +36,11 @@ PRIMITIVE_DESCRIPTIONS: dict[str, str] = {
     "fetch": ("Read a public https page as text. Use it when the answer lives outside the local library."),
     "act": "Show a result to the user: open it on screen, or start playing it.",
     "ask": "Ask the user a short question when the request is ambiguous. Ends the turn.",
-    "final": "Give the final answer. Use only facts and references from the steps you executed.",
+    "final": (
+        "Give the final answer from executed steps only. Answer briefly like MIKU: warm, "
+        "max four short sentences, one emoji at most, never narrate an action the client "
+        "already performs."
+    ),
 }
 
 
@@ -46,14 +52,17 @@ def tool_name(integration_id: str) -> str:
 def _strip_schema_noise(schema: dict[str, Any]) -> dict[str, Any]:
     """Keep tool schemas small: models follow titles and long descriptions poorly.
 
-    Property *names* are kept, everything descriptive inside a property is dropped.
+    Property *names* are kept, plus one short hint per property so the model knows
+    what each argument means. Without it the model guesses filters blindly.
     """
-    keywords = {"type", "properties", "required", "additionalProperties", "enum", "items"}
+    keywords = {"type", "properties", "required", "additionalProperties", "enum", "items", "description"}
 
     def walk(node: Any) -> Any:
         if not isinstance(node, dict):
             return node
         compacted = {key: value for key, value in node.items() if key in keywords}
+        if isinstance(compacted.get("description"), str):
+            compacted["description"] = " ".join(compacted["description"].split())[:MAX_PROPERTY_DESCRIPTION]
         properties = compacted.get("properties")
         if isinstance(properties, dict):
             compacted["properties"] = {name: walk(sub) for name, sub in properties.items()}
@@ -157,9 +166,15 @@ def integration_tools(catalog: list[dict[str, Any]]) -> list[AgentTool]:
 
 
 def build_tool_catalog(catalog: list[dict[str, Any]]) -> list[AgentTool]:
-    """Fixed primitives first, then every integration the consumer may call."""
+    """Fixed primitives first, then integrations: local private reads before external I/O.
+
+    A small model picks the first plausible tool, so order is policy. Reads without
+    external I/O come first, mutating and remote tools last.
+    """
     tools = _primitive_tools()
-    tools.extend(integration_tools(catalog))
+    integrations = integration_tools(catalog)
+    integrations.sort(key=lambda tool: (tool.effect != "read", tool.external_io, tool.name))
+    tools.extend(integrations)
     return tools
 
 

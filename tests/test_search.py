@@ -222,6 +222,30 @@ class SearchContractTests(unittest.TestCase):
         self.assertEqual(["Zero Escape finale", "Zero Hour"], [item.title for item in result.items])
         self.assertGreater(result.items[0].score, result.items[1].score)
 
+    def test_global_search_attaches_a_snippet_and_boosts_playable(self):
+        documents = [
+            indexed_document("Zero Escape", body="Final episode walkthrough"),
+            indexed_document("Zero Escape", body="Final episode walkthrough"),
+        ]
+        documents[0].playable = True
+        documents[0].document_id = "playable-1"
+        documents[1].document_id = "text-1"
+        session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: documents)))
+        context = IntegrationContext(
+            session=session,
+            user=SimpleNamespace(id=1),
+            registry=SimpleNamespace(),
+            consumer_id="miku",
+        )
+        with patch("app.modules.search.integrations.refresh_index", AsyncMock(return_value=[])):
+            result = asyncio.run(
+                global_search(GlobalSearchRequest(query="включи zero escape", limit=2), context)
+            )
+
+        self.assertEqual("playable-1", result.items[0].document_id)
+        self.assertIsNotNone(result.items[0].matched_snippet)
+        self.assertIn("zero", (result.items[0].matched_snippet or "").casefold())
+
     def test_global_search_filters_generic_exact_terms(self):
         documents = [
             indexed_document("Zero Escape walkthrough 1", module_id="video_archiver"),

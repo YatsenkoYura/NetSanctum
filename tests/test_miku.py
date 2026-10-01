@@ -450,7 +450,8 @@ class MikuTests(unittest.TestCase):
         self.assertTrue(all(name.endswith(".v1") for name in result.commands[5:]))
 
     def test_assistant_output_strips_emoji(self):
-        reply = MikuReply(command="respond", text="Привет \U0001f44b \u2728")
+        # Chat text may carry persona emoji; titles stay plain for buttons and lists.
+        reply = MikuReply(command="respond", text="Привет \U0001f44b")
         reference = MikuReference(
             ref="result:1",
             module_id="music",
@@ -459,8 +460,8 @@ class MikuTests(unittest.TestCase):
             title="Track \U0001f3b5",
         )
 
-        self.assertEqual("Привет", reply.text)
-        self.assertEqual("Привет", reply.segments[0].text)
+        self.assertIn("\U0001f44b", reply.text)
+        self.assertIn("\U0001f44b", reply.segments[0].text)
         self.assertEqual("Track", reference.title)
 
     def test_resource_resolution_stays_consumer_scoped(self):
@@ -585,14 +586,17 @@ class MikuTests(unittest.TestCase):
 
     def test_dashboard_renders_remote_values_with_text_content(self):
         dashboard = Path("app/modules/miku/templates/miku_dashboard.html").read_text()
+        panel = Path("static/miku-dashboard.js").read_text()
         assistant = Path("static/miku-assistant.js").read_text()
-        self.assertIn("textContent", dashboard)
+        self.assertIn("/static/miku-dashboard.js", dashboard)
+        self.assertNotIn("loadMemory();\n    loadCascades();\n})();\n</script>", dashboard)
+        self.assertIn("textContent", panel)
         self.assertIn("textContent", assistant)
         self.assertNotIn("innerHTML", assistant)
         self.assertIn("segment.speak", assistant)
         self.assertNotIn("miku-video", dashboard)
         self.assertNotIn('value="{{ provider.model }}" required', dashboard)
-        self.assertIn("payload.references?.length === 1", assistant)
+        self.assertIn("payload.auto_open", assistant)
 
     def test_rest_calls_survive_a_dead_connection_and_report_it_readably(self):
         assistant = Path("static/miku-assistant.js").read_text()
@@ -643,6 +647,9 @@ class MikuTests(unittest.TestCase):
                 ("POST", "/api/miku/transcribe"),
                 ("POST", "/api/miku/speech"),
                 ("GET", "/api/miku/memory"),
+                ("DELETE", "/api/miku/memory"),
+                ("GET", "/api/miku/notifications"),
+                ("GET", "/api/miku/briefing"),
                 ("GET", "/api/miku/cascades"),
                 ("POST", "/api/miku/cascades/{cascade_id}/undo/{step_index}"),
                 ("GET", "/api/miku/jobs/{task_id}"),

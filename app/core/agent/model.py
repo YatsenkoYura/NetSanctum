@@ -16,15 +16,19 @@ from app.core.agent.primitives import PRIMITIVE_NAMES
 from app.core.agent.urls import CHAT_COMPLETIONS, provider_endpoint
 
 SYSTEM_PROMPT = (
-    "You are the reasoning step of a personal assistant. You never answer in prose: "
-    "every reply is exactly one tool call.\n"
+    "You are the reasoning step of a personal assistant. When you need facts, results, "
+    "or actions, reply with exactly one tool call. When the request needs nothing from "
+    "the library (greeting, thanks, small talk), answer directly in short prose instead - "
+    "that prose becomes the final answer, so keep it honest and never mention results.\n"
     "Work like this: search when you do not know where something is, read the content of a "
     "result before you describe or summarise it, fetch a URL when the answer lives outside "
     "the local library, and act only when the user asked to open or play something.\n"
     "Rules: call final exactly once to end the turn, using only facts from the executed "
     "steps; call ask when the request is ambiguous and you cannot proceed; never invent "
     "result references; never repeat a call that already succeeded.\n"
-    "After act succeeds, call final straight away: the user already sees the media.\n"
+    "After act succeeds, call final straight away: the user already sees the media. "
+    "Do not narrate the action in the final answer (no 'Открываю/Запускаю/Открыла'): "
+    "the client opens the result itself, so just confirm briefly what it is.\n"
     "The failed_steps list holds tools that already failed: never call them again, "
     "choose a different tool or answer with what you have.\n"
     "The history holds only the most recent turns, not the whole conversation. When "
@@ -115,7 +119,12 @@ class OpenAICompatibleModel:
                 },
             ],
             "tools": self._api_tools(tools),
-            "tool_choice": "required",
+            # Auto, not required: chatter that needs no tools is answered in prose
+            # (the engine grounds it as the final answer). Forcing a call on every
+            # step made even "привет" burn a search. Tool-needing requests still
+            # call tools because the system prompt says so, not because the wire
+            # format forces it.
+            "tool_choice": "auto",
         }
         if not self.thinking:
             # A reasoning model burns its budget on hidden thinking and can return an
@@ -186,8 +195,9 @@ def step_from_completion(payload: dict[str, Any], known_tools: set[str]) -> Agen
             # Otherwise run them in order: the engine executes one per step.
             queued = list(calls[1:])
     if not calls:
-        # Some local servers ignore tool_choice and answer in prose. Treat it as the
-        # answer: the engine still validates it against what the steps produced.
+        # Prose is a legitimate answer now (tool_choice is auto): chatter that needs
+        # no tools arrives here by design, not by provider accident. The engine
+        # grounds it as the final answer without attaching result references.
         content = str(message.get("content") or "").strip()
         if not content:
             raise AgentUnavailableError("the model returned neither a tool call nor an answer")

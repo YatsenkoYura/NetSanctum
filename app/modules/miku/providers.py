@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from time import monotonic
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,9 @@ from app.modules.settings.service import resolve_many, upsert_setting
 
 PROVIDER_KINDS = ("llm", "stt", "tts")
 DEFAULT_MODELS = {"llm": "gpt-4o-mini", "stt": "whisper-1", "tts": "tts-1"}
+# Settings change rarely but load on every turn, transcribe and speech call.
+# A short TTL keeps the dashboard save effective within a minute.
+PROVIDER_CACHE_TTL_SECONDS = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +54,8 @@ PROVIDER_MODES: dict[str, tuple[MikuProviderMode, ...]] = {
     "tts": ("api", "local", "client"),
 }
 
+_bundle_cache: dict[int, tuple[float, MikuProviderBundle]] = {}
+
 
 def _keys() -> list[str]:
     return [
@@ -58,6 +64,9 @@ def _keys() -> list[str]:
 
 
 async def load_provider_bundle(db: AsyncSession, user_id: int) -> MikuProviderBundle:
+    cached = _bundle_cache.get(user_id)
+    if cached and monotonic() - cached[0] < PROVIDER_CACHE_TTL_SECONDS:
+        return cached[1]
     settings = await resolve_many(db, keys=_keys(), module_name="miku", user_id=user_id)
 
     def provider(kind: str) -> MikuProviderConfig:
@@ -78,7 +87,9 @@ async def load_provider_bundle(db: AsyncSession, user_id: int) -> MikuProviderBu
             mode=mode,
         )
 
-    return MikuProviderBundle(llm=provider("llm"), stt=provider("stt"), tts=provider("tts"))
+    bundle = MikuProviderBundle(llm=provider("llm"), stt=provider("stt"), tts=provider("tts"))
+    _bundle_cache[user_id] = (monotonic(), bundle)
+    return bundle
 
 
 def provider_settings_response(bundle: MikuProviderBundle) -> MikuProviderSettingsResponse:
@@ -124,4 +135,9 @@ async def save_provider_settings(
                 is_secret=True,
             )
     await db.flush()
+    _bundle_cache.pop(user_id, None)
     return await load_provider_bundle(db, user_id)
+
+
+def invalidate_provider_cache(user_id: int) -> None:
+    _bundle_cache.pop(user_id, None)

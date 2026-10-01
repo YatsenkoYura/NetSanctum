@@ -117,6 +117,44 @@ class AgentBridgeTests(unittest.TestCase):
         self.assertEqual("play", reply.command)
         self.assertEqual("play", reply.client_action)
 
+    def test_auto_open_only_for_a_single_acted_result(self):
+        single = {
+            **TURN_RESULT,
+            "client_action": "play",
+            "client_ref": "result:1",
+            "refs": ["result:1"],
+        }
+        reply = to_miku_reply(AgentTurnResult.model_validate(single))
+        self.assertTrue(reply.auto_open)
+        multi = {
+            **TURN_RESULT,
+            "client_action": "play",
+            "client_ref": "result:1",
+            "refs": ["result:1", "result:2"],
+        }
+        reply_multi = to_miku_reply(AgentTurnResult.model_validate(multi))
+        self.assertFalse(reply_multi.auto_open)
+        self.assertEqual(2, len(reply_multi.references))
+        no_act = to_miku_reply(AgentTurnResult.model_validate(TURN_RESULT))
+        self.assertFalse(no_act.auto_open)
+
+    def test_mood_survives_the_bridge(self):
+        happy = to_miku_reply(AgentTurnResult.model_validate({**TURN_RESULT, "mood": "happy"}))
+        self.assertEqual("happy", happy.mood)
+        acted = to_miku_reply(
+            AgentTurnResult.model_validate(
+                {**TURN_RESULT, "client_action": "play", "client_ref": "result:1", "refs": ["result:1"]}
+            )
+        )
+        self.assertEqual("happy", acted.mood)
+        bogus = to_miku_reply(AgentTurnResult.model_validate({**TURN_RESULT, "mood": "ecstatic"}))
+        self.assertEqual("neutral", bogus.mood)
+
+    def test_long_answers_are_not_cut_to_a_stub(self):
+        long_answer = "Подробный разбор. " * 100
+        reply = to_miku_reply(AgentTurnResult.model_validate({**TURN_RESULT, "answer": long_answer}))
+        self.assertGreater(len(reply.text), 500)
+
     def test_question_becomes_a_clarification_reply(self):
         result = {
             **TURN_RESULT,

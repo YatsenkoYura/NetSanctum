@@ -13,6 +13,8 @@ from app.core.modules import module_registry
 from app.core.scheduler import celery_app
 from app.core.security import OwnerUser
 from app.modules.miku.cascades import claim_due_tasks, finish_task
+from app.modules.miku.consolidate import consolidate_old_conversations
+from app.modules.miku.notifications import push_notification
 from app.modules.miku.schemas import MikuQuery
 from app.modules.miku.service import MikuSessionContext, query
 
@@ -33,6 +35,7 @@ async def _resume(session, task) -> None:
         request_id=f"task-{task.id}",
     )
     await finish_task(session, task, done=True)
+    await push_notification(task.user_id, f"Готово: {task.goal[:200]}")
 
 
 async def continue_due_tasks() -> int:
@@ -45,7 +48,15 @@ async def continue_due_tasks() -> int:
             except Exception as exc:
                 logger.warning("task %s could not be resumed: %s", task.id, type(exc).__name__)
                 await finish_task(session, task, done=False, error=type(exc).__name__)
+                await push_notification(task.user_id, f"Не смогла: {task.goal[:200]}. Попробую позже.")
+        try:
+            consolidated = await consolidate_old_conversations(session)
+        except Exception:
+            logger.exception("MIKU consolidation pass failed")
+            consolidated = 0
         await session.commit()
+        if consolidated:
+            logger.info("miku consolidated %d conversations", consolidated)
         return len(tasks)
 
 

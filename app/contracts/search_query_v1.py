@@ -80,6 +80,9 @@ class GlobalSearchHit(BaseModel):
     title: str
     subtitle: str | None = None
     summary: str | None = None
+    # Why this document matched: a short fragment with the query terms.
+    # The model picks results by this, not by guessing from the title.
+    matched_snippet: str | None = None
     open_path: str | None = None
     playable: bool = False
     readable: bool = False

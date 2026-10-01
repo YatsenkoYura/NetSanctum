@@ -8,6 +8,7 @@ content.
 
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -157,6 +158,8 @@ async def query(
 ) -> MikuReply:
     """Run one cascade for the owner, streaming progress while it happens."""
 
+    started = time.monotonic()
+
     async def _emit(phase: str, data: dict) -> None:
         if on_event is None:
             return
@@ -166,6 +169,7 @@ async def query(
             logger.exception("MIKU turn event hook failed")
 
     providers = await load_provider_bundle(db, user.id) if db is not None and user is not None else None
+    providers_ms = (time.monotonic() - started) * 1000.0
     effects = _catalog_effects(registry)
 
     conversation = None
@@ -213,16 +217,32 @@ async def query(
         on_event=_emit,
         on_turn=_store if db is not None else None,
     )
+    turn_ms = (time.monotonic() - started) * 1000.0
     if reply is None:
         reply = unavailable_reply()
-    elif conversation is not None and db is not None:
-        await append_message(
-            db,
-            conversation,
-            MESSAGE_ROLE_ASSISTANT,
-            reply.text,
-            command=reply.command,
+        logger.warning(
+            "miku turn fallback request_id=%s providers_ms=%.0f turn_ms=%.0f",
+            request_id,
+            providers_ms,
+            turn_ms,
         )
+    else:
+        logger.info(
+            "miku turn request_id=%s command=%s refs=%d providers_ms=%.0f turn_ms=%.0f",
+            request_id,
+            reply.command,
+            len(reply.references),
+            providers_ms,
+            turn_ms,
+        )
+        if conversation is not None and db is not None:
+            await append_message(
+                db,
+                conversation,
+                MESSAGE_ROLE_ASSISTANT,
+                reply.text,
+                command=reply.command,
+            )
     if remember:
         reply = _remember(context, request, reply)
     return reply

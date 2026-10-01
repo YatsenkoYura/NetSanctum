@@ -21,6 +21,7 @@ from app.core.agent.references import AgentReference
 from app.core.agent_client import AgentClient, AgentRuntimeUnavailableError, AgentTurnProgress
 from app.modules.miku.schemas import (
     MikuCommand,
+    MikuMood,
     MikuQuery,
     MikuReference,
     MikuReply,
@@ -32,9 +33,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-REPLY_TEXT_LIMIT = 500
+REPLY_TEXT_LIMIT = 2000
 HISTORY_TEXT_LIMIT = 500
 STATUS_LIMIT = 200
+VALID_MOODS = {"neutral", "happy", "confused", "thinking", "listening"}
 
 
 def agent_client() -> AgentClient:
@@ -78,11 +80,16 @@ def to_agent_references(references: list[MikuReference]) -> list[AgentReference]
 
 
 def to_miku_references(result: AgentTurnResult) -> list[MikuReference]:
+    from app.modules.miku.deep_link import is_allowed_open_path
+
     wanted = list(result.refs)
     references = []
     for reference in result.references:
         if wanted and reference.ref not in wanted:
             continue
+        open_url = (
+            reference.open_url if is_allowed_open_path(reference.module_id, reference.open_url) else None
+        )
         references.append(
             MikuReference(
                 ref=reference.ref,
@@ -95,7 +102,7 @@ def to_miku_references(result: AgentTurnResult) -> list[MikuReference]:
                 playable=reference.playable,
                 readable=reference.readable,
                 entity_type=reference.entity_type,
-                open_url=reference.open_url,
+                open_url=open_url,
                 resource_url=reference.resource_endpoint,
             )
         )
@@ -104,25 +111,37 @@ def to_miku_references(result: AgentTurnResult) -> list[MikuReference]:
 
 def to_miku_reply(result: AgentTurnResult, *, command: MikuCommand = "respond") -> MikuReply:
     """Ground the answer: only references the agent actually produced are attached."""
+    mood: MikuMood = result.mood if result.mood in VALID_MOODS else "neutral"  # type: ignore[assignment]
     if result.question:
         return MikuReply(
             command=command,
             text=result.question[:REPLY_TEXT_LIMIT],
+            mood="confused" if mood == "neutral" else mood,
             question=result.question,
             question_options=list(result.question_options),
             references=to_miku_references(result),
             exhausted=result.exhausted,
         )
     answer = result.answer.strip() or "Готово."
+    references = to_miku_references(result)
+    # Auto-open exactly once: a single referenced result that the agent acted on.
+    # Multiple results never auto-open — the user picks via buttons or a question.
+    acted_ref = getattr(result, "client_ref", None)
+    auto_open = bool(
+        result.client_action in ("open", "play")
+        and len(references) == 1
+        and (acted_ref is None or references[0].ref == acted_ref)
+    )
+    client_action = result.client_action if result.client_action in ("open", "play") else None
+    if mood == "neutral" and client_action in ("open", "play"):
+        mood = "happy"
     return MikuReply(
-        command="play"
-        if result.client_action == "play"
-        else "open"
-        if result.client_action == "open"
-        else command,
+        command="play" if client_action == "play" else "open" if client_action == "open" else command,
         text=answer[:REPLY_TEXT_LIMIT],
-        references=to_miku_references(result),
-        client_action=result.client_action,
+        mood=mood,
+        references=references,
+        client_action=client_action,
+        auto_open=auto_open,
         exhausted=result.exhausted,
     )
 

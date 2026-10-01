@@ -4,7 +4,6 @@ import binascii
 import json
 import logging
 import re
-import secrets
 import time
 from collections import deque
 from datetime import UTC
@@ -25,7 +24,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.contracts.miku_memory_v1 import MikuMemorySearchRequest
+from app.contracts.miku_memory_v1 import MikuMemorySearchRequest, MikuMemoryWriteRequest
 from app.core.agent_client import AgentRuntimeUnavailableError
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.module_types import (
@@ -39,7 +38,16 @@ from app.core.responses import serve_media_stream, serve_storage_file_chunked
 from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
 from app.modules.miku.agent_turn import agent_client, runtime_capabilities
+from app.modules.miku.briefing import build_briefing
 from app.modules.miku.cascades import list_cascades, undo_cascade_step
+from app.modules.miku.context_store import (
+    REST_CONTEXT_LOCK_SECONDS,  # noqa: F401  (re-exported for tests/callers)
+    REST_CONTEXT_TTL_SECONDS,  # noqa: F401  (re-exported for tests/callers)
+    acquire_context_lock,
+    release_context_lock,
+    rest_context,
+    save_rest_context,
+)
 from app.modules.miku.conversations import (
     create_conversation,
     delete_conversation,
@@ -48,8 +56,9 @@ from app.modules.miku.conversations import (
     list_messages,
     rename_conversation,
 )
-from app.modules.miku.integrations import search_memory
+from app.modules.miku.integrations import search_memory, write_memory
 from app.modules.miku.models import MikuConversationNote
+from app.modules.miku.notifications import pop_notifications
 from app.modules.miku.providers import (
     load_provider_bundle,
     provider_settings_response,
@@ -64,12 +73,10 @@ from app.modules.miku.schemas import (
     MikuConversationNoteList,
     MikuConversationRename,
     MikuConversationSummary,
-    MikuConversationTurn,
     MikuJobStatus,
     MikuProviderSettingsResponse,
     MikuProviderSettingsUpdate,
     MikuQuery,
-    MikuReference,
     MikuReply,
     MikuRuntimeCapabilities,
     MikuSocketMessage,
@@ -85,6 +92,11 @@ from app.modules.miku.service import (
     query,
     resolve_resource,
 )
+from app.modules.miku.speech import (
+    VOICE_AUDIO_LIMIT,
+    VOICE_AUDIO_TYPES,
+    split_speech as _split_speech,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -92,53 +104,13 @@ SOCKET_MESSAGE_LIMIT = 4096
 SOCKET_VOICE_MESSAGE_LIMIT = 6_500_000
 SOCKET_TURN_LIMIT = 20
 SOCKET_TURN_WINDOW_SECONDS = 60
-VOICE_AUDIO_LIMIT = 4 * 1024 * 1024
-VOICE_AUDIO_TYPES = {"audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"}
-REST_CONTEXT_TTL_SECONDS = 900
-REST_CONTEXT_LOCK_SECONDS = 300
-SPEECH_CHUNK_LIMIT = 300
 
 
-def _split_speech(text: str) -> list[str]:
-    """Split reply text into speakable sentence chunks for streaming TTS.
-
-    Each sentence becomes its own chunk so playback starts early; fragments
-    shorter than 40 characters merge forward so the provider never gets
-    one-word requests; oversized sentences hard-cut at the chunk limit.
-    """
-    sentences = [
-        fragment.strip() for fragment in re.split(r"(?<=[.!?…\n])\s+", text.strip()) if fragment.strip()
-    ]
-    chunks: list[str] = []
-    pending = ""
-    for sentence in sentences:
-        candidate = f"{pending} {sentence}".strip() if pending else sentence
-        if len(candidate) < 40:
-            pending = candidate
-            continue
-        if len(candidate) <= SPEECH_CHUNK_LIMIT:
-            chunks.append(candidate)
-            pending = ""
-            continue
-        if pending:
-            chunks.append(pending)
-            pending = ""
-        while len(sentence) > SPEECH_CHUNK_LIMIT:
-            chunks.append(sentence[:SPEECH_CHUNK_LIMIT])
-            sentence = sentence[SPEECH_CHUNK_LIMIT:]
-        if sentence:
-            chunks.append(sentence)
-    if pending:
-        chunks.append(pending)
-    return chunks
-
-
-RELEASE_CONTEXT_LOCK_SCRIPT = """
-if redis.call('get', KEYS[1]) == ARGV[1] then
-    return redis.call('del', KEYS[1])
-end
-return 0
-"""
+# Backward-compatible aliases: tests and in-flight code patch these names here.
+_rest_context = rest_context
+_save_rest_context = save_rest_context
+_acquire_context_lock = acquire_context_lock
+_release_context_lock = release_context_lock
 
 
 async def _bounded_body(request: Request, limit: int) -> bytes:
@@ -148,66 +120,6 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
         if len(content) > limit:
             raise HTTPException(status_code=413, detail="Request body is too large")
     return bytes(content)
-
-
-async def _rest_context(context_id: str | None, user_id: int) -> MikuSessionContext | None:
-    if not context_id:
-        return None
-    raw = await redis_client.get(f"miku:context:{user_id}:{context_id}")
-    if not raw:
-        return MikuSessionContext()
-    try:
-        payload = json.loads(raw)
-        if isinstance(payload, list):
-            references_payload = payload
-            history_payload = []
-        else:
-            references_payload = payload.get("references", [])
-            history_payload = payload.get("history", [])
-        references = [MikuReference.model_validate(item) for item in references_payload]
-        history = [MikuConversationTurn.model_validate(item) for item in history_payload]
-    except (json.JSONDecodeError, TypeError, ValidationError):
-        return MikuSessionContext()
-    return MikuSessionContext(references=references[:20], history=history[-6:])
-
-
-async def _save_rest_context(
-    context_id: str | None, user_id: int, context: MikuSessionContext | None
-) -> None:
-    if not context_id or not context or (not context.references and not context.history):
-        if context_id and context is not None:
-            await redis_client.delete(f"miku:context:{user_id}:{context_id}")
-        return
-    await redis_client.setex(
-        f"miku:context:{user_id}:{context_id}",
-        REST_CONTEXT_TTL_SECONDS,
-        json.dumps(
-            {
-                "references": [item.model_dump(mode="json") for item in (context.references or [])[:20]],
-                "history": [item.model_dump(mode="json") for item in (context.history or [])[-6:]],
-            }
-        ),
-    )
-
-
-async def _acquire_context_lock(context_id: str | None, user_id: int) -> tuple[str, str] | None:
-    if not context_id:
-        return None
-    key = f"miku:context-lock:{user_id}:{context_id}"
-    token = secrets.token_urlsafe(18)
-    if not await redis_client.set(key, token, ex=REST_CONTEXT_LOCK_SECONDS, nx=True):
-        raise MikuQueryError("Session context is busy; retry the request.")
-    return key, token
-
-
-async def _release_context_lock(lock: tuple[str, str] | None) -> None:
-    if not lock:
-        return
-    key, token = lock
-    try:
-        await redis_client.eval(RELEASE_CONTEXT_LOCK_SCRIPT, 1, key, token)
-    except Exception:
-        logger.warning("MIKU context lock release failed", exc_info=True)
 
 
 def websocket_origin_allowed(websocket: WebSocket) -> bool:
@@ -360,6 +272,48 @@ async def miku_memory(
         consumer_id="miku",
     )
     return await search_memory(request, context)
+
+
+@router.delete("/api/miku/memory")
+async def miku_memory_forget(
+    scope: str = Query(pattern="^(profile|episodic)$"),
+    key: str | None = Query(default=None, max_length=64),
+    summary: str | None = Query(default=None, max_length=500),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Forgetting is a right, not a favor: delete one fact or episode summary."""
+    if scope == "profile" and not key:
+        raise HTTPException(status_code=422, detail="Profile memory requires a key")
+    if scope == "episodic" and not summary:
+        raise HTTPException(status_code=422, detail="Episodic memory requires a summary")
+    context = IntegrationContext(
+        session=db,
+        user=user,
+        registry=module_registry,
+        consumer_id="miku",
+    )
+    result = await write_memory(
+        MikuMemoryWriteRequest(op="delete", scope=scope, key=key, summary=summary),  # type: ignore[arg-type]
+        context,
+    )
+    await db.commit()
+    return {"status": result.status, "scope": result.scope}
+
+
+@router.get("/api/miku/notifications")
+async def miku_notifications(user=Depends(get_current_user)):
+    """Background notices since the last poll. Reading clears the queue."""
+    return {"items": await pop_notifications(user.id)}
+
+
+@router.get("/api/miku/briefing")
+async def miku_briefing(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """What changed while the owner was away: tasks, episodes, recent turns."""
+    return await build_briefing(db, user.id)
 
 
 def _summary(conversation, message_count: int = 0) -> MikuConversationSummary:
