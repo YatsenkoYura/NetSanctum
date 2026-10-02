@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlparse
 OPEN_PATH_PREFIXES: dict[str, tuple[str, ...]] = {
     "alllib": ("/alllib/reader/", "/alllib/dashboard"),
     "music": ("/music/dashboard",),
+    "planner": ("/planner",),
     "vault": ("/vault/dashboard",),
     "video_archiver": ("/video-archiver/dashboard",),
     "youtube": ("/youtube/watch/", "/youtube/dashboard"),

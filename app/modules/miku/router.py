@@ -312,8 +312,8 @@ async def miku_briefing(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """What changed while the owner was away: tasks, episodes, recent turns."""
-    return await build_briefing(db, user.id)
+    """What changed while the owner was away: tasks, episodes, recent turns, plans."""
+    return await build_briefing(db, user.id, registry=module_registry, user=user)
 
 
 def _summary(conversation, message_count: int = 0) -> MikuConversationSummary:

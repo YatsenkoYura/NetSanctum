@@ -46,6 +46,7 @@ class DeepLinkTests(unittest.TestCase):
         self.assertTrue(is_allowed_open_path("alllib", "/alllib/reader/9"))
         self.assertTrue(is_allowed_open_path("video_archiver", "/video-archiver/dashboard?miku_item=1"))
         self.assertTrue(is_allowed_open_path("music", "/music/dashboard?miku_item=7"))
+        self.assertTrue(is_allowed_open_path("planner", "/planner"))
 
     def test_foreign_or_remote_paths_fail(self):
         self.assertFalse(is_allowed_open_path("music", "https://evil.example/x"))

@@ -93,7 +93,12 @@ The worker cannot reach open sockets, so background notices wait in Redis per ow
 (`miku:notify:{user_id}`) and the side chat polls `GET /api/miku/notifications`; reading clears
 the queue. Finished and failed background tasks notify once and stop. `GET /api/miku/briefing`
 gathers open tasks, recent episodes, and recent turns into a bounded fact list the chat turns
-into prose on request.
+into prose on request. The planner module appends its agenda section through the
+`planner.today.v1` contract (overdue first, capped); the section is skipped when planner
+is off or fails, never breaking the briefing. Planner reminders arrive on the same
+notify queue with a space badge. Date-bearing talk pulls `planner.today`/`list_tasks`;
+the today tool description carries the anti-nag rule, so unprompted plan mentions stay
+to one closing line for overdue or due-within-2-hours items.
 
 Provider settings are cached per owner for 60s (invalidated on save); every turn logs
 `providers_ms` and `turn_ms` with command and result count, never text.

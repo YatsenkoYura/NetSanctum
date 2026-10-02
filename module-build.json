@@ -7,6 +7,7 @@
     "video_archiver",
     "youtube",
     "vault",
+    "planner",
     "alllib",
     "tabletop_games",
     "computercraft",
@@ -44,6 +45,11 @@
         "deno",
         "ffmpeg"
       ]
+    },
+    "planner": {
+      "required": false,
+      "extra": null,
+      "system_packages": []
     },
     "search": {
       "required": false,

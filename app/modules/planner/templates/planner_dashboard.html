@@ -1,0 +1,189 @@
+{% extends module_base|default("base.html") %}
+{% block title %}Планировщик — NetSanctum{% endblock %}
+
+{% block head_extra %}
+<style>
+.planner-shell { min-height:calc(100dvh - 7rem); }
+.planner-card { border:1px solid #27272a; background:#09090b; }
+.planner-input { width:100%; background:#09090b; border:1px solid #27272a; color:#e4e4e7; font-size:12px; padding:6px 8px; }
+.planner-input:focus { outline:none; border-color:#2dd4bf; }
+.planner-btn { border:1px solid #27272a; background:#09090b; color:#a1a1aa; font-size:11px; font-weight:700; padding:5px 10px; cursor:pointer; text-transform:uppercase; }
+.planner-btn:hover { color:#2dd4bf; border-color:#2dd4bf; }
+.planner-btn.danger:hover { color:#fca5a5; border-color:#ef4444; }
+.planner-act { color:#71717a; font-size:11px; font-weight:700; cursor:pointer; text-transform:uppercase; }
+.planner-act:hover { color:#2dd4bf; }
+.planner-act.danger:hover { color:#fca5a5; }
+.space-badge { display:inline-block; font-size:10px; font-weight:700; color:#2dd4bf; border:1px solid #134e4a; background:rgba(45,212,191,.06); padding:1px 6px; margin-left:6px; }
+.space-badge.inbox { color:#71717a; border-color:#27272a; background:transparent; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="planner-shell max-w-4xl mx-auto px-4 py-6">
+  <h1 class="text-lg font-bold text-zinc-100 mb-4">Планировщик</h1>
+
+  <form id="planner-quick-add" class="planner-card p-3 mb-5 flex flex-col gap-2">
+    <input id="qa-title" class="planner-input" type="text" maxlength="200" placeholder="Новая задача…" required>
+    <div class="flex flex-wrap gap-2">
+      <input id="qa-due" class="planner-input" style="width:auto" type="datetime-local" title="Срок">
+      <select id="qa-space" class="planner-input" style="width:auto">
+        <option value="">Без пространства</option>
+      </select>
+      <select id="qa-recurrence" class="planner-input" style="width:auto">
+        <option value="none">Без повтора</option>
+        <option value="daily">Ежедневно</option>
+        <option value="weekdays">По будням</option>
+        <option value="weekly">Еженедельно</option>
+        <option value="monthly">Ежемесячно</option>
+      </select>
+      <label class="text-xs text-zinc-400 flex items-center gap-1">
+        <input id="qa-remind" type="checkbox" checked> напомнить
+      </label>
+      <button class="planner-btn" type="submit">Добавить</button>
+    </div>
+  </form>
+
+  {% macro task_row(task, show_dates=true) %}
+  <div class="planner-card px-3 py-2 mb-2 flex items-start gap-2" data-task="{{ task.id }}">
+    <button class="planner-act" data-complete="{{ task.id }}" title="Готово">✓</button>
+    <div class="flex-1 min-w-0">
+      <div class="text-sm text-zinc-100">{{ task.title }}
+        {%- if task.space_kind != 'none' and task.space_name %} <span class="space-badge">{{ task.space_name }}</span>
+        {%- else %} <span class="space-badge inbox">inbox</span>{% endif %}
+        {%- if task.recurrence != 'none' %} <span class="text-zinc-500 text-xs">↻ {{ task.recurrence }}</span>{% endif %}
+      </div>
+      {% if show_dates and task.due_at %}
+      <div class="text-xs text-zinc-500">срок: <span data-dt="{{ task.due_at.isoformat() }}"></span></div>
+      {% endif %}
+    </div>
+    <button class="planner-act" data-snooze-hour="{{ task.id }}" title="Напомнить через час">+1ч</button>
+    <button class="planner-act" data-snooze-morning="{{ task.id }}" title="Напомнить завтра в 9:00">утро</button>
+    <button class="planner-act danger" data-del="{{ task.id }}" title="Удалить">✕</button>
+  </div>
+  {% endmacro %}
+
+  {% if overdue %}
+  <h2 class="text-sm font-bold text-red-400 mb-2">Просрочено ({{ overdue|length }})</h2>
+  {% for task in overdue %}{{ task_row(task) }}{% endfor %}
+  {% endif %}
+
+  {% if due_today %}
+  <h2 class="text-sm font-bold text-teal-300 mb-2 mt-4">Сегодня ({{ due_today|length }})</h2>
+  {% for task in due_today %}{{ task_row(task) }}{% endfor %}
+  {% endif %}
+
+  <h2 class="text-sm font-bold text-zinc-300 mb-2 mt-4">Предстоящее ({{ upcoming|length }})</h2>
+  {% if upcoming %}
+  {% for task in upcoming %}{{ task_row(task) }}{% endfor %}
+  {% else %}
+  <p class="text-xs text-zinc-600 mb-2">Пусто. Кайф.</p>
+  {% endif %}
+
+  <h2 class="text-sm font-bold text-zinc-300 mb-2 mt-4">События ({{ events|length }})</h2>
+  {% for event in events %}
+  <div class="planner-card px-3 py-2 mb-2" data-event="{{ event.id }}">
+    <div class="text-sm text-zinc-100">{{ event.title }}
+      {%- if event.space_kind != 'none' and event.space_name %} <span class="space-badge">{{ event.space_name }}</span>{% endif %}
+    </div>
+    <div class="text-xs text-zinc-500">
+      <span data-dt="{{ event.starts_at.isoformat() }}"></span>
+      {% if event.location %} · {{ event.location }}{% endif %}
+      <button class="planner-act danger ml-2" data-event-del="{{ event.id }}">✕</button>
+    </div>
+  </div>
+  {% endfor %}
+  {% if not events %}<p class="text-xs text-zinc-600 mb-2">Нет событий.</p>{% endif %}
+
+  {% if done %}
+  <h2 class="text-sm font-bold text-zinc-500 mb-2 mt-4">Готово ({{ done|length }})</h2>
+  {% for task in done %}
+  <div class="px-3 py-1 mb-1 text-sm text-zinc-600 line-through">{{ task.title }}</div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll("[data-dt]").forEach(function (el) {
+    var d = new Date(el.getAttribute("data-dt"));
+    if (!isNaN(d)) el.textContent = d.toLocaleString("ru-RU", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+  });
+
+  function reload() { location.reload(); }
+  async function call(url, method, body) {
+    const r = await fetch(url, {method: method, headers: {"Content-Type": "application/json"}, body: body ? JSON.stringify(body) : undefined});
+    if (!r.ok) alert("Ошибка: " + r.status);
+    reload();
+  }
+  document.querySelectorAll("[data-complete]").forEach(function (b) {
+    b.addEventListener("click", function () { call("/api/planner/tasks/" + b.dataset.complete + "/complete", "POST"); });
+  });
+  document.querySelectorAll("[data-del]").forEach(function (b) {
+    b.addEventListener("click", function () { if (confirm("Удалить задачу?")) call("/api/planner/tasks/" + b.dataset.del, "DELETE"); });
+  });
+  document.querySelectorAll("[data-event-del]").forEach(function (b) {
+    b.addEventListener("click", function () { if (confirm("Удалить событие?")) call("/api/planner/events/" + b.dataset.eventDel, "DELETE"); });
+  });
+  document.querySelectorAll("[data-snooze-hour]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      call("/api/planner/tasks/" + b.dataset.snoozeHour, "PATCH", {remind_at: new Date(Date.now() + 3600e3).toISOString()});
+    });
+  });
+  document.querySelectorAll("[data-snooze-morning]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0);
+      call("/api/planner/tasks/" + b.dataset.snoozeMorning, "PATCH", {remind_at: d.toISOString()});
+    });
+  });
+
+  // Space picker: vault collections + folder nodes.
+  fetch("/api/vault/collections").then(function (r) { return r.json(); }).then(function (cols) {
+    var sel = document.getElementById("qa-space");
+    (cols || []).forEach(function (c) {
+      var o = document.createElement("option");
+      o.value = "collection:" + c.id + ":" + c.name;
+      o.textContent = c.name;
+      sel.appendChild(o);
+    });
+    return fetch("/api/vault/items?node_type=folder&limit=500").then(function (r) { return r.json(); });
+  }).then(function (items) {
+    var sel = document.getElementById("qa-space");
+    var byId = {};
+    (items || []).forEach(function (i) { byId[i.id] = i; });
+    function path(item) {
+      var chain = [item.title || ("#" + item.id)], seen = {};
+      var cur = item;
+      while (cur.parent_id && byId[cur.parent_id] && !seen[cur.parent_id]) {
+        cur = byId[cur.parent_id]; seen[cur.id] = true; chain.unshift(cur.title);
+      }
+      return chain.join(" / ");
+    }
+    (items || []).filter(function (i) { return !i.is_archived; }).forEach(function (i) {
+      var o = document.createElement("option");
+      o.value = "folder:" + i.id + ":" + i.title;
+      o.textContent = path(i);
+      sel.appendChild(o);
+    });
+  }).catch(function () {});
+
+  document.getElementById("planner-quick-add").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var title = document.getElementById("qa-title").value.trim();
+    if (!title) return;
+    var dueRaw = document.getElementById("qa-due").value;
+    var due = dueRaw ? new Date(dueRaw).toISOString() : null;
+    var spaceRaw = document.getElementById("qa-space").value;
+    var body = {title: title, recurrence: document.getElementById("qa-recurrence").value};
+    if (due) {
+      body.due_at = due;
+      if (document.getElementById("qa-remind").checked) body.remind_at = due;
+    }
+    if (spaceRaw) {
+      var parts = spaceRaw.split(":");
+      body.space_kind = parts[0]; body.space_id = parseInt(parts[1], 10); body.space_name = parts.slice(2).join(":");
+    }
+    call("/api/planner/tasks", "POST", body);
+  });
+})();
+</script>
+{% endblock %}

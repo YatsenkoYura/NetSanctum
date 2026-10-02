@@ -245,6 +245,7 @@ class ModuleMigrationTests(unittest.TestCase):
                 "alllib",
                 "miku",
                 "music",
+                "planner",
                 "search",
                 "settings",
                 "sharing",

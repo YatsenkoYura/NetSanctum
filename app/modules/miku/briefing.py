@@ -1,16 +1,44 @@
 """Morning briefing: what changed while the owner was away, in three lines.
 
 Sources, in order: open background tasks, recent episodic memory, recent
-cascade outcomes. Extractive and bounded — the chat model turns this into
-prose at request time, this just gathers the facts.
+cascade outcomes, today's planner agenda. Extractive and bounded — the chat
+model turns this into prose at request time, this just gathers the facts.
 """
 
 from sqlalchemy import func, select
 
+from app.contracts.planner_v1 import PlannerTodayRequest, PlannerTodayResult
+from app.core.module_types import IntegrationContext
 from app.modules.miku.models import MikuCascadeLog, MikuEpisodeMemory, MikuTask
 
+PLANNER_CONSUMER_ID = "miku"
 
-async def build_briefing(db, user_id: int, *, limit: int = 5) -> dict:
+
+async def _planner_lines(db, user, registry) -> list[str]:
+    """Agenda section via the typed contract; absent when planner is off or fails."""
+    if registry is None:
+        return []
+    try:
+        has = registry.has_integration("planner.today.v1")
+    except Exception:
+        return []
+    if not has:
+        return []
+    try:
+        result = await registry.invoke_integration(
+            "planner.today.v1",
+            PlannerTodayRequest().model_dump(mode="json"),
+            IntegrationContext(session=db, user=user, registry=registry, consumer_id=PLANNER_CONSUMER_ID),
+        )
+        today = PlannerTodayResult.model_validate(result)
+    except Exception:
+        return []
+    lines = [f"Планы: просрочено {today.overdue_count}, на сегодня {today.today_count}"]
+    lines.extend(f"• {line}" for line in today.lines[:6])
+    return lines
+
+
+async def build_briefing(db, user_id: int, *, limit: int = 5, registry=None, user=None) -> dict:
     open_tasks = (
         await db.scalars(
             select(MikuTask).where(MikuTask.user_id == user_id, MikuTask.state == "open").limit(10)
@@ -44,8 +72,9 @@ async def build_briefing(db, user_id: int, *, limit: int = 5) -> dict:
         lines.append(f"• {episode.summary[:160]}")
     for cascade in recent[:3]:
         lines.append(f"• {cascade.goal[:120]} — {cascade.status}")
+    lines.extend(await _planner_lines(db, user or user_id, registry))
     return {
-        "lines": lines[:9],
+        "lines": lines[:12],
         "open_tasks": total_tasks or 0,
         "episodes": len(episodes),
         "recent_turns": len(recent),

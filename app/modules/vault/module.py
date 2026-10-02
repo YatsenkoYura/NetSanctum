@@ -68,6 +68,15 @@ MODULE = ModuleSpec(
             ),
         ),
         IntegrationSpec(
+            id="vault.spaces.v1",
+            handler="app.modules.vault.spaces:list_spaces",
+            request_model="app.contracts.vault_spaces_v1:VaultSpacesRequest",
+            result_model="app.contracts.vault_spaces_v1:VaultSpacesResult",
+            description="List Vault collections and folder nodes as plannable spaces.",
+            contract="vault.spaces.v1",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
+        ),
+        IntegrationSpec(
             id="vault.search.documents.v1",
             contract="search.documents.v1",
             handler="app.modules.vault.search:search_documents",
