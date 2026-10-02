@@ -108,6 +108,8 @@
 .ncal-pop.hidden { display:none; }
 .ncal-pop-head { display:flex; justify-content:space-between; align-items:center; padding:.5rem .7rem; border-bottom:1px solid #27272a; font-size:11px; font-weight:800; color:#fff; text-transform:uppercase; }
 .ncal-pop-body { padding:.4rem .7rem .7rem; display:flex; flex-direction:column; gap:3px; }
+.ncal-pop-create { display:flex; gap:.4rem; margin-top:.5rem; padding-top:.5rem; border-top:1px solid #1c1c1f; }
+.ncal-pop-create .vcal-btn { flex:1; }
 .vcal-input { width:100%; background:#000; border:1px solid #27272a; color:#e4e4e7; font-size:12px; padding:6px 8px; color-scheme:dark; }
 .vcal-input:focus { outline:none; border-color:#2dd4bf; }
 
@@ -146,7 +148,31 @@
   #active-ws-title { max-width:9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 }
 @media (max-width: 767px) {
-  .ncal-cell { min-height:52px; }
+  /* Space mini-calendar on phones: the panel must not push the tiles away,
+     so it collapses by default via JS and keeps compact, thumb-sized cells. */
+  .vcal-bar { gap:.4rem; padding:8px 10px; }
+  .vcal-bar .vcal-title { flex:1 1 100%; order:-1; }
+  .vcal-nav { flex:1 1 auto; gap:.3rem; }
+  .vcal-btn { padding:9px 10px; font-size:11px; min-height:40px; }
+  .vcal-label { flex:1; min-width:0; font-size:.8rem; }
+  #vcal-body { padding:6px; }
+  .ncal-cell { min-height:50px; padding:2px 1px; }
+  .ncal-grid { gap:1px; }
+  .ncal-daynum { width:22px; height:22px; font-size:11px; }
+  .ncal-add { display:none; }
+  .ncal-pill { font-size:9px; padding:2px 3px; gap:2px; border-left-width:2px; }
+  .ncal-time { display:none; }
+  .ncal-more { font-size:9px; padding:3px 1px; text-align:center; }
+  .ncal-cell, .ncal-pill, .ncal-more { -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .ncal-pop { left:0 !important; right:0; top:auto !important; bottom:0; width:100%; max-height:72dvh; border-left:none; border-right:none; border-bottom:none; padding-bottom:env(safe-area-inset-bottom,0px); }
+  .ncal-pop .ncal-pill { font-size:12px; padding:8px 6px; }
+  .ncal-pop .ncal-time { display:inline; }
+  /* Quick-create modal rides the bottom of the screen on phones. */
+  #vcal-modal { align-items:flex-end !important; padding:0 !important; }
+  #vcal-modal > div { max-width:none !important; border-left:none; border-right:none; border-bottom:none; max-height:92dvh; overflow-y:auto; padding-bottom:env(safe-area-inset-bottom,0px); }
+  #vcal-modal .vcal-input { font-size:16px; min-height:44px; }
+  #vcal-modal .grid > div label { font-size:11px; }
+  #vcal-modal button { min-height:44px; }
 }
 </style>
 <script src="/static/netsanctum-calendar.js?v=1"></script>
@@ -2003,6 +2029,8 @@ var vcalLoading = false;
 
 function vcalNSC() { return window.NetSanctumCalendar || null; }
 
+function vcalIsMobile() { return window.matchMedia('(max-width: 767px)').matches; }
+
 function vcalVisible() {
   if (readOnlyMode) return false;
   if (activeView !== 'tiles') return false;
@@ -2162,7 +2190,12 @@ function submitVcalModal() {
       document.head.appendChild(s);
       return;
     }
-    if (!vcalCursor) { vcalCursor = NSC.startOfDay(new Date()); vcalSelectedKey = NSC.dayKey(new Date()); }
+    // Phones start collapsed: the grid is one tap away and the tiles stay on screen.
+    if (!vcalCursor) {
+      vcalCursor = NSC.startOfDay(new Date());
+      vcalSelectedKey = NSC.dayKey(new Date());
+      vcalCollapsed = vcalIsMobile();
+    }
     document.getElementById('vcal-prev').addEventListener('click', function () {
       vcalCursor = NSC.addMonths(vcalCursor, -1); refreshVaultCalendar();
     });
@@ -2186,12 +2219,30 @@ function submitVcalModal() {
       var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
       if (pill) { vcalGotoPlanner(); return; }
       var cell = e.target.closest ? e.target.closest('.ncal-cell') : null;
-      if (cell) { vcalSelectedKey = cell.dataset.date; openVcalModal(cell.dataset.date); }
+      if (!cell) return;
+      vcalSelectedKey = cell.dataset.date;
+      // Phones with a planned day open its sheet first; an empty day goes
+      // straight to quick create, which is what the tap asked for.
+      var cached = vcalCache.byDay[cell.dataset.date];
+      var hasItems = cached && (cached.events.length || cached.tasks.length);
+      if (vcalIsMobile() && hasItems) openVcalPop(cell.dataset.date, cell);
+      else openVcalModal(cell.dataset.date);
     });
     document.getElementById('vcal-pop-close').addEventListener('click', function () {
       document.getElementById('vcal-pop').classList.add('hidden');
     });
-    document.getElementById('vcal-pop-body').addEventListener('click', function () { vcalGotoPlanner(); });
+    document.getElementById('vcal-pop-body').addEventListener('click', function (e) {
+      var newBtn = e.target.closest ? e.target.closest('[data-vcal-new]') : null;
+      if (newBtn) {
+        document.getElementById('vcal-pop').classList.add('hidden');
+        openVcalModal(newBtn.dataset.vcalNew);
+        return;
+      }
+      var fullBtn = e.target.closest ? e.target.closest('[data-vcal-full]') : null;
+      if (fullBtn) { vcalGotoPlanner(); return; }
+      var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
+      if (pill) { vcalGotoPlanner(); }
+    });
     refreshVaultCalendar();
   }
   // No once-guard here on purpose: htmx swaps replace the panel nodes on every
@@ -2215,9 +2266,21 @@ function openVcalPop(key, anchor) {
   }).join('') + cell.tasks.map(function (t) {
     return NSC.pillHTML('task', t, vcalSpaceColor(t), {});
   }).join('');
-  body.innerHTML = rows || '<div style="font-size:11px;color:#71717a">Нет событий — нажмите, чтобы открыть планировщик</div>';
-  var r = anchor.getBoundingClientRect();
+  if (!rows) rows = '<div style="font-size:11px;color:#71717a;padding:4px 0">Нет событий</div>';
+  // Create entry point lives in the sheet too, so a phone thumb never has to
+  // reach the panel header.
+  body.innerHTML = rows +
+    '<div class="ncal-pop-create">' +
+    '<button class="vcal-btn" data-vcal-new="' + key + '">+ Событие здесь</button>' +
+    '</div>' +
+    '<button class="vcal-btn" data-vcal-full style="width:100%;margin-top:.35rem">Открыть в планировщике →</button>';
   var pop = document.getElementById('vcal-pop');
+  if (vcalIsMobile()) {
+    pop.style.left = ''; pop.style.top = '';
+    pop.classList.remove('hidden');
+    return;
+  }
+  var r = anchor.getBoundingClientRect();
   pop.style.left = Math.min(window.innerWidth - 320, Math.max(8, r.left - 100)) + 'px';
   pop.style.top = Math.min(window.innerHeight - 220, r.bottom + 6) + 'px';
   pop.classList.remove('hidden');

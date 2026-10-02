@@ -83,8 +83,16 @@ drag-to-move, bottom-handle resize for `ends_at`), agenda grouped by day
 - Click an empty cell/slot → create modal prefilled with that date (event/task
   tabs, all-day, end date, space picker fed by collections + folder nodes,
   location/priority/recurrence/remind/notes). Click a pill → edit modal.
-- Keyboard: `t` today, `m/w/a` views, `←/→` paging, `Esc` closes. Mobile gets
-  a compact month (shorter cells) plus a horizontally scrollable week.
+- Keyboard: `t` today, `m/w/a` views, `←/→` paging, `Esc` closes.
+- Mobile (`≤767px`) is a one-thumb layout, not a squeezed desktop: cells drop to
+  two pills and hide the per-cell `+` (the whole cell is the target), the day
+  popover becomes a bottom sheet, the create/edit modal becomes a full-height
+  sheet with sticky header/footer and 16px inputs, the week becomes a
+  horizontal scroller, and dragging is disabled on the grid (HTML5 drag fights
+  touch). A day tap opens the day sheet instead of the create modal; the sheet
+  carries `+ Событие` / `+ Задача` so the header buttons are never required.
+- The Vault mini-calendar follows the same rules and starts collapsed on
+  phones, so it never pushes the tiles off screen.
 - Shared rendering/DnD/date helpers live in `static/netsanctum-calendar.js`
   (`window.NetSanctumCalendar`), reused by the Vault mini-calendar. Calendar
   styling is custom `ncal-*` classes in template `<style>` blocks, so no

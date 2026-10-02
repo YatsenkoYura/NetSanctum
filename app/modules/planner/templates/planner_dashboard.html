@@ -100,15 +100,67 @@
 .ncal-pop.hidden { display:none; }
 .ncal-pop-head { display:flex; justify-content:space-between; align-items:center; padding:.5rem .7rem; border-bottom:1px solid #27272a; font-size:11px; font-weight:800; color:#fff; text-transform:uppercase; }
 .ncal-pop-body { padding:.4rem .7rem .7rem; display:flex; flex-direction:column; gap:3px; }
+.ncal-pop-create { display:flex; gap:.4rem; margin-top:.5rem; padding-top:.5rem; border-top:1px solid #1c1c1f; }
+.ncal-pop-create .ncal-btn { flex:1; }
 .ncal-toast { position:fixed; right:1rem; bottom:1rem; z-index:100; max-width:min(24rem,calc(100vw - 2rem)); border:1px solid #3f3f46; background:#09090b; padding:.6rem .8rem; color:#e4e4e7; font-size:11px; }
 .ncal-toast.hidden { display:none; }
 .ncal-toast.error { border-color:#ef4444; color:#fca5a5; }
 @media (max-width:767px) {
-  .ncal-shell { padding:.6rem .6rem 3rem; }
-  .ncal-cell { min-height:60px; padding:2px; }
-  .ncal-range-label { min-width:0; }
-  .ncal-week-scroll { overflow-x:auto; }
-  .ncal-week-inner { min-width:44rem; }
+  .ncal-shell { padding:.5rem .5rem 4rem; }
+  .ncal-topbar { gap:.4rem; margin-bottom:.45rem; }
+  .ncal-nav { flex:1 1 auto; gap:.3rem; }
+  .ncal-range-label { flex:1; min-width:0; font-size:.75rem; }
+  .ncal-btn, .vcal-btn { padding:9px 11px; font-size:12px; min-height:40px; }
+  .ncal-select { flex:1; min-width:0; max-width:none; min-height:40px; font-size:12px; }
+  .ncal-check { font-size:11px; padding:6px 2px; }
+  .ncal-check input { width:18px; height:18px; }
+  .ncal-view { flex:1; }
+  .ncal-legend { gap:.25rem; margin-bottom:.5rem; }
+  .ncal-chip { font-size:10px; padding:4px 7px; }
+
+  /* Month: compact cells, no per-cell add button (the whole cell is the target). */
+  .ncal-grid { gap:1px; }
+  .ncal-cell { min-height:64px; padding:2px 1px; }
+  .ncal-daynum { width:24px; height:24px; font-size:12px; }
+  .ncal-add { display:none; }
+  .ncal-pill { font-size:9px; padding:2px 3px; gap:2px; border-left-width:2px; }
+  .ncal-time { display:none; }
+  .ncal-more { font-size:9px; padding:3px 2px; text-align:center; }
+  .ncal-dow { font-size:9px; padding:5px 0; }
+
+  /* Long-press drags on a grid are hostile on touch: keep taps, drop drags. */
+  .ncal-cell, .ncal-pill, .ncal-more, .ncal-arow { -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+
+  /* Week: horizontal snap-scroller with a comfortable column width. */
+  .ncal-week-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .ncal-week-inner { min-width:42rem; }
+  .ncal-gutter-hour { font-size:10px; }
+  .ncal-week-day .ncal-dow { font-size:10px; }
+  .ncal-week-day .ncal-daynum { width:26px; height:26px; font-size:13px; margin:0 auto; }
+  .ncal-allday-cell { min-height:36px; }
+  .ncal-allday-label { font-size:9px; }
+  .ncal-block { font-size:11px; padding:2px 4px; }
+
+  /* Agenda rows get real touch targets. */
+  .ncal-agenda-head { padding:10px; }
+  .ncal-arow { padding:9px 0; font-size:13px; }
+  .ncal-act { padding:8px 4px; font-size:11px; }
+
+  /* Popover becomes a bottom sheet so a day is reachable with one thumb. */
+  .ncal-pop { left:0 !important; right:0; top:auto !important; bottom:0; width:100%; max-height:72dvh; border-left:none; border-right:none; border-bottom:none; padding-bottom:env(safe-area-inset-bottom,0px); }
+  .ncal-pop .ncal-pill { font-size:12px; padding:8px 6px; }
+  .ncal-pop .ncal-time { display:inline; }
+
+  /* Modal becomes a full-height sheet: thumb-reachable fields, no lost body. */
+  .ncal-overlay { align-items:flex-end; padding:0; }
+  .ncal-modal { max-width:none; max-height:92dvh; overflow-y:auto; border-left:none; border-right:none; border-bottom:none; padding-bottom:env(safe-area-inset-bottom,0px); }
+  .ncal-modal-head, .ncal-modal-foot { position:sticky; background:#09090b; }
+  .ncal-modal-head { top:0; }
+  .ncal-modal-foot { bottom:0; }
+  .ncal-input, .ncal-select { font-size:16px; min-height:44px; }
+  .ncal-modal-body .ncal-field label { font-size:11px; }
+  .ncal-modal-foot .ncal-btn { min-height:44px; padding:11px 16px; }
+  .ncal-toast { left:.6rem; right:.6rem; bottom:calc(.6rem + env(safe-area-inset-bottom,0px)); max-width:none; }
 }
 </style>
 {% endblock %}
@@ -224,6 +276,9 @@
       collections: [], folders: [], colMap: {}, events: [], tasks: [], undated: [], byDay: {},
     };
     var HOUR_H = 44;
+    // Phones get one-thumb flows: a day tap opens the day sheet instead of the
+    // create modal, and the grid keeps two pills instead of three.
+    function isMobile() { return window.matchMedia('(max-width: 767px)').matches; }
 
     var monthWrap = document.getElementById('ncal-month-wrap');
     var monthBox = document.getElementById('ncal-month');
@@ -321,7 +376,8 @@
       NSC.renderMonth(monthBox, {
         weeks: weeks, byDay: state.byDay, cursor: state.cursor,
         selectedKey: state.selectedKey, showEvents: state.showEvents,
-        showTasks: state.showTasks, collectionsById: state.colMap, withComplete: true,
+        showTasks: state.showTasks, collectionsById: state.colMap,
+        withComplete: true, maxPills: isMobile() ? 2 : 3,
       });
       NSC.wireMonthDrop(monthBox, moveItem);
     }
@@ -336,7 +392,13 @@
       var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
       if (pill) { e.stopPropagation(); openEditor(pill.dataset.kind, pill.dataset.id); return; }
       var cell = e.target.closest ? e.target.closest('.ncal-cell') : null;
-      if (cell) { state.selectedKey = cell.dataset.date; openModal('event', { dateKey: cell.dataset.date }); renderMonth(); }
+      if (cell) {
+        state.selectedKey = cell.dataset.date;
+        // Phones open the day sheet (read + create from one place);
+        // desktops go straight to the prefilled create modal.
+        if (isMobile()) { openDayPop(cell.dataset.date, cell); renderMonth(); }
+        else { openModal('event', { dateKey: cell.dataset.date }); renderMonth(); }
+      }
     });
 
     // ── Week ──
@@ -558,7 +620,19 @@
         var hex = NSC.spaceColor(t.space_kind, t.space_id, t.space_name, state.colMap);
         return NSC.pillHTML('task', t, hex, { withComplete: true });
       }).join('');
-      body.innerHTML = rows || '<div class="ncal-status">Нет событий</div>';
+      if (!rows) rows = '<div class="ncal-status">Нет событий</div>';
+      // The sheet doubles as the day's create entry point, so a thumb never
+      // has to reach the header buttons to add something on this day.
+      body.innerHTML = rows +
+        '<div class="ncal-pop-create">' +
+        '<button class="ncal-btn" data-newkind="event" data-newdate="' + key + '">+ Событие</button>' +
+        '<button class="ncal-btn" data-newkind="task" data-newdate="' + key + '">+ Задача</button>' +
+        '</div>';
+      if (isMobile()) {
+        pop.style.left = ''; pop.style.top = '';
+        pop.classList.remove('hidden');
+        return;
+      }
       var r = anchor.getBoundingClientRect();
       pop.style.left = Math.min(window.innerWidth - 320, Math.max(8, r.left - 100)) + 'px';
       pop.style.top = Math.min(window.innerHeight - 200, r.bottom + 6) + 'px';
@@ -568,6 +642,12 @@
     document.getElementById('ncal-pop-body').addEventListener('click', function (e) {
       var doneBtn = e.target.closest ? e.target.closest('[data-complete]') : null;
       if (doneBtn) { e.stopPropagation(); pop.classList.add('hidden'); completeTask(doneBtn.dataset.complete); return; }
+      var newBtn = e.target.closest ? e.target.closest('[data-newkind]') : null;
+      if (newBtn) {
+        e.stopPropagation(); pop.classList.add('hidden');
+        openModal(newBtn.dataset.newkind, { dateKey: newBtn.dataset.newdate });
+        return;
+      }
       var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
       if (pill) { pop.classList.add('hidden'); openEditor(pill.dataset.kind, pill.dataset.id); }
     });
