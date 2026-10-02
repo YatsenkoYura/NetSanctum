@@ -100,6 +100,7 @@ async def list_tasks(
     space_kind: str | None = None,
     space_id: int | None = None,
     due_before: datetime.datetime | None = None,
+    due_after: datetime.datetime | None = None,
     limit: int = TASK_LIST_LIMIT,
 ) -> list[PlannerTask]:
     statement = select(PlannerTask).where(PlannerTask.user_id == user_id)
@@ -118,6 +119,8 @@ async def list_tasks(
         statement = statement.where(PlannerTask.space_id == space_id)
     if due_before is not None:
         statement = statement.where(PlannerTask.due_at.is_not(None), PlannerTask.due_at <= due_before)
+    if due_after is not None:
+        statement = statement.where(PlannerTask.due_at.is_not(None), PlannerTask.due_at >= due_after)
     statement = statement.order_by(
         PlannerTask.due_at.is_(None),
         PlannerTask.due_at.asc(),

@@ -53,18 +53,53 @@ a silent wrong date.
 
 No Celery beat exists, so `planner.sweep_reminders` re-arms itself every 60s.
 Every planner write calls `ensure_sweep_armed`, which schedules the loop once
-via a Redis SETNX flag — a worker restart heals on the next API call. Each
+via a Redis SETNX flag, and a `worker_ready` handler kicks the same gate on
+worker (re)start — a second loop can never fork, which matters because task
+claiming is not atomic across processes. Each
 pass pushes due reminders exactly once (`notified_at`), then rolls repeating
 events whose end passed (old → done, next instance spawned with shifted
 remind). Task repeats roll on explicit complete, never in the sweep.
 
+## Range API
+
+- `GET /api/planner/events?from=&to=` and `GET /api/planner/tasks?due_from=&due_to=`
+  filter by an ISO datetime or a plain `YYYY-MM-DD` day (naive means Moscow).
+- `GET /api/planner/calendar?from=&to=&space_kind=&space_id=&include_done_tasks=`
+  returns one `{events, tasks}` payload for the visible range (cap 500 each).
+  The dashboard and the Vault mini-calendar both read through this endpoint.
+
 ## Dashboard (`/planner`)
 
-Server-rendered: overdue / today / upcoming / done tasks plus upcoming events,
-quick-add form with a space picker fed by `/api/vault/collections` and
-`items?node_type=folder`. Actions (complete, snooze +1h / tomorrow 9:00,
-delete) are fetch calls followed by reload — no client state to drift.
-The path is pinned in MIKU's deep-link allowlist.
+Server renders an empty calendar shell; the visible range loads client-side
+via `/api/planner/calendar`, so the server never guesses which 42 days the
+owner looks at. Views: month grid (Monday-first, pills in cells, `3 + "+ещё N"`
+density cap with a day popover), week time-grid (all-day row + 24h columns,
+drag-to-move, bottom-handle resize for `ends_at`), agenda grouped by day
+(complete / snooze / delete inline, undated tasks in their own section).
+
+- Month pills: solid for events, dashed with `✓` for tasks; color comes from
+  the Vault collection (`/api/vault/collections` joined client-side, folders
+  hash to a palette, inbox gray); `↻` marks repeats, overdue tasks tint red.
+- Click an empty cell/slot → create modal prefilled with that date (event/task
+  tabs, all-day, end date, space picker fed by collections + folder nodes,
+  location/priority/recurrence/remind/notes). Click a pill → edit modal.
+- Keyboard: `t` today, `m/w/a` views, `←/→` paging, `Esc` closes. Mobile gets
+  a compact month (shorter cells) plus a horizontally scrollable week.
+- Shared rendering/DnD/date helpers live in `static/netsanctum-calendar.js`
+  (`window.NetSanctumCalendar`), reused by the Vault mini-calendar. Calendar
+  styling is custom `ncal-*` classes in template `<style>` blocks, so no
+  Tailwind rebuild is needed for calendar changes.
+- The path is pinned in MIKU's deep-link allowlist.
+
+## Vault mini-calendar
+
+`vault_dashboard.html` shows a collapsible "Календарь пространства" panel
+above the tiles whenever a concrete workspace is selected (hidden for "Все
+карточки", other views, and read-only/package mode). It renders the same
+month grid in compact mode (`2 + "+ещё N"`), scoped with
+`space_kind=collection&space_id=<workspace>`, and supports quick event
+creation (prefilled space) plus drag-to-move; a pill click jumps to `/planner`
+for full editing.
 
 ## Non-goals (second iteration)
 

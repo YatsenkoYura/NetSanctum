@@ -14,6 +14,7 @@
 .vault-toolbar-primary, .vault-toolbar-actions { display:flex; align-items:center; gap:.75rem; min-width:0; }
 .vault-search { width:11rem; }
 .vault-status { position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; min-height:12rem; background:#000; color:#71717a; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+.vault-status.hidden { display:none; }
 .vault-toast { position:fixed; right:1rem; bottom:1rem; z-index:100; max-width:min(24rem, calc(100vw - 2rem)); border:1px solid #3f3f46; background:#09090b; padding:.65rem .8rem; color:#e4e4e7; font-size:11px; box-shadow:0 12px 35px rgba(0,0,0,.7); }
 .vault-toast.error { border-color:#ef4444; color:#fca5a5; }
 .sidebar-backdrop { display:none; }
@@ -65,6 +66,51 @@
 .mini-sheet-table { border-collapse:collapse; width:100%; font-size:11px; font-family:'JetBrains Mono',monospace; }
 .mini-sheet-table td, .mini-sheet-table th { border:1px solid #27272a; padding:5px 8px; white-space:nowrap; text-align:left; }
 
+/* Space mini-calendar (shares the NetSanctumCalendar core with /planner) */
+#vault-cal-panel { border:1px solid #27272a; background:#09090b; margin-bottom:12px; }
+.vcal-bar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; justify-content:space-between; padding:6px 10px; border-bottom:1px solid #1c1c1f; }
+.vcal-title { font-size:10px; font-weight:800; color:#e4e4e7; text-transform:uppercase; letter-spacing:.06em; }
+.vcal-nav { display:flex; align-items:center; gap:.35rem; }
+.vcal-label { font-size:11px; font-weight:700; color:#e4e4e7; min-width:8rem; text-align:center; }
+.vcal-btn { border:1px solid #27272a; background:#000; color:#a1a1aa; font-size:10px; font-weight:700; padding:3px 8px; cursor:pointer; text-transform:uppercase; }
+.vcal-btn:hover { color:#2dd4bf; border-color:#2dd4bf; }
+#vcal-body { padding:8px; }
+#vcal-body.collapsed { display:none; }
+.ncal-dowrow { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; margin-bottom:2px; }
+.ncal-dow { font-size:9px; font-weight:800; color:#71717a; text-transform:uppercase; text-align:center; padding:2px 0; }
+.ncal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; }
+.ncal-cell { min-height:64px; border:1px solid #27272a; background:#000; padding:2px; cursor:cell; display:flex; flex-direction:column; }
+.ncal-cell:hover { border-color:#3f3f46; }
+.ncal-cell.ncal-outside { opacity:.42; }
+.ncal-cell.ncal-weekend { background:#0a0a0c; }
+.ncal-cell.ncal-today { border-color:#2dd4bf; }
+.ncal-cell.ncal-selected { outline:1px solid #2dd4bf; outline-offset:-1px; }
+.ncal-cell.ncal-drop-hint { outline:2px dashed #2dd4bf; outline-offset:-2px; }
+.ncal-dayrow { display:flex; align-items:center; justify-content:space-between; }
+.ncal-daynum { font-size:10px; font-weight:700; color:#a1a1aa; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; }
+.ncal-today .ncal-daynum { background:#2dd4bf; color:#000; border-radius:9999px; }
+.ncal-add { opacity:0; border:none; background:none; color:#2dd4bf; font-size:13px; font-weight:800; cursor:pointer; line-height:1; padding:0 2px; }
+.ncal-cell:hover .ncal-add { opacity:1; }
+.ncal-pills { display:flex; flex-direction:column; gap:2px; margin-top:2px; }
+.ncal-pill { display:flex; align-items:center; gap:4px; font-size:9px; line-height:1.4; padding:1px 4px; border-left:3px solid var(--pill); background:#121215; color:#e4e4e7; white-space:nowrap; overflow:hidden; cursor:pointer; }
+.ncal-pill:hover { background:#1a1a1e; }
+.ncal-event { border-top:1px solid #1f1f23; border-right:1px solid #1f1f23; border-bottom:1px solid #1f1f23; }
+.ncal-task { border:1px dashed #3f3f46; border-left:3px solid var(--pill); background:transparent; }
+.ncal-task-done { opacity:.55; }
+.ncal-task-done .ncal-title { text-decoration:line-through; }
+.ncal-overdue { border-color:#7f1d1d; background:rgba(127,29,29,.18); }
+.ncal-time { color:#71717a; flex-shrink:0; }
+.ncal-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.ncal-recur { color:#52525b; flex-shrink:0; }
+.ncal-more { border:none; background:none; color:#2dd4bf; font-size:9px; font-weight:700; cursor:pointer; text-align:left; padding:2px 2px 0; }
+.ncal-more:hover { text-decoration:underline; }
+.ncal-pop { position:fixed; z-index:90; width:min(19rem,calc(100vw - 2rem)); max-height:60vh; overflow-y:auto; background:#09090b; border:1px solid #3f3f46; box-shadow:0 14px 40px rgba(0,0,0,.8); }
+.ncal-pop.hidden { display:none; }
+.ncal-pop-head { display:flex; justify-content:space-between; align-items:center; padding:.5rem .7rem; border-bottom:1px solid #27272a; font-size:11px; font-weight:800; color:#fff; text-transform:uppercase; }
+.ncal-pop-body { padding:.4rem .7rem .7rem; display:flex; flex-direction:column; gap:3px; }
+.vcal-input { width:100%; background:#000; border:1px solid #27272a; color:#e4e4e7; font-size:12px; padding:6px 8px; color-scheme:dark; }
+.vcal-input:focus { outline:none; border-color:#2dd4bf; }
+
 /* Whiteboard Canvas Viewport */
 .wb-viewport { position:relative; width:100%; height:clamp(420px, 68dvh, 720px); background:#050505; border:1px solid #27272a; overflow:hidden; user-select:none; touch-action:none; }
 .wb-world { position:absolute; top:0; left:0; width:3000px; height:3000px; background-image:radial-gradient(#1f1f23 1px, transparent 1px); background-size:20px 20px; transform-origin:0 0; }
@@ -99,7 +145,11 @@
   .vault-toolbar-actions { grid-template-columns:minmax(0, 1fr); }
   #active-ws-title { max-width:9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 }
+@media (max-width: 767px) {
+  .ncal-cell { min-height:52px; }
+}
 </style>
+<script src="/static/netsanctum-calendar.js?v=1"></script>
 {% endblock %}
 
 {% block content %}
@@ -201,6 +251,57 @@
     <div class="flex-1 relative overflow-y-auto p-4" id="board-viewport">
 
       <div id="vault-status" class="vault-status">Загрузка хранилища...</div>
+
+      <!-- ── SPACE MINI-CALENDAR (planner events bound to this workspace) ── -->
+      <div id="vault-cal-panel" class="hidden">
+        <div class="vcal-bar">
+          <span class="vcal-title">Календарь пространства</span>
+          <div class="vcal-nav">
+            <button class="vcal-btn" id="vcal-prev" title="Прошлый месяц">‹</button>
+            <span class="vcal-label" id="vcal-label">…</span>
+            <button class="vcal-btn" id="vcal-next" title="Следующий месяц">›</button>
+            <button class="vcal-btn" id="vcal-today">Сегодня</button>
+          </div>
+          <div class="vcal-nav">
+            {% if not is_readonly %}<button class="vcal-btn" id="vcal-add">+ Событие</button>{% endif %}
+            <button class="vcal-btn" id="vcal-open-full">Весь календарь →</button>
+            <button class="vcal-btn" id="vcal-toggle">Свернуть</button>
+          </div>
+        </div>
+        <div id="vcal-body"><div id="vcal-grid"></div></div>
+      </div>
+
+      <div class="ncal-pop hidden" id="vcal-pop">
+        <div class="ncal-pop-head"><span id="vcal-pop-title"></span><button class="vcal-btn" id="vcal-pop-close">✕</button></div>
+        <div class="ncal-pop-body" id="vcal-pop-body"></div>
+      </div>
+
+      {% if not is_readonly %}
+      <div id="vcal-modal" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
+        <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
+          <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
+            <span class="text-xs font-bold text-white uppercase">Событие в «<span id="vcal-modal-space">…</span>»</span>
+            <button onclick="closeVcalModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+          </div>
+          <div class="p-4 space-y-3">
+            <div><label class="text-[10px] text-zinc-500 uppercase font-bold">Заголовок</label>
+              <input type="text" id="vcal-f-title" maxlength="200" placeholder="Название события…" class="vcal-input"></div>
+            <div class="grid grid-cols-2 gap-2">
+              <div><label class="text-[10px] text-zinc-500 uppercase font-bold">Дата</label>
+                <input type="date" id="vcal-f-date" class="vcal-input"></div>
+              <div><label class="text-[10px] text-zinc-500 uppercase font-bold">Время</label>
+                <input type="time" id="vcal-f-time" value="09:00" class="vcal-input"></div>
+            </div>
+            <label class="text-[11px] text-zinc-400 flex items-center gap-2"><input type="checkbox" id="vcal-f-allday"> весь день</label>
+            <label class="text-[11px] text-zinc-400 flex items-center gap-2"><input type="checkbox" id="vcal-f-remind" checked> напомнить в момент начала</label>
+          </div>
+          <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
+            <button onclick="closeVcalModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+            <button onclick="submitVcalModal()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
 
       <!-- 1. MASONRY TILES GRID -->
       <div id="view-tiles-container">
@@ -368,21 +469,25 @@
 {% endif %}
 
 <script>
-const sharedMode = {{ is_shared|tojson }};
-const packageId = new URLSearchParams(window.location.search).get('package_id');
-const packageMode = Boolean(packageId);
-const readOnlyMode = sharedMode || packageMode;
-let currentCollectionId = null;
-let currentItems = [];
-let packageItemsPromise = null;
-let workspaceLoadId = 0;
-let packageVisibleLimit = 200;
-let activeView = 'tiles';
-let autoSaveTimer = null;
-let sheetSaveTimer = null;
-let wbSaveTimer = null;
-let searchTimer = null;
-let activeCell = null;
+// NOTE: `var`, not `const`/`let`: this dashboard is swapped into the live page
+// via htmx (navigate() in base.html), so the script re-executes in the same
+// window scope on every visit — lexical redeclarations would throw and abort
+// the swap. `var` redeclaration is legal and resets state per navigation.
+var sharedMode = {{ is_shared|tojson }};
+var packageId = new URLSearchParams(window.location.search).get('package_id');
+var packageMode = Boolean(packageId);
+var readOnlyMode = sharedMode || packageMode;
+var currentCollectionId = null;
+var currentItems = [];
+var packageItemsPromise = null;
+var workspaceLoadId = 0;
+var packageVisibleLimit = 200;
+var activeView = 'tiles';
+var autoSaveTimer = null;
+var sheetSaveTimer = null;
+var wbSaveTimer = null;
+var searchTimer = null;
+var activeCell = null;
 window._vaultCache = {};
 
 function escapeHtml(value) {
@@ -425,7 +530,7 @@ async function mutationJson(url, options, fallback) {
   }
 }
 
-let toastTimer = null;
+var toastTimer = null;
 function showToast(message, isError = false) {
   const toast = document.getElementById('vault-toast');
   if (!toast) return;
@@ -468,19 +573,24 @@ function safeImageUrl(value) {
   return safeExternalUrl(raw);
 }
 
-let wbMode = 'select';
-let wbZoom = 1.0;
-let wbPanX = 0;
-let wbPanY = 0;
-let isPanning = false;
-let panStartX = 0;
-let panStartY = 0;
-let isDrawing = false;
-let isDrawingArrow = false;
-let activeWbNodes = [];
-let activeWbStrokes = [];
-let currentStroke = null;
-let wbCtx = null;
+function itemImageUrl(item) {
+  if (!item || !item.has_image) return '';
+  return packageUrl(`/api/vault/items/${pathSegment(item.id)}/image`);
+}
+
+var wbMode = 'select';
+var wbZoom = 1.0;
+var wbPanX = 0;
+var wbPanY = 0;
+var isPanning = false;
+var panStartX = 0;
+var panStartY = 0;
+var isDrawing = false;
+var isDrawingArrow = false;
+var activeWbNodes = [];
+var activeWbStrokes = [];
+var currentStroke = null;
+var wbCtx = null;
 
 function closeSidebar() {
   document.getElementById('sidebar')?.classList.remove('is-open');
@@ -500,49 +610,60 @@ function toggleSidebar() {
 function togglePlusDropdown(e) { e.stopPropagation(); document.getElementById('plus-dropdown')?.classList.toggle('show'); }
 function toggleExportMenu(e) { e.stopPropagation(); document.getElementById('export-dropdown')?.classList.toggle('hidden'); }
 
-document.addEventListener('click', () => {
-  document.getElementById('plus-dropdown')?.classList.remove('show');
-  document.getElementById('export-dropdown')?.classList.add('hidden');
-});
+// Guarded: document-level listeners must be attached once — this script
+// re-executes on every htmx navigation into the dashboard.
+if (!window.__vaultClickBound) {
+  window.__vaultClickBound = true;
+  document.addEventListener('click', () => {
+    document.getElementById('plus-dropdown')?.classList.remove('show');
+    document.getElementById('export-dropdown')?.classList.add('hidden');
+  });
+}
 
 // Tool Hotkeys
-document.addEventListener('keydown', (e) => {
-  if (readOnlyMode) return;
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  const key = e.key.toLowerCase();
-  if (key === 'v' || key === '1') setWbMode('select');
-  if (key === 'b' || key === '2') setWbMode('draw');
-  if (key === 'l' || key === '3') setWbMode('line');
-  if (key === 'e' || key === '4') setWbMode('erase');
-});
+if (!window.__vaultKeysBound) {
+  window.__vaultKeysBound = true;
+  document.addEventListener('keydown', (e) => {
+    if (readOnlyMode) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const key = e.key.toLowerCase();
+    if (key === 'v' || key === '1') setWbMode('select');
+    if (key === 'b' || key === '2') setWbMode('draw');
+    if (key === 'l' || key === '3') setWbMode('line');
+    if (key === 'e' || key === '4') setWbMode('erase');
+  });
+}
 
 // ── FAST CLIPBOARD PASTE (CTRL+V) & DRAG & DROP ────────────────────────────
-document.addEventListener('paste', async (e) => {
-  if (readOnlyMode) return;
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+if (!window.__vaultPasteBound) {
+  window.__vaultPasteBound = true;
+  document.addEventListener('paste', async (e) => {
+    if (readOnlyMode) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  const clipboardData = e.clipboardData || window.clipboardData;
-  if (!clipboardData) return;
+    const clipboardData = e.clipboardData || window.clipboardData;
+    if (!clipboardData) return;
 
-  const items = clipboardData.items;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].type.indexOf('image') !== -1) {
-      const blob = items[i].getAsFile();
-      const reader = new FileReader();
-      reader.onload = async (evt) => {
-        const base64Img = evt.target.result;
-        await createNoteWithImage(base64Img);
-      };
-      reader.readAsDataURL(blob);
-      return;
+    const items = clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const blob = items[i].getAsFile();
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+          const base64Img = evt.target.result;
+          await createNoteWithImage(base64Img);
+        };
+        reader.readAsDataURL(blob);
+        return;
+      }
     }
-  }
 
-  const pastedText = clipboardData.getData('text');
-  if (pastedText && pastedText.trim()) {
-    await processPastedText(pastedText.trim());
-  }
-});
+    const pastedText = clipboardData.getData('text');
+    if (pastedText && pastedText.trim()) {
+      await processPastedText(pastedText.trim());
+    }
+  });
+}
 
 async function processPastedText(text) {
   if (text.startsWith('http://') || text.startsWith('https://')) {
@@ -635,10 +756,12 @@ async function createNoteWithImage(base64Img) {
   if (created) { loadWorkspace(); loadVaultSummary(); }
 }
 
-// Attach Drag & Drop to Main Workspace Area
-document.addEventListener('DOMContentLoaded', () => {
+// Attach Drag & Drop to Main Workspace Area (re-attached per navigation:
+// htmx swaps replace the root node, so a stale-element guard is used).
+function __vaultAttachRootDrop() {
   const root = document.getElementById('main-workspace-root');
-  if (!root) return;
+  if (!root || root.dataset.vaultDropBound) return;
+  root.dataset.vaultDropBound = '1';
 
   root.addEventListener('dragover', (e) => { e.preventDefault(); root.classList.add('drag-over-active'); });
   root.addEventListener('dragleave', () => { root.classList.remove('drag-over-active'); });
@@ -670,7 +793,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const droppedText = e.dataTransfer.getData('text');
     if (droppedText) { await processPastedText(droppedText.trim()); }
   });
-});
+}
 
 function openWorkspaceModal() { document.getElementById('ws-name-input').value = ''; document.getElementById('modal-workspace').classList.remove('hidden'); }
 function closeWorkspaceModal() { document.getElementById('modal-workspace').classList.add('hidden'); }
@@ -806,17 +929,12 @@ function openEditorView(item) {
   document.getElementById('editor-content').value = item.content || '';
 
   const imgContainer = document.getElementById('editor-image-container');
-  if (item.og_image) {
-    const imageUrl = safeImageUrl(item.og_image);
-    if (!imageUrl) {
-      imgContainer.replaceChildren();
-      imgContainer.classList.add('hidden');
-    } else {
-      imgContainer.innerHTML = `<div class="mb-4 border border-zinc-800 bg-zinc-950 p-2 flex items-center justify-center rounded-sm">
-        <img src="${escapeAttr(imageUrl)}" class="max-h-[65vh] w-auto object-contain rounded">
-      </div>`;
-      imgContainer.classList.remove('hidden');
-    }
+  const imageUrl = safeImageUrl(item.og_image) || itemImageUrl(item);
+  if (imageUrl) {
+    imgContainer.innerHTML = `<div class="mb-4 border border-zinc-800 bg-zinc-950 p-2 flex items-center justify-center rounded-sm">
+      <img src="${escapeAttr(imageUrl)}" class="max-h-[65vh] w-auto object-contain rounded">
+    </div>`;
+    imgContainer.classList.remove('hidden');
   } else {
     imgContainer.replaceChildren();
     imgContainer.classList.add('hidden');
@@ -1499,6 +1617,7 @@ async function selectWorkspace(id, name) {
   document.getElementById('active-ws-title').innerText = name;
   closeSidebar();
   loadWorkspace();
+  if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
 }
 
 async function loadVaultSummary() {
@@ -1633,7 +1752,10 @@ function resizeAllGridItems() {
   allItems.forEach(item => resizeGridItem(item));
 }
 
-window.addEventListener('resize', resizeAllGridItems);
+if (!window.__vaultResizeBound) {
+  window.__vaultResizeBound = true;
+  window.addEventListener('resize', resizeAllGridItems);
+}
 
 // ── MASONRY TILE RENDERING (UNCROPPED IMAGES & FULL PREVIEWS) ────────────────
 function renderTiles(items) {
@@ -1652,7 +1774,7 @@ function renderTiles(items) {
     const isWb = item.node_type === 'whiteboard';
 
     const wbDrawingPreview = isWb && item.canvas_data?.drawing && item.canvas_data.drawing.length > 100 ? item.canvas_data.drawing : null;
-    const displayImg = safeImageUrl(item.og_image || wbDrawingPreview);
+    const displayImg = safeImageUrl(item.og_image) || itemImageUrl(item) || safeImageUrl(wbDrawingPreview);
 
     let itemColSpan = displayImg || isWb ? 'sm:col-span-2 lg:col-span-2' : '';
 
@@ -1768,7 +1890,7 @@ async function exportItems() {
     } else {
       items = [];
       for (let offset = 0; ; offset += 500) {
-        const page = await requestJson(`/api/vault/items?limit=500&offset=${offset}&is_archived=false`, {}, 'Не удалось экспортировать Vault');
+        const page = await requestJson(`/api/vault/items?limit=500&offset=${offset}&is_archived=false&include_images=true`, {}, 'Не удалось экспортировать Vault');
         items.push(...page);
         if (page.length < 500) break;
       }
@@ -1848,13 +1970,257 @@ function handleSheetPaste(e) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// Boot on every visit: htmx navigation does not re-fire DOMContentLoaded,
+// so when the document is already ready the dashboard must start immediately.
+function __vaultBoot() {
+  __vaultAttachRootDrop();
   loadVaultSummary();
   loadWorkspace();
   const sheetCanvas = document.getElementById('sheet-canvas');
-  if (sheetCanvas) {
+  if (sheetCanvas && !sheetCanvas.dataset.vaultPasteBound) {
+    sheetCanvas.dataset.vaultPasteBound = '1';
     sheetCanvas.addEventListener('paste', handleSheetPaste);
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', __vaultBoot, { once: true });
+} else {
+  __vaultBoot();
+}
+</script>
+
+<script>
+// ── VAULT SPACE MINI-CALENDAR ──────────────────────────────────────────────
+// Same NetSanctumCalendar core as /planner, scoped to the active workspace.
+// Full editing lives in /planner; here: month pills in cells, quick create,
+// drag-to-move, "+ещё" popover. `var` on purpose (htmx re-executes this).
+var vcalCursor = null;
+var vcalSelectedKey = null;
+var vcalCollapsed = false;
+var vcalCache = { events: [], tasks: [], byDay: {} };
+var vcalLoading = false;
+
+function vcalNSC() { return window.NetSanctumCalendar || null; }
+
+function vcalVisible() {
+  if (readOnlyMode) return false;
+  if (activeView !== 'tiles') return false;
+  return currentCollectionId !== null && currentCollectionId !== undefined;
+}
+
+function refreshVaultCalendar() {
+  var NSC = vcalNSC();
+  var panel = document.getElementById('vault-cal-panel');
+  if (!panel) return;
+  if (!NSC) {
+    var s = document.createElement('script');
+    s.src = '/static/netsanctum-calendar.js?v=1';
+    s.onload = function () { refreshVaultCalendar(); };
+    document.head.appendChild(s);
+    return;
+  }
+  if (!vcalCursor) { vcalCursor = NSC.startOfDay(new Date()); vcalSelectedKey = NSC.dayKey(new Date()); }
+  if (!vcalVisible()) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  document.getElementById('vcal-body').classList.toggle('collapsed', vcalCollapsed);
+  document.getElementById('vcal-toggle').textContent = vcalCollapsed ? 'Развернуть' : 'Свернуть';
+  document.getElementById('vcal-label').textContent = NSC.monthTitle(vcalCursor);
+  if (vcalCollapsed) return;
+  var weeks = NSC.monthWeeks(vcalCursor);
+  var range = NSC.rangeOfWeeks(weeks);
+  vcalLoading = true;
+  NSC.fetchCalendar({ from: range.from, to: range.to, space_kind: 'collection', space_id: currentCollectionId })
+    .then(function (data) {
+      vcalLoading = false;
+      vcalCache.events = data.events || [];
+      vcalCache.tasks = data.tasks || [];
+      vcalCache.byDay = NSC.groupByDay(vcalCache.events, vcalCache.tasks);
+      renderVaultCalendar(weeks);
+    })
+    .catch(function (e) {
+      vcalLoading = false;
+      document.getElementById('vcal-grid').innerHTML =
+        '<div style="padding:1rem;text-align:center;font-size:11px;color:#71717a">' +
+        escapeHtml((e && e.message) || 'Календарь недоступен') + '</div>';
+    });
+}
+
+function vcalSpaceColor(item) {
+  var NSC = vcalNSC();
+  var map = {};
+  try {
+    var label = document.getElementById('active-ws-title').textContent || '';
+    map[currentCollectionId] = { color: 'teal', name: label };
+  } catch (e) {}
+  // Collection color is teal by default; the full palette legend lives in /planner.
+  return NSC.spaceColor(item.space_kind, item.space_id, item.space_name, map);
+}
+
+function renderVaultCalendar(weeks) {
+  var NSC = vcalNSC();
+  var grid = document.getElementById('vcal-grid');
+  NSC.renderMonth(grid, {
+    weeks: weeks, byDay: vcalCache.byDay, cursor: vcalCursor,
+    selectedKey: vcalSelectedKey, compact: true, showEvents: true, showTasks: true,
+    collectionsById: {}, withComplete: false,
+  });
+  // Recolor pills with the workspace accent (single-space view).
+  grid.querySelectorAll('.ncal-pill').forEach(function (pill) {
+    var kind = pill.dataset.kind, id = parseInt(pill.dataset.id, 10);
+    var list = kind === 'event' ? vcalCache.events : vcalCache.tasks;
+    var found = null;
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) { found = list[i]; break; }
+    if (found) pill.style.setProperty('--pill', vcalSpaceColor(found));
+  });
+  NSC.wireMonthDrop(grid, vcalMoveItem);
+}
+
+function vcalFind(kind, id) {
+  id = parseInt(id, 10);
+  var list = kind === 'event' ? vcalCache.events : vcalCache.tasks;
+  for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+  return null;
+}
+
+function vcalMoveItem(kind, id, targetKey) {
+  var NSC = vcalNSC();
+  var item = vcalFind(kind, id);
+  if (!item) return;
+  var iso = NSC.shiftedToDay(kind === 'event' ? item.starts_at : item.due_at, targetKey);
+  var req;
+  if (kind === 'event') {
+    var body = { starts_at: iso };
+    var s = NSC.parseISO(item.starts_at), e = NSC.parseISO(item.ends_at);
+    // Preserve duration: shift the end by the same delta as the start.
+    if (s && e && e > s) {
+      var day = NSC.fromKey(targetKey);
+      var ns = new Date(day.getFullYear(), day.getMonth(), day.getDate(), s.getHours(), s.getMinutes(), 0, 0);
+      body.ends_at = NSC.isoWithOffset(new Date(ns.getTime() + (e - s)));
+    }
+    req = NSC.apiCall('/api/planner/events/' + item.id, 'PATCH', body);
+  } else {
+    req = NSC.apiCall('/api/planner/tasks/' + item.id, 'PATCH', { due_at: iso });
+  }
+  req.then(function () { refreshVaultCalendar(); })
+    .catch(function (err) { showToast((err && err.message) || 'Не удалось перенести', true); });
+}
+
+function vcalGotoPlanner() {
+  if (window.netSanctumNavigate) window.netSanctumNavigate('/planner');
+  else window.location.href = '/planner';
+}
+
+function openVcalModal(dateKey) {
+  var NSC = vcalNSC();
+  if (!NSC || currentCollectionId == null) return;
+  document.getElementById('vcal-modal-space').textContent = document.getElementById('active-ws-title').textContent || '';
+  document.getElementById('vcal-f-title').value = '';
+  var d = dateKey ? NSC.fromKey(dateKey) : new Date();
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  document.getElementById('vcal-f-date').value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  document.getElementById('vcal-f-time').value = '09:00';
+  document.getElementById('vcal-f-allday').checked = false;
+  document.getElementById('vcal-f-remind').checked = true;
+  document.getElementById('vcal-modal').classList.remove('hidden');
+  setTimeout(function () { document.getElementById('vcal-f-title').focus(); }, 30);
+}
+
+function closeVcalModal() { document.getElementById('vcal-modal').classList.add('hidden'); }
+
+function submitVcalModal() {
+  var NSC = vcalNSC();
+  var title = document.getElementById('vcal-f-title').value.trim();
+  if (!title) { showToast('Введите заголовок', true); return; }
+  var dateStr = document.getElementById('vcal-f-date').value;
+  if (!dateStr) { showToast('Выберите дату', true); return; }
+  var allDay = document.getElementById('vcal-f-allday').checked;
+  var p = dateStr.split('-');
+  var t = allDay ? [0, 0] : document.getElementById('vcal-f-time').value.split(':').map(Number);
+  var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10), t[0] || 0, t[1] || 0, 0, 0);
+  var starts = NSC.isoWithOffset(d);
+  var spaceName = document.getElementById('active-ws-title').textContent || null;
+  var body = {
+    title: title, starts_at: starts, space_kind: 'collection',
+    space_id: currentCollectionId, space_name: spaceName,
+  };
+  if (document.getElementById('vcal-f-remind').checked) body.remind_at = starts;
+  NSC.apiCall('/api/planner/events', 'POST', body).then(function () {
+    closeVcalModal();
+    refreshVaultCalendar();
+    showToast('Событие создано');
+  }).catch(function (err) { showToast((err && err.message) || 'Не удалось создать событие', true); });
+}
+
+(function vcalBoot() {
+  function bind() {
+    var NSC = vcalNSC();
+    if (!NSC) {
+      var s = document.createElement('script');
+      s.src = '/static/netsanctum-calendar.js?v=1';
+      s.onload = bind;
+      document.head.appendChild(s);
+      return;
+    }
+    if (!vcalCursor) { vcalCursor = NSC.startOfDay(new Date()); vcalSelectedKey = NSC.dayKey(new Date()); }
+    document.getElementById('vcal-prev').addEventListener('click', function () {
+      vcalCursor = NSC.addMonths(vcalCursor, -1); refreshVaultCalendar();
+    });
+    document.getElementById('vcal-next').addEventListener('click', function () {
+      vcalCursor = NSC.addMonths(vcalCursor, 1); refreshVaultCalendar();
+    });
+    document.getElementById('vcal-today').addEventListener('click', function () {
+      vcalCursor = NSC.startOfDay(new Date()); vcalSelectedKey = NSC.dayKey(new Date()); refreshVaultCalendar();
+    });
+    document.getElementById('vcal-toggle').addEventListener('click', function () {
+      vcalCollapsed = !vcalCollapsed; refreshVaultCalendar();
+    });
+    document.getElementById('vcal-open-full').addEventListener('click', vcalGotoPlanner);
+    var addBtn = document.getElementById('vcal-add');
+    if (addBtn) addBtn.addEventListener('click', function () { openVcalModal(vcalSelectedKey); });
+    document.getElementById('vcal-grid').addEventListener('click', function (e) {
+      var more = e.target.closest ? e.target.closest('[data-more]') : null;
+      if (more) { e.stopPropagation(); openVcalPop(more.dataset.more, more); return; }
+      var add = e.target.closest ? e.target.closest('[data-add]') : null;
+      if (add) { e.stopPropagation(); vcalSelectedKey = add.dataset.add; openVcalModal(add.dataset.add); return; }
+      var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
+      if (pill) { vcalGotoPlanner(); return; }
+      var cell = e.target.closest ? e.target.closest('.ncal-cell') : null;
+      if (cell) { vcalSelectedKey = cell.dataset.date; openVcalModal(cell.dataset.date); }
+    });
+    document.getElementById('vcal-pop-close').addEventListener('click', function () {
+      document.getElementById('vcal-pop').classList.add('hidden');
+    });
+    document.getElementById('vcal-pop-body').addEventListener('click', function () { vcalGotoPlanner(); });
+    refreshVaultCalendar();
+  }
+  // No once-guard here on purpose: htmx swaps replace the panel nodes on every
+  // visit, so listeners must be bound to the fresh elements each time. Detached
+  // nodes (and their listeners) are garbage-collected with the old swap.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bind, { once: true });
+  } else {
+    bind();
+  }
+})();
+
+function openVcalPop(key, anchor) {
+  var NSC = vcalNSC();
+  if (!NSC) return;
+  var cell = vcalCache.byDay[key] || { events: [], tasks: [] };
+  document.getElementById('vcal-pop-title').textContent = NSC.fmtDateLong(key);
+  var body = document.getElementById('vcal-pop-body');
+  var rows = cell.events.map(function (ev) {
+    return NSC.pillHTML('event', ev, vcalSpaceColor(ev), {});
+  }).join('') + cell.tasks.map(function (t) {
+    return NSC.pillHTML('task', t, vcalSpaceColor(t), {});
+  }).join('');
+  body.innerHTML = rows || '<div style="font-size:11px;color:#71717a">Нет событий — нажмите, чтобы открыть планировщик</div>';
+  var r = anchor.getBoundingClientRect();
+  var pop = document.getElementById('vcal-pop');
+  pop.style.left = Math.min(window.innerWidth - 320, Math.max(8, r.left - 100)) + 'px';
+  pop.style.top = Math.min(window.innerHeight - 220, r.bottom + 6) + 'px';
+  pop.classList.remove('hidden');
+}
 </script>
 {% endblock %}

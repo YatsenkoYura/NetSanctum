@@ -3,187 +3,915 @@
 
 {% block head_extra %}
 <style>
-.planner-shell { min-height:calc(100dvh - 7rem); }
-.planner-card { border:1px solid #27272a; background:#09090b; }
-.planner-input { width:100%; background:#09090b; border:1px solid #27272a; color:#e4e4e7; font-size:12px; padding:6px 8px; }
-.planner-input:focus { outline:none; border-color:#2dd4bf; }
-.planner-btn { border:1px solid #27272a; background:#09090b; color:#a1a1aa; font-size:11px; font-weight:700; padding:5px 10px; cursor:pointer; text-transform:uppercase; }
-.planner-btn:hover { color:#2dd4bf; border-color:#2dd4bf; }
-.planner-btn.danger:hover { color:#fca5a5; border-color:#ef4444; }
-.planner-act { color:#71717a; font-size:11px; font-weight:700; cursor:pointer; text-transform:uppercase; }
-.planner-act:hover { color:#2dd4bf; }
-.planner-act.danger:hover { color:#fca5a5; }
-.space-badge { display:inline-block; font-size:10px; font-weight:700; color:#2dd4bf; border:1px solid #134e4a; background:rgba(45,212,191,.06); padding:1px 6px; margin-left:6px; }
-.space-badge.inbox { color:#71717a; border-color:#27272a; background:transparent; }
+.ncal-shell { max-width:76rem; margin:0 auto; padding:1rem 1rem 3rem; font-family:'JetBrains Mono',monospace; }
+.ncal-topbar { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; justify-content:space-between; margin-bottom:.6rem; }
+.ncal-title { font-size:1rem; font-weight:800; color:#fafafa; text-transform:uppercase; letter-spacing:.04em; }
+.ncal-range-label { font-size:.8rem; font-weight:700; color:#e4e4e7; min-width:11rem; text-align:center; }
+.ncal-nav { display:flex; align-items:center; gap:.35rem; }
+.ncal-btn { border:1px solid #27272a; background:#09090b; color:#a1a1aa; font-size:11px; font-weight:700; padding:5px 10px; cursor:pointer; text-transform:uppercase; }
+.ncal-btn:hover { color:#2dd4bf; border-color:#2dd4bf; }
+.ncal-btn.active { color:#2dd4bf; border-color:#2dd4bf; background:rgba(45,212,191,.08); }
+.ncal-btn.danger:hover { color:#fca5a5; border-color:#ef4444; }
+.ncal-select { background:#09090b; border:1px solid #27272a; color:#e4e4e7; font-size:11px; padding:5px 8px; max-width:14rem; }
+.ncal-select:focus { outline:none; border-color:#2dd4bf; }
+.ncal-check { display:flex; align-items:center; gap:4px; font-size:10px; color:#71717a; text-transform:uppercase; font-weight:700; cursor:pointer; }
+.ncal-legend { display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:.6rem; }
+.ncal-chip { display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#a1a1aa; border:1px solid #27272a; background:#09090b; padding:2px 8px; }
+.ncal-dot { width:8px; height:8px; display:inline-block; flex-shrink:0; }
+.ncal-status { font-size:11px; color:#71717a; text-transform:uppercase; font-weight:700; padding:1.5rem 0; text-align:center; }
+.ncal-dowrow { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; margin-bottom:2px; }
+.ncal-dow { font-size:10px; font-weight:800; color:#71717a; text-transform:uppercase; text-align:center; padding:4px 0; }
+.ncal-weekend-head { color:#52525b; }
+.ncal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; }
+.ncal-cell { min-height:96px; border:1px solid #27272a; background:#09090b; padding:3px; cursor:cell; display:flex; flex-direction:column; }
+.ncal-cell:hover { border-color:#3f3f46; }
+.ncal-cell.ncal-outside { opacity:.42; }
+.ncal-cell.ncal-weekend { background:#0a0a0c; }
+.ncal-cell.ncal-today { border-color:#2dd4bf; }
+.ncal-cell.ncal-selected { outline:1px solid #2dd4bf; outline-offset:-1px; }
+.ncal-cell.ncal-drop-hint { outline:2px dashed #2dd4bf; outline-offset:-2px; }
+.ncal-dayrow { display:flex; align-items:center; justify-content:space-between; }
+.ncal-daynum { font-size:11px; font-weight:700; color:#a1a1aa; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; }
+.ncal-today .ncal-daynum { background:#2dd4bf; color:#000; border-radius:9999px; }
+.ncal-add { opacity:0; border:none; background:none; color:#2dd4bf; font-size:14px; font-weight:800; cursor:pointer; line-height:1; padding:0 2px; }
+.ncal-cell:hover .ncal-add { opacity:1; }
+.ncal-pills { display:flex; flex-direction:column; gap:2px; margin-top:2px; min-height:0; }
+.ncal-pill { display:flex; align-items:center; gap:4px; font-size:10px; line-height:1.4; padding:1px 4px; border-left:3px solid var(--pill); background:#121215; color:#e4e4e7; white-space:nowrap; overflow:hidden; cursor:pointer; }
+.ncal-pill:hover { background:#1a1a1e; }
+.ncal-event { border-top:1px solid #1f1f23; border-right:1px solid #1f1f23; border-bottom:1px solid #1f1f23; }
+.ncal-task { border:1px dashed #3f3f46; border-left:3px solid var(--pill); background:transparent; }
+.ncal-task-done { opacity:.55; }
+.ncal-task-done .ncal-title { text-decoration:line-through; }
+.ncal-overdue { border-color:#7f1d1d; background:rgba(127,29,29,.18); }
+.ncal-time { color:#71717a; flex-shrink:0; }
+.ncal-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.ncal-recur { color:#52525b; flex-shrink:0; }
+.ncal-done { border:none; background:none; color:#52525b; font-size:10px; cursor:pointer; padding:0 1px; flex-shrink:0; }
+.ncal-done:hover { color:#2dd4bf; }
+.ncal-more { border:none; background:none; color:#2dd4bf; font-size:10px; font-weight:700; cursor:pointer; text-align:left; padding:2px 2px 0; }
+.ncal-more:hover { text-decoration:underline; }
+.ncal-week-head { display:grid; grid-template-columns:44px repeat(7,minmax(0,1fr)); gap:2px; margin-bottom:2px; }
+.ncal-week-day { text-align:center; padding:4px 2px; border:1px solid #27272a; background:#09090b; cursor:cell; }
+.ncal-week-day.ncal-today { border-color:#2dd4bf; }
+.ncal-week-day .ncal-dow { padding:0; }
+.ncal-allday-row { display:grid; grid-template-columns:44px repeat(7,minmax(0,1fr)); gap:2px; margin-bottom:4px; }
+.ncal-allday-label { font-size:9px; color:#52525b; text-transform:uppercase; display:flex; align-items:center; justify-content:center; }
+.ncal-allday-cell { border:1px solid #27272a; background:#09090b; min-height:30px; padding:2px; display:flex; flex-direction:column; gap:2px; cursor:cell; }
+.ncal-timegrid { display:grid; grid-template-columns:44px repeat(7,minmax(0,1fr)); gap:2px; }
+.ncal-gutter { display:flex; flex-direction:column; }
+.ncal-gutter-hour { height:44px; font-size:9px; color:#52525b; text-align:right; padding-right:4px; transform:translateY(-7px); }
+.ncal-daycol { position:relative; border-left:1px solid #1c1c1f; }
+.ncal-slot { height:44px; border-top:1px solid #17171a; cursor:cell; }
+.ncal-slot:hover { background:rgba(45,212,191,.04); }
+.ncal-slot.ncal-drop-hint { background:rgba(45,212,191,.12); }
+.ncal-block { position:absolute; left:2px; right:2px; overflow:hidden; font-size:10px; line-height:1.35; padding:1px 4px; border-left:3px solid var(--pill); background:#121215; color:#e4e4e7; border-top:1px solid #1f1f23; border-right:1px solid #1f1f23; border-bottom:1px solid #1f1f23; cursor:pointer; white-space:nowrap; text-overflow:ellipsis; }
+.ncal-block.ncal-task { background:rgba(9,9,11,.85); border:1px dashed #3f3f46; border-left:3px solid var(--pill); }
+.ncal-resize { position:absolute; left:0; right:0; bottom:0; height:8px; cursor:ns-resize; }
+.ncal-resize:hover { background:rgba(45,212,191,.35); }
+.ncal-agenda-day { border:1px solid #27272a; background:#09090b; margin-bottom:.6rem; }
+.ncal-agenda-head { display:flex; justify-content:space-between; align-items:center; padding:6px 10px; border-bottom:1px solid #1c1c1f; font-size:11px; font-weight:800; color:#e4e4e7; text-transform:uppercase; cursor:pointer; }
+.ncal-agenda-head.today { color:#2dd4bf; }
+.ncal-agenda-body { padding:6px 10px; display:flex; flex-direction:column; gap:4px; }
+.ncal-arow { display:flex; align-items:center; gap:8px; font-size:12px; color:#e4e4e7; padding:3px 0; }
+.ncal-arow .ncal-time { min-width:38px; }
+.ncal-arow.done .ncal-atitle { text-decoration:line-through; color:#52525b; }
+.ncal-atitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.ncal-atitle:hover { color:#2dd4bf; }
+.ncal-abadge { font-size:9px; font-weight:700; color:#2dd4bf; border:1px solid #134e4a; background:rgba(45,212,191,.06); padding:0 5px; white-space:nowrap; }
+.ncal-abadge.inbox { color:#71717a; border-color:#27272a; background:transparent; }
+.ncal-act { border:none; background:none; color:#52525b; font-size:10px; font-weight:700; cursor:pointer; text-transform:uppercase; white-space:nowrap; }
+.ncal-act:hover { color:#2dd4bf; }
+.ncal-act.danger:hover { color:#fca5a5; }
+.ncal-overlay { position:fixed; inset:0; z-index:80; background:rgba(0,0,0,.8); display:flex; align-items:flex-start; justify-content:center; padding:3rem 1rem 1rem; overflow-y:auto; }
+.ncal-overlay.hidden { display:none; }
+.ncal-modal { width:100%; max-width:26rem; background:#09090b; border:1px solid #27272a; }
+.ncal-modal-head { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #27272a; padding:.6rem .9rem; }
+.ncal-modal-title { font-size:12px; font-weight:800; color:#fff; text-transform:uppercase; }
+.ncal-modal-body { padding:.9rem; display:flex; flex-direction:column; gap:.6rem; }
+.ncal-field label { display:block; font-size:10px; font-weight:700; color:#71717a; text-transform:uppercase; margin-bottom:3px; }
+.ncal-input { width:100%; background:#000; border:1px solid #27272a; color:#e4e4e7; font-size:12px; padding:6px 8px; color-scheme:dark; }
+.ncal-input:focus { outline:none; border-color:#2dd4bf; }
+.ncal-row2 { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+.ncal-tabs { display:flex; gap:2px; }
+.ncal-tab { flex:1; border:1px solid #27272a; background:#000; color:#71717a; font-size:11px; font-weight:800; padding:6px; cursor:pointer; text-transform:uppercase; }
+.ncal-tab.active { color:#2dd4bf; border-color:#2dd4bf; background:rgba(45,212,191,.06); }
+.ncal-modal-foot { display:flex; justify-content:space-between; gap:.5rem; border-top:1px solid #27272a; padding:.6rem .9rem; }
+.ncal-pop { position:fixed; z-index:90; width:min(19rem,calc(100vw - 2rem)); max-height:60vh; overflow-y:auto; background:#09090b; border:1px solid #3f3f46; box-shadow:0 14px 40px rgba(0,0,0,.8); }
+.ncal-pop.hidden { display:none; }
+.ncal-pop-head { display:flex; justify-content:space-between; align-items:center; padding:.5rem .7rem; border-bottom:1px solid #27272a; font-size:11px; font-weight:800; color:#fff; text-transform:uppercase; }
+.ncal-pop-body { padding:.4rem .7rem .7rem; display:flex; flex-direction:column; gap:3px; }
+.ncal-toast { position:fixed; right:1rem; bottom:1rem; z-index:100; max-width:min(24rem,calc(100vw - 2rem)); border:1px solid #3f3f46; background:#09090b; padding:.6rem .8rem; color:#e4e4e7; font-size:11px; }
+.ncal-toast.hidden { display:none; }
+.ncal-toast.error { border-color:#ef4444; color:#fca5a5; }
+@media (max-width:767px) {
+  .ncal-shell { padding:.6rem .6rem 3rem; }
+  .ncal-cell { min-height:60px; padding:2px; }
+  .ncal-range-label { min-width:0; }
+  .ncal-week-scroll { overflow-x:auto; }
+  .ncal-week-inner { min-width:44rem; }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="planner-shell max-w-4xl mx-auto px-4 py-6">
-  <h1 class="text-lg font-bold text-zinc-100 mb-4">Планировщик</h1>
-
-  <form id="planner-quick-add" class="planner-card p-3 mb-5 flex flex-col gap-2">
-    <input id="qa-title" class="planner-input" type="text" maxlength="200" placeholder="Новая задача…" required>
-    <div class="flex flex-wrap gap-2">
-      <input id="qa-due" class="planner-input" style="width:auto" type="datetime-local" title="Срок">
-      <select id="qa-space" class="planner-input" style="width:auto">
-        <option value="">Без пространства</option>
-      </select>
-      <select id="qa-recurrence" class="planner-input" style="width:auto">
-        <option value="none">Без повтора</option>
-        <option value="daily">Ежедневно</option>
-        <option value="weekdays">По будням</option>
-        <option value="weekly">Еженедельно</option>
-        <option value="monthly">Ежемесячно</option>
-      </select>
-      <label class="text-xs text-zinc-400 flex items-center gap-1">
-        <input id="qa-remind" type="checkbox" checked> напомнить
-      </label>
-      <button class="planner-btn" type="submit">Добавить</button>
+<div class="ncal-shell">
+  <div class="ncal-topbar">
+    <div class="ncal-nav">
+      <button class="ncal-btn" id="ncal-prev" title="Назад">‹</button>
+      <div class="ncal-range-label" id="ncal-range">…</div>
+      <button class="ncal-btn" id="ncal-next" title="Вперёд">›</button>
+      <button class="ncal-btn" id="ncal-today">Сегодня</button>
     </div>
-  </form>
-
-  {% macro task_row(task, show_dates=true) %}
-  <div class="planner-card px-3 py-2 mb-2 flex items-start gap-2" data-task="{{ task.id }}">
-    <button class="planner-act" data-complete="{{ task.id }}" title="Готово">✓</button>
-    <div class="flex-1 min-w-0">
-      <div class="text-sm text-zinc-100">{{ task.title }}
-        {%- if task.space_kind != 'none' and task.space_name %} <span class="space-badge">{{ task.space_name }}</span>
-        {%- else %} <span class="space-badge inbox">inbox</span>{% endif %}
-        {%- if task.recurrence != 'none' %} <span class="text-zinc-500 text-xs">↻ {{ task.recurrence }}</span>{% endif %}
-      </div>
-      {% if show_dates and task.due_at %}
-      <div class="text-xs text-zinc-500">срок: <span data-dt="{{ task.due_at.isoformat() }}"></span></div>
-      {% endif %}
-    </div>
-    <button class="planner-act" data-snooze-hour="{{ task.id }}" title="Напомнить через час">+1ч</button>
-    <button class="planner-act" data-snooze-morning="{{ task.id }}" title="Напомнить завтра в 9:00">утро</button>
-    <button class="planner-act danger" data-del="{{ task.id }}" title="Удалить">✕</button>
-  </div>
-  {% endmacro %}
-
-  {% if overdue %}
-  <h2 class="text-sm font-bold text-red-400 mb-2">Просрочено ({{ overdue|length }})</h2>
-  {% for task in overdue %}{{ task_row(task) }}{% endfor %}
-  {% endif %}
-
-  {% if due_today %}
-  <h2 class="text-sm font-bold text-teal-300 mb-2 mt-4">Сегодня ({{ due_today|length }})</h2>
-  {% for task in due_today %}{{ task_row(task) }}{% endfor %}
-  {% endif %}
-
-  <h2 class="text-sm font-bold text-zinc-300 mb-2 mt-4">Предстоящее ({{ upcoming|length }})</h2>
-  {% if upcoming %}
-  {% for task in upcoming %}{{ task_row(task) }}{% endfor %}
-  {% else %}
-  <p class="text-xs text-zinc-600 mb-2">Пусто. Кайф.</p>
-  {% endif %}
-
-  <h2 class="text-sm font-bold text-zinc-300 mb-2 mt-4">События ({{ events|length }})</h2>
-  {% for event in events %}
-  <div class="planner-card px-3 py-2 mb-2" data-event="{{ event.id }}">
-    <div class="text-sm text-zinc-100">{{ event.title }}
-      {%- if event.space_kind != 'none' and event.space_name %} <span class="space-badge">{{ event.space_name }}</span>{% endif %}
-    </div>
-    <div class="text-xs text-zinc-500">
-      <span data-dt="{{ event.starts_at.isoformat() }}"></span>
-      {% if event.location %} · {{ event.location }}{% endif %}
-      <button class="planner-act danger ml-2" data-event-del="{{ event.id }}">✕</button>
+    <div class="ncal-nav">
+      <button class="ncal-btn ncal-view active" data-view="month">Месяц</button>
+      <button class="ncal-btn ncal-view" data-view="week">Неделя</button>
+      <button class="ncal-btn ncal-view" data-view="agenda">Повестка</button>
     </div>
   </div>
-  {% endfor %}
-  {% if not events %}<p class="text-xs text-zinc-600 mb-2">Нет событий.</p>{% endif %}
-
-  {% if done %}
-  <h2 class="text-sm font-bold text-zinc-500 mb-2 mt-4">Готово ({{ done|length }})</h2>
-  {% for task in done %}
-  <div class="px-3 py-1 mb-1 text-sm text-zinc-600 line-through">{{ task.title }}</div>
-  {% endfor %}
-  {% endif %}
+  <div class="ncal-topbar">
+    <div class="ncal-nav">
+      <select class="ncal-select" id="ncal-space" title="Пространство"></select>
+      <label class="ncal-check"><input type="checkbox" id="ncal-f-events" checked> события</label>
+      <label class="ncal-check"><input type="checkbox" id="ncal-f-tasks" checked> задачи</label>
+    </div>
+    <div class="ncal-nav">
+      <button class="ncal-btn" id="ncal-new-event">+ Событие</button>
+      <button class="ncal-btn" id="ncal-new-task">+ Задача</button>
+    </div>
+  </div>
+  <div class="ncal-legend" id="ncal-legend"></div>
+  <div class="ncal-status" id="ncal-status">Загрузка календаря…</div>
+  <div id="ncal-month-wrap"><div id="ncal-month"></div></div>
+  <div id="ncal-week-wrap" class="hidden">
+    <div class="ncal-week-scroll"><div class="ncal-week-inner">
+      <div class="ncal-week-head" id="ncal-week-head"></div>
+      <div class="ncal-allday-row" id="ncal-allday"></div>
+      <div class="ncal-timegrid" id="ncal-timegrid"></div>
+    </div></div>
+  </div>
+  <div id="ncal-agenda-wrap" class="hidden"><div id="ncal-agenda"></div></div>
 </div>
 
+<div class="ncal-pop hidden" id="ncal-pop">
+  <div class="ncal-pop-head"><span id="ncal-pop-title"></span><button class="ncal-act" id="ncal-pop-close">✕</button></div>
+  <div class="ncal-pop-body" id="ncal-pop-body"></div>
+</div>
+
+<div class="ncal-overlay hidden" id="ncal-overlay">
+  <div class="ncal-modal" role="dialog" aria-modal="true">
+    <div class="ncal-modal-head">
+      <span class="ncal-modal-title" id="nm-title">Новое событие</span>
+      <button class="ncal-act" id="nm-close">✕</button>
+    </div>
+    <div class="ncal-modal-body">
+      <div class="ncal-tabs">
+        <button class="ncal-tab active" id="nm-tab-event">Событие</button>
+        <button class="ncal-tab" id="nm-tab-task">Задача</button>
+      </div>
+      <div class="ncal-field"><label>Заголовок</label><input class="ncal-input" id="nm-name" maxlength="200" placeholder="Название…"></div>
+      <div class="ncal-row2">
+        <div class="ncal-field"><label>Дата</label><input class="ncal-input" type="date" id="nm-date"></div>
+        <div class="ncal-field" id="nm-enddate-wrap"><label>Дата конца</label><input class="ncal-input" type="date" id="nm-enddate"></div>
+      </div>
+      <label class="ncal-check" id="nm-allday-wrap"><input type="checkbox" id="nm-allday"> весь день</label>
+      <div class="ncal-row2" id="nm-times">
+        <div class="ncal-field"><label>Начало</label><input class="ncal-input" type="time" id="nm-start" value="09:00"></div>
+        <div class="ncal-field" id="nm-end-wrap"><label>Конец</label><input class="ncal-input" type="time" id="nm-end" value="10:00"></div>
+      </div>
+      <div class="ncal-field" id="nm-tasktime-wrap" style="display:none"><label>Время срока (пусто — без времени)</label><input class="ncal-input" type="time" id="nm-tasktime" value=""></div>
+      <div class="ncal-field"><label>Пространство</label><select class="ncal-input" id="nm-space"></select></div>
+      <div class="ncal-row2">
+        <div class="ncal-field" id="nm-loc-wrap"><label>Место</label><input class="ncal-input" id="nm-loc" maxlength="200"></div>
+        <div class="ncal-field" id="nm-prio-wrap" style="display:none"><label>Приоритет</label><select class="ncal-input" id="nm-prio"><option value="0">0 — обычный</option><option value="1">1</option><option value="2">2</option><option value="3">3 — срочный</option></select></div>
+        <div class="ncal-field"><label>Повтор</label><select class="ncal-input" id="nm-rec"><option value="none">Без повтора</option><option value="daily">Ежедневно</option><option value="weekdays">По будням</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option></select></div>
+      </div>
+      <label class="ncal-check"><input type="checkbox" id="nm-remind" checked> напомнить в момент начала</label>
+      <div class="ncal-field"><label>Заметки</label><textarea class="ncal-input" id="nm-notes" rows="2"></textarea></div>
+    </div>
+    <div class="ncal-modal-foot">
+      <button class="ncal-btn danger" id="nm-delete" style="display:none">Удалить</button>
+      <div style="display:flex;gap:.5rem;margin-left:auto">
+        <button class="ncal-btn" id="nm-cancel">Отмена</button>
+        <button class="ncal-btn active" id="nm-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ncal-toast hidden" id="ncal-toast" role="status" aria-live="polite"></div>
+
+<script src="/static/netsanctum-calendar.js?v=1"></script>
 <script>
 (function () {
-  document.querySelectorAll("[data-dt]").forEach(function (el) {
-    var d = new Date(el.getAttribute("data-dt"));
-    if (!isNaN(d)) el.textContent = d.toLocaleString("ru-RU", {day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
-  });
-
-  function reload() { location.reload(); }
-  async function call(url, method, body) {
-    const r = await fetch(url, {method: method, headers: {"Content-Type": "application/json"}, body: body ? JSON.stringify(body) : undefined});
-    if (!r.ok) alert("Ошибка: " + r.status);
-    reload();
+  var NSC = window.NetSanctumCalendar;
+  if (!NSC) {
+    var s = document.createElement('script');
+    s.src = '/static/netsanctum-calendar.js?v=1';
+    s.onload = function () { NSC = window.NetSanctumCalendar; boot(); };
+    s.onerror = function () {
+      document.getElementById('ncal-status').textContent = 'Не загрузился компонент календаря';
+    };
+    document.head.appendChild(s);
+  } else {
+    boot();
   }
-  document.querySelectorAll("[data-complete]").forEach(function (b) {
-    b.addEventListener("click", function () { call("/api/planner/tasks/" + b.dataset.complete + "/complete", "POST"); });
-  });
-  document.querySelectorAll("[data-del]").forEach(function (b) {
-    b.addEventListener("click", function () { if (confirm("Удалить задачу?")) call("/api/planner/tasks/" + b.dataset.del, "DELETE"); });
-  });
-  document.querySelectorAll("[data-event-del]").forEach(function (b) {
-    b.addEventListener("click", function () { if (confirm("Удалить событие?")) call("/api/planner/events/" + b.dataset.eventDel, "DELETE"); });
-  });
-  document.querySelectorAll("[data-snooze-hour]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      call("/api/planner/tasks/" + b.dataset.snoozeHour, "PATCH", {remind_at: new Date(Date.now() + 3600e3).toISOString()});
-    });
-  });
-  document.querySelectorAll("[data-snooze-morning]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0);
-      call("/api/planner/tasks/" + b.dataset.snoozeMorning, "PATCH", {remind_at: d.toISOString()});
-    });
-  });
 
-  // Space picker: vault collections + folder nodes.
-  fetch("/api/vault/collections").then(function (r) { return r.json(); }).then(function (cols) {
-    var sel = document.getElementById("qa-space");
-    (cols || []).forEach(function (c) {
-      var o = document.createElement("option");
-      o.value = "collection:" + c.id + ":" + c.name;
-      o.textContent = c.name;
-      sel.appendChild(o);
+  function boot() {
+    var esc = NSC.escapeHtml;
+    var state = {
+      view: 'month', cursor: NSC.startOfDay(new Date()), selectedKey: NSC.dayKey(new Date()),
+      showEvents: true, showTasks: true, spaceKind: '', spaceId: '',
+      collections: [], folders: [], colMap: {}, events: [], tasks: [], undated: [], byDay: {},
+    };
+    var HOUR_H = 44;
+
+    var monthWrap = document.getElementById('ncal-month-wrap');
+    var monthBox = document.getElementById('ncal-month');
+    var weekWrap = document.getElementById('ncal-week-wrap');
+    var agendaWrap = document.getElementById('ncal-agenda-wrap');
+    var agendaBox = document.getElementById('ncal-agenda');
+    var statusEl = document.getElementById('ncal-status');
+    var rangeEl = document.getElementById('ncal-range');
+    var overlay = document.getElementById('ncal-overlay');
+    var pop = document.getElementById('ncal-pop');
+    var toastTimer = null;
+
+    function toast(msg, isErr) {
+      var t = document.getElementById('ncal-toast');
+      clearTimeout(toastTimer);
+      t.textContent = msg;
+      t.classList.toggle('error', !!isErr);
+      t.classList.remove('hidden');
+      toastTimer = setTimeout(function () { t.classList.add('hidden'); }, 3200);
+    }
+
+    function currentRange() {
+      if (state.view === 'week') return NSC.rangeOfDays(NSC.weekDays(state.cursor));
+      var weeks = NSC.monthWeeks(state.cursor);
+      return NSC.rangeOfWeeks(weeks);
+    }
+
+    function spaceParams(out) {
+      out = out || {};
+      if (state.spaceKind) out.space_kind = state.spaceKind;
+      if (state.spaceId !== '' && state.spaceId != null) out.space_id = parseInt(state.spaceId, 10);
+      return out;
+    }
+
+    function load() {
+      var range = currentRange();
+      statusEl.textContent = 'Загрузка календаря…';
+      statusEl.style.display = '';
+      var params = spaceParams({ from: range.from, to: range.to });
+      NSC.fetchCalendar(params).then(function (data) {
+        state.events = data.events || [];
+        state.tasks = data.tasks || [];
+        return loadUndated(params);
+      }).then(function () {
+        state.byDay = NSC.groupByDay(state.events, filteredTasks());
+        render();
+        statusEl.style.display = 'none';
+      }).catch(function (e) {
+        statusEl.textContent = (e && e.message) || 'Не удалось загрузить календарь';
+      });
+    }
+
+    // The range endpoint can only return dated rows (due_at is not null), so
+    // undated tasks are fetched separately for the agenda's inbox section.
+    function loadUndated(params) {
+      var q = new URLSearchParams({ status: 'todo,doing', limit: '100' });
+      if (params.space_kind) q.set('space_kind', params.space_kind);
+      if (params.space_id != null) q.set('space_id', params.space_id);
+      return fetch('/api/planner/tasks?' + q.toString()).then(function (r) {
+        return r.ok ? r.json() : [];
+      }).then(function (rows) {
+        state.undated = (rows || []).filter(function (t) { return !t.due_at; });
+      }).catch(function () { state.undated = []; });
+    }
+
+    function filteredTasks() {
+      if (state.showTasks) return state.tasks;
+      return [];
+    }
+
+    function render() {
+      document.querySelectorAll('.ncal-view').forEach(function (b) {
+        b.classList.toggle('active', b.dataset.view === state.view);
+      });
+      monthWrap.classList.toggle('hidden', state.view !== 'month');
+      weekWrap.classList.toggle('hidden', state.view !== 'week');
+      agendaWrap.classList.toggle('hidden', state.view !== 'agenda');
+      if (state.view === 'month') {
+        rangeEl.textContent = NSC.monthTitle(state.cursor);
+        renderMonth();
+      } else if (state.view === 'week') {
+        var days = NSC.weekDays(state.cursor);
+        rangeEl.textContent = NSC.weekTitle(days);
+        renderWeek(days);
+      } else {
+        var weeks = NSC.monthWeeks(state.cursor);
+        rangeEl.textContent = NSC.monthTitle(state.cursor);
+        renderAgenda(weeks);
+      }
+    }
+
+    // ── Month ──
+    function renderMonth() {
+      var weeks = NSC.monthWeeks(state.cursor);
+      NSC.renderMonth(monthBox, {
+        weeks: weeks, byDay: state.byDay, cursor: state.cursor,
+        selectedKey: state.selectedKey, showEvents: state.showEvents,
+        showTasks: state.showTasks, collectionsById: state.colMap, withComplete: true,
+      });
+      NSC.wireMonthDrop(monthBox, moveItem);
+    }
+
+    monthBox.addEventListener('click', function (e) {
+      var doneBtn = e.target.closest ? e.target.closest('[data-complete]') : null;
+      if (doneBtn) { e.stopPropagation(); completeTask(doneBtn.dataset.complete); return; }
+      var moreBtn = e.target.closest ? e.target.closest('[data-more]') : null;
+      if (moreBtn) { e.stopPropagation(); openDayPop(moreBtn.dataset.more, moreBtn); return; }
+      var addBtn = e.target.closest ? e.target.closest('[data-add]') : null;
+      if (addBtn) { e.stopPropagation(); state.selectedKey = addBtn.dataset.add; openModal('event', { dateKey: addBtn.dataset.add }); renderMonth(); return; }
+      var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
+      if (pill) { e.stopPropagation(); openEditor(pill.dataset.kind, pill.dataset.id); return; }
+      var cell = e.target.closest ? e.target.closest('.ncal-cell') : null;
+      if (cell) { state.selectedKey = cell.dataset.date; openModal('event', { dateKey: cell.dataset.date }); renderMonth(); }
     });
-    return fetch("/api/vault/items?node_type=folder&limit=500").then(function (r) { return r.json(); });
-  }).then(function (items) {
-    var sel = document.getElementById("qa-space");
-    var byId = {};
-    (items || []).forEach(function (i) { byId[i.id] = i; });
-    function path(item) {
-      var chain = [item.title || ("#" + item.id)], seen = {};
+
+    // ── Week ──
+    function renderWeek(days) {
+      var head = document.getElementById('ncal-week-head');
+      var allday = document.getElementById('ncal-allday');
+      var grid = document.getElementById('ncal-timegrid');
+      var todayKey = NSC.dayKey(new Date());
+      var perDay = days.map(function (d) {
+        var key = NSC.dayKey(d);
+        var cell = state.byDay[key] || { events: [], tasks: [] };
+        var timed = [], whole = [];
+        cell.events.forEach(function (ev) {
+          if (state.showEvents === false) return;
+          var keys = NSC.eventDayKeys(ev);
+          if (keys.length > 1 || NSC.isAllDayEvent(ev)) whole.push(ev);
+          else timed.push(ev);
+        });
+        var dtasks = state.showTasks === false ? [] : cell.tasks.slice();
+        return { date: d, key: key, timed: timed, whole: whole, tasks: dtasks };
+      });
+      head.innerHTML = '<div></div>' + perDay.map(function (p) {
+        return '<div class="ncal-week-day' + (p.key === todayKey ? ' ncal-today' : '') + '" data-date="' + p.key + '">' +
+          '<div class="ncal-dow">' + NSC.DOW_RU[(p.date.getDay() + 6) % 7] + '</div>' +
+          '<div class="ncal-daynum">' + p.date.getDate() + '</div></div>';
+      }).join('');
+      allday.innerHTML = '<div class="ncal-allday-label">День</div>' + perDay.map(function (p) {
+        var pills = p.whole.map(function (ev) {
+          return NSC.pillHTML('event', ev, NSC.spaceColor(ev.space_kind, ev.space_id, ev.space_name, state.colMap), { hideTime: true });
+        }).join('');
+        return '<div class="ncal-allday-cell" data-date="' + p.key + '">' + pills + '</div>';
+      }).join('');
+      var gutter = '<div class="ncal-gutter">' + Array.from({ length: 24 }, function (_, h) {
+        return '<div class="ncal-gutter-hour">' + (h < 10 ? '0' : '') + h + ':00</div>';
+      }).join('') + '</div>';
+      var cols = perDay.map(function (p) {
+        var slots = '';
+        for (var h = 0; h < 24; h++) slots += '<div class="ncal-slot" data-date="' + p.key + '" data-hour="' + h + '"></div>';
+        var blocks = p.timed.map(function (ev) { return timedBlock('event', ev); }).join('') +
+          p.tasks.map(function (t) { return timedBlock('task', t); }).join('');
+        return '<div class="ncal-daycol" data-date="' + p.key + '">' + slots + blocks + '</div>';
+      }).join('');
+      grid.innerHTML = gutter + cols;
+      wireWeekDrop(grid);
+    }
+
+    function timedBlock(kind, item) {
+      var iso = kind === 'event' ? item.starts_at : item.due_at;
+      var d = NSC.parseISO(iso);
+      if (!d) return '';
+      var end = NSC.parseISO(item.ends_at);
+      var durMin = 45;
+      if (kind === 'event' && end && end > d) durMin = Math.max(25, Math.min(24 * 60, (end - d) / 60000));
+      var top = (d.getHours() * 60 + d.getMinutes()) / 60 * HOUR_H;
+      var height = Math.max(22, durMin / 60 * HOUR_H - 2);
+      var hex = NSC.spaceColor(item.space_kind, item.space_id, item.space_name, state.colMap);
+      var label = esc(NSC.fmtTime(d)) + ' ' + esc(item.title || '');
+      var resize = (kind === 'event') ? '<div class="ncal-resize" data-resize="' + item.id + '"></div>' : '';
+      return '<div class="ncal-block' + (kind === 'task' ? ' ncal-task' : '') + '" draggable="true" data-kind="' + kind +
+        '" data-id="' + item.id + '" style="--pill:' + esc(hex) + ';top:' + top + 'px;height:' + height + 'px" title="' + esc(item.title || '') + '">' +
+        label + resize + '</div>';
+    }
+
+    function wireWeekDrop(grid) {
+      grid.querySelectorAll('.ncal-daycol').forEach(function (col) {
+        col.addEventListener('dragover', function (e) { e.preventDefault(); });
+        col.addEventListener('drop', function (e) {
+          e.preventDefault();
+          var raw = '';
+          try { raw = e.dataTransfer.getData('text/plain'); } catch (err) {}
+          var parts = String(raw).split(':');
+          if (parts.length < 2) return;
+          var slot = e.target.closest ? e.target.closest('.ncal-slot') : null;
+          var hour = slot ? parseInt(slot.dataset.hour, 10) : 9;
+          moveItemToHour(parts[0], parts[1], col.dataset.date, hour);
+        });
+      });
+      grid.querySelectorAll('.ncal-block').forEach(function (block) {
+        block.addEventListener('dragstart', function (e) {
+          try { e.dataTransfer.setData('text/plain', block.dataset.kind + ':' + block.dataset.id); } catch (err) {}
+          e.dataTransfer.effectAllowed = 'move';
+        });
+        block.addEventListener('click', function (e) {
+          if (e.target.closest && e.target.closest('[data-resize]')) return;
+          openEditor(block.dataset.kind, block.dataset.id);
+        });
+      });
+      grid.querySelectorAll('[data-resize]').forEach(function (handle) {
+        handle.addEventListener('pointerdown', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          var block = handle.closest('.ncal-block');
+          var col = handle.closest('.ncal-daycol');
+          var id = handle.dataset.resize;
+          var startTop = block.offsetTop;
+          function onMove(ev) {
+            var rect = col.getBoundingClientRect();
+            var y = ev.clientY - rect.top - startTop;
+            var mins = Math.max(15, Math.round(y / HOUR_H * 4) * 15);
+            block.style.height = Math.max(22, mins / 60 * HOUR_H - 2) + 'px';
+            block.dataset.pendingMins = mins;
+          }
+          function onUp() {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            resizeEvent(id, parseInt(block.dataset.pendingMins || '60', 10));
+          }
+          document.addEventListener('pointermove', onMove);
+          document.addEventListener('pointerup', onUp);
+        });
+      });
+      grid.querySelectorAll('.ncal-slot').forEach(function (slot) {
+        slot.addEventListener('click', function () {
+          openModal('event', { dateKey: slot.dataset.date, hour: parseInt(slot.dataset.hour, 10) });
+        });
+      });
+      grid.querySelectorAll('.ncal-allday-cell').forEach(function (cell) {
+        cell.addEventListener('click', function (e) {
+          var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
+          if (pill) { openEditor(pill.dataset.kind, pill.dataset.id); return; }
+          openModal('event', { dateKey: cell.dataset.date, allDay: true });
+        });
+      });
+    }
+
+    function moveItemToHour(kind, id, targetKey, hour) {
+      var item = findItem(kind, id);
+      if (!item) return;
+      var src = NSC.parseISO(kind === 'event' ? item.starts_at : item.due_at) || new Date();
+      var day = NSC.fromKey(targetKey);
+      var start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, src.getMinutes(), 0, 0);
+      applyMove(kind, item, start);
+    }
+
+    function resizeEvent(id, mins) {
+      var item = findItem('event', id);
+      if (!item) return;
+      var s = NSC.parseISO(item.starts_at);
+      if (!s) return;
+      var end = new Date(s.getTime() + mins * 60000);
+      NSC.apiCall('/api/planner/events/' + id, 'PATCH', { ends_at: NSC.isoWithOffset(end) })
+        .then(load).catch(function (e) { toast((e && e.message) || 'Не удалось изменить', true); });
+    }
+
+    // ── Agenda ──
+    function renderAgenda(weeks) {
+      var keys = weeks.map(NSC.dayKey);
+      var todayKey = NSC.dayKey(new Date());
+      var html = keys.map(function (key) {
+        var cell = state.byDay[key] || { events: [], tasks: [] };
+        var evs = state.showEvents === false ? [] : cell.events;
+        var tks = state.showTasks === false ? [] : cell.tasks;
+        if (!evs.length && !tks.length) return '';
+        var rows = evs.map(function (ev) {
+          var hex = NSC.spaceColor(ev.space_kind, ev.space_id, ev.space_name, state.colMap);
+          var s = NSC.parseISO(ev.starts_at);
+          return '<div class="ncal-arow"><span class="ncal-dot" style="background:' + esc(hex) + '"></span>' +
+            '<span class="ncal-time">' + esc(s && !NSC.isAllDayEvent(ev) ? NSC.fmtTime(s) : '—') + '</span>' +
+            '<span class="ncal-atitle" data-kind="event" data-id="' + ev.id + '">' + esc(ev.title) + '</span>' +
+            spaceBadge(ev) +
+            (ev.recurrence && ev.recurrence !== 'none' ? '<span class="ncal-recur">↻</span>' : '') +
+            '<button class="ncal-act danger" data-evdel="' + ev.id + '">✕</button></div>';
+        }).join('') + tks.map(taskRow).join('');
+        return '<div class="ncal-agenda-day"><div class="ncal-agenda-head' + (key === todayKey ? ' today' : '') + '">' +
+          '<span>' + esc(NSC.fmtDateLong(key)) + '</span><button class="ncal-btn" data-add="' + key + '">+</button></div>' +
+          '<div class="ncal-agenda-body">' + rows + '</div></div>';
+      }).join('');
+      var undated = state.showTasks === false ? [] : (state.undated || []);
+      if (undated.length) {
+        html = '<div class="ncal-agenda-day"><div class="ncal-agenda-head"><span>Без даты (' + undated.length + ')</span></div>' +
+          '<div class="ncal-agenda-body">' + undated.map(taskRow).join('') + '</div></div>' + html;
+      }
+      agendaBox.innerHTML = html || '<div class="ncal-status">Пусто. Кайф.</div>';
+    }
+
+    function taskRow(t) {
+      var due = NSC.parseISO(t.due_at);
+      var overdue = t.status !== 'done' && due && due < new Date();
+      return '<div class="ncal-arow' + (t.status === 'done' ? ' done' : '') + '">' +
+        '<button class="ncal-act" data-complete="' + t.id + '" title="Готово">' + (t.status === 'done' ? '✓' : '○') + '</button>' +
+        '<span class="ncal-time">' + esc(due ? NSC.fmtTime(due) : '—') + '</span>' +
+        '<span class="ncal-atitle" data-kind="task" data-id="' + t.id + '">' + esc(t.title) + '</span>' +
+        (overdue ? '<span class="ncal-abadge inbox">просрочка</span>' : spaceBadge(t)) +
+        '<button class="ncal-act" data-snooze1h="' + t.id + '" title="Напомнить через час">+1ч</button>' +
+        '<button class="ncal-act danger" data-tdel="' + t.id + '">✕</button></div>';
+    }
+
+    function spaceBadge(item) {
+      if (item.space_kind && item.space_kind !== 'none' && item.space_name) {
+        return '<span class="ncal-abadge">' + esc(item.space_name) + '</span>';
+      }
+      return '<span class="ncal-abadge inbox">inbox</span>';
+    }
+
+    agendaBox.addEventListener('click', function (e) {
+      var q = function (sel) { return e.target.closest ? e.target.closest(sel) : null; };
+      var c = q('[data-complete]');
+      if (c) { completeTask(c.dataset.complete); return; }
+      var sd = q('[data-snooze1h]');
+      if (sd) { snoozeTask(sd.dataset.snooze1h, 1); return; }
+      var td = q('[data-tdel]');
+      if (td) { if (confirm('Удалить задачу?')) NSC.apiCall('/api/planner/tasks/' + td.dataset.tdel, 'DELETE').then(load).catch(function (err) { toast(err.message, true); }); return; }
+      var ed = q('[data-evdel]');
+      if (ed) { if (confirm('Удалить событие?')) NSC.apiCall('/api/planner/events/' + ed.dataset.evdel, 'DELETE').then(load).catch(function (err) { toast(err.message, true); }); return; }
+      var add = q('[data-add]');
+      if (add) { openModal('event', { dateKey: add.dataset.add }); return; }
+      var title = q('.ncal-atitle');
+      if (title) { openEditor(title.dataset.kind, title.dataset.id); }
+    });
+
+    // ── Day popover (+ещё N) ──
+    function openDayPop(key, anchor) {
+      var cell = state.byDay[key] || { events: [], tasks: [] };
+      document.getElementById('ncal-pop-title').textContent = NSC.fmtDateLong(key);
+      var body = document.getElementById('ncal-pop-body');
+      var rows = cell.events.map(function (ev) {
+        var hex = NSC.spaceColor(ev.space_kind, ev.space_id, ev.space_name, state.colMap);
+        return NSC.pillHTML('event', ev, hex, {});
+      }).join('') + cell.tasks.map(function (t) {
+        var hex = NSC.spaceColor(t.space_kind, t.space_id, t.space_name, state.colMap);
+        return NSC.pillHTML('task', t, hex, { withComplete: true });
+      }).join('');
+      body.innerHTML = rows || '<div class="ncal-status">Нет событий</div>';
+      var r = anchor.getBoundingClientRect();
+      pop.style.left = Math.min(window.innerWidth - 320, Math.max(8, r.left - 100)) + 'px';
+      pop.style.top = Math.min(window.innerHeight - 200, r.bottom + 6) + 'px';
+      pop.classList.remove('hidden');
+    }
+    document.getElementById('ncal-pop-close').addEventListener('click', function () { pop.classList.add('hidden'); });
+    document.getElementById('ncal-pop-body').addEventListener('click', function (e) {
+      var doneBtn = e.target.closest ? e.target.closest('[data-complete]') : null;
+      if (doneBtn) { e.stopPropagation(); pop.classList.add('hidden'); completeTask(doneBtn.dataset.complete); return; }
+      var pill = e.target.closest ? e.target.closest('.ncal-pill') : null;
+      if (pill) { pop.classList.add('hidden'); openEditor(pill.dataset.kind, pill.dataset.id); }
+    });
+
+    // ── Mutations ──
+    function findItem(kind, id) {
+      id = parseInt(id, 10);
+      var list = kind === 'event' ? state.events : state.tasks;
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+      return null;
+    }
+
+    function moveItem(kind, id, targetKey) {
+      var item = findItem(kind, id);
+      if (!item) return;
+      var src = NSC.parseISO(kind === 'event' ? item.starts_at : item.due_at) || new Date();
+      var day = NSC.fromKey(targetKey);
+      var start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), src.getHours(), src.getMinutes(), 0, 0);
+      applyMove(kind, item, start);
+    }
+
+    function applyMove(kind, item, start) {
+      var iso = NSC.isoWithOffset(start);
+      var req;
+      if (kind === 'event') {
+        var body = { starts_at: iso };
+        var s = NSC.parseISO(item.starts_at), e = NSC.parseISO(item.ends_at);
+        if (s && e && e > s) body.ends_at = NSC.isoWithOffset(new Date(start.getTime() + (e - s)));
+        req = NSC.apiCall('/api/planner/events/' + item.id, 'PATCH', body);
+      } else {
+        req = NSC.apiCall('/api/planner/tasks/' + item.id, 'PATCH', { due_at: iso });
+      }
+      req.then(load).catch(function (err) { toast((err && err.message) || 'Не удалось перенести', true); });
+    }
+
+    function completeTask(id) {
+      NSC.apiCall('/api/planner/tasks/' + id + '/complete', 'POST')
+        .then(load).catch(function (e) { toast((e && e.message) || 'Не удалось завершить', true); });
+    }
+
+    function snoozeTask(id, hours) {
+      NSC.apiCall('/api/planner/tasks/' + id, 'PATCH', { remind_at: new Date(Date.now() + hours * 3600e3).toISOString() })
+        .then(load).catch(function (e) { toast((e && e.message) || 'Не удалось отложить', true); });
+    }
+
+    function openEditor(kind, id) {
+      var item = findItem(kind, id);
+      if (!item) { toast('Элемент уже обновлён, перезагружаю…'); load(); return; }
+      openModal(kind, { item: item });
+    }
+
+    // ── Modal ──
+    var modalKind = 'event';
+    var editing = null;
+
+    function setModalKind(kind) {
+      modalKind = kind;
+      document.getElementById('nm-tab-event').classList.toggle('active', kind === 'event');
+      document.getElementById('nm-tab-task').classList.toggle('active', kind === 'task');
+      document.getElementById('nm-title').textContent = (editing ? 'Редактировать: ' : 'Новое: ') + (kind === 'event' ? 'событие' : 'задача');
+      var isEv = kind === 'event';
+      document.getElementById('nm-enddate-wrap').style.display = isEv ? '' : 'none';
+      document.getElementById('nm-allday-wrap').style.display = isEv ? '' : 'none';
+      document.getElementById('nm-times').style.display = isEv ? '' : 'none';
+      document.getElementById('nm-tasktime-wrap').style.display = isEv ? 'none' : '';
+      document.getElementById('nm-loc-wrap').style.display = isEv ? '' : 'none';
+      document.getElementById('nm-prio-wrap').style.display = isEv ? 'none' : '';
+      document.getElementById('nm-delete').style.display = editing ? '' : 'none';
+    }
+
+    function spaceValue(kind, id) {
+      if (!kind || kind === 'none') return 'none';
+      return kind + ':' + id;
+    }
+
+    function openModal(kind, preset) {
+      preset = preset || {};
+      editing = preset.item || null;
+      setModalKind(kind);
+      var d = new Date();
+      var hour = 9;
+      if (preset.dateKey) d = NSC.fromKey(preset.dateKey);
+      else if (editing) {
+        var iso = kind === 'event' ? editing.starts_at : editing.due_at;
+        var parsed = NSC.parseISO(iso);
+        if (parsed) d = parsed;
+      }
+      if (preset.hour != null) hour = preset.hour;
+      else if (editing) {
+        var ex = NSC.parseISO(kind === 'event' ? editing.starts_at : editing.due_at);
+        if (ex) hour = ex.getHours();
+      }
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      var dateStr = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      document.getElementById('nm-name').value = editing ? (editing.title || '') : '';
+      document.getElementById('nm-date').value = dateStr;
+      document.getElementById('nm-enddate').value = '';
+      var isAll = preset.allDay === true;
+      var endIso = editing && kind === 'event' ? NSC.parseISO(editing.ends_at) : null;
+      if (editing && kind === 'event') {
+        var st = NSC.parseISO(editing.starts_at);
+        isAll = st && st.getHours() === 0 && st.getMinutes() === 0 && !editing.ends_at;
+        if (endIso && NSC.dayKey(endIso) !== NSC.dayKey(st)) {
+          document.getElementById('nm-enddate').value = endIso.getFullYear() + '-' + pad(endIso.getMonth() + 1) + '-' + pad(endIso.getDate());
+        }
+      }
+      document.getElementById('nm-allday').checked = isAll;
+      document.getElementById('nm-start').value = pad(hour) + ':00';
+      document.getElementById('nm-end').value = pad(Math.min(23, hour + 1)) + ':00';
+      if (editing && kind === 'event' && !isAll) {
+        var s2 = NSC.parseISO(editing.starts_at);
+        if (s2) document.getElementById('nm-start').value = pad(s2.getHours()) + ':' + pad(s2.getMinutes());
+        if (endIso) document.getElementById('nm-end').value = pad(endIso.getHours()) + ':' + pad(endIso.getMinutes());
+      }
+      document.getElementById('nm-tasktime').value = '';
+      if (editing && kind === 'task') {
+        var dd = NSC.parseISO(editing.due_at);
+        if (dd && (dd.getHours() !== 0 || dd.getMinutes() !== 0)) {
+          document.getElementById('nm-tasktime').value = pad(dd.getHours()) + ':' + pad(dd.getMinutes());
+        }
+      }
+      document.getElementById('nm-space').value = editing ? spaceValue(editing.space_kind, editing.space_id) : currentSpaceValue();
+      document.getElementById('nm-loc').value = (editing && editing.location) || '';
+      document.getElementById('nm-prio').value = String((editing && editing.priority) || 0);
+      document.getElementById('nm-rec').value = (editing && editing.recurrence) || 'none';
+      document.getElementById('nm-remind').checked = true;
+      document.getElementById('nm-notes').value = (editing && editing.notes) || '';
+      overlay.classList.remove('hidden');
+      setTimeout(function () { document.getElementById('nm-name').focus(); }, 30);
+    }
+
+    function currentSpaceValue() {
+      if (!state.spaceKind) return 'none';
+      return state.spaceKind + ':' + state.spaceId;
+    }
+
+    function closeModal() { overlay.classList.add('hidden'); editing = null; }
+
+    function localISO(dateStr, timeStr) {
+      if (!dateStr) return null;
+      var p = dateStr.split('-');
+      var t = (timeStr || '00:00').split(':');
+      var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10),
+        parseInt(t[0] || '0', 10), parseInt(t[1] || '0', 10), 0, 0);
+      return NSC.isoWithOffset(d);
+    }
+
+    function modalSpace() {
+      var raw = document.getElementById('nm-space').value;
+      if (!raw || raw === 'none') return { space_kind: 'none' };
+      var parts = raw.split(':');
+      return { space_kind: parts[0], space_id: parseInt(parts[1], 10) };
+    }
+
+    function saveModal() {
+      var title = document.getElementById('nm-name').value.trim();
+      if (!title) { toast('Введите заголовок', true); return; }
+      var dateStr = document.getElementById('nm-date').value;
+      var space = modalSpace();
+      // Resolve cached space name for badges.
+      space.space_name = spaceNameFor(space.space_kind, space.space_id);
+      var remind = document.getElementById('nm-remind').checked;
+      var rec = document.getElementById('nm-rec').value;
+      var notes = document.getElementById('nm-notes').value.trim() || null;
+      var req;
+      if (modalKind === 'event') {
+        if (!dateStr) { toast('Выберите дату', true); return; }
+        var allDay = document.getElementById('nm-allday').checked;
+        var starts = allDay ? localISO(dateStr, '00:00') : localISO(dateStr, document.getElementById('nm-start').value);
+        var endDate = document.getElementById('nm-enddate').value || dateStr;
+        var ends = allDay ? null : localISO(endDate, document.getElementById('nm-end').value);
+        var body = {
+          title: title, starts_at: starts, location: document.getElementById('nm-loc').value.trim() || null,
+          recurrence: rec, notes: notes, space_kind: space.space_kind,
+          space_id: space.space_id != null ? space.space_id : null,
+          space_name: space.space_name,
+        };
+        if (ends) body.ends_at = ends;
+        if (remind) body.remind_at = starts;
+        req = editing
+          ? NSC.apiCall('/api/planner/events/' + editing.id, 'PATCH', body)
+          : NSC.apiCall('/api/planner/events', 'POST', body);
+      } else {
+        var due = dateStr ? localISO(dateStr, document.getElementById('nm-tasktime').value || '09:00') : null;
+        if (dateStr && !document.getElementById('nm-tasktime').value) {
+          // Date without time: start of day is a valid deadline bucket.
+          due = localISO(dateStr, '00:00');
+        }
+        var tBody = {
+          title: title, recurrence: rec, notes: notes,
+          priority: parseInt(document.getElementById('nm-prio').value, 10) || 0,
+          space_kind: space.space_kind,
+          space_id: space.space_id != null ? space.space_id : null,
+          space_name: space.space_name,
+        };
+        if (due) { tBody.due_at = due; if (remind) tBody.remind_at = due; }
+        req = editing
+          ? NSC.apiCall('/api/planner/tasks/' + editing.id, 'PATCH', tBody)
+          : NSC.apiCall('/api/planner/tasks', 'POST', tBody);
+      }
+      req.then(function () { closeModal(); load(); })
+        .catch(function (e) { toast((e && e.message) || 'Не удалось сохранить', true); });
+    }
+
+    function deleteEditing() {
+      if (!editing) return;
+      if (!confirm('Удалить?')) return;
+      var url = modalKind === 'event' ? '/api/planner/events/' + editing.id : '/api/planner/tasks/' + editing.id;
+      NSC.apiCall(url, 'DELETE').then(function () { closeModal(); load(); })
+        .catch(function (e) { toast((e && e.message) || 'Не удалось удалить', true); });
+    }
+
+    function spaceNameFor(kind, id) {
+      if (!kind || kind === 'none' || id == null) return null;
+      if (kind === 'collection' && state.colMap[id]) return state.colMap[id].name;
+      var f = state.folders.filter(function (x) { return x.id === id; })[0];
+      return f ? (f.title || null) : null;
+    }
+
+    document.getElementById('nm-tab-event').addEventListener('click', function () { setModalKind('event'); });
+    document.getElementById('nm-tab-task').addEventListener('click', function () { setModalKind('task'); });
+    document.getElementById('nm-close').addEventListener('click', closeModal);
+    document.getElementById('nm-cancel').addEventListener('click', closeModal);
+    document.getElementById('nm-save').addEventListener('click', saveModal);
+    document.getElementById('nm-delete').addEventListener('click', deleteEditing);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeModal(); });
+
+    // ── Header wiring ──
+    document.getElementById('ncal-prev').addEventListener('click', function () {
+      if (state.view === 'week') state.cursor = NSC.addDays(state.cursor, -7);
+      else state.cursor = NSC.addMonths(state.cursor, -1);
+      load();
+    });
+    document.getElementById('ncal-next').addEventListener('click', function () {
+      if (state.view === 'week') state.cursor = NSC.addDays(state.cursor, 7);
+      else state.cursor = NSC.addMonths(state.cursor, 1);
+      load();
+    });
+    document.getElementById('ncal-today').addEventListener('click', function () {
+      state.cursor = NSC.startOfDay(new Date());
+      state.selectedKey = NSC.dayKey(new Date());
+      load();
+    });
+    document.querySelectorAll('.ncal-view').forEach(function (b) {
+      b.addEventListener('click', function () { state.view = b.dataset.view; load(); });
+    });
+    document.getElementById('ncal-f-events').addEventListener('change', function (e) { state.showEvents = e.target.checked; render(); });
+    document.getElementById('ncal-f-tasks').addEventListener('change', function (e) { state.showTasks = e.target.checked; render(); });
+    document.getElementById('ncal-space').addEventListener('change', function (e) {
+      var raw = e.target.value;
+      if (!raw) { state.spaceKind = ''; state.spaceId = ''; }
+      else if (raw === 'none') { state.spaceKind = 'none'; state.spaceId = ''; }
+      else { var p = raw.split(':'); state.spaceKind = p[0]; state.spaceId = p[1]; }
+      load();
+    });
+    document.getElementById('ncal-new-event').addEventListener('click', function () { openModal('event', { dateKey: state.selectedKey }); });
+    document.getElementById('ncal-new-task').addEventListener('click', function () { openModal('task', { dateKey: state.selectedKey }); });
+
+    // Single document-level handler (htmx revisits re-execute this script in the
+    // same window scope): it always delegates to the latest visit's instance.
+    window.__ncalActive = {
+      goToday: function () { state.cursor = NSC.startOfDay(new Date()); state.selectedKey = NSC.dayKey(new Date()); load(); },
+      setView: function (view) { state.view = view; load(); },
+      step: function (dir) {
+        if (state.view === 'week') state.cursor = NSC.addDays(state.cursor, 7 * dir);
+        else state.cursor = NSC.addMonths(state.cursor, dir);
+        load();
+      },
+    };
+    if (!window.__ncalKeysBound) {
+      window.__ncalKeysBound = true;
+      document.addEventListener('keydown', function (e) {
+        var inst = window.__ncalActive;
+        if (!inst) return;
+        var onPlanner = document.getElementById('ncal-month') || document.getElementById('ncal-agenda');
+        if (!onPlanner) return;
+        var tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+          if (e.key === 'Escape') e.target.blur();
+          return;
+        }
+        var k = (e.key || '').toLowerCase();
+        if (e.key === 'Escape') {
+          var ov = document.getElementById('ncal-overlay');
+          if (ov && !ov.classList.contains('hidden')) ov.classList.add('hidden');
+          var pp = document.getElementById('ncal-pop');
+          if (pp) pp.classList.add('hidden');
+          return;
+        }
+        if (k === 't' || k === 'е') { inst.goToday(); return; }
+        if (k === 'm' || k === 'ь') { inst.setView('month'); return; }
+        if (k === 'w' || k === 'ц') { inst.setView('week'); return; }
+        if (k === 'a' || k === 'ф') { inst.setView('agenda'); return; }
+        if (e.key === 'ArrowLeft') { inst.step(-1); return; }
+        if (e.key === 'ArrowRight') { inst.step(1); }
+      });
+    }
+
+    // ── Spaces ──
+    function folderPath(item, byId) {
+      var chain = [item.title || ('#' + item.id)];
+      var seen = {};
       var cur = item;
       while (cur.parent_id && byId[cur.parent_id] && !seen[cur.parent_id]) {
         cur = byId[cur.parent_id]; seen[cur.id] = true; chain.unshift(cur.title);
       }
-      return chain.join(" / ");
+      return chain.join(' / ');
     }
-    (items || []).filter(function (i) { return !i.is_archived; }).forEach(function (i) {
-      var o = document.createElement("option");
-      o.value = "folder:" + i.id + ":" + i.title;
-      o.textContent = path(i);
-      sel.appendChild(o);
-    });
-  }).catch(function () {});
 
-  document.getElementById("planner-quick-add").addEventListener("submit", function (e) {
-    e.preventDefault();
-    var title = document.getElementById("qa-title").value.trim();
-    if (!title) return;
-    var dueRaw = document.getElementById("qa-due").value;
-    var due = dueRaw ? new Date(dueRaw).toISOString() : null;
-    var spaceRaw = document.getElementById("qa-space").value;
-    var body = {title: title, recurrence: document.getElementById("qa-recurrence").value};
-    if (due) {
-      body.due_at = due;
-      if (document.getElementById("qa-remind").checked) body.remind_at = due;
+    function buildSpaceOptions() {
+      var filter = document.getElementById('ncal-space');
+      var modal = document.getElementById('nm-space');
+      var fHtml = '<option value="">Все пространства</option><option value="none">Без пространства</option>';
+      var mHtml = '<option value="none">Без пространства</option>';
+      state.collections.forEach(function (c) {
+        fHtml += '<option value="collection:' + c.id + '">' + esc(c.name) + '</option>';
+        mHtml += '<option value="collection:' + c.id + '">' + esc(c.name) + '</option>';
+      });
+      var byId = {};
+      state.folders.forEach(function (x) { byId[x.id] = x; });
+      state.folders.filter(function (x) { return !x.is_archived; }).forEach(function (x) {
+        var label = folderPath(x, byId);
+        fHtml += '<option value="folder:' + x.id + '">' + esc(label) + '</option>';
+        mHtml += '<option value="folder:' + x.id + '">' + esc(label) + '</option>';
+      });
+      filter.innerHTML = fHtml;
+      modal.innerHTML = mHtml;
+      var legend = document.getElementById('ncal-legend');
+      legend.innerHTML = state.collections.map(function (c) {
+        var hex = NSC.spaceColor('collection', c.id, c.name, state.colMap);
+        return '<span class="ncal-chip"><span class="ncal-dot" style="background:' + esc(hex) + '"></span>' + esc(c.name) + '</span>';
+      }).join('') + '<span class="ncal-chip"><span class="ncal-dot" style="background:#71717a"></span>inbox</span>';
     }
-    if (spaceRaw) {
-      var parts = spaceRaw.split(":");
-      body.space_kind = parts[0]; body.space_id = parseInt(parts[1], 10); body.space_name = parts.slice(2).join(":");
-    }
-    call("/api/planner/tasks", "POST", body);
-  });
+
+    NSC.fetchCollections().then(function (cols) {
+      state.collections = cols || [];
+      state.colMap = NSC.collectionsMap(state.collections);
+      return NSC.fetchFolders();
+    }).then(function (folders) {
+      state.folders = folders || [];
+      buildSpaceOptions();
+      load();
+    }).catch(function () { load(); });
+  }
 })();
 </script>
 {% endblock %}

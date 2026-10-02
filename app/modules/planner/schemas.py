@@ -131,3 +131,10 @@ class EventResponse(SpaceMixin):
 
     class Config:
         from_attributes = True
+
+
+class CalendarResponse(BaseModel):
+    """One payload for a visible calendar range: events plus dated tasks."""
+
+    events: list[EventResponse] = Field(default_factory=list)
+    tasks: list[TaskResponse] = Field(default_factory=list)

@@ -2,16 +2,21 @@ import asyncio
 import datetime
 import unittest
 import unittest.mock
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.contracts.search_documents_v1 import SearchDocumentsRequest
 from app.core.database import Base
+from app.core.module_types import IntegrationContext
 from app.modules.planner import services
 from app.modules.planner.models import PlannerEvent, PlannerTask
 from app.modules.planner.schemas import EventCreate, TaskCreate, TaskUpdate
+from app.modules.planner.search import search_documents
 from app.modules.planner.sweep import sweep_due_reminders
+from app.modules.search.models import SearchRefreshOutbox
 
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -49,7 +54,14 @@ def aware(year, month, day, hour=0, minute=0):
 class PlannerServicesTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite://")
-        Base.metadata.create_all(self.engine, tables=[PlannerTask.__table__, PlannerEvent.__table__])
+        Base.metadata.create_all(
+            self.engine,
+            tables=[
+                PlannerTask.__table__,
+                PlannerEvent.__table__,
+                SearchRefreshOutbox.__table__,
+            ],
+        )
         self.session = Session(self.engine, expire_on_commit=False)
         self.db = PlannerSession(self.session)
         self.user_id = 7
@@ -142,6 +154,54 @@ class PlannerServicesTests(unittest.TestCase):
         self.assertEqual("todo", updated.status)
         self.assertIsNone(updated.completed_at)
 
+    def test_list_tasks_due_range(self):
+        asyncio.run(
+            services.create_task(
+                self.db, self.user_id, TaskCreate(title="Внутри", due_at=aware(2026, 10, 6, 9, 0))
+            )
+        )
+        asyncio.run(
+            services.create_task(
+                self.db, self.user_id, TaskCreate(title="Раньше", due_at=aware(2026, 9, 1, 9, 0))
+            )
+        )
+        asyncio.run(
+            services.create_task(
+                self.db, self.user_id, TaskCreate(title="Позже", due_at=aware(2026, 11, 1, 9, 0))
+            )
+        )
+        scoped = asyncio.run(
+            services.list_tasks(
+                self.db,
+                self.user_id,
+                due_after=aware(2026, 10, 1),
+                due_before=aware(2026, 10, 31, 23, 59),
+            )
+        )
+        self.assertEqual(["Внутри"], [task.title for task in scoped])
+
+    def test_list_events_starts_range(self):
+        asyncio.run(
+            services.create_event(
+                self.db, self.user_id, EventCreate(title="Внутри", starts_at=aware(2026, 10, 6, 7, 0))
+            )
+        )
+        asyncio.run(
+            services.create_event(
+                self.db, self.user_id, EventCreate(title="Раньше", starts_at=aware(2026, 9, 1, 7, 0))
+            )
+        )
+        scoped = asyncio.run(
+            services.list_events(
+                self.db,
+                self.user_id,
+                statuses=("active",),
+                starts_after=aware(2026, 10, 1),
+                starts_before=aware(2026, 10, 31, 23, 59),
+            )
+        )
+        self.assertEqual(["Внутри"], [event.title for event in scoped])
+
     def test_event_crud(self):
         event = asyncio.run(
             services.create_event(
@@ -166,10 +226,39 @@ class PlannerServicesTests(unittest.TestCase):
         self.assertEqual([], remaining)
 
 
+class PlannerRangeParsingTests(unittest.TestCase):
+    def test_plain_day_bounds_use_moscow_wall_time(self):
+        from app.modules.planner.router import _parse_range_bound
+
+        start = _parse_range_bound("2026-10-05", is_end=False)
+        end = _parse_range_bound("2026-10-05", is_end=True)
+        self.assertIsNotNone(start)
+        self.assertIsNotNone(end)
+        assert start is not None and end is not None
+        # 2026-10-05 00:00 MSK (+03:00) is the previous day 21:00 UTC.
+        self.assertEqual(aware(2026, 10, 4, 21, 0), start)
+        self.assertEqual(datetime.datetime(2026, 10, 5, 20, 59, 59, 999999, tzinfo=datetime.UTC), end)
+
+    def test_iso_datetime_kept_as_moment(self):
+        from app.modules.planner.router import _parse_range_bound
+
+        moment = _parse_range_bound("2026-10-05T09:00:00+03:00", is_end=False)
+        self.assertEqual(aware(2026, 10, 5, 6, 0), moment)
+        self.assertIsNone(_parse_range_bound(None, is_end=False))
+        self.assertIsNone(_parse_range_bound("  ", is_end=True))
+
+
 class PlannerSweepTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite://")
-        Base.metadata.create_all(self.engine, tables=[PlannerTask.__table__, PlannerEvent.__table__])
+        Base.metadata.create_all(
+            self.engine,
+            tables=[
+                PlannerTask.__table__,
+                PlannerEvent.__table__,
+                SearchRefreshOutbox.__table__,
+            ],
+        )
         self.session = Session(self.engine, expire_on_commit=False)
         self.db = PlannerSession(self.session)
         self.user_id = 7
@@ -266,6 +355,124 @@ class PlannerSweepTests(unittest.TestCase):
         asyncio.run(sweep_due_reminders(self.db))
         events = asyncio.run(services.list_events(self.db, self.user_id))
         self.assertEqual(["active"], [event.status for event in events])
+
+
+class PlannerSearchDocumentsTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite://")
+        Base.metadata.create_all(
+            self.engine,
+            tables=[
+                PlannerTask.__table__,
+                PlannerEvent.__table__,
+                SearchRefreshOutbox.__table__,
+            ],
+        )
+        self.session = Session(self.engine, expire_on_commit=False)
+        self.context = IntegrationContext(
+            session=PlannerSession(self.session),
+            user=SimpleNamespace(id=7),
+            registry=SimpleNamespace(),
+            consumer_id="search",
+        )
+
+    def tearDown(self):
+        self.session.close()
+        self.engine.dispose()
+
+    def test_publishes_tasks_and_events(self):
+        asyncio.run(
+            services.create_task(
+                PlannerSession(self.session),
+                7,
+                TaskCreate(title="Купить молоко", notes="2 литра", space_name="Дом"),
+            )
+        )
+        asyncio.run(
+            services.create_event(
+                PlannerSession(self.session),
+                7,
+                EventCreate(title="Созвон", starts_at=aware(2026, 10, 6, 7, 0)),
+            )
+        )
+        asyncio.run(services.create_task(PlannerSession(self.session), 999, TaskCreate(title="Чужое")))
+        result = asyncio.run(search_documents(SearchDocumentsRequest(limit=10), self.context))
+        self.assertEqual("planner", result.module_id)
+        by_id = {doc.document_id: doc for doc in result.documents}
+        self.assertIn("task-1", by_id)
+        self.assertIn("event-1", by_id)
+        self.assertNotIn("task-2", by_id)
+        self.assertEqual("Купить молоко", by_id["task-1"].title)
+        self.assertIn("2 литра", by_id["task-1"].body or "")
+        self.assertIn("Дом", by_id["task-1"].keywords)
+        self.assertEqual("/planner", by_id["task-1"].open_path)
+        self.assertIsNone(result.next_offset)
+
+    def test_pagination_and_cancelled_excluded(self):
+        db = PlannerSession(self.session)
+        for index in range(3):
+            asyncio.run(services.create_task(db, 7, TaskCreate(title=f"Дело {index}")))
+        doomed = asyncio.run(services.create_task(db, 7, TaskCreate(title="Отмена")))
+        asyncio.run(services.update_task(db, doomed, TaskUpdate(status="cancelled")))
+        first = asyncio.run(search_documents(SearchDocumentsRequest(limit=2), self.context))
+        self.assertEqual(2, len(first.documents))
+        self.assertEqual(2, first.next_offset)
+        second = asyncio.run(search_documents(SearchDocumentsRequest(offset=2, limit=2), self.context))
+        self.assertEqual(1, len(second.documents))
+        self.assertIsNone(second.next_offset)
+        titles = [doc.title for doc in first.documents + second.documents]
+        self.assertNotIn("Отмена", titles)
+
+
+class SweepArmingTests(unittest.TestCase):
+    def test_arms_exactly_once(self):
+        from app.modules.planner import tasks as planner_tasks
+
+        store = {}
+
+        async def fake_set(key, value, ex=None, nx=False):
+            if nx and key in store:
+                return None
+            store[key] = value
+            return True
+
+        async def run():
+            applied = []
+            with (
+                unittest.mock.patch.object(planner_tasks, "redis_client", SimpleNamespace(set=fake_set)),
+                unittest.mock.patch.object(
+                    planner_tasks.sweep_reminders,
+                    "apply_async",
+                    side_effect=lambda **kwargs: applied.append(kwargs),
+                ),
+            ):
+                await planner_tasks.ensure_sweep_armed()
+                await planner_tasks.ensure_sweep_armed()
+            return applied
+
+        applied = asyncio.run(run())
+        self.assertEqual([{"countdown": 60}], applied)
+
+    def test_broken_redis_never_raises(self):
+        from app.modules.planner import tasks as planner_tasks
+
+        async def failing_set(*args, **kwargs):
+            raise ConnectionError("redis is down")
+
+        async def run():
+            with unittest.mock.patch.object(planner_tasks, "redis_client", SimpleNamespace(set=failing_set)):
+                await planner_tasks.ensure_sweep_armed()
+
+        asyncio.run(run())
+
+    def test_worker_ready_kicks_ensure(self):
+        from unittest.mock import AsyncMock
+
+        from app.modules.planner import tasks as planner_tasks
+
+        with unittest.mock.patch.object(planner_tasks, "ensure_sweep_armed", AsyncMock()) as ensure:
+            planner_tasks.arm_sweep_on_worker_ready()
+        ensure.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

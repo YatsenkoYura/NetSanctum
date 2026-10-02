@@ -9,6 +9,7 @@ from app.core.security import get_current_user
 from app.core.templates import templates
 from app.modules.planner import services
 from app.modules.planner.schemas import (
+    CalendarResponse,
     EventCreate,
     EventResponse,
     EventUpdate,
@@ -21,6 +22,25 @@ from app.modules.planner.tasks import ensure_sweep_armed
 router = APIRouter()
 
 DASHBOARD_LIMIT = 50
+CALENDAR_LIMIT = 500
+
+
+def _parse_range_bound(raw: str | None, *, is_end: bool) -> datetime.datetime | None:
+    """Accept an ISO datetime or a plain YYYY-MM-DD day (Moscow wall time)."""
+    if not raw:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if len(text) == 10:
+        day = datetime.date.fromisoformat(text)
+        if is_end:
+            moment = datetime.datetime(day.year, day.month, day.day, 23, 59, 59, 999999)
+        else:
+            moment = datetime.datetime(day.year, day.month, day.day, 0, 0, 0)
+        return services.normalize_dt(moment)
+    parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return services.normalize_dt(parsed)
 
 
 async def _get_lang(request: Request) -> str:
@@ -38,32 +58,10 @@ async def planner_dashboard(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # The calendar shell is rendered empty on purpose: the visible range
+    # (month/week/agenda) is loaded client-side via /api/planner/calendar,
+    # so the server never has to guess which 42 days the owner looks at.
     now = datetime.datetime.now(datetime.UTC)
-    today_start, tomorrow_start = _day_bounds(now)
-    overdue = await services.list_tasks(db, user.id, overdue_only=True, limit=DASHBOARD_LIMIT)
-    due_today = [
-        task
-        for task in await services.list_tasks(
-            db,
-            user.id,
-            statuses=services.OPEN_TASK_STATUSES,
-            due_before=tomorrow_start,
-            limit=DASHBOARD_LIMIT,
-        )
-        if task.due_at is not None and task.due_at >= today_start
-    ]
-    upcoming = await services.list_tasks(
-        db, user.id, statuses=services.OPEN_TASK_STATUSES, limit=DASHBOARD_LIMIT
-    )
-    upcoming = [task for task in upcoming if task not in overdue and task not in due_today][:DASHBOARD_LIMIT]
-    done = await services.list_tasks(db, user.id, statuses=("done",), limit=DASHBOARD_LIMIT)
-    events = await services.list_events(
-        db,
-        user.id,
-        statuses=("active",),
-        starts_after=now - datetime.timedelta(hours=2),
-        limit=DASHBOARD_LIMIT,
-    )
     return templates.TemplateResponse(
         request,
         "planner_dashboard.html",
@@ -71,11 +69,6 @@ async def planner_dashboard(
             "user": user,
             "lang": await _get_lang(request),
             "now": now,
-            "overdue": overdue,
-            "due_today": due_today,
-            "upcoming": upcoming,
-            "done": done,
-            "events": events,
         },
     )
 
@@ -86,7 +79,9 @@ async def api_list_tasks(
     overdue: bool = Query(False),
     space_kind: str | None = Query(None),
     space_id: int | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    due_from: str | None = Query(None, description="ISO datetime or YYYY-MM-DD, inclusive"),
+    due_to: str | None = Query(None, description="ISO datetime or YYYY-MM-DD, inclusive"),
+    limit: int = Query(50, ge=1, le=500),
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -98,6 +93,8 @@ async def api_list_tasks(
         overdue_only=overdue,
         space_kind=space_kind,
         space_id=space_id,
+        due_after=_parse_range_bound(due_from, is_end=False),
+        due_before=_parse_range_bound(due_to, is_end=True),
         limit=limit,
     )
 
@@ -160,22 +157,70 @@ async def api_list_events(
     upcoming: bool = Query(False),
     space_kind: str | None = Query(None),
     space_id: int | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    from_date: str | None = Query(None, alias="from", description="ISO datetime or YYYY-MM-DD"),
+    to_date: str | None = Query(None, alias="to", description="ISO datetime or YYYY-MM-DD"),
+    limit: int = Query(50, ge=1, le=500),
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     statuses = tuple(part for part in (status or "").split(",") if part)
     if upcoming:
         statuses = ("active",)
-    starts_after = datetime.datetime.now(datetime.UTC) if upcoming else None
+    starts_after = _parse_range_bound(from_date, is_end=False)
+    starts_before = _parse_range_bound(to_date, is_end=True)
+    if upcoming and starts_after is None:
+        starts_after = datetime.datetime.now(datetime.UTC)
     return await services.list_events(
         db,
         user.id,
         statuses=statuses or None,
         starts_after=starts_after,
+        starts_before=starts_before,
         space_kind=space_kind,
         space_id=space_id,
         limit=limit,
+    )
+
+
+@router.get("/api/planner/calendar", response_model=CalendarResponse)
+async def api_calendar(
+    from_date: str | None = Query(None, alias="from", description="ISO datetime or YYYY-MM-DD"),
+    to_date: str | None = Query(None, alias="to", description="ISO datetime or YYYY-MM-DD"),
+    space_kind: str | None = Query(None),
+    space_id: int | None = Query(None),
+    include_done_tasks: bool = Query(True),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """One payload for a visible calendar range: events plus dated tasks."""
+    starts_after = _parse_range_bound(from_date, is_end=False)
+    starts_before = _parse_range_bound(to_date, is_end=True)
+    events = await services.list_events(
+        db,
+        user.id,
+        statuses=("active",),
+        starts_after=starts_after,
+        starts_before=starts_before,
+        space_kind=space_kind,
+        space_id=space_id,
+        limit=CALENDAR_LIMIT,
+    )
+    task_statuses: tuple[str, ...] = services.OPEN_TASK_STATUSES
+    if include_done_tasks:
+        task_statuses = (*services.OPEN_TASK_STATUSES, "done")
+    tasks = await services.list_tasks(
+        db,
+        user.id,
+        statuses=task_statuses,
+        space_kind=space_kind,
+        space_id=space_id,
+        due_after=starts_after,
+        due_before=starts_before,
+        limit=CALENDAR_LIMIT,
+    )
+    return CalendarResponse(
+        events=[EventResponse.model_validate(event) for event in events],
+        tasks=[TaskResponse.model_validate(task) for task in tasks],
     )
 
 
