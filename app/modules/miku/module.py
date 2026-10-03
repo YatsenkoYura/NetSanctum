@@ -13,6 +13,11 @@ MODULE = ModuleSpec(
     title_ru="MIKU",
     dashboard_url="/miku/dashboard",
     order=5,
+    # Opt-in: the assistant is not installed unless the operator asks for it by
+    # name (NETSANCTUM_MODULES=...,miku on first install). Everything it needs
+    # at runtime already sits behind the `agent` and `miku-local` compose
+    # profiles, so an install without it loses nothing but the assistant.
+    default_enabled=False,
     router="app.modules.miku.router:router",
     models="app.modules.miku.models",
     migrations=MigrationSpec(

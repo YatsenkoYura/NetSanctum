@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     AGENT_RUNTIME_URL: str = "http://agent-runtime:8780"
     AGENT_RUNTIME_TOKEN: str = ""
     AGENT_INTERNAL_KEY: str = ""
+    # Identity the runtime calls integrations under. It defaults to the assistant
+    # because that is the only consumer today, but it is just a label: an install
+    # without the miku module works with this value untouched.
     AGENT_CONSUMER_ID: str = "miku"
 
     # ── Observability ─────────────────────────────────────
