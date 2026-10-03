@@ -5,12 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.core.storage import LocalStorage
 from app.modules.system.storage.browse import (
     StoragePathError,
     guess_media_type,
     list_local,
     normalize_folder,
     parent_of,
+    read_object,
     resolve_local,
     safe_segment,
 )
@@ -120,6 +122,62 @@ class StorageListingTests(unittest.TestCase):
     def test_a_file_is_not_a_folder(self):
         with self.assertRaises(StoragePathError):
             list_local("vault/notes.txt")
+
+
+class StorageDownloadTests(unittest.TestCase):
+    """A download hands over the plaintext under a name the OS understands."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.storage = LocalStorage(str(self.root))
+        patcher = patch("app.core.storage.get_storage", return_value=self.storage)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _body(self, path):
+        stream, _size, _media_type, _name = read_object(path)
+        try:
+            return b"".join(stream if not hasattr(stream, "read") else iter(lambda: stream.read(65536), b""))
+        finally:
+            closer = getattr(stream, "close", None)
+            if callable(closer):
+                closer()
+
+    def test_an_encrypted_video_downloads_as_the_video_it_is(self):
+        self.storage.save_file_encrypted(b"plain mp4 bytes", "vault/videos/clip.mp4.enc")
+
+        _stream, _size, media_type, name = read_object("vault/videos/clip.mp4.enc")
+
+        self.assertEqual("clip.mp4", name)
+        self.assertEqual("video/mp4", media_type)
+        self.assertEqual(b"plain mp4 bytes", self._body("vault/videos/clip.mp4.enc"))
+
+    def test_a_seekable_envelope_downloads_under_its_inner_name(self):
+        import io
+
+        self.storage.save_file_encrypted_seekable(
+            io.BytesIO(b"seekable mp4 bytes"), "vault/videos/big.mp4.enc"
+        )
+
+        _stream, size, media_type, name = read_object("vault/videos/big.mp4.enc")
+
+        self.assertEqual(("big.mp4", len(b"seekable mp4 bytes"), "video/mp4"), (name, size, media_type))
+        self.assertEqual(b"seekable mp4 bytes", self._body("vault/videos/big.mp4.enc"))
+
+    def test_a_plain_file_keeps_its_own_name(self):
+        self.storage.save_file(b"plain", "vault/notes.txt")
+
+        stream, _size, media_type, name = read_object("vault/notes.txt")
+
+        self.assertEqual(("notes.txt", "text/plain; charset=utf-8"), (name, media_type))
+        stream.close()
+
+    def test_a_name_that_is_only_an_encryption_suffix_is_left_alone(self):
+        self.storage.save_file(b"x", "vault/notes.enc")
+
+        self.assertEqual("notes.enc", read_object("vault/notes.enc")[3])
 
 
 class StorageBrowserTemplateTests(unittest.TestCase):

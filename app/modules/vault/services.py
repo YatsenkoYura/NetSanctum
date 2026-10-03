@@ -302,14 +302,11 @@ async def create_video_capture_item(
         quality=capture.quality,
         title=capture.title,
     )
-    # The job id lives in the card's own metadata, not in related_entity_id:
-    # it is a Redis key with a 24h life, and a durable field holding an expired
-    # id is exactly the dead link this flow used to have.
-    item.canvas_data = {
-        **(item.canvas_data or {}),
-        "media_status": "queued" if task_id else "not queued",
-        "media_task": task_id,
-    }
+    # Structural column, like `media_path`: `canvas_data` is a sealed field, so a
+    # write there was silently dropped for a locked collection and visible in the
+    # clear before that. The task id used to sit here too — write-only, read by
+    # nothing, and it expired within a day anyway.
+    item.media_status = "queued" if task_id else "not queued"
     await session.commit()
     return item
 

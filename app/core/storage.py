@@ -24,6 +24,10 @@ from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_
 
 ENCRYPTED_FILE_MAGIC = b"NSENC\x02\x00\x00"
 NONCE_SIZE = 12
+# Filename marker for an encrypted object. It is a naming convention, never a
+# reliable signal on its own — `looks_encrypted` reads the header — but it is what
+# lets a download be named after the file inside the envelope.
+ENCRYPTED_SUFFIX = ".enc"
 
 # Chunked, seekable envelope. The chunk index lives in the nonce, so no
 # (key, nonce) pair repeats across chunks, and each chunk authenticates on its own.
@@ -289,6 +293,31 @@ class StorageInterface(ABC):
     def file_exists(self, path: str) -> bool:
         """Check whether a file exists at the given path."""
         ...
+
+    def looks_encrypted(self, path: str) -> bool:
+        """Whether the stored object carries one of our encryption envelopes.
+
+        A cheap prefix check. Deciding this by the filename is not enough: the
+        same logical path holds a plaintext object before a module starts
+        encrypting and an envelope afterwards.
+        """
+        if self.is_seekable_encrypted(path):
+            return True
+        with self.get_file_stream(path) as stream:
+            head = stream.read(max(len(ENCRYPTED_FILE_MAGIC), len(SEEKABLE_MAGIC)))
+        return head.startswith(ENCRYPTED_FILE_MAGIC) or head.startswith(SEEKABLE_MAGIC)
+
+    def read_maybe_encrypted(self, path: str) -> bytes:
+        """The object's bytes, decrypted if it is an envelope.
+
+        Callers that must keep serving objects written before their module started
+        encrypting use this: the bytes are identical either way, so the caller does
+        not need to know which envelope — or none — the object happens to use.
+        """
+        if self.looks_encrypted(path):
+            return self.get_file_decrypted(path)
+        with self.get_file_stream(path) as stream:
+            return stream.read()
 
     def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
         return EncryptionMigrationResult()

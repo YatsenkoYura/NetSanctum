@@ -24,6 +24,7 @@ from app.modules.vault.images import (
     externalize_image,
     has_image,
     image_bytes,
+    media_type_for,
 )
 from app.modules.vault.models import VaultCollection
 from app.modules.vault.schemas import (
@@ -246,13 +247,12 @@ def _apply_lock_state(serialized: dict, item, *, locked: bool) -> dict:
 
 def _apply_media_state(serialized: dict, item) -> dict:
     """Expose what a media card needs without leaking its storage path."""
-    media = item.canvas_data or {}
     serialized["has_media"] = bool(getattr(item, "media_path", None))
-    serialized["media_status"] = media.get("media_status")
-    duration = media.get("media_duration")
+    serialized["media_status"] = getattr(item, "media_status", None)
+    duration = getattr(item, "media_duration", None)
     serialized["media_duration"] = int(duration) if isinstance(duration, (int, float)) else None
     # A download that already produced a poster should use it as the card face.
-    if serialized["has_media"] and not serialized.get("has_image") and media.get("media_thumbnail_path"):
+    if serialized["has_media"] and not serialized.get("has_image") and item.media_thumbnail_path:
         serialized["og_image"] = f"/api/vault/items/{item.id}/thumbnail"
     return serialized
 
@@ -470,17 +470,21 @@ async def get_item_thumbnail(
 ):
     """Serve the poster a media download stored, when there is one."""
     item = await get_vault_item(db, item_id)
-    path = (item.canvas_data or {}).get("media_thumbnail_path") if item else None
+    path = item.media_thumbnail_path if item else None
     if not path:
         raise HTTPException(status_code=404, detail="Vault thumbnail not found")
+    storage = get_storage()
     try:
-        with get_storage().get_file_stream(path) as stream:
-            content = stream.read()
+        # Posters written before the encryption change are still plaintext on
+        # disk, so the reader has to accept both rather than assume an envelope.
+        content = await asyncio.to_thread(storage.read_maybe_encrypted, path)
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="Vault thumbnail file is missing") from exc
     return Response(
         content=content,
-        media_type="image/jpeg",
+        # Derived from the stored name: the endpoint used to claim every poster
+        # was a JPEG, which broke a PNG served with an image/png body.
+        media_type=media_type_for(path),
         headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
     )
 

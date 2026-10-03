@@ -275,6 +275,13 @@ def read_object(path: str) -> tuple[Any, int, str, str]:
     Encrypted objects are decrypted on the way out: the operator gets the bytes
     the module stored, not the envelope. Seekable envelopes are streamed chunk
     by chunk so a multi-gigabyte video never lands in memory at once.
+
+    The download name drops the `.enc` suffix and the media type is taken from
+    the extension underneath it. Without that the browser saves `clip.mp4.enc`
+    as `application/octet-stream`, which is the plaintext bytes wearing the
+    envelope's name — correct bytes, useless file. The suffix is only stripped
+    from an object that really is an envelope: a user who uploaded their own
+    `archive.enc` gets it back under that name.
     """
     from app.core.storage import get_storage
 
@@ -284,7 +291,7 @@ def read_object(path: str) -> tuple[Any, int, str, str]:
     if not backend.file_exists(path):
         raise FileNotFoundError(path)
 
-    name = PurePosixPath(path).name
+    stored_name = PurePosixPath(path).name
     try:
         size = backend.get_file_size(path)
     except (OSError, ValueError):
@@ -292,13 +299,22 @@ def read_object(path: str) -> tuple[Any, int, str, str]:
 
     if backend.is_seekable_encrypted(path):
         total = backend.get_seekable_plaintext_size(path)
+        name = _plain_name(stored_name)
         return backend.read_seekable_range(path, 0, total), total, guess_media_type(name), name
 
     with backend.get_file_stream(path) as stream:
         head = stream.read(8)
     if _looks_encrypted(head):
+        name = _plain_name(stored_name)
         return _single_pass(backend.get_file_decrypted(path)), size, guess_media_type(name), name
-    return backend.get_file_stream(path), size, guess_media_type(name), name
+    return backend.get_file_stream(path), size, guess_media_type(stored_name), stored_name
+
+
+def _plain_name(name: str) -> str:
+    """The name the object has once its envelope is off."""
+    from app.core.storage import ENCRYPTED_SUFFIX
+
+    return name[: -len(ENCRYPTED_SUFFIX)] if name.endswith(ENCRYPTED_SUFFIX) else name
 
 
 def _single_pass(payload: bytes):

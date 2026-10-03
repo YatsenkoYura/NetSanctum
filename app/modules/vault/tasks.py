@@ -54,14 +54,19 @@ def _format_selector(quality: str | None) -> str:
 
 
 def _record_status(item_id: int, status: str):
-    """Write download progress onto the item so the card can show it."""
+    """Write download progress onto the item so the card can show it.
+
+    `media_status` is a structural column, not `canvas_data`: canvas_data is a
+    sealed field, so for an item in a sealed collection a write there was both
+    lost on the next unlock and visible in the clear until then.
+    """
 
     def report(message: str) -> None:
         try:
             with SyncSessionLocal() as session:
                 item = session.get(VaultItem, item_id)
                 if item is not None and item.node_type == "video":
-                    item.canvas_data = {**(item.canvas_data or {}), "media_status": message}
+                    item.media_status = message
                     session.commit()
         except Exception:
             logger.debug("could not record vault media status", exc_info=True)
@@ -167,15 +172,16 @@ def download_vault_video_task(
             item.media_path = str(destination.relative_to(_storage_root()))
             item.media_mime = "video/mp4" if ext == ".mp4" else f"video/{ext.lstrip('.')}"
             item.media_size = size
-            item.canvas_data = {
-                **(item.canvas_data or {}),
-                "media_status": "completed",
-                "media_title": info.get("title") or title,
-                "media_duration": info.get("duration"),
-                "media_thumbnail_path": thumbnail_path,
-                "media_width": info.get("width"),
-                "media_height": info.get("height"),
-            }
+            # Structural columns, one per fact. See the note in `models.py`: the
+            # worker has no vault key, so anything it writes has to be readable.
+            item.media_status = "completed"
+            item.media_title = info.get("title") or title
+            duration = info.get("duration")
+            item.media_duration = float(duration) if isinstance(duration, (int, float)) else None
+            width, height = info.get("width"), info.get("height")
+            item.media_width = int(width) if isinstance(width, (int, float)) else None
+            item.media_height = int(height) if isinstance(height, (int, float)) else None
+            item.media_thumbnail_path = thumbnail_path
             if not item.title and info.get("title"):
                 item.title = str(info["title"])[:1000]
             session.commit()
@@ -197,7 +203,13 @@ def download_vault_video_task(
 
 
 def _store_thumbnail(storage, info: dict, item_id: int) -> str | None:
-    """Best-effort poster for the card. Its absence must not fail the download."""
+    """Best-effort poster for the card. Its absence must not fail the download.
+
+    Encrypted with the application file key, exactly like the video next to it and
+    like `images.py` does for pasted screenshots. It used to be written in the
+    clear, which meant a sealed collection held an encrypted video beside a
+    readable poster.
+    """
     url = info.get("thumbnail")
     if not url or not str(url).startswith("http"):
         return None
@@ -211,9 +223,9 @@ def _store_thumbnail(storage, info: dict, item_id: int) -> str | None:
             https_only=False,
         )
         suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(content_type, ".jpg")
-        destination = _storage_root() / THUMBNAIL_PREFIX / f"{item_id}{suffix}"
+        destination = _storage_root() / THUMBNAIL_PREFIX / f"{item_id}{suffix}.enc"
         destination.parent.mkdir(parents=True, exist_ok=True)
-        storage.save_file(content, str(destination.relative_to(_storage_root())))
+        storage.save_file_encrypted(content, str(destination.relative_to(_storage_root())))
         return str(destination.relative_to(_storage_root()))
     except Exception:
         logger.debug("no thumbnail stored for vault item %s", item_id, exc_info=True)

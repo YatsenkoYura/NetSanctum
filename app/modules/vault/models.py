@@ -54,6 +54,20 @@ class VaultItem(Base):
     media_path = Column(String, nullable=True, index=True)
     media_mime = Column(String, nullable=True)
     media_size = Column(Integer, nullable=True)
+    # The rest of the media record. These are structural, not author-written, and
+    # they deliberately stay in the clear: the download that produced them runs in
+    # a worker with no vault key, so it could seal them but never re-seal them.
+    # Living in `canvas_data` they were silently discarded on the next unlock —
+    # `open_item` restores that blob over whatever the worker wrote — which is why
+    # a sealed collection's video lost its poster.
+    media_status = Column(String, nullable=True)
+    media_title = Column(String, nullable=True)
+    media_duration = Column(Float, nullable=True)
+    media_width = Column(Integer, nullable=True)
+    media_height = Column(Integer, nullable=True)
+    # The poster, encrypted with the application file key exactly like `image_path`
+    # and the video itself.
+    media_thumbnail_path = Column(String, nullable=True)
 
     # For an item in a sealed collection, everything the owner wrote lives here as
     # one AEAD blob and the readable columns above stay empty. Structural columns
