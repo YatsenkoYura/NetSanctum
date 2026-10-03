@@ -327,8 +327,8 @@ class ModuleManifestTests(unittest.TestCase):
             version="0.1.0",
             title_en="Partial",
             title_ru="Partial",
-            startup="test_module_contracts:failing_startup",
-            shutdown="test_module_contracts:record_shutdown",
+            startup=f"{__name__}:failing_startup",
+            shutdown=f"{__name__}:record_shutdown",
         )
         record = ModuleRecord(
             package="app.modules.partial_failure",

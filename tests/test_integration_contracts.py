@@ -51,7 +51,7 @@ async def example_entity_resolver(session, entity_type: str, entity_id: str) -> 
 
 def make_registry(
     status: ModuleStatus = ModuleStatus.ACTIVE,
-    handler: str = "test_integration_contracts:example_handler",
+    handler: str = f"{__name__}:example_handler",
 ) -> ModuleRegistry:
     registry = ModuleRegistry()
     spec = ModuleSpec(
@@ -60,16 +60,16 @@ def make_registry(
         title_en="Example",
         title_ru="Example",
         entity_types=("video",),
-        entity_resolver="test_integration_contracts:example_entity_resolver",
+        entity_resolver=f"{__name__}:example_entity_resolver",
         integrations=(
             IntegrationSpec(
                 id="example.echo.v1",
                 handler=handler,
-                request_model="test_integration_contracts:ExampleRequest",
-                result_model="test_integration_contracts:ExampleResult",
+                request_model=f"{__name__}:ExampleRequest",
+                result_model=f"{__name__}:ExampleResult",
                 contract="example.contract.v1",
-                resource_handler="test_integration_contracts:example_resource_handler",
-                resource_request_model="test_integration_contracts:ExampleResourceRequest",
+                resource_handler=f"{__name__}:example_resource_handler",
+                resource_request_model=f"{__name__}:ExampleResourceRequest",
                 effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
             ),
         ),
@@ -104,7 +104,7 @@ class IntegrationContractTests(unittest.TestCase):
         self.assertEqual({"echoed": "ok"}, result)
 
     def test_registry_wraps_unexpected_provider_failures(self):
-        registry = make_registry(handler="test_integration_contracts:failing_handler")
+        registry = make_registry(handler=f"{__name__}:failing_handler")
         context = IntegrationContext(session=None, user=None, registry=registry)
 
         with self.assertRaisesRegex(IntegrationServiceError, "Integration 'example.echo.v1' failed"):
@@ -190,9 +190,9 @@ class IntegrationContractTests(unittest.TestCase):
     def test_integration_effects_default_to_conservative_execute(self):
         integration = IntegrationSpec(
             id="example.default.v1",
-            handler="test_integration_contracts:example_handler",
-            request_model="test_integration_contracts:ExampleRequest",
-            result_model="test_integration_contracts:ExampleResult",
+            handler=f"{__name__}:example_handler",
+            request_model=f"{__name__}:ExampleRequest",
+            result_model=f"{__name__}:ExampleResult",
         )
 
         self.assertEqual(IntegrationEffect.EXECUTE, integration.effects.effect)
@@ -252,9 +252,9 @@ class IntegrationContractTests(unittest.TestCase):
                 IntegrationSpec(
                     id="second.echo.v1",
                     contract="example.contract.v1",
-                    handler="test_integration_contracts:example_handler",
-                    request_model="test_integration_contracts:ExampleRequest",
-                    result_model="test_integration_contracts:ExampleResult",
+                    handler=f"{__name__}:example_handler",
+                    request_model=f"{__name__}:ExampleRequest",
+                    result_model=f"{__name__}:ExampleResult",
                 ),
             ),
         )
