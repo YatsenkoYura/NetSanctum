@@ -9,8 +9,8 @@ import shutil
 from pathlib import Path
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -19,6 +19,23 @@ from app.core.modules import module_registry
 from app.core.security import OwnerUser, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
+from app.modules.system.storage.browse import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    StoragePathError,
+    UnsupportedOnBackendError,
+    breadcrumbs,
+    guess_media_type,
+    is_remote,
+    join_folder,
+    list_folder,
+    normalize_folder,
+    parent_of,
+    read_object,
+    resolve_local,
+    safe_segment,
+    storage_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +44,9 @@ redis_client = aioredis.Redis.from_url(settings.REDIS_URL, decode_responses=True
 
 router = APIRouter(prefix="/storage", tags=["Storage"])
 STORAGE_PACKAGE_ID = "storage_manager"
+# A single upload is bounded here rather than by the request body limit, so an
+# accidental 4 GB video cannot be streamed into the storage tree unnoticed.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024
 
 
 def format_size(size_bytes: int) -> str:
@@ -184,12 +204,22 @@ async def cleanup_database_for_module(db: AsyncSession, module: str):
 async def storage_dashboard(
     request: Request,
     package_id: str | None = Query(None),
+    path: str = Query(""),
     user=Depends(get_current_user),
 ):
     if package_id and package_id != STORAGE_PACKAGE_ID:
         raise HTTPException(status_code=400, detail="Invalid Storage package ID")
     lang = request.cookies.get("lang") or "en"
     stats = await asyncio.to_thread(_get_storage_stats)
+    folder = ""
+    listing = None
+    error = None
+    if not package_id:
+        try:
+            listing = await asyncio.to_thread(list_folder, path)
+            folder = listing.path
+        except StoragePathError as exc:
+            error = str(exc)
     return templates.TemplateResponse(
         request,
         "storage_dashboard.html",
@@ -199,8 +229,283 @@ async def storage_dashboard(
             "stats": stats,
             "package_mode": bool(package_id),
             "is_readonly": bool(package_id),
+            "folder": folder,
+            "breadcrumbs": breadcrumbs(folder),
+            "parent_path": parent_of(folder),
+            "entries": [entry.as_dict(format_size=format_size) for entry in listing.entries]
+            if listing
+            else [],
+            "listing_total": listing.total if listing else 0,
+            "remote_backend": is_remote(),
+            "browse_error": error,
         },
     )
+
+
+# ── FOLDER MANAGER ──────────────────────────────────────────────────────
+# Read one folder. Never recursive: a whole tree would mean walking every byte
+# of every module on each click.
+
+
+@router.get("/api/folder")
+async def api_list_folder(
+    path: str = Query(""),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+):
+    try:
+        listing = await asyncio.to_thread(list_folder, path, limit=limit, offset=offset)
+    except StoragePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnsupportedOnBackendError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Folder not found") from exc
+    return {
+        "path": listing.path,
+        "parent": parent_of(listing.path),
+        "backend": listing.backend,
+        "total": listing.total,
+        "truncated": listing.truncated,
+        "entries": [entry.as_dict(format_size=format_size) for entry in listing.entries],
+    }
+
+
+@router.get("/api/download")
+async def api_download(
+    path: str = Query(...),
+    user=Depends(get_current_user),
+):
+    """Download one file. Encrypted objects are decrypted on the way out."""
+    try:
+        stream, size, media_type, name = await asyncio.to_thread(read_object, path)
+    except StoragePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Unreadable file: {exc}") from exc
+
+    async def body():
+        # A seekable envelope yields chunk by chunk; a plain stream is iterated
+        # in blocks. Neither holds the whole file in memory.
+        iterator = stream
+        if hasattr(stream, "read"):
+
+            def _read():
+                while True:
+                    block = stream.read(1024 * 1024)
+                    if not block:
+                        return
+                    yield block
+
+            iterator = _read()
+        try:
+            for block in iterator:
+                yield block
+        finally:
+            closer = getattr(stream, "close", None)
+            if callable(closer):
+                closer()
+
+    headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+    if size:
+        headers["Content-Length"] = str(size)
+    return StreamingResponse(
+        body(),
+        media_type=media_type,
+        headers={**headers, "Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.post("/api/mkdir")
+async def api_mkdir(
+    payload: dict,
+    user=Depends(get_current_user),
+):
+    """Create a folder inside another folder."""
+    if is_remote():
+        raise HTTPException(status_code=422, detail="Folders are a local-backend feature")
+    try:
+        folder = normalize_folder(payload.get("path"))
+        name = safe_segment(str(payload.get("name") or ""), fallback="")
+    except StoragePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not name or name == "file":
+        raise HTTPException(status_code=400, detail="A folder name is required")
+    target = resolve_local(join_folder(folder, name))
+    if target.exists():
+        raise HTTPException(status_code=409, detail="A folder with that name already exists")
+
+    def _mkdir() -> None:
+        target.mkdir(parents=True, exist_ok=False)
+
+    try:
+        await asyncio.to_thread(_mkdir)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="A folder with that name already exists") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not create the folder: {exc}") from exc
+    return {"status": "ok", "path": f"{folder}/{name}" if folder else name}
+
+
+@router.post("/api/upload")
+async def api_upload(
+    file: UploadFile = File(...),
+    path: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Store an uploaded file in a folder of the storage tree."""
+    try:
+        folder = normalize_folder(path)
+        name = safe_segment(file.filename or "", fallback="upload.bin")
+    except StoragePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if is_remote():
+        raise HTTPException(status_code=422, detail="Uploads require the local backend")
+    target_path = join_folder(folder, name)
+    target = resolve_local(target_path)
+    if not target.parent.exists():
+        raise HTTPException(status_code=404, detail="Folder not found")
+    if await asyncio.to_thread(get_storage().file_exists, target_path):
+        raise HTTPException(status_code=409, detail="A file with that name already exists")
+
+    def _write() -> int:
+        written = 0
+        with target.open("wb") as sink:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    sink.close()
+                    target.unlink(missing_ok=True)
+                    raise ValueError("The file is larger than the upload limit")
+                sink.write(chunk)
+        return written
+
+    try:
+        written = await asyncio.to_thread(_write)
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not store the file: {exc}") from exc
+    finally:
+        await file.close()
+    return {"status": "ok", "path": target_path, "size": written, "media_type": guess_media_type(name)}
+
+
+@router.post("/api/rename")
+async def api_rename(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Rename a file or a folder in place."""
+    if is_remote():
+        raise HTTPException(status_code=422, detail="Renaming requires the local backend")
+    try:
+        source = normalize_folder(payload.get("path"))
+        name = safe_segment(str(payload.get("name") or ""), fallback="")
+    except StoragePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not source:
+        raise HTTPException(status_code=400, detail="The storage root cannot be renamed")
+    if not name or name == "file":
+        raise HTTPException(status_code=400, detail="A new name is required")
+    folder = parent_of(source)
+    destination_path = join_folder(folder, name)
+    source_path = resolve_local(source)
+    destination = resolve_local(destination_path)
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    if destination.exists():
+        raise HTTPException(status_code=409, detail="A folder or file with that name already exists")
+
+    def _rename() -> None:
+        source_path.rename(destination)
+
+    try:
+        await asyncio.to_thread(_rename)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not rename: {exc}") from exc
+
+    if source_path.is_dir():
+        # A folder move invalidates every module path underneath it.
+        top_segment = source.split("/", 1)[0]
+        await cleanup_database_for_module(db, top_segment)
+        await db.commit()
+        return {"status": "ok", "path": destination_path, "is_dir": True}
+    await cleanup_database_for_file(db, destination_path)
+    await db.commit()
+    return {"status": "ok", "path": destination_path, "is_dir": False}
+
+
+@router.delete("/api/entry")
+async def api_delete_entry(
+    path: str = Query(...),
+    recursive: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Delete one file, or a folder and everything in it."""
+    try:
+        target_logical = normalize_folder(path)
+    except StoragePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not target_logical:
+        raise HTTPException(status_code=400, detail="The storage root cannot be deleted")
+    if is_remote():
+        backend = get_storage()
+        if not await asyncio.to_thread(backend.file_exists, target_logical):
+            raise HTTPException(status_code=404, detail="Not found")
+        await asyncio.to_thread(backend.delete_file, target_logical)
+        await cleanup_database_for_file(db, target_logical)
+        await db.commit()
+        return {"status": "ok", "path": target_logical}
+
+    target = resolve_local(target_logical)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if target.is_dir():
+        removed_files = await asyncio.to_thread(_delete_folder_files, target)
+
+        def _rmdir() -> None:
+            shutil.rmtree(target)
+
+        try:
+            await asyncio.to_thread(_rmdir)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Could not delete the folder: {exc}") from exc
+        for logical in removed_files:
+            await cleanup_database_for_file(db, logical)
+        top_segment = target_logical.split("/", 1)[0]
+        await cleanup_database_for_module(db, top_segment)
+        await db.commit()
+        return {"status": "ok", "path": target_logical, "files_removed": len(removed_files)}
+
+    await asyncio.to_thread(get_storage().delete_file, target_logical)
+    await cleanup_database_for_file(db, target_logical)
+    await db.commit()
+    return {"status": "ok", "path": target_logical, "files_removed": 1}
+
+
+def _delete_folder_files(target: Path) -> list[str]:
+    """Logical paths of every file under `target`, before the tree is removed."""
+    root = storage_root()
+    collected: list[str] = []
+    for current, _dirs, files in os.walk(target):
+        for name in files:
+            full = Path(current) / name
+            try:
+                collected.append(str(full.relative_to(root)))
+            except ValueError:
+                continue
+    return collected
 
 
 @router.post("/api/recalculate", response_class=HTMLResponse, include_in_schema=False)

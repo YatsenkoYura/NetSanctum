@@ -1,0 +1,251 @@
+{# Folder manager over the storage tree. Read-only in package mode. #}
+<div class="bg-zinc-950 border-2 border-zinc-800">
+    <div class="border-b border-zinc-800 px-6 py-4 bg-zinc-900/20 flex flex-wrap items-center justify-between gap-3">
+        <div>
+            <span class="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
+                {{ _('storage', 'module_title') }}
+            </span>
+            <p class="text-[10px] font-mono text-zinc-500 mt-1">
+                {% if remote_backend %}S3 PREFIX BROWSER — FOLDERS ARE EMULATED{% else %}{{ storage_root }}{% endif %}
+            </p>
+        </div>
+        {% if not is_readonly %}
+        <div class="flex items-center gap-2">
+            <input type="file" id="storage-upload-file" class="hidden">
+            <button id="storage-upload-btn" type="button"
+                class="px-3 py-1.5 text-[10px] font-mono font-bold uppercase border border-zinc-800 bg-zinc-900 text-teal-400 hover:border-teal-400 hover:bg-black rounded-none">
+                {{ _('storage', 'upload') }}
+            </button>
+            <button id="storage-mkdir-btn" type="button"
+                class="px-3 py-1.5 text-[10px] font-mono font-bold uppercase border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-teal-400 hover:text-teal-400 rounded-none">
+                {{ _('storage', 'new_folder') }}
+            </button>
+        </div>
+        {% endif %}
+    </div>
+
+    <nav class="px-6 py-2 border-b border-zinc-900 flex flex-wrap items-center gap-1 text-[10px] font-mono">
+        <button type="button" data-nav="" class="px-1.5 py-0.5 uppercase font-bold text-teal-400 hover:underline">/</button>
+        {% for label, crumb in breadcrumbs %}
+        <span class="text-zinc-700">/</span>
+        <button type="button" data-nav="{{ crumb }}"
+            class="px-1.5 py-0.5 uppercase font-bold {% if loop.last %}text-white{% else %}text-zinc-400 hover:text-teal-400 hover:underline{% endif %}">{{ label }}</button>
+        {% endfor %}
+        <button id="storage-up-btn" type="button" data-nav="{{ parent_path }}"
+            class="ml-auto px-1.5 py-0.5 uppercase font-bold text-zinc-400 hover:text-teal-400 {% if not breadcrumbs %}hidden{% endif %}">↑ {{ _('storage', 'up') }}</button>
+    </nav>
+
+    {% if browse_error %}
+    <div class="px-6 py-3 text-[11px] font-mono text-rose-400 border-b border-zinc-900">{{ browse_error }}</div>
+    {% endif %}
+
+    <div class="overflow-x-auto">
+        <table class="w-full border-collapse text-left text-xs font-mono">
+            <thead>
+                <tr class="border-b border-zinc-800 bg-zinc-900/40 text-zinc-400 uppercase text-[10px]">
+                    <th class="px-6 py-3 font-bold">{{ _('storage', 'name') }}</th>
+                    <th class="px-6 py-3 font-bold text-right">{{ _('storage', 'size') }}</th>
+                    <th class="px-6 py-3 font-bold">{{ _('storage', 'modified') }}</th>
+                    {% if not is_readonly %}<th class="px-6 py-3 font-bold text-center">—</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody id="storage-entries" class="divide-y divide-zinc-900">
+                {% for entry in entries %}
+                <tr class="hover:bg-zinc-900/20 transition-colors text-zinc-300"
+                    data-path="{{ entry.path }}" data-dir="{{ '1' if entry.is_dir else '0' }}">
+                    <td class="px-6 py-3">
+                        {% if entry.is_dir %}
+                        <button type="button" data-open="{{ entry.path }}"
+                            class="font-bold text-teal-400 hover:underline text-left">📁 {{ entry.name }}</button>
+                        {% else %}
+                        <a href="/storage/api/download?path={{ entry.path }}" class="font-bold text-zinc-100 hover:text-teal-400">
+                            {{ entry.name }}
+                            {% if entry.encrypted %}<span class="text-[9px] text-amber-500/80">·enc</span>{% endif %}
+                        </a>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-3 text-right whitespace-nowrap text-zinc-400">{{ entry.size_human }}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-zinc-500">{{ entry.modified_label or '—' }}</td>
+                    {% if not is_readonly %}
+                    <td class="px-6 py-3 text-center whitespace-nowrap">
+                        <button type="button" data-rename="{{ entry.path }}" data-dir="{{ entry.is_dir }}"
+                            class="px-2 text-[10px] font-bold uppercase text-zinc-400 hover:text-white">Rename</button>
+                        <button type="button" data-delete="{{ entry.path }}" data-dir="{{ entry.is_dir }}" data-name="{{ entry.name }}"
+                            class="px-2 text-[10px] font-bold uppercase text-rose-500 hover:text-rose-300">Delete</button>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                <tr id="storage-empty-row" {% if entries %}class="hidden"{% endif %}>
+                    <td colspan="{% if is_readonly %}3{% else %}4{% endif %}" class="px-6 py-8 text-center text-zinc-600 font-mono italic">
+                        {{ _('storage', 'folder_empty') }}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="px-6 py-2 border-t border-zinc-900 text-[10px] font-mono text-zinc-600 flex justify-between">
+        <span id="storage-listing-total">{{ listing_total }}</span>
+        <span id="storage-listing-trunc" class="{% if not listing and listing %}{% endif %}"></span>
+    </div>
+</div>
+
+<script>
+// Folder manager: one folder at a time over /storage/api/folder. Kept outside
+// the stats fragment so a recalculate swap never wipes the open folder.
+(function storageBrowser() {
+  var tbody = document.getElementById('storage-entries');
+  if (!tbody) return;
+  var current = {{ (folder or '') | tojson }};
+
+  function label(name) {
+    var div = document.createElement('div');
+    div.textContent = name;
+    return div.innerHTML;
+  }
+
+  function reload(path) {
+    return fetch('/storage/api/folder?path=' + encodeURIComponent(path || ''), { headers: { 'Accept': 'application/json' } })
+      .then(function (response) { return response.json().then(function (data) { return { ok: response.ok, data: data }; }); })
+      .then(function (result) {
+        if (!result.ok) { alert(result.data.detail || 'Не удалось открыть папку'); return; }
+        current = result.data.path;
+        render(result.data.entries);
+        document.getElementById('storage-listing-total').textContent = result.data.total;
+        document.getElementById('storage-listing-trunc').textContent = result.data.truncated ? 'показаны не все' : '';
+        // The breadcrumb row is server-rendered; a folder change reloads it.
+        var nav = document.querySelectorAll('[data-nav]');
+        nav.forEach(function (node) {
+          node.classList.toggle('hidden', node.id === 'storage-up-btn' && !result.data.parent && result.data.path);
+        });
+        history.replaceState(null, '', '/storage/dashboard?path=' + encodeURIComponent(current));
+      });
+  }
+
+  function render(entries) {
+    tbody.innerHTML = '';
+    var empty = document.createElement('tr');
+    empty.id = 'storage-empty-row';
+    var cell = document.createElement('td');
+    cell.colSpan = tbody.closest('table').querySelector('thead').rows[0].cells.length;
+    cell.className = 'px-6 py-8 text-center text-zinc-600 font-mono italic';
+    cell.textContent = 'Папка пуста';
+    empty.appendChild(cell);
+    if (!entries.length) { tbody.appendChild(empty); return; }
+    entries.forEach(function (entry) {
+      var row = document.createElement('tr');
+      row.className = 'hover:bg-zinc-900/20 transition-colors text-zinc-300';
+      row.dataset.path = entry.path;
+
+      var name = document.createElement('td');
+      name.className = 'px-6 py-3';
+      if (entry.is_dir) {
+        var open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'font-bold text-teal-400 hover:underline text-left';
+        open.textContent = '📁 ' + entry.name;
+        open.addEventListener('click', function () { reload(entry.path); });
+        name.appendChild(open);
+      } else {
+        var link = document.createElement('a');
+        link.className = 'font-bold text-zinc-100 hover:text-teal-400';
+        link.href = '/storage/api/download?path=' + encodeURIComponent(entry.path);
+        link.textContent = entry.name;
+        if (entry.encrypted) {
+          var mark = document.createElement('span');
+          mark.className = 'text-[9px] text-amber-500/80';
+          mark.textContent = '·enc';
+          link.appendChild(mark);
+        }
+        name.appendChild(link);
+      }
+
+      var size = document.createElement('td');
+      size.className = 'px-6 py-3 text-right whitespace-nowrap text-zinc-400';
+      size.textContent = entry.size_human;
+
+      var modified = document.createElement('td');
+      modified.className = 'px-6 py-3 whitespace-nowrap text-zinc-500';
+      modified.textContent = entry.modified ? new Date(entry.modified * 1000).toLocaleString('ru-RU') : '—';
+
+      row.append(name, size, modified);
+
+      var actions = document.createElement('td');
+      actions.className = 'px-6 py-3 text-center whitespace-nowrap';
+      if (!{{ 'true' if is_readonly else 'false' }}) {
+        var rename = document.createElement('button');
+        rename.type = 'button';
+        rename.className = 'px-2 text-[10px] font-bold uppercase text-zinc-400 hover:text-white';
+        rename.textContent = 'Rename';
+        rename.addEventListener('click', function () {
+          var next = prompt('Новое имя', entry.name);
+          if (!next || next === entry.name) return;
+          fetch('/storage/api/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: entry.path, name: next })
+          }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (result) {
+              if (!result.ok) { alert(result.data.detail || 'Не удалось переименовать'); return; }
+              reload(current);
+            });
+        });
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'px-2 text-[10px] font-bold uppercase text-rose-500 hover:text-rose-300';
+        remove.textContent = 'Delete';
+        remove.addEventListener('click', function () {
+          var what = entry.is_dir ? 'папку и всё её содержимое' : 'файл';
+          if (!confirm('Удалить ' + what + ' «' + entry.name + '»?')) return;
+          fetch('/storage/api/entry?path=' + encodeURIComponent(entry.path), { method: 'DELETE' })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (result) {
+              if (!result.ok) { alert(result.data.detail || 'Не удалось удалить'); return; }
+              reload(current);
+            });
+        });
+        actions.append(rename, remove);
+      }
+      row.appendChild(actions);
+      tbody.appendChild(row);
+    });
+  }
+
+  document.querySelectorAll('[data-nav]').forEach(function (node) {
+    node.addEventListener('click', function () { reload(node.dataset.nav); });
+  });
+
+  var mkdirBtn = document.getElementById('storage-mkdir-btn');
+  if (mkdirBtn) mkdirBtn.addEventListener('click', function () {
+    var name = prompt('Имя новой папки');
+    if (!name) return;
+    fetch('/storage/api/mkdir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: current, name: name })
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (result) {
+        if (!result.ok) { alert(result.data.detail || 'Не удалось создать папку'); return; }
+        reload(current);
+      });
+  });
+
+  var uploadInput = document.getElementById('storage-upload-file');
+  var uploadBtn = document.getElementById('storage-upload-btn');
+  if (uploadBtn && uploadInput) uploadBtn.addEventListener('click', function () { uploadInput.click(); });
+  if (uploadInput) uploadInput.addEventListener('change', function () {
+    var file = uploadInput.files && uploadInput.files[0];
+    if (!file) return;
+    var form = new FormData();
+    form.append('file', file);
+    form.append('path', current);
+    fetch('/storage/api/upload', { method: 'POST', body: form })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (result) {
+        if (!result.ok) { alert(result.data.detail || 'Не удалось загрузить файл'); return; }
+        uploadInput.value = '';
+        reload(current);
+      });
+  });
+})();
+</script>

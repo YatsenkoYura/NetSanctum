@@ -1,8 +1,10 @@
 {% set package_mode = package_mode|default(false) %}
 {% set is_readonly = is_readonly|default(package_mode) %}
+{% set only_stats = only_stats|default(false) %}
 {% if only_stats %}
-    <!-- Inner HTMX block swap -->
-    <div id="storage-container" class="space-y-6 animate-fade-in">
+    <!-- Inner HTMX block swap: the stats fragment only, so the folder manager
+         on the page keeps the folder the operator is looking at. -->
+    <div id="storage-stats" class="space-y-6">
         {% include "storage_content.html" %}
     </div>
 {% else %}

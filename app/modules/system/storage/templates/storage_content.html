@@ -1,6 +1,18 @@
+{% set listing_total = listing_total|default(0) %}
+{% set folder = folder|default('') %}
+{% set breadcrumbs = breadcrumbs|default([('/', '')]) %}
+{% set parent_path = parent_path|default('') %}
+{% set entries = entries|default([]) %}
+{% set remote_backend = remote_backend|default(false) %}
+{% set browse_error = browse_error|default(none) %}
+{% set only_stats = only_stats|default(false) %}
 <!-- Storage Content Panel -->
 <div class="space-y-6">
 
+    <!-- ── Folder manager (navigable tree over the storage root) ── -->
+    {% if not only_stats %}{% include "storage_browser.html" %}{% endif %}
+
+    <div id="storage-stats" class="space-y-6">
     <!-- ── Header & Reload controls ─────────────────── -->
     <div class="bg-zinc-950 border-2 border-zinc-800 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -25,7 +37,7 @@
         </div>
 
         {% if not is_readonly %}<button hx-post="/storage/api/recalculate"
-                hx-target="#storage-container"
+                hx-target="#storage-stats"
                 hx-swap="outerHTML"
                 class="px-4 py-2 text-xs font-mono font-bold uppercase transition-all border border-zinc-800 bg-zinc-900 text-teal-400 hover:border-teal-400 hover:bg-black rounded-none">
             {{ _('storage', 'recalculate') }} ↻
@@ -127,7 +139,7 @@
                     {% if mod.file_count > 0 %}
                     <button hx-post="/storage/api/clean-module?module={{ mod.name }}"
                             hx-confirm="{{ _('storage', 'clear_module_confirm', name=mod.name) }}"
-                            hx-target="#storage-container"
+                            hx-target="#storage-stats"
                             hx-swap="outerHTML"
                             class="w-full text-center py-1.5 text-[10px] font-mono uppercase tracking-wider font-bold border border-rose-900 bg-rose-950/20 text-rose-400 hover:bg-rose-950/60 hover:border-rose-600 transition-colors rounded-none">
                         {{ _('storage', 'clean_module_btn') }}
@@ -192,7 +204,7 @@
                             {% if not is_readonly %}<td class="px-6 py-4 text-center whitespace-nowrap">
                                 <button hx-delete="/storage/api/file?path={{ file.path }}"
                                         hx-confirm="{{ _('storage', 'delete_file_confirm') }}"
-                                        hx-target="#storage-container"
+                                        hx-target="#storage-stats"
                                         hx-swap="outerHTML"
                                         class="px-2.5 py-1 text-[10px] font-bold text-rose-500 border border-transparent hover:border-rose-900 hover:bg-rose-950/20 transition-all rounded-none uppercase">
                                     [Delete]
@@ -210,6 +222,7 @@
                 </tbody>
             </table>
         </div>
+    </div>
     </div>
 
 </div>
