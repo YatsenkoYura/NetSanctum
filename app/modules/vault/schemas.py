@@ -227,8 +227,11 @@ class VaultUnlockResponse(BaseModel):
     status: Literal["unlocked"] = "unlocked"
     collection_id: int
     name: str
+    # Lives only in the page's memory. It is not a cookie, it is not stored server
+    # side, and it is required again after a reload — that is what makes an unlock
+    # per tab rather than per instance.
+    unlock_token: str
     unlocked_collections: list[int] = Field(default_factory=list)
-    locked_collections: list[int] = Field(default_factory=list)
 
 
 class VaultLockResponse(BaseModel):

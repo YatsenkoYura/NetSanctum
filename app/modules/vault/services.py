@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import redis.asyncio as aioredis
-from sqlalchemy import exists, func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -390,6 +390,20 @@ async def increment_item_progress(session: AsyncSession, item: VaultItem, step: 
     return item
 
 
+def is_readable_item():
+    """SQL predicate for "this item may appear on a board that needs no passphrase".
+
+    Both halves matter: `sealed_payload` catches an item that was sealed, and the
+    subquery catches one that was inserted into a sealed collection before it was
+    sealed. An empty filter would leak the board; a half-filter would leak a row.
+    """
+    sealed_collections = select(VaultCollection.id).where(VaultCollection.is_encrypted.is_(True))
+    return and_(
+        VaultItem.sealed_payload.is_(None),
+        or_(VaultItem.collection_id.is_(None), ~VaultItem.collection_id.in_(sealed_collections)),
+    )
+
+
 async def list_vault_items(
     session: AsyncSession,
     q: str | None = None,
@@ -430,6 +444,12 @@ async def list_vault_items(
 
     if collection_id is not None:
         stmt = stmt.where(VaultItem.collection_id == collection_id)
+    else:
+        # The aggregate view ("Все карточки") must not surface a sealed Vault.
+        # A card cannot be opened without the passphrase, but its existence, its
+        # alias and its rating are still information the owner chose to keep out
+        # of the shared board.
+        stmt = stmt.where(is_readable_item())
 
     if parent_id is not None:
         stmt = stmt.where(VaultItem.parent_id == parent_id)
@@ -464,10 +484,15 @@ async def list_vault_items(
 
 
 async def list_vault_package_items(session: AsyncSession) -> list[VaultItem]:
-    """Return the complete, deterministically ordered offline Vault snapshot."""
+    """Return the complete, deterministically ordered offline Vault snapshot.
+
+    Sealed items are excluded. A package is a portable copy handed to someone else,
+    so including a sealed row would export ciphertext nobody can read and its alias
+    to everybody.
+    """
     stmt = (
         select(VaultItem)
-        .where(VaultItem.is_archived.is_(False))
+        .where(VaultItem.is_archived.is_(False), is_readable_item())
         .order_by(VaultItem.is_pinned.desc(), VaultItem.created_at.desc(), VaultItem.id.desc())
     )
     res = await session.execute(stmt)
@@ -476,7 +501,9 @@ async def list_vault_package_items(session: AsyncSession) -> list[VaultItem]:
 
 async def get_vault_stats(session: AsyncSession) -> dict[str, Any]:
     """Calculate vault statistics summary with SQL aggregates (no full-row load)."""
-    active = VaultItem.is_archived.is_(False)
+    # Sealed items are excluded here too: the sidebar counted them, which leaked
+    # how many private records exist and how they were rated.
+    active = and_(VaultItem.is_archived.is_(False), is_readable_item())
 
     async def count_where(*conditions) -> int:
         result = await session.execute(select(func.count(VaultItem.id)).where(*conditions))
@@ -489,7 +516,7 @@ async def get_vault_stats(session: AsyncSession) -> dict[str, Any]:
     completed = await count_where(active, VaultItem.status == "completed")
     watching = await count_where(active, VaultItem.status == "watching")
     pinned = await count_where(active, VaultItem.is_pinned.is_(True))
-    archived_count = await count_where(VaultItem.is_archived.is_(True))
+    archived_count = await count_where(VaultItem.is_archived.is_(True), is_readable_item())
 
     avg_result = await session.execute(
         select(func.avg(VaultItem.score)).where(active, VaultItem.score.is_not(None))

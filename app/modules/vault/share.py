@@ -5,8 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.module_types import ShareAsset, ShareRoute
+from app.modules.vault.images import has_image, image_bytes
 from app.modules.vault.models import VaultCollection, VaultItem
-from app.modules.vault.services import decode_data_image as _decode_data_image, vault_tag_filter
+from app.modules.vault.services import vault_tag_filter
 
 MAX_SHARED_ITEMS = 500
 
@@ -226,7 +227,7 @@ class VaultShareProvider:
     @staticmethod
     def _serialize_item(item: VaultItem, collection_name: str | None, share) -> dict:
         image_url = None
-        if _decode_data_image(item.og_image):
+        if has_image(item):
             image_url = f"/s/{share.id}/api/vault/items/{item.id}/image"
         return {
             "id": item.id,
@@ -366,7 +367,7 @@ class VaultShareProvider:
         if asset.name != "item_image":
             raise _not_found()
         item, _collection_name = await self._get_allowed_item(db, share, params["item_id"])
-        decoded = _decode_data_image(item.og_image)
+        decoded = image_bytes(item)
         if not decoded:
             raise _not_found("Shared image not found")
         content, media_type = decoded

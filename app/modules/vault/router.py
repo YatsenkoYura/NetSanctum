@@ -1,7 +1,7 @@
 import asyncio
 import random
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.core.security import get_current_bearer_user, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
 from app.modules.vault.crypto import VaultUnlockError
+from app.modules.vault.images import externalize_image, has_image, image_bytes
 from app.modules.vault.models import VaultCollection
 from app.modules.vault.schemas import (
     VaultCaptureCreate,
@@ -70,6 +71,11 @@ from app.modules.vault.services import (
 )
 
 router = APIRouter()
+
+# The unlock token is per-tab: it exists only in one page's memory, so a reload
+# loses it and the passphrase is required again. Anything that reads a sealed
+# Vault takes it as a header rather than reading a server-side session.
+UNLOCK_HEADER = Header(None, alias="X-Vault-Unlock")
 settings = get_settings()
 VAULT_PACKAGE_ID = "vault_all"
 LOCAL_IMAGE_PREFIXES = (
@@ -93,6 +99,7 @@ async def vault_dashboard(
     request: Request,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    unlock_token: str = UNLOCK_HEADER,
 ):
     """Serve the primary Vault personal scrapbook & tracker dashboard."""
     lang = await _get_lang(request)
@@ -101,7 +108,7 @@ async def vault_dashboard(
     # Serialized, not raw rows: the sidebar is rendered on the server, and a raw
     # VaultCollection would put a locked vault's real name into the first HTML
     # response before any of the lock-aware JavaScript runs.
-    locked = await locked_collection_ids(db)
+    locked = await locked_collection_ids(db, unlock_token)
     serializable = [
         _serialize_collection(collection, locked=collection.id in locked) for collection in collections
     ]
@@ -141,6 +148,7 @@ async def get_items(
     include_images: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
     """List vault items with dynamic filter parameters."""
     if package_id and package_id != VAULT_PACKAGE_ID:
@@ -167,8 +175,8 @@ async def get_items(
 
     # Sealed collections are opened here, in the one place that reads a whole page
     # of items, so no other endpoint has to remember to do it.
-    locked = await locked_collection_ids(db)
-    await open_items(db, items)
+    locked = await locked_collection_ids(db, unlock_token)
+    await open_items(db, items, unlock_token)
     serialized = [
         _apply_lock_state(
             # Always a dict: handing this an ORM row would write the alias into a
@@ -192,7 +200,8 @@ def _serialize_list_item(item) -> dict:
     serialized = VaultItemResponse.model_validate(item).model_dump()
     if decode_data_image(serialized.get("og_image")):
         serialized["og_image"] = None
-        serialized["has_image"] = True
+    # `has_image` covers both carriers: the file and the legacy data URL.
+    serialized["has_image"] = has_image(item)
     _apply_media_state(serialized, item)
     return serialized
 
@@ -272,6 +281,7 @@ async def create_item(
     item_in: VaultItemCreate,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
     """Create a new vault item (bookmark, rating, thought).
 
@@ -280,6 +290,9 @@ async def create_item(
     relies on. Nothing readable is stored, locked or not.
     """
     item = await create_vault_item(db, item_in)
+    if externalize_image(item):
+        await db.commit()
+        await db.refresh(item)
     collection = await collection_for(db, item.collection_id)
     locked = False
     if is_sealed_collection(collection):
@@ -287,7 +300,7 @@ async def create_item(
         seal_item(item, require_inbox_public_key(collection))
         await db.commit()
         await db.refresh(item)
-        locked = await data_key_for(collection) is None
+        locked = await data_key_for(collection, unlock_token) is None
     return _apply_lock_state(_serialize_full_item(item), item, locked=locked)
 
 
@@ -305,6 +318,7 @@ async def create_capture(
     """
     try:
         item = await create_captured_item(db, capture_in, user=user)
+        externalize_image(item)
         # A capture into a sealed collection must be sealed too. This used to be
         # missing entirely, which meant the extension wrote screenshots, titles and
         # URLs into a locked vault in the clear, silently.
@@ -336,7 +350,7 @@ async def create_capture(
         item_id=item.id,
         kind=capture_in.kind,
         title=item.title,
-        image_url=f"/api/vault/items/{item.id}/image" if item.og_image else None,
+        image_url=f"/api/vault/items/{item.id}/image" if has_image(item) else None,
         task_id=item.related_entity_id if capture_in.kind == "video" else None,
         message=messages[capture_in.kind],
     )
@@ -473,6 +487,7 @@ async def get_item_by_id(
     item_id: int,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
     """Get single vault item details."""
     item = await get_vault_item(db, item_id)
@@ -481,7 +496,7 @@ async def get_item_by_id(
     collection = await collection_for(db, item.collection_id)
     locked = False
     if is_sealed_collection(collection):
-        private_key = await data_key_for(collection)
+        private_key = await data_key_for(collection, unlock_token)
         if private_key is None:
             locked = True
         else:
@@ -529,22 +544,19 @@ async def get_item_image(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Serve an embedded (pasted) Vault image so list responses stay light."""
+    """Serve a Vault image so list responses stay light.
+
+    Images live in encrypted storage; rows written before that still carry a
+    data URL and are served from the column.
+    """
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
-    decoded = decode_data_image(item.og_image)
+    decoded = image_bytes(item)
     if not decoded:
         raise HTTPException(status_code=404, detail="Vault image not found")
-    content, media_type = decoded
-    return Response(
-        content=content,
-        media_type=media_type,
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+    payload, media_type = decoded
+    return Response(payload, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.patch("/api/vault/items/{item_id}", response_model=VaultItemResponse)
@@ -553,6 +565,7 @@ async def update_item(
     update_in: VaultItemUpdate,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
     """Update vault item properties.
 
@@ -566,7 +579,7 @@ async def update_item(
     collection = await collection_for(db, item.collection_id)
     if is_sealed_collection(collection):
         changed = set(update_in.model_dump(exclude_unset=True))
-        private_key = await data_key_for(collection)
+        private_key = await data_key_for(collection, unlock_token)
         if private_key is None:
             if changed - {"public_title"}:
                 raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы изменить содержимое")
@@ -684,10 +697,11 @@ async def get_stats(
 async def get_collections(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
     """List all collection folders."""
     colls = await list_collections(db)
-    locked = await locked_collection_ids(db)
+    locked = await locked_collection_ids(db, unlock_token)
     return [_serialize_collection(collection, locked=collection.id in locked) for collection in colls]
 
 
@@ -741,22 +755,27 @@ async def unlock_collection_route(
     body: VaultUnlockRequest,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
-    """Supply the passphrase and hold this collection's key for the session."""
+    """Supply the passphrase and get back the token that opens it in this tab.
+
+    The token is the whole point: it stays in the page's memory, is not a cookie
+    and is not in Redis, so reloading the tab asks for the password again.
+    """
     collection = await db.get(VaultCollection, coll_id)
     if collection is None:
         raise HTTPException(status_code=404, detail="Vault not found")
     if not is_sealed_collection(collection):
         raise HTTPException(status_code=400, detail="This Vault is not sealed")
     try:
-        await unlock_collection(collection, body.passphrase)
+        token = await unlock_collection(collection, body.passphrase, unlock_token)
     except VaultUnlockError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return VaultUnlockResponse(
         collection_id=collection.id,
         name=collection.name,
-        unlocked_collections=sorted(set(await sealed_collection_ids(db)) - await locked_collection_ids(db)),
-        locked_collections=sorted(await locked_collection_ids(db)),
+        unlock_token=token,
+        unlocked_collections=[collection.id],
     )
 
 
@@ -765,17 +784,22 @@ async def lock_collection_route(
     coll_id: int,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
-    """Forget the key for this session. The ciphertext on disk is untouched."""
-    await lock_collection(coll_id)
+    """Forget this tab's key. Other tabs that unlocked it keep theirs."""
+    await lock_collection(coll_id, unlock_token)
     return VaultLockResponse(collection_id=coll_id)
 
 
 @router.get("/api/vault/lock-state")
-async def vault_lock_state(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+async def vault_lock_state(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
+):
     """Which sealed collections are open right now."""
     sealed = await sealed_collection_ids(db)
-    locked = await locked_collection_ids(db)
+    locked = await locked_collection_ids(db, unlock_token)
     return {"sealed": sorted(sealed), "locked": sorted(locked), "unlocked": sorted(sealed - locked)}
 
 

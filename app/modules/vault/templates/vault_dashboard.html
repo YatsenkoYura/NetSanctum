@@ -614,8 +614,22 @@ function packageUrl(value) {
   return `${url.pathname}${url.search}`;
 }
 
+// One unlock token per tab, living only in this page's memory. Reloading loses
+// it, so a sealed Vault asks for the passphrase again on every visit instead of
+// staying open for the whole instance. Every collection this tab unlocks is
+// registered under the same token.
+let vaultUnlockToken = '';
+
+function vaultUnlockHeader(extra) {
+  const headers = Object.assign({}, extra || {});
+  if (vaultUnlockToken) headers['X-Vault-Unlock'] = vaultUnlockToken;
+  return headers;
+}
+
 async function requestJson(url, options = {}, fallback = 'Не удалось выполнить запрос') {
-  const response = await fetch(url, options);
+  const opts = Object.assign({}, options || {});
+  opts.headers = vaultUnlockHeader(opts.headers);
+  const response = await fetch(url, opts);
   if (!response.ok) {
     let message = fallback;
     try {
@@ -1953,6 +1967,9 @@ async function submitUnlock() {
     showToast(error.message || 'Не удалось разблокировать', true);
     return;
   }
+  // Held in memory only. A reload starts from empty, so the passphrase is needed
+  // again on the next visit.
+  vaultUnlockToken = result.unlock_token || vaultUnlockToken;
   closeUnlockModal();
   await loadVaultSummary();
   await loadWorkspace();
@@ -1962,6 +1979,8 @@ async function lockWorkspace(collectionId) {
   await mutationJson(`/api/vault/collections/${pathSegment(collectionId)}/lock`, {
     method: 'POST'
   }, 'Не удалось заблокировать');
+  // One token covers the whole tab, so dropping it locks everything it opened.
+  vaultUnlockToken = '';
   await loadVaultSummary();
   await loadWorkspace();
 }

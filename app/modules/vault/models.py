@@ -67,6 +67,10 @@ class VaultItem(Base):
     # For a blind write, the item key wrapped under the collection's inbox public
     # key. Without this the sealed payload is unrecoverable.
     wrapped_key = Column(Text, nullable=True)
+    # Where the image lives in storage, encrypted. `og_image` used to hold a base64
+    # data URL, which put a screenshot into a text column at a third more space and
+    # with none of the encryption the video files get.
+    image_path = Column(String, nullable=True)
 
     # Media tracker fields
     score = Column(Float, nullable=True)  # 1.0 - 10.0

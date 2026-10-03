@@ -13,8 +13,10 @@ embedded picture — moves inside one AEAD blob.
 """
 
 import datetime
+import hashlib
 import json
 import logging
+import secrets
 from base64 import b64decode, b64encode
 from typing import Any
 
@@ -40,7 +42,10 @@ logger = logging.getLogger(__name__)
 
 redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
 
-UNLOCK_TTL_SECONDS = 8 * 3600
+# An unlock lives with a browser tab, not with the instance. The token only ever
+# exists in the page's memory, so reloading asks for the passphrase again, and a
+# token from one tab cannot open the vault in another.
+UNLOCK_TTL_SECONDS = 15 * 60
 
 # What a sealed thing is called before anyone has unlocked it.
 DEFAULT_SEALED_ALIAS = "Зашифрованный Vault"
@@ -67,8 +72,14 @@ class VaultLockedError(RuntimeError):
     """The collection is sealed and its key is not available right now."""
 
 
-def collection_key(collection_id: int) -> str:
-    return f"vault_key:{collection_id}"
+def collection_key(collection_id: int, unlock_token: str) -> str:
+    """Where the private key sits for one tab.
+
+    The token is hashed rather than embedded: the key name is visible to anything
+    that can list Redis, and a leaked key name must not be a usable token.
+    """
+    digest = hashlib.sha256(unlock_token.encode("utf-8")).hexdigest()[:32]
+    return f"vault_key:{collection_id}:{digest}"
 
 
 def is_sealed_collection(collection: VaultCollection | None) -> bool:
@@ -136,19 +147,29 @@ async def create_sealed_collection(
     return collection
 
 
-async def unlock_collection(collection: VaultCollection, passphrase: str) -> bytes:
-    """Recover the inbox private key from the passphrase and hold it for the session."""
+async def unlock_collection(collection: VaultCollection, passphrase: str, unlock_token: str = "") -> str:
+    """Recover the inbox private key and register it under this tab's token.
+
+    The caller keeps the token; the server keeps the key. The tab's memory is the
+    only place the token exists, which is what makes the unlock per-tab. A token
+    supplied by the caller is reused, so one tab registers several collections
+    under a single token instead of accumulating them.
+    """
     private_key = unwrap_data_key(
         wrapper_for(collection),
         passphrase,
         context=context_for("collection", collection.id),
     )
-    await redis_client.setex(collection_key(collection.id), UNLOCK_TTL_SECONDS, private_key.hex())
-    return private_key
+    token = unlock_token or secrets.token_urlsafe(32)
+    await redis_client.set(collection_key(collection.id, token), private_key.hex(), ex=UNLOCK_TTL_SECONDS)
+    return token
 
 
-async def lock_collection(collection_id: int) -> None:
-    await redis_client.delete(collection_key(collection_id))
+async def lock_collection(collection_id: int, unlock_token: str) -> None:
+    """Forget this tab's key. Other tabs keep theirs."""
+    if not unlock_token:
+        return
+    await redis_client.delete(collection_key(collection_id, unlock_token))
 
 
 async def sealed_collection_ids(session) -> set[int]:
@@ -156,14 +177,22 @@ async def sealed_collection_ids(session) -> set[int]:
     return set(result.scalars().all())
 
 
-async def locked_collection_ids(session) -> set[int]:
-    """Sealed collections that have no key in the session store right now."""
+async def locked_collection_ids(session, unlock_token: str = "") -> set[int]:
+    """Sealed collections this tab cannot open right now.
+
+    Scoped to the token on purpose: another tab having the vault open says nothing
+    about whether *this* page may read it.
+    """
     sealed = await sealed_collection_ids(session)
     if not sealed:
         return set()
-    keys = await redis_client.keys("vault_key:*")
-    unlocked = {int(key.rsplit(":", 1)[1]) for key in keys if key.rsplit(":", 1)[1].isdigit()}
-    return sealed - unlocked
+    if not unlock_token:
+        return sealed
+    locked = set()
+    for collection_id in sealed:
+        if await redis_client.get(collection_key(collection_id, unlock_token)) is None:
+            locked.add(collection_id)
+    return locked
 
 
 async def collection_for(session, collection_id: int | None) -> VaultCollection | None:
@@ -172,24 +201,29 @@ async def collection_for(session, collection_id: int | None) -> VaultCollection 
     return await session.get(VaultCollection, collection_id)
 
 
-async def data_key_for(collection: VaultCollection | None) -> bytes | None:
+async def data_key_for(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:
+    """This tab's key for a sealed collection, or None while it stays locked."""
     if not is_sealed_collection(collection) or collection is None:
         return None
-    stored = await redis_client.get(collection_key(collection.id))
+    if not unlock_token:
+        return None
+    stored = await redis_client.get(collection_key(collection.id, unlock_token))
     if not stored:
         return None
+    # Reading the key is activity: push the expiry out so a tab in use stays open.
+    await redis_client.expire(collection_key(collection.id, unlock_token), UNLOCK_TTL_SECONDS)
     try:
         return bytes.fromhex(stored)
     except ValueError:
-        logger.warning("Vault %s has a malformed key in the session store", collection.id)
+        logger.warning("Vault %s has a malformed key in the key store", collection.id)
         return None
 
 
-async def require_data_key(collection: VaultCollection | None) -> bytes | None:
+async def require_data_key(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:
     """The data key, or a refusal. A sealed vault must never read as empty."""
     if not is_sealed_collection(collection):
         return None
-    key = await data_key_for(collection)
+    key = await data_key_for(collection, unlock_token)
     if key is None:
         raise VaultLockedError("This Vault is locked")
     return key
@@ -293,7 +327,7 @@ def require_inbox_public_key(collection: VaultCollection) -> bytes:
     return key
 
 
-async def open_items(session, items: list[VaultItem]) -> list[VaultItem]:
+async def open_items(session, items: list[VaultItem], unlock_token: str = "") -> list[VaultItem]:
     """Open every item whose collection is unlocked, in as few key lookups as possible."""
     if not items:
         return items
@@ -303,7 +337,7 @@ async def open_items(session, items: list[VaultItem]) -> list[VaultItem]:
         rows = await session.execute(select(VaultCollection).where(VaultCollection.id.in_(collection_ids)))
         for collection in rows.scalars().all():
             if is_sealed_collection(collection):
-                key = await data_key_for(collection)
+                key = await data_key_for(collection, unlock_token)
                 if key is not None:
                     keys[collection.id] = key
     for item in items:
