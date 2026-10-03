@@ -69,13 +69,13 @@ def _record_status(item_id: int, status: str):
     return report
 
 
-@celery_app.task(bind=True)
 def _collection_is_sealed(session, item) -> bool:
     """Whether the item lives in a collection that must not store media in the clear."""
     collection = session.get(VaultCollection, item.collection_id) if item is not None else None
     return bool(getattr(collection, "is_encrypted", False))
 
 
+@celery_app.task(bind=True)
 def download_vault_video_task(
     self,
     item_id: int,
