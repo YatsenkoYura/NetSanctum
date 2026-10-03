@@ -8,6 +8,11 @@ downloaded" with no visible failure anywhere.
 
 This walks every task name the modules dispatch and asserts each one is a real
 registered task.
+
+Only bundled modules are listed. A private module is installed per deployment
+and is not in the repository, so naming one here made this test depend on a
+checkout it cannot assume: it passed on the machine that still had the module
+and failed in the image built from a clean one.
 """
 
 import importlib
@@ -24,11 +29,20 @@ DISPATCHED = {
         "sync_all_videos_task",
         "youtube_oauth2_task",
     ],
-    "app.modules.xq7m.tasks": ["sync_saved_task"],
 }
 
 
 class DispatchedTasksAreRegisteredTests(unittest.TestCase):
+    def test_every_dispatched_name_is_importable(self):
+        """A module that cannot be imported would otherwise check nothing."""
+        broken = []
+        for module_name in DISPATCHED:
+            try:
+                importlib.import_module(module_name)
+            except ImportError as error:
+                broken.append(f"{module_name}: {error}")
+        self.assertEqual([], broken, "\n".join(broken))
+
     def test_every_dispatched_name_is_a_celery_task(self):
         broken = []
         for module_name, attributes in DISPATCHED.items():
