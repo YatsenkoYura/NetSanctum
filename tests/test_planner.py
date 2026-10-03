@@ -2,11 +2,13 @@ import asyncio
 import datetime
 import unittest
 import unittest.mock
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.contracts.search_documents_v1 import SearchDocumentsRequest
 from app.core.database import Base
@@ -466,13 +468,60 @@ class SweepArmingTests(unittest.TestCase):
         asyncio.run(run())
 
     def test_worker_ready_kicks_ensure(self):
-        from unittest.mock import AsyncMock
+        from unittest.mock import Mock, patch
 
         from app.modules.planner import tasks as planner_tasks
 
-        with unittest.mock.patch.object(planner_tasks, "ensure_sweep_armed", AsyncMock()) as ensure:
+        # Worker code never awaits: the armed gate runs on the synchronous client.
+        with patch.object(planner_tasks, "ensure_sweep_armed_sync", Mock()) as ensure:
             planner_tasks.arm_sweep_on_worker_ready()
-        ensure.assert_awaited_once_with()
+        ensure.assert_called_once_with()
+
+    def test_the_sweep_task_does_not_wrap_its_work_in_asyncio_run(self):
+        import ast
+
+        from app.modules.planner import tasks as planner_tasks
+
+        tree = ast.parse(Path(planner_tasks.__file__).read_text())
+        called = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        # `asyncio.run` per pass hands the async pool a different loop every minute,
+        # which is what stopped the sweep in production.
+        self.assertNotIn("run", called)
+        self.assertNotIn("AsyncSessionLocal", Path(planner_tasks.__file__).read_text())
+
+    def test_the_sync_sweep_rolls_repeating_events_like_the_async_one(self):
+        from app.modules.planner.sweep import sweep_due_reminders_sync
+
+        self.engine = create_engine("sqlite://")
+        Base.metadata.create_all(self.engine)
+        self.session = sessionmaker(bind=self.engine, expire_on_commit=False)()
+        self.addCleanup(self.engine.dispose)
+
+        now = datetime.datetime.now(datetime.UTC)
+        past = PlannerEvent(
+            user_id=1,
+            title="Еженедельный созвон",
+            starts_at=now - datetime.timedelta(days=7),
+            ends_at=now - datetime.timedelta(days=7, hours=-1),
+            recurrence="weekly",
+            status="active",
+        )
+        self.session.add(past)
+        self.session.commit()
+
+        with patch("app.modules.planner.sweep.push_notification_sync") as push:
+            sweep_due_reminders_sync(self.session)
+        push.assert_not_called()
+
+        self.session.expire_all()
+        self.assertEqual("done", self.session.get(PlannerEvent, past.id).status)
+        remaining = self.session.query(PlannerEvent).filter(PlannerEvent.id != past.id).all()
+        self.assertEqual(1, len(remaining))
+        self.assertEqual("Еженедельный созвон", remaining[0].title)
 
 
 if __name__ == "__main__":

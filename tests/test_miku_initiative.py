@@ -150,7 +150,7 @@ class InitiativeTests(unittest.TestCase):
 
     def test_notifications_push_and_pop(self):
         async def run():
-            from app.modules.miku.notifications import pop_notifications, push_notification
+            from app.core.notifications import pop_notifications, push_notification
 
             calls = []
 
@@ -172,15 +172,15 @@ class InitiativeTests(unittest.TestCase):
 
             with (
                 patch(
-                    "app.modules.miku.notifications.redis_client.pipeline",
+                    "app.core.notifications.redis_client.pipeline",
                     return_value=FakePipeline(),
                 ),
                 patch(
-                    "app.modules.miku.notifications.redis_client.lrange",
+                    "app.core.notifications.redis_client.lrange",
                     AsyncMock(return_value=[]),
                 ),
                 patch(
-                    "app.modules.miku.notifications.redis_client.delete",
+                    "app.core.notifications.redis_client.delete",
                     AsyncMock(),
                 ),
             ):

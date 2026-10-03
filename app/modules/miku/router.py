@@ -34,6 +34,7 @@ from app.core.module_types import (
     IntegrationUnavailableError,
 )
 from app.core.modules import module_registry
+from app.core.notifications import pop_notifications
 from app.core.responses import serve_media_stream, serve_storage_file_chunked
 from app.core.security import OwnerUser, get_current_user, redis_client
 from app.core.templates import templates
@@ -58,7 +59,6 @@ from app.modules.miku.conversations import (
 )
 from app.modules.miku.integrations import search_memory, write_memory
 from app.modules.miku.models import MikuConversationNote
-from app.modules.miku.notifications import pop_notifications
 from app.modules.miku.providers import (
     load_provider_bundle,
     provider_settings_response,

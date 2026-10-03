@@ -24,7 +24,7 @@
         {% endif %}
     </div>
 
-    <nav class="px-6 py-2 border-b border-zinc-900 flex flex-wrap items-center gap-1 text-[10px] font-mono">
+    <nav id="storage-crumbs" class="px-6 py-2 border-b border-zinc-900 flex flex-wrap items-center gap-1 text-[10px] font-mono">
         <button type="button" data-nav="" class="px-1.5 py-0.5 uppercase font-bold text-teal-400 hover:underline">/</button>
         {% for label, crumb in breadcrumbs %}
         <span class="text-zinc-700">/</span>
@@ -98,12 +98,6 @@
   if (!tbody) return;
   var current = {{ (folder or '') | tojson }};
 
-  function label(name) {
-    var div = document.createElement('div');
-    div.textContent = name;
-    return div.innerHTML;
-  }
-
   function reload(path) {
     return fetch('/storage/api/folder?path=' + encodeURIComponent(path || ''), { headers: { 'Accept': 'application/json' } })
       .then(function (response) { return response.json().then(function (data) { return { ok: response.ok, data: data }; }); })
@@ -113,13 +107,45 @@
         render(result.data.entries);
         document.getElementById('storage-listing-total').textContent = result.data.total;
         document.getElementById('storage-listing-trunc').textContent = result.data.truncated ? 'показаны не все' : '';
-        // The breadcrumb row is server-rendered; a folder change reloads it.
-        var nav = document.querySelectorAll('[data-nav]');
-        nav.forEach(function (node) {
-          node.classList.toggle('hidden', node.id === 'storage-up-btn' && !result.data.parent && result.data.path);
-        });
+        renderCrumbs(current);
         history.replaceState(null, '', '/storage/dashboard?path=' + encodeURIComponent(current));
       });
+  }
+
+  // The breadcrumb row is rebuilt here rather than left server-rendered: without
+  // this it would still describe the folder the page was opened at, so "up" and
+  // the trail would lie after the first click.
+  function renderCrumbs(path) {
+    var nav = document.getElementById('storage-crumbs');
+    var up = document.getElementById('storage-up-btn');
+    if (!nav) return;
+    nav.innerHTML = '';
+    var root = document.createElement('button');
+    root.type = 'button';
+    root.dataset.nav = '';
+    root.className = 'px-1.5 py-0.5 uppercase font-bold text-teal-400 hover:underline';
+    root.textContent = '/';
+    nav.appendChild(root);
+    var walked = '';
+    (path ? path.split('/') : []).forEach(function (segment, index, all) {
+      walked = walked ? walked + '/' + segment : segment;
+      var separator = document.createElement('span');
+      separator.className = 'text-zinc-700';
+      separator.textContent = '/';
+      var crumb = document.createElement('button');
+      crumb.type = 'button';
+      crumb.dataset.nav = walked;
+      var last = index === all.length - 1;
+      crumb.className = 'px-1.5 py-0.5 uppercase font-bold ' +
+        (last ? 'text-white' : 'text-zinc-400 hover:text-teal-400 hover:underline');
+      crumb.textContent = segment;
+      nav.append(separator, crumb);
+    });
+    if (up) {
+      var parts = path ? path.split('/') : [];
+      up.dataset.nav = parts.slice(0, -1).join('/');
+      up.classList.toggle('hidden', parts.length === 0);
+    }
   }
 
   function render(entries) {
@@ -144,7 +170,8 @@
         open.type = 'button';
         open.className = 'font-bold text-teal-400 hover:underline text-left';
         open.textContent = '📁 ' + entry.name;
-        open.addEventListener('click', function () { reload(entry.path); });
+        // The click is delegated on the tbody below, so no listener here.
+        open.dataset.open = entry.path;
         name.appendChild(open);
       } else {
         var link = document.createElement('a');
@@ -211,9 +238,20 @@
     });
   }
 
-  document.querySelectorAll('[data-nav]').forEach(function (node) {
-    node.addEventListener('click', function () { reload(node.dataset.nav); });
+  // Delegated: the first listing is server-rendered and the later ones come
+  // from render(), so per-button listeners would only cover half of them.
+  tbody.addEventListener('click', function (event) {
+    var opener = event.target.closest ? event.target.closest('[data-open]') : null;
+    if (opener) { reload(opener.dataset.open); }
   });
+
+  document.getElementById('storage-crumbs').addEventListener('click', function (event) {
+    var crumb = event.target.closest ? event.target.closest('[data-nav]') : null;
+    if (crumb) reload(crumb.dataset.nav);
+  });
+
+  var upBtn = document.getElementById('storage-up-btn');
+  if (upBtn) upBtn.addEventListener('click', function () { reload(upBtn.dataset.nav || ''); });
 
   var mkdirBtn = document.getElementById('storage-mkdir-btn');
   if (mkdirBtn) mkdirBtn.addEventListener('click', function () {

@@ -3,20 +3,25 @@
 There is no Celery beat in this stack, so the continuation pass schedules itself: it
 claims the goals that are due, retries them, and re-arms for later. That keeps the
 initiative feature on the existing worker without adding another container.
+
+The pass is genuinely async (it calls integrations through the agent runtime), so
+it runs on the process-wide worker loop. A fresh `asyncio.run` per pass would hand
+the async pool connections from a loop that no longer exists, and the failure
+looks like a dead sweep rather than a plumbing error.
 """
 
-import asyncio
 import logging
 
 from celery.signals import worker_ready
 
 from app.core.database import AsyncSessionLocal
 from app.core.modules import module_registry
+from app.core.notifications import push_notification
 from app.core.scheduler import celery_app
 from app.core.security import OwnerUser, redis_client
+from app.core.worker_loop import run_async
 from app.modules.miku.cascades import claim_due_tasks, finish_task
 from app.modules.miku.consolidate import consolidate_old_conversations
-from app.modules.miku.notifications import push_notification
 from app.modules.miku.schemas import MikuQuery
 from app.modules.miku.service import MikuSessionContext, query
 
@@ -84,7 +89,7 @@ async def ensure_continue_armed() -> None:
 @celery_app.task(name="miku.continue_tasks", ignore_result=True, max_retries=0)
 def continue_tasks() -> None:
     """Claim due goals, then arm the next pass so the loop survives restarts."""
-    asyncio.run(continue_due_tasks())
+    run_async(continue_due_tasks())
     continue_tasks.apply_async(countdown=SELF_RESCHEDULE_SECONDS)
 
 
@@ -92,6 +97,6 @@ def continue_tasks() -> None:
 def arm_continue_on_worker_ready(**kwargs) -> None:
     """First kick after a (re)start. SETNX-gated: never forks a second loop."""
     try:
-        asyncio.run(ensure_continue_armed())
+        run_async(ensure_continue_armed())
     except Exception:
         logger.warning("miku continuation could not be armed on worker ready", exc_info=True)
