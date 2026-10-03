@@ -268,6 +268,12 @@ async def queue_video_download(
             {"url": url, "item_id": item_id, "status": "queued", "progress": "0%"},
             kwargs={"item_id": item_id, "url": url, "quality": quality, "title": title},
         )
+    except TypeError:
+        # The task is not a task. That is a defect in this file, not an
+        # unavailable worker, and the card cannot ever download until it is fixed —
+        # so it must not be logged as a transient warning.
+        logger.error("the Vault video task is not a registered Celery task", exc_info=True)
+        return None
     except Exception:
         logger.warning("could not queue a Vault video download for item %s", item_id, exc_info=True)
         return None

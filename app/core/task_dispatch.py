@@ -34,6 +34,15 @@ async def dispatch_tracked_async(
     kwargs: dict[str, Any] | None = None,
     ttl: int = 86400,
 ):
+    if not hasattr(task, "apply_async"):
+        # A plain function reaches here when a Celery decorator landed on the wrong
+        # target and left the real task undecorated. The failure then surfaces at
+        # `task.apply_async` as `'function' object has no attribute 'apply_async'`,
+        # which says nothing about the cause.
+        raise TypeError(
+            f"{getattr(task, '__module__', '?')}.{getattr(task, '__qualname__', task)} is not a "
+            "registered Celery task. A decorator probably landed on another function above it."
+        )
     task_id = str(uuid.uuid4())
     key = f"{key_prefix}:{task_id}"
     await redis_client.setex(key, ttl, _task_payload(task_id, payload))
