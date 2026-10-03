@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>NetSanctum Capture</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>NetSanctum Capture</h1>
+      <p class="lead">
+        Press the toolbar icon on any page. The media you touched is saved as media, everything else is saved as a
+        screenshot.
+      </p>
+
+      <label for="serverUrl">NetSanctum address</label>
+      <input id="serverUrl" type="url" placeholder="https://netsanctum.example.net" autocomplete="url" />
+
+      <label for="accessToken">Access token</label>
+      <input id="accessToken" type="password" placeholder="The bootstrap token from your .env" autocomplete="off" />
+      <p class="hint">
+        The same token you use to log into NetSanctum. It is exchanged for a short-lived bearer session; the token
+        itself stays in this browser profile.
+      </p>
+
+      <label for="collection">Vault collection</label>
+      <select id="collection">
+        <option value="">No collection</option>
+      </select>
+
+      <label for="videoQuality">Video capture quality</label>
+      <select id="videoQuality">
+        <option value="best">Best</option>
+        <option value="1080">1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+        <option value="360">360p</option>
+      </select>
+      <p class="hint">Used when a clicked video is queued for archiving.</p>
+
+      <label for="tags">Tags</label>
+      <input id="tags" type="text" placeholder="from-extension, screenshot" />
+      <p class="hint">Comma separated. Applied to every capture.</p>
+
+      <label class="checkbox">
+        <input id="openDashboard" type="checkbox" checked />
+        <span>Open the Vault dashboard after a save</span>
+      </label>
+
+      <div class="actions">
+        <button id="save" type="button">Save settings</button>
+        <span id="status" role="status"></span>
+      </div>
+
+      <section class="collections">
+        <button id="reloadCollections" type="button" class="secondary">Load collections</button>
+        <p class="hint">Needs a working address and token.</p>
+      </section>
+    </main>
+    <script src="errors.js"></script>
+    <script src="api.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

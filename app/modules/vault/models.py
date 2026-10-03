@@ -16,6 +16,21 @@ class VaultCollection(Base):
     icon = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+    # A sealed collection owns a data key that is never stored in the clear. Only
+    # the passphrase-wrapped key and its KDF parameters are persisted, so the
+    # passphrase itself has to be supplied again to read anything inside.
+    is_encrypted = Column(Boolean, default=False, nullable=False, index=True)
+    key_salt = Column(String, nullable=True)
+    wrapped_key = Column(String, nullable=True)
+    key_kdf = Column(String, nullable=True)
+    key_kdf_params = Column(JSON, nullable=True)
+    # The alias the sidebar shows while the collection is locked.
+    public_name = Column(String, nullable=True)
+    # Blind-write inbox. The public half is readable on purpose: it is what lets
+    # the browser extension seal a capture without ever holding the passphrase.
+    inbox_public_key = Column(String, nullable=True)
+    inbox_private_key = Column(Text, nullable=True)
+
     items = relationship("VaultItem", back_populates="collection")
 
 
@@ -32,6 +47,26 @@ class VaultItem(Base):
     og_title = Column(String, nullable=True)
     og_description = Column(Text, nullable=True)
     og_image = Column(String, nullable=True)
+
+    # A stored video file, kept in Vault's own storage namespace. Vault owns the
+    # bytes for a media card rather than pointing at another module's copy, which
+    # is what kept the two records from drifting apart.
+    media_path = Column(String, nullable=True, index=True)
+    media_mime = Column(String, nullable=True)
+    media_size = Column(Integer, nullable=True)
+
+    # For an item in a sealed collection, everything the owner wrote lives here as
+    # one AEAD blob and the readable columns above stay empty. Structural columns
+    # (which collection, which node type, pinned, timestamps) deliberately stay in
+    # the clear: the grid needs them to lay out a tile, and they describe the shape
+    # of the record rather than its contents.
+    sealed_payload = Column(Text, nullable=True)
+    # The alias a sealed item shows while it is locked. It is readable on purpose —
+    # a locked vault has to be navigable — and it is never the real title.
+    public_title = Column(String, nullable=True)
+    # For a blind write, the item key wrapped under the collection's inbox public
+    # key. Without this the sealed payload is unrecoverable.
+    wrapped_key = Column(Text, nullable=True)
 
     # Media tracker fields
     score = Column(Float, nullable=True)  # 1.0 - 10.0

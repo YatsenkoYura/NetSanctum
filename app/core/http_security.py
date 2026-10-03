@@ -7,6 +7,21 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CROSS_SITE_CAPABILITY_PATHS = frozenset({"/alllib/api/save_token_external"})
 PRIVATE_CAPABILITY_PREFIXES = ("/s/", "/tabletop/join/", "/tabletop/room/")
 
+# A packaged browser extension sends `Origin: chrome-extension://<id>` (or the
+# Gecko equivalent), which is neither same-origin nor an http(s) host, so the
+# cross-site guard would reject it. Only these declared endpoints accept that
+# origin, and every one of them authenticates with a bearer token rather than a
+# cookie, so an ordinary web page still cannot reach them.
+EXTENSION_ORIGIN_SCHEMES = frozenset({"chrome-extension", "moz-extension", "safari-web-extension"})
+EXTENSION_CLIENT_PATHS = frozenset(
+    {
+        # Exchanges the bootstrap token for a bearer session. No cookie is read
+        # or written here, so it carries no ambient authority to abuse.
+        "/auth/login",
+        "/api/vault/capture",
+    }
+)
+
 
 def _is_capability_route(path: str) -> bool:
     return (
@@ -16,11 +31,25 @@ def _is_capability_route(path: str) -> bool:
     )
 
 
+def _is_extension_capability_route(path: str) -> bool:
+    return path in EXTENSION_CLIENT_PATHS
+
+
+def is_extension_origin(request: Request) -> bool:
+    """True when the caller is a packaged browser extension on a declared route."""
+    if not _is_extension_capability_route(request.url.path):
+        return False
+    origin = request.headers.get("origin", "")
+    return urlparse(origin).scheme in EXTENSION_ORIGIN_SCHEMES
+
+
 def is_cross_site_request(request: Request) -> bool:
     """Reject browser cross-site mutations while leaving non-browser API clients usable."""
     if request.method not in UNSAFE_METHODS:
         return False
     if _is_capability_route(request.url.path):
+        return False
+    if is_extension_origin(request):
         return False
 
     fetch_site = request.headers.get("sec-fetch-site", "").lower()

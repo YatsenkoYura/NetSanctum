@@ -1,5 +1,3 @@
-import base64
-import binascii
 from typing import Any
 
 from fastapi import HTTPException, Request, Response
@@ -8,16 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.module_types import ShareAsset, ShareRoute
 from app.modules.vault.models import VaultCollection, VaultItem
-from app.modules.vault.services import vault_tag_filter
+from app.modules.vault.services import decode_data_image as _decode_data_image, vault_tag_filter
 
 MAX_SHARED_ITEMS = 500
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
-DATA_IMAGE_TYPES = {
-    "data:image/gif;base64": "image/gif",
-    "data:image/jpeg;base64": "image/jpeg",
-    "data:image/png;base64": "image/png",
-    "data:image/webp;base64": "image/webp",
-}
 
 
 def _not_found(detail: str = "Shared content not found") -> HTTPException:
@@ -38,27 +29,16 @@ def _parse_item_id(value: Any) -> int:
     return item_id
 
 
-def _decode_data_image(value: str | None) -> tuple[bytes, str] | None:
-    if not value:
-        return None
-    header, separator, payload = value.partition(",")
-    media_type = DATA_IMAGE_TYPES.get(header.lower())
-    if not separator or not media_type or len(payload) > (MAX_IMAGE_BYTES * 4 // 3) + 4:
-        return None
-    try:
-        content = base64.b64decode(payload, validate=True)
-    except (binascii.Error, ValueError):
-        return None
-    if not content or len(content) > MAX_IMAGE_BYTES:
-        return None
-    return content, media_type
-
-
 class VaultShareProvider:
     async def catalog(self, db: AsyncSession) -> list[dict]:
         result = await db.execute(
             select(VaultItem, VaultCollection.name)
             .outerjoin(VaultCollection, VaultCollection.id == VaultItem.collection_id)
+            .where(
+                # Sharing a sealed item would mean handing the recipient its key,
+                # which is exactly what the passphrase promises never to do.
+                VaultItem.sealed_payload.is_(None),
+            )
             .order_by(VaultItem.created_at.desc())
         )
         return [
@@ -164,9 +144,13 @@ class VaultShareProvider:
 
     async def _list_items(self, request: Request, share, db: AsyncSession) -> list[dict]:
         query = request.query_params
-        stmt = select(VaultItem, VaultCollection.name).outerjoin(
-            VaultCollection,
-            VaultCollection.id == VaultItem.collection_id,
+        stmt = (
+            select(VaultItem, VaultCollection.name)
+            .outerjoin(
+                VaultCollection,
+                VaultCollection.id == VaultItem.collection_id,
+            )
+            .where(VaultItem.sealed_payload.is_(None))
         )
         scope_ids = self._scope_ids(share)
         if scope_ids is not None:
@@ -275,7 +259,7 @@ class VaultShareProvider:
         }
 
     async def _stats(self, db: AsyncSession, share) -> dict:
-        stmt = select(VaultItem)
+        stmt = select(VaultItem).where(VaultItem.sealed_payload.is_(None))
         scope_ids = self._scope_ids(share)
         if scope_ids is not None:
             if not scope_ids:

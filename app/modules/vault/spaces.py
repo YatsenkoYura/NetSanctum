@@ -3,6 +3,7 @@ from sqlalchemy import select
 from app.contracts.vault_spaces_v1 import VaultSpace, VaultSpacesRequest, VaultSpacesResult
 from app.core.module_types import IntegrationContext
 from app.modules.vault.models import VaultItem
+from app.modules.vault.sealing import DEFAULT_SEALED_ALIAS, is_sealed_collection
 from app.modules.vault.services import list_collections
 
 
@@ -35,22 +36,34 @@ async def list_spaces(
     spaces: list[VaultSpace] = []
 
     collections = await list_collections(session)
-    collection_names = {collection.id: collection.name for collection in collections}
+    # Spaces is consumed by other modules, so a sealed vault appears under its
+    # alias and never under its real name.
+    collection_names = {
+        collection.id: (collection.public_name or DEFAULT_SEALED_ALIAS)
+        if is_sealed_collection(collection)
+        else collection.name
+        for collection in collections
+    }
     for collection in collections:
         spaces.append(
             VaultSpace(
                 kind="collection",
                 id=collection.id,
-                name=collection.name,
+                name=collection_names[collection.id],
                 color=collection.color,
                 icon=collection.icon,
-                path=collection.name,
+                path=collection_names[collection.id],
                 items_count=getattr(collection, "items_count", None),
             )
         )
 
     if request.include_folders:
-        statement = select(VaultItem).where(VaultItem.is_folder.is_(True))
+        statement = select(VaultItem).where(
+            VaultItem.is_folder.is_(True),
+            # A sealed folder cannot name itself, so it has no place in a tree
+            # other modules read.
+            VaultItem.sealed_payload.is_(None),
+        )
         if not request.include_archived:
             statement = statement.where(VaultItem.is_archived.is_(False))
         if request.collection_id is not None:

@@ -187,6 +187,9 @@ app.add_middleware(
         r"https://([a-z0-9-]+\.)?"
         r"(mangalib\.me|ranobelib\.me|hentailib\.org|slashlib\.me|comixlib\.me|anilib\.me|"
         r"ranobehub\.org|ranobe\.space|mangadex\.org|novel-bin\.net|novel-bin\.com)"
+        # Packaged browser extensions send their own origin from a background
+        # page. They authenticate with a bearer token, never with a cookie.
+        r"|^(chrome|moz|safari-web)-extension://[a-z0-9-]+$"
     ),
     allow_credentials=False,
     allow_methods=["*"],

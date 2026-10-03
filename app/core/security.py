@@ -126,6 +126,22 @@ async def get_current_user(request: Request):
     )
 
 
+async def get_current_bearer_user(request: Request):
+    """Authenticate a non-browser client that may only present a bearer token.
+
+    A packaged extension is trusted with the owner's token but must not be able
+    to ride the browser session cookie, otherwise any page able to reach the
+    capture endpoint would inherit the owner's authenticated session.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This endpoint requires a bearer token",
+        )
+    return await get_current_user(request)
+
+
 async def get_operator_share_id(connection: HTTPConnection, module_id: str) -> str | None:
     session_id = connection.cookies.get(OPERATOR_SHARE_COOKIE)
     if not session_id:

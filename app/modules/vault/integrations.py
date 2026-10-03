@@ -47,7 +47,9 @@ async def undo_capture(
     title = str(request.arguments.get("title") or "").strip()[:200]
     if not url and not title:
         return UndoResult(status="not_addressable", detail="The capture had no url or title")
-    statement = select(VaultItem).where(VaultItem.user_id == context.user.id)
+    # Vault is single-owner: items carry no user_id, so the URL or title alone
+    # identifies the entry. A filter on a nonexistent column raised AttributeError.
+    statement = select(VaultItem)
     statement = statement.where(VaultItem.url == url) if url else statement.where(VaultItem.title == title)
     item = (await context.session.scalars(statement.limit(1))).first()
     if item is None:

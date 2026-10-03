@@ -212,10 +212,15 @@
       {% for c in collections %}
       <div onclick="selectWorkspace({{ c.id|int }}, this.querySelector('[data-workspace-name]').textContent)" id="ws-item-{{ c.id|int }}" class="ws-item">
         <div class="flex items-center gap-2 truncate">
-          <span class="w-1.5 h-1.5 bg-teal-400 inline-block"></span>
+          <span class="w-1.5 h-1.5 {{ 'bg-red-500' if c.is_locked else 'bg-teal-400' }} inline-block"></span>
           <span class="truncate" data-workspace-name>{{ c.name }}</span>
         </div>
+        {% if c.is_encrypted %}
+        <button onclick="event.stopPropagation(); {{ 'openUnlockModal(' ~ c.id|int ~ ", this.closest(\'.ws-item\').querySelector(\'[data-workspace-name]\').textContent)" if c.is_locked else 'lockWorkspace(' ~ c.id|int ~ ')' }}"
+                class="text-red-400 hover:text-red-300 text-xs" title="{{ 'Разблокировать' if c.is_locked else 'Заблокировать' }}">{{ '🔒' if c.is_locked else '🔓' }}</button>
+        {% else %}
         <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
+        {% endif %}
       </div>
       {% endfor %}
       </div>
@@ -355,6 +360,31 @@
                   class="w-full bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-200 focus:outline-none focus:border-teal-400 resize-y leading-relaxed font-mono"></textarea>
       </div>
 
+      <!-- 4. MEDIA CARD: a picture or a video, with only a caption to edit -->
+      <div id="view-media-container" class="hidden max-w-4xl mx-auto space-y-3 py-2">
+        <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
+          <button onclick="closeMediaView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад</button>
+          <div class="flex items-center gap-3">
+            <span class="text-[10px] text-teal-400 uppercase font-bold" id="media-save-status"></span>
+            {% if not is_readonly %}
+            <a id="media-source-link" href="#" target="_blank" rel="noopener noreferrer"
+               class="text-[10px] text-zinc-500 hover:text-white uppercase font-bold">Открыть источник ↗</a>
+            {% endif %}
+          </div>
+        </div>
+        <input type="hidden" id="media-id">
+
+        <div id="media-stage" class="bg-black border border-zinc-800 flex items-center justify-center overflow-hidden"></div>
+
+        <!-- The caption is optional and stays out of the way: one line, no prompts. -->
+        <input type="text" id="media-title" {% if is_readonly %}readonly{% else %}onblur="saveMediaCaption()"{% endif %}
+               placeholder="Подпись (необязательно)"
+               class="w-full bg-transparent text-sm font-bold text-white border-b border-transparent focus:outline-none focus:border-teal-400 pb-1">
+        <textarea id="media-content" {% if is_readonly %}readonly{% else %}onblur="saveMediaCaption()"{% endif %} rows="2"
+                  placeholder="Описание (необязательно)"
+                  class="w-full bg-transparent text-xs text-zinc-400 focus:outline-none focus:text-zinc-200 resize-y leading-relaxed font-mono"></textarea>
+      </div>
+
       <!-- 3. SPREADSHEET TABLE DOCUMENT -->
       <div id="view-sheet-container" class="hidden max-w-5xl mx-auto space-y-3 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
@@ -459,10 +489,56 @@
       <label class="text-[10px] text-zinc-500 uppercase font-bold">Название воркспейса</label>
       <input type="text" id="ws-name-input" placeholder="Например: Идеи по работе" onkeydown="if(event.key==='Enter') submitWorkspace()"
              class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+
+      <div class="pt-2 border-t border-zinc-800 space-y-3">
+        <label class="flex items-center gap-2 text-[10px] text-zinc-500 uppercase font-bold cursor-pointer">
+          <input type="checkbox" id="ws-sealed-input" onchange="toggleSealedFields()" class="accent-teal-400">
+          Зашифровать воркспейс
+        </label>
+
+        <div id="ws-sealed-fields" class="hidden space-y-3">
+          <div>
+            <label class="text-[10px] text-zinc-500 uppercase font-bold">Пароль</label>
+            <input type="password" id="ws-passphrase-input" autocomplete="new-password" placeholder="Восстановить его будет невозможно"
+                   class="w-full bg-black border border-zinc-800 focus:border-red-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+          </div>
+          <div>
+            <label class="text-[10px] text-zinc-500 uppercase font-bold">Публичное название</label>
+            <input type="text" id="ws-public-name-input" placeholder="Видно, пока воркспейс заперт" maxlength="100"
+                   class="w-full bg-black border border-zinc-800 focus:border-red-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+          </div>
+          <p class="text-[10px] text-red-400/80 leading-relaxed">
+            Пароль нигде не сохраняется и не может быть восстановлен — это единственный способ открыть содержимое.
+          </p>
+        </div>
+      </div>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
       <button onclick="closeWorkspaceModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
       <button onclick="submitWorkspace()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Unlock a sealed Vault -->
+<div id="modal-unlock" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
+  <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
+    <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
+      <span class="text-xs font-bold text-white uppercase">Разблокировать</span>
+      <button onclick="closeUnlockModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <p class="text-[10px] text-zinc-500 leading-relaxed">
+        Воркспейс <b class="text-white" id="unlock-alias"></b>. Содержимое зашифровано.
+      </p>
+      <input type="password" id="unlock-passphrase-input" autocomplete="current-password" placeholder="Пароль"
+             onkeydown="if(event.key==='Enter') submitUnlock()"
+             class="w-full bg-black border border-zinc-800 focus:border-red-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+      <p id="unlock-error" class="hidden text-[10px] text-red-400">Неверный пароль</p>
+    </div>
+    <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
+      <button onclick="closeUnlockModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button onclick="submitUnlock()" class="px-4 py-1 bg-red-500 hover:bg-red-400 text-white font-black text-xs uppercase">Открыть</button>
     </div>
   </div>
 </div>
@@ -483,6 +559,11 @@
       <div class="space-y-1">
         <label class="text-[10px] text-zinc-500 uppercase font-bold">Название (необязательно)</label>
         <input type="text" id="link-title-input" placeholder="Оставьте пустым если не нужно"
+               class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+      </div>
+      <div class="space-y-1">
+        <label class="text-[10px] text-zinc-500 uppercase font-bold">Публичное название</label>
+        <input type="text" id="link-public-title-input" placeholder="Видно, пока воркспейс заперт"
                class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
       </div>
     </div>
@@ -541,7 +622,11 @@ async function requestJson(url, options = {}, fallback = 'Не удалось в
       const payload = await response.json();
       message = payload.detail || payload.message || message;
     } catch (error) {}
-    throw new Error(message);
+    // The status has to survive: 401 means a wrong passphrase and 423 means the
+    // Vault is locked, and the two need different handling.
+    const failure = new Error(message);
+    failure.status = response.status;
+    throw failure;
   }
   if (response.status === 204) return null;
   return response.json();
@@ -551,6 +636,13 @@ async function mutationJson(url, options, fallback) {
   try {
     return await requestJson(url, options, fallback);
   } catch (error) {
+    // 423 is the Vault refusing an edit because it is locked. Point at the
+    // unlock dialog instead of reporting it as a generic failure.
+    if (error.status === 423) {
+      showToast(error.message || 'Разблокируйте воркспейс', true);
+      openUnlockModal(currentCollectionId, null);
+      return null;
+    }
     showToast(error.message || fallback, true);
     return null;
   }
@@ -821,16 +913,37 @@ function __vaultAttachRootDrop() {
   });
 }
 
-function openWorkspaceModal() { document.getElementById('ws-name-input').value = ''; document.getElementById('modal-workspace').classList.remove('hidden'); }
+function toggleSealedFields() {
+  document.getElementById('ws-sealed-fields').classList.toggle('hidden', !document.getElementById('ws-sealed-input').checked);
+}
+
+function openWorkspaceModal() {
+  document.getElementById('ws-name-input').value = '';
+  document.getElementById('ws-passphrase-input').value = '';
+  document.getElementById('ws-public-name-input').value = '';
+  document.getElementById('ws-sealed-input').checked = false;
+  toggleSealedFields();
+  document.getElementById('modal-workspace').classList.remove('hidden');
+}
 function closeWorkspaceModal() { document.getElementById('modal-workspace').classList.add('hidden'); }
 
 async function submitWorkspace() {
   const name = document.getElementById('ws-name-input').value.trim();
   if (!name) return;
+  const sealed = document.getElementById('ws-sealed-input').checked;
+  const passphrase = document.getElementById('ws-passphrase-input').value;
+  if (sealed && !passphrase) return showToast('Нужен пароль для зашифрованного воркспейса', true);
+
+  const payload = { name: name };
+  if (sealed) {
+    payload.passphrase = passphrase;
+    const alias = document.getElementById('ws-public-name-input').value.trim();
+    if (alias) payload.public_name = alias;
+  }
   const created = await mutationJson('/api/vault/collections', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ name: name })
+    body: JSON.stringify(payload)
   }, 'Не удалось создать воркспейс');
   if (created) { closeWorkspaceModal(); window.location.reload(); }
 }
@@ -839,6 +952,7 @@ function openLinkModal() {
   document.getElementById('plus-dropdown').classList.remove('show');
   document.getElementById('link-url-input').value = '';
   document.getElementById('link-title-input').value = '';
+  document.getElementById('link-public-title-input').value = '';
   document.getElementById('modal-link').classList.remove('hidden');
 }
 function closeLinkModal() { document.getElementById('modal-link').classList.add('hidden'); }
@@ -870,6 +984,10 @@ async function submitLink() {
     collection_id: currentCollectionId,
     auto_fetch_og: true
   };
+  // Only meaningful in a sealed collection, where it is the alias shown while
+  // the Vault is locked. Harmless elsewhere.
+  const alias = document.getElementById('link-public-title-input').value.trim();
+  if (alias) payload.public_title = alias;
 
   const created = await mutationJson('/api/vault/items', {
     method: 'POST',
@@ -944,6 +1062,175 @@ async function instantCreate(type) {
     updateCachedItem(created);
     loadVaultSummary();
     openEditorView(created);
+  }
+}
+
+/* ── Media card: a picture or a video, plus a caption ──────────────────
+   Deliberately not the editor view. A picture is not a document that wants
+   more words, so there is no autosave timer, no "write here" prompt and no
+   chrome beyond a back arrow and two optional lines. */
+const MEDIA_NODE_TYPES = new Set(['image', 'video']);
+
+function isMediaCard(item) {
+  return !!item && MEDIA_NODE_TYPES.has(item.node_type);
+}
+
+function mediaUrl(item) {
+  const base = packageUrl(`/api/vault/items/${pathSegment(item.id)}`);
+  return `${base}/media`;
+}
+
+function thumbnailUrl(item) {
+  const base = packageUrl(`/api/vault/items/${pathSegment(item.id)}`);
+  return `${base}/thumbnail`;
+}
+
+function formatDuration(seconds) {
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total <= 0) return '';
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = Math.floor(total % 60);
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function openMediaView(item) {
+  const card = window._vaultCache[item.id];
+  if (!card) return;
+  activeView = 'media';
+  document.getElementById('media-id').value = item.id;
+  document.getElementById('media-title').value = card.title || '';
+  document.getElementById('media-content').value = card.content || '';
+  document.getElementById('media-save-status').innerText = '';
+
+  const stage = document.getElementById('media-stage');
+  const source = safeExternalUrl(card.url);
+  const link = document.getElementById('media-source-link');
+  if (link) {
+    if (source) { link.href = source; link.classList.remove('hidden'); }
+    else link.classList.add('hidden');
+  }
+
+  const poster = safeImageUrl(card.og_image) || itemImageUrl(card);
+  const isVideo = card.node_type === 'video';
+  // Only a card that actually holds bytes plays. Otherwise say what is going on
+  // rather than showing a player that will never load.
+  const playable = isVideo && card.has_media;
+
+  if (isVideo && !playable) {
+    const status = card.media_status || 'ожидает';
+    stage.innerHTML = `
+      <div class="text-center px-6 py-10 space-y-2">
+        ${poster ? `<img src="${escapeAttr(poster)}" class="max-h-[40vh] mx-auto opacity-60" onerror="this.style.display='none'">` : ''}
+        <div class="text-xs text-zinc-400 font-mono">${escapeHtml(statusLabel(status))}</div>
+      </div>`;
+  } else if (isVideo) {
+    const duration = formatDuration(card.media_duration);
+    stage.innerHTML = `<video src="${escapeAttr(mediaUrl(card))}" ${poster ? `poster="${escapeAttr(poster)}"` : ''}
+      controls preload="metadata" class="max-h-[70vh] w-auto max-w-full"></video>
+      ${duration ? `<div class="absolute bottom-2 right-3 text-[10px] font-mono text-zinc-300">${duration}</div>` : ''}`;
+    stage.classList.add('relative');
+  } else {
+    stage.innerHTML = poster
+      ? `<img src="${escapeAttr(poster)}" class="max-h-[70vh] w-auto max-w-full object-contain" onerror="this.style.display='none'">`
+      : `<div class="text-xs text-zinc-500 font-mono px-6 py-10">Изображение недоступно</div>`;
+  }
+
+  hideViews();
+  document.getElementById('vault-empty').classList.add('hidden');
+  document.getElementById('view-media-container').classList.remove('hidden');
+}
+
+function statusLabel(status) {
+  const text = String(status || '');
+  if (!text) return 'Видео ещё не загружено';
+  if (text.startsWith('downloading')) return `Загрузка ${text.replace('downloading', '').trim()}`;
+  if (text.startsWith('resolving')) return 'Определяем источник…';
+  if (text.startsWith('error:')) return text.replace('error:', 'Не удалось:').trim();
+  // Internal words never reach the card as-is.
+  const labels = { queued: 'В очереди на загрузку', completed: 'Готово', 'not queued': 'Загрузка не запущена' };
+  return labels[text] || text;
+}
+
+/* A media tile is the picture and, at most, one line of caption. No date strip,
+   no "Открыть", no pin row: those belong to the document tiles. */
+function mediaTileHtml(item, itemId, displayImg, clickHandler) {
+  const isVideo = item.node_type === 'video';
+  const caption = String(item.title || item.og_title || '').trim();
+  const failed = String(item.media_status || '').startsWith('error:');
+  const duration = formatDuration(item.media_duration);
+
+  let badge = '';
+  let fallback = 'нет изображения';
+  if (isVideo) {
+    if (item.has_media) {
+      // A poster is best-effort; the card must still read as a video without
+      // one, and the play glyph must not be drawn twice.
+      badge = duration
+        ? `<span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/80 text-[10px] font-mono text-white">${escapeHtml(duration)}</span>`
+        : '';
+      fallback = '▶';
+    } else {
+      badge = `<span class="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black/80 text-[10px] font-mono ${failed ? 'text-red-400' : 'text-zinc-400'}">${escapeHtml(failed ? 'ошибка' : 'загрузка')}</span>`;
+      fallback = escapeHtml(statusLabel(item.media_status));
+    }
+  }
+
+  return `
+  <div class="tile-card sm:col-span-2 lg:col-span-2 ${item.is_pinned ? 'pinned' : ''}">
+    <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center relative"
+         style="min-height: 120px" onclick="${clickHandler}">
+      ${displayImg
+        ? `<img src="${escapeAttr(displayImg)}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="text-[10px] text-zinc-600 font-mono px-4 py-10 text-center">${fallback}</div>`}
+      ${badge}
+    </div>
+    ${caption ? `<div class="px-3 pt-2 text-xs text-zinc-200 truncate cursor-pointer hover:text-teal-400" onclick="${clickHandler}">${escapeHtml(caption)}</div>` : ''}
+  </div>`;
+}
+
+function hideViews() {
+  ['tiles', 'editor', 'sheet', 'whiteboard', 'media'].forEach((name) => {
+    const node = document.getElementById(`view-${name}-container`);
+    if (node) node.classList.add('hidden');
+  });
+}
+
+async function closeMediaView() {
+  if (activeView !== 'media') return;
+  await saveMediaCaption();
+  activeView = 'tiles';
+  hideViews();
+  document.getElementById('view-tiles-container').classList.remove('hidden');
+  renderTiles(currentItems);
+}
+
+/* Saved on blur rather than on every keystroke: a caption is two lines, and a
+   request per character is not what this view is for. */
+async function saveMediaCaption() {
+  const id = document.getElementById('media-id').value;
+  if (!id) return;
+  const card = window._vaultCache[Number(id)];
+  if (!card) return;
+  const title = document.getElementById('media-title').value;
+  const content = document.getElementById('media-content').value;
+  if (title === (card.title || '') && content === (card.content || '')) return;
+
+  const status = document.getElementById('media-save-status');
+  status.innerText = 'Сохраняем…';
+  try {
+    const response = await fetch(`/api/vault/items/${pathSegment(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content }),
+    });
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    Object.assign(card, { title, content });
+    status.innerText = 'Сохранено';
+  } catch (error) {
+    status.innerText = 'Не сохранилось';
   }
 }
 
@@ -1631,6 +1918,52 @@ async function closeActiveView() {
   if (activeView === 'editor') return closeEditorView();
   if (activeView === 'sheet') return closeSheetView();
   if (activeView === 'whiteboard') return closeWhiteboardView();
+  if (activeView === 'media') return closeMediaView();
+}
+
+let unlockTarget = null;
+
+function openUnlockModal(collectionId, alias) {
+  unlockTarget = collectionId;
+  document.getElementById('unlock-alias').textContent = alias || 'зашифрован';
+  document.getElementById('unlock-passphrase-input').value = '';
+  document.getElementById('unlock-error').classList.add('hidden');
+  document.getElementById('modal-unlock').classList.remove('hidden');
+  document.getElementById('unlock-passphrase-input').focus();
+}
+function closeUnlockModal() { document.getElementById('modal-unlock').classList.add('hidden'); }
+
+async function submitUnlock() {
+  const passphrase = document.getElementById('unlock-passphrase-input').value;
+  if (!unlockTarget || !passphrase) return;
+  let result = null;
+  try {
+    result = await requestJson(`/api/vault/collections/${pathSegment(unlockTarget)}/unlock`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ passphrase: passphrase })
+    }, 'Не удалось разблокировать');
+  } catch (error) {
+    // Only a wrong passphrase is worth retrying in place; anything else is a
+    // transport or server fault and deserves the usual toast.
+    if (error.status === 401) {
+      document.getElementById('unlock-error').classList.remove('hidden');
+      return;
+    }
+    showToast(error.message || 'Не удалось разблокировать', true);
+    return;
+  }
+  closeUnlockModal();
+  await loadVaultSummary();
+  await loadWorkspace();
+}
+
+async function lockWorkspace(collectionId) {
+  await mutationJson(`/api/vault/collections/${pathSegment(collectionId)}/lock`, {
+    method: 'POST'
+  }, 'Не удалось заблокировать');
+  await loadVaultSummary();
+  await loadWorkspace();
 }
 
 async function selectWorkspace(id, name) {
@@ -1666,12 +1999,26 @@ async function loadVaultSummary() {
       const label = document.createElement('div');
       label.className = 'flex items-center gap-2 truncate';
       const marker = document.createElement('span');
-      marker.className = 'w-1.5 h-1.5 bg-teal-400 inline-block';
+      marker.className = collection.is_encrypted
+        ? (collection.is_locked ? 'w-1.5 h-1.5 bg-red-500 inline-block' : 'w-1.5 h-1.5 bg-teal-400 inline-block')
+        : 'w-1.5 h-1.5 bg-teal-400 inline-block';
       const name = document.createElement('span');
       name.className = 'truncate';
       name.dataset.workspaceName = '';
       name.textContent = collection.name;
       label.append(marker, name);
+      if (collection.is_encrypted) {
+        const lock = document.createElement('button');
+        lock.className = 'ml-auto text-red-400 hover:text-red-300 text-xs';
+        lock.title = collection.is_locked ? 'Разблокировать' : 'Заблокировать';
+        lock.textContent = collection.is_locked ? '🔒' : '🔓';
+        lock.addEventListener('click', event => {
+          event.stopPropagation();
+          if (collection.is_locked) openUnlockModal(collection.id, collection.name);
+          else lockWorkspace(collection.id);
+        });
+        label.append(lock);
+      }
 
       const count = document.createElement('span');
       count.className = 'text-[9px] text-zinc-600 font-bold';
@@ -1798,6 +2145,7 @@ function renderTiles(items) {
     if (!Number.isInteger(itemId)) return '';
     const isTable = item.node_type === 'table';
     const isWb = item.node_type === 'whiteboard';
+    const isMedia = isMediaCard(item);
 
     const wbDrawingPreview = isWb && item.canvas_data?.drawing && item.canvas_data.drawing.length > 100 ? item.canvas_data.drawing : null;
     const displayImg = safeImageUrl(item.og_image) || itemImageUrl(item) || safeImageUrl(wbDrawingPreview);
@@ -1807,6 +2155,11 @@ function renderTiles(items) {
     let clickHandler = `openEditorView(window._vaultCache[${itemId}])`;
     if (isTable) clickHandler = `openSheetView(window._vaultCache[${itemId}])`;
     if (isWb) clickHandler = `openWhiteboardView(window._vaultCache[${itemId}])`;
+    if (isMedia) clickHandler = `openMediaView(window._vaultCache[${itemId}])`;
+
+    if (isMedia) {
+      return mediaTileHtml(item, itemId, displayImg, clickHandler);
+    }
 
     let miniTableHtml = '';
     if (isTable && item.canvas_data?.headers) {
@@ -1835,7 +2188,9 @@ function renderTiles(items) {
       </div>`;
     }
 
-    const hasTitle = item.title && item.title.trim() !== '';
+    // A locked sealed item has a blank title on purpose, so it must still get a
+    // tile — otherwise it would silently vanish from the grid while sealed.
+    const hasTitle = (item.title && item.title.trim() !== '') || item.is_locked;
 
     let displayText = item.content || '';
     if (displayText.length > 350) {
@@ -1855,8 +2210,9 @@ function renderTiles(items) {
 
       <div class="p-3 flex flex-col gap-2">
         ${hasTitle ? `
-          <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400" onclick="${clickHandler}">
-            ${itemUrl ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
+          <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400 ${item.is_locked ? 'cursor-not-allowed hover:text-white' : ''}" onclick="${item.is_locked ? '' : clickHandler}">
+            ${item.is_locked ? '<span class="inline-block w-2 h-2 rounded-[1px] bg-red-500 align-middle mr-1.5" title="Зашифровано — разблокируйте Vault"></span>' : ''}
+            ${itemUrl && !item.is_locked ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
           </div>
         ` : (itemUrl ? `<div class="text-xs font-bold text-teal-400 truncate"><a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)} ↗</a></div>` : '')}
 

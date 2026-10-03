@@ -15,7 +15,15 @@ async def search_documents(
 ) -> SearchDocumentsResult:
     result = await context.session.execute(
         select(VaultItem)
-        .where(VaultItem.is_archived.is_(False), VaultItem.is_folder.is_(False))
+        .where(
+            VaultItem.is_archived.is_(False),
+            VaultItem.is_folder.is_(False),
+            # Sealed items are excluded outright, not blanked. Their readable
+            # columns are empty, so indexing them would only ever publish
+            # "Vault item #12"; opening them to index properly would move
+            # plaintext out of the vault and into a global search index.
+            VaultItem.sealed_payload.is_(None),
+        )
         .order_by(VaultItem.updated_at.desc(), VaultItem.id.desc())
         .offset(request.offset)
         .limit(request.limit + 1)

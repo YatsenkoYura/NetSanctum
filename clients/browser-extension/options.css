@@ -1,0 +1,133 @@
+:root {
+  color-scheme: light dark;
+  --ink: #101014;
+  --paper: #f6f5f1;
+  --line: #101014;
+  --accent: #0f766e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f2f1ee;
+    --paper: #16161a;
+    --line: #f2f1ee;
+    --accent: #5eead4;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 34rem;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+.lead {
+  margin: 0 0 2rem;
+  opacity: 0.75;
+}
+
+label {
+  display: block;
+  margin: 1.25rem 0 0.35rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 1rem;
+}
+
+input[type="url"],
+input[type="password"],
+input[type="text"],
+select {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 2px solid var(--line);
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  opacity: 0.65;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+button {
+  padding: 0.55rem 1.1rem;
+  border: 2px solid var(--line);
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+}
+
+#status {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+#status.error {
+  color: #b91c1c;
+  opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  #status.error {
+    color: #fca5a5;
+  }
+}
+
+.collections {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 2px solid var(--line);
+}

@@ -110,6 +110,20 @@ def _get_platform_cookies(platform_id: str) -> str | None:
     return None
 
 
+def _quality_format(quality: str | None) -> str:
+    """Build the yt-dlp format selector for a height preference.
+
+    `best` has to drop the height cap rather than interpolate into it: yt-dlp
+    rejects `height<=best` outright with "Invalid filter specification", which
+    failed the whole download. Anything that is not a plausible height is treated
+    the same way, because `DownloadRequest.quality` is a free-form string and a
+    typo must not become a broken selector.
+    """
+    text = str(quality or "").strip().lower()
+    cap = f"[height<={text}]" if text.isdigit() and int(text) > 0 else ""
+    return f"bestvideo{cap}[ext=mp4]+bestaudio[ext=m4a]/best{cap}[ext=mp4]/best{cap}/best"
+
+
 def _youtube_video_id(url: str) -> str | None:
     parsed = urlparse(url)
     video_id = parse_qs(parsed.query).get("v", [None])[0]
@@ -139,10 +153,18 @@ def process_video_url_task(
     playlist_id: int | None = None,
     compress_video: bool = False,
     download_subtitles: bool = False,
+    allow_generic: bool = False,
 ) -> str:
     """
     Entry point for archiving. Identifies if the URL is a playlist or single video.
     Dispatches separate download tasks accordingly.
+
+    `allow_generic` lets yt-dlp try a host this module has no provider for. It is
+    opt-in because the registry is a whitelist that guards *typed* URLs: a paste
+    into the dashboard can be a typo or a look-alike host. A URL that came from
+    the user clicking an element on a page they were already reading has no such
+    failure mode, and refusing every unregistered site would defeat the capture
+    entirely — yt-dlp ships extractors for hundreds of hosts.
     """
     task_id = self.request.id
 
@@ -160,7 +182,11 @@ def process_video_url_task(
     update_status("Fetching info...")
 
     try:
-        provider = PlatformRegistry.require_supported_url(url)
+        provider = (
+            PlatformRegistry.get_provider(url)
+            if allow_generic
+            else PlatformRegistry.require_supported_url(url)
+        )
     except ValueError as exc:
         update_status(str(exc), "Error", "failed")
         return f"Error: {exc}"
@@ -184,6 +210,7 @@ def process_video_url_task(
                 "compress_video": compress_video,
                 "download_subtitles": download_subtitles,
                 "source_video_id": source_video_id,
+                "allow_generic": allow_generic,
             },
         )
 
@@ -304,8 +331,13 @@ def download_video_task(
     compress_video: bool = False,
     download_subtitles: bool = False,
     source_video_id: str | None = None,
+    allow_generic: bool = False,
 ) -> str:
-    """Downloads a single video, caches metadata + comments, and saves to database."""
+    """Downloads a single video, caches metadata + comments, and saves to database.
+
+    `allow_generic` mirrors the flag on `process_video_url_task`: without it the
+    download stage would reject the very host the capture stage just accepted.
+    """
     task_id = self.request.id
 
     def update_redis(
@@ -352,7 +384,11 @@ def download_video_task(
     update_redis("Extracting full metadata...", "5%")
     temp_dir = tempfile.mkdtemp()
     try:
-        provider = PlatformRegistry.require_supported_url(url)
+        provider = (
+            PlatformRegistry.get_provider(url)
+            if allow_generic
+            else PlatformRegistry.require_supported_url(url)
+        )
     except ValueError as exc:
         update_redis(str(exc), "Error", state="failed")
         return f"Error: {exc}"
@@ -361,7 +397,7 @@ def download_video_task(
     # Configure yt-dlp options using platform provider strategy
     ydl_opts = provider.get_ydl_opts(
         {
-            "format": f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best[height<={quality}]/best",
+            "format": _quality_format(quality),
             "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
             "merge_output_format": "mp4",
             "noplaylist": True,

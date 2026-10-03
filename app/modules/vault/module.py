@@ -39,6 +39,8 @@ MODULE = ModuleSpec(
         assets=(ShareAsset(name="item_image", path="items/{item_id}/image"),),
     ),
     module_cleanup="app.modules.vault.cleanup:cleanup_module",
+    tasks="app.modules.vault.tasks",
+    progress_key_patterns=("vault_media:*",),
     storage_namespaces=("vault",),
     package_prefixes=("vault_all",),
     package_resolver="app.modules.vault.capabilities:resolve_package_resources",

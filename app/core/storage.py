@@ -12,6 +12,7 @@ import secrets
 import shutil
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
@@ -23,6 +24,16 @@ from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_
 
 ENCRYPTED_FILE_MAGIC = b"NSENC\x02\x00\x00"
 NONCE_SIZE = 12
+
+# Chunked, seekable envelope. The chunk index lives in the nonce, so no
+# (key, nonce) pair repeats across chunks, and each chunk authenticates on its own.
+SEEKABLE_MAGIC = b"NSENCS\x01\x00\x00"
+SEEKABLE_CHUNK_SIZE = 1024 * 1024
+SEEKABLE_FILE_NONCE_SIZE = 8
+# magic | file nonce | chunk size | plaintext length. The length is stored rather
+# than derived, because the final chunk is short and the count cannot be recovered
+# from the stored size alone.
+SEEKABLE_HEADER_SIZE = len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE + 4 + 8
 
 
 def stream_size_sha256(stream: BinaryIO, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
@@ -125,6 +136,12 @@ class StorageInterface(ABC):
         """
         Retrieve the encrypted file, decrypt it using AES-256-GCM, and return a readable stream.
         """
+        if self.is_seekable_encrypted(path):
+            # Callers such as alllib and computercraft reach the file through this
+            # one method, so it has to speak both envelopes.
+            total = self.get_seekable_plaintext_size(path)
+            return io.BytesIO(b"".join(self.read_seekable_range(path, 0, total)))
+
         stream = self.get_file_stream(path)
         try:
             payload = stream.read()
@@ -132,6 +149,106 @@ class StorageInterface(ABC):
             stream.close()
 
         return io.BytesIO(self._decrypt_payload(payload, path))
+
+    # ── Seekable envelope ────────────────────────────────────────────────
+    # AES-GCM over one blob cannot be seeked: the GHASH tag spans the whole
+    # ciphertext, so serving `bytes=1000-2000` would mean decrypting from byte
+    # zero. Video needs seeking, so large objects use a chunked envelope where
+    # every chunk is its own AEAD with the path bound into its associated data.
+    # A range then touches only the chunks it covers.
+
+    def save_file_encrypted_seekable(self, stream: BinaryIO, path: str) -> str:
+        """Encrypt a stream into the chunked envelope without buffering it whole."""
+        file_nonce = os.urandom(SEEKABLE_FILE_NONCE_SIZE)
+        aad = self._seekable_associated_data(path, file_nonce)
+        aesgcm = AESGCM(self._get_encryption_key())
+        plaintext_length = 0
+        with tempfile.TemporaryDirectory(prefix="seekenc_") as workdir:
+            temporary = Path(workdir) / "payload"
+            with temporary.open("wb") as sink:
+                sink.write(SEEKABLE_MAGIC + file_nonce + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big"))
+                sink.write((0).to_bytes(8, "big"))  # patched below, once known
+                index = 0
+                while True:
+                    chunk = stream.read(SEEKABLE_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    index_bytes = index.to_bytes(4, "big")
+                    sink.write(aesgcm.encrypt(file_nonce + index_bytes, chunk, aad + index_bytes))
+                    plaintext_length += len(chunk)
+                    index += 1
+                sink.seek(len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE + 4)
+                sink.write(plaintext_length.to_bytes(8, "big"))
+            return self.save_file_from_path(temporary, path)
+
+    def is_seekable_encrypted(self, path: str) -> bool:
+        """Whether the stored object uses the chunked envelope."""
+        with self.get_file_stream(path) as stream:
+            return stream.read(len(SEEKABLE_MAGIC)) == SEEKABLE_MAGIC
+
+    def get_seekable_plaintext_size(self, path: str) -> int:
+        """Plaintext length of a chunked envelope, computed from stored sizes alone."""
+        with self.get_file_stream(path) as stream:
+            header = stream.read(SEEKABLE_HEADER_SIZE)
+        if len(header) < SEEKABLE_HEADER_SIZE or not header.startswith(SEEKABLE_MAGIC):
+            raise ValueError(f"Invalid encrypted file '{path}': header is truncated.")
+        return int.from_bytes(header[-8:], "big")
+
+    def read_seekable_range(self, path: str, start: int, length: int) -> Iterator[bytes]:
+        """Yield plaintext bytes `[start, start + length)` in chunks.
+
+        Only the chunks that overlap the range are read and decrypted, so a seek
+        into a large video costs one or two chunks rather than the whole file.
+        """
+        if length <= 0:
+            return
+        with self.get_file_stream(path) as stream:
+            header = stream.read(SEEKABLE_HEADER_SIZE)
+            if not header.startswith(SEEKABLE_MAGIC):
+                raise ValueError(f"File '{path}' is not a seekable encrypted object.")
+            offset = len(header)
+            file_nonce = header[len(SEEKABLE_MAGIC) : len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE]
+            aad = self._seekable_associated_data(path, file_nonce)
+
+            # Every chunk but the last is exactly SEEKABLE_CHUNK_SIZE bytes, so the
+            # covering chunk can be computed instead of found by reading forward.
+            wanted_end = start + length
+            index = start // SEEKABLE_CHUNK_SIZE
+            position = index * SEEKABLE_CHUNK_SIZE
+            while position < wanted_end:
+                stream.seek(offset + index * (SEEKABLE_CHUNK_SIZE + 16))
+                stored = stream.read(SEEKABLE_CHUNK_SIZE + 16)
+                if not stored:
+                    return
+                chunk_plain = len(stored) - 16
+                chunk_start = position
+                chunk_end = position + chunk_plain
+                if chunk_end > start:
+                    index_bytes = index.to_bytes(4, "big")
+                    plaintext = self._decrypt_chunk(
+                        stored,
+                        file_nonce + index_bytes,
+                        aad + index_bytes,
+                        path,
+                    )
+                    trim_start = max(0, start - chunk_start)
+                    piece = plaintext[trim_start : trim_start + (wanted_end - max(chunk_start, start))]
+                    if piece:
+                        yield piece
+                position = chunk_end
+                index += 1
+
+    def _decrypt_chunk(self, stored: bytes, nonce: bytes, aad: bytes, path: str) -> bytes:
+        last_error = None
+        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+            try:
+                return AESGCM(key).decrypt(nonce, stored, aad)
+            except Exception as error:
+                last_error = error
+        raise ValueError(f"Failed to decrypt file '{path}': {last_error}")
+
+    def _seekable_associated_data(self, path: str, file_nonce: bytes) -> bytes:
+        return SEEKABLE_MAGIC + b"\x00" + file_nonce + path.encode("utf-8")
 
     def get_file_decrypted(self, path: str) -> bytes:
         """
@@ -143,10 +260,12 @@ class StorageInterface(ABC):
     def get_encrypted_plaintext_size(self, path: str) -> int:
         """Return the envelope's plaintext length without decrypting the whole object."""
         with self.get_file_stream(path) as stream:
-            prefix = stream.read(len(ENCRYPTED_FILE_MAGIC))
+            prefix = stream.read(max(len(ENCRYPTED_FILE_MAGIC), len(SEEKABLE_MAGIC)))
+        if prefix.startswith(SEEKABLE_MAGIC):
+            return self.get_seekable_plaintext_size(path)
         stored_size = self.get_file_size(path)
         overhead = NONCE_SIZE + 16
-        if prefix == ENCRYPTED_FILE_MAGIC:
+        if prefix[: len(ENCRYPTED_FILE_MAGIC)] == ENCRYPTED_FILE_MAGIC:
             overhead += len(ENCRYPTED_FILE_MAGIC)
         plaintext_size = stored_size - overhead
         if plaintext_size < 0:

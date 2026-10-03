@@ -1,7 +1,82 @@
 import datetime
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# Shared ceiling for an embedded picture. It lives here because the capture
+# schema needs it to bound a request body, and services imports this module.
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+class VaultCaptureCreate(BaseModel):
+    """A capture pushed by the browser extension.
+
+    `image` is a `data:image/...;base64,` URL, the same shape the dashboard
+    stores for a pasted screenshot, so a capture lands in Vault exactly like a
+    manually pasted picture. `source_url` keeps the media or page address the
+    capture came from so the entry stays navigable.
+
+    `kind="video"` is different in kind, not in shape: the video file itself is
+    archived by the module that owns it, and Vault keeps the record plus an
+    optional still. That keeps large blobs out of Vault, which matters for the
+    per-collection encryption planned for it.
+    """
+
+    kind: Literal["screenshot", "media", "video"]
+    title: str = Field(..., min_length=1, max_length=500)
+    # The alias shown while a sealed Vault is locked. The extension cannot be given
+    # a passphrase, so this is the only handle the owner has on a blind write.
+    public_title: str | None = Field(default=None, max_length=1000)
+    page_url: str | None = Field(default=None, max_length=4000)
+    # Free-form provenance, shown as text and never dereferenced, so a `blob:`
+    # or `data:` value is kept rather than refused.
+    source_url: str | None = Field(default=None, max_length=4000)
+    alt_text: str | None = Field(default=None, max_length=1000)
+    image: str | None = Field(
+        default=None,
+        description="data:image/...;base64 payload; required unless kind is video",
+        # The encoded ceiling of `MAX_IMAGE_BYTES`; the service still decodes and
+        # checks the bytes, this only keeps an oversized body out of the router.
+        max_length=(MAX_IMAGE_BYTES * 4 // 3) + 64,
+    )
+    video_url: str | None = Field(default=None, max_length=4000)
+    quality: Literal["best", "1080", "720", "480", "360"] = "720"
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    collection_id: int | None = None
+    parent_id: int | None = None
+    auto_fetch_og: bool = True
+
+    @model_validator(mode="after")
+    def validate_shape(self):
+        if self.kind == "video":
+            if not self.video_url:
+                raise ValueError("A video capture requires video_url")
+        elif not self.image:
+            raise ValueError("A screenshot or media capture requires an image")
+        # `page_url` becomes the item's clickable link and `video_url` is handed
+        # to a downloader that will fetch it, so both must be real addresses.
+        # `source_url` is neither: it is only ever shown as text, so an
+        # unrecognised scheme there must not fail a capture the user chose.
+        for value in (self.page_url, self.video_url):
+            if value is None:
+                continue
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError("Capture URLs must be public HTTP URLs")
+            if parsed.username or parsed.password:
+                raise ValueError("Capture URLs must not contain credentials")
+        return self
+
+
+class VaultCaptureResponse(BaseModel):
+    status: Literal["completed"] = "completed"
+    item_id: int
+    kind: Literal["screenshot", "media", "video"]
+    title: str
+    image_url: str | None = None
+    task_id: str | None = Field(default=None, description="Archive job, for a video capture")
+    message: str
 
 
 class VaultCollectionCreate(BaseModel):
@@ -9,6 +84,12 @@ class VaultCollectionCreate(BaseModel):
     description: str | None = None
     color: str = "teal"
     icon: str | None = None
+
+    # A sealed collection needs a passphrase, and a public alias: while the
+    # collection is locked the sidebar must show something, and it must not be the
+    # real name.
+    passphrase: str | None = Field(default=None, max_length=512)
+    public_name: str | None = Field(default=None, max_length=100)
 
 
 class VaultCollectionResponse(BaseModel):
@@ -19,6 +100,11 @@ class VaultCollectionResponse(BaseModel):
     icon: str | None = None
     created_at: datetime.datetime
     items_count: int | None = 0
+    # A sealed collection has two names as well: the alias shown while it is
+    # locked, and the real one once the passphrase has been supplied.
+    is_encrypted: bool = False
+    public_name: str | None = None
+    is_locked: bool = False
 
     class Config:
         from_attributes = True
@@ -33,6 +119,10 @@ class VaultItemCreate(BaseModel):
     og_title: str | None = None
     og_description: str | None = None
     og_image: str | None = None
+
+    # Required for a sealed item: the alias shown while its Vault is locked. It is
+    # stored in the clear on purpose and is never the real title.
+    public_title: str | None = Field(default=None, max_length=1000)
 
     score: float | None = Field(None, ge=1.0, le=10.0)
     status: str | None = Field(None, description="watching, completed, dropped, planned, on_hold")
@@ -58,6 +148,9 @@ class VaultItemCreate(BaseModel):
 
 
 class VaultItemUpdate(BaseModel):
+    # Editable while the Vault is locked: the alias is public by design.
+    public_title: str | None = Field(default=None, max_length=1000)
+
     title: str | None = None
     content: str | None = None
     url: str | None = None
@@ -82,12 +175,21 @@ class VaultItemUpdate(BaseModel):
 class VaultItemResponse(BaseModel):
     id: int
     entry_type: str
+    # While a sealed item is locked this holds its alias, never the real title.
     title: str
     content: str | None = None
     url: str | None = None
     og_title: str | None = None
     og_description: str | None = None
     og_image: str | None = None
+    # True when the item stores an embedded image that the list endpoint
+    # omits for weight; the bytes are served via /api/vault/items/{id}/image.
+    has_image: bool = False
+    # A media card owns a file in Vault storage. The path itself is never sent
+    # to a client; only whether the bytes are there and what the download is doing.
+    has_media: bool = False
+    media_status: str | None = None
+    media_duration: int | None = None
     score: float | None = None
     status: str | None = None
     progress_current: int
@@ -105,11 +207,33 @@ class VaultItemResponse(BaseModel):
     is_folder: bool = False
     node_type: str = "note"
     canvas_data: dict[str, Any] = Field(default_factory=dict)
+    # Lock-state flags. `is_sealed` never changes; `is_locked` is true only while
+    # the collection's key is out of reach, and it is what the grid paints red.
+    is_sealed: bool = False
+    is_locked: bool = False
+    public_title: str | None = None
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
     class Config:
         from_attributes = True
+
+
+class VaultUnlockRequest(BaseModel):
+    passphrase: str = Field(..., min_length=1, max_length=512)
+
+
+class VaultUnlockResponse(BaseModel):
+    status: Literal["unlocked"] = "unlocked"
+    collection_id: int
+    name: str
+    unlocked_collections: list[int] = Field(default_factory=list)
+    locked_collections: list[int] = Field(default_factory=list)
+
+
+class VaultLockResponse(BaseModel):
+    status: Literal["locked"] = "locked"
+    collection_id: int
 
 
 class VaultStatsResponse(BaseModel):

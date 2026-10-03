@@ -2,25 +2,58 @@ import asyncio
 import random
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.module_types import (
+    IntegrationNotFoundError,
+    IntegrationRejectedError,
+    IntegrationUnavailableError,
+)
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
-from app.core.security import get_current_user
+from app.core.security import get_current_bearer_user, get_current_user
+from app.core.storage import get_storage
 from app.core.templates import templates
+from app.modules.vault.crypto import VaultUnlockError
+from app.modules.vault.models import VaultCollection
 from app.modules.vault.schemas import (
+    VaultCaptureCreate,
+    VaultCaptureResponse,
     VaultCollectionCreate,
     VaultCollectionResponse,
     VaultItemCreate,
     VaultItemResponse,
     VaultItemUpdate,
+    VaultLockResponse,
     VaultStatsResponse,
+    VaultUnlockRequest,
+    VaultUnlockResponse,
+)
+from app.modules.vault.sealing import (
+    DEFAULT_ITEM_ALIAS,
+    DEFAULT_SEALED_ALIAS,
+    SEALED_FIELDS,
+    collection_for,
+    create_sealed_collection,
+    data_key_for,
+    is_sealed_collection,
+    lock_collection,
+    locked_collection_ids,
+    open_item,
+    open_items,
+    require_inbox_public_key,
+    seal_item,
+    sealed_collection_ids,
+    unlock_collection,
+    update_sealed_item,
 )
 from app.modules.vault.services import (
+    create_captured_item,
     create_collection,
     create_vault_item,
+    decode_data_image,
     delete_collection,
     delete_vault_item,
     fetch_url_metadata,
@@ -65,6 +98,13 @@ async def vault_dashboard(
     lang = await _get_lang(request)
     collections = await list_collections(db)
     stats = await get_vault_stats(db)
+    # Serialized, not raw rows: the sidebar is rendered on the server, and a raw
+    # VaultCollection would put a locked vault's real name into the first HTML
+    # response before any of the lock-aware JavaScript runs.
+    locked = await locked_collection_ids(db)
+    serializable = [
+        _serialize_collection(collection, locked=collection.id in locked) for collection in collections
+    ]
 
     return templates.TemplateResponse(
         request,
@@ -72,7 +112,7 @@ async def vault_dashboard(
         {
             "user": user,
             "lang": lang,
-            "collections": collections,
+            "collections": serializable,
             "stats": stats,
         },
     )
@@ -98,6 +138,7 @@ async def get_items(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     package_id: str | None = Query(None),
+    include_images: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -121,10 +162,87 @@ async def get_items(
         limit=limit,
         offset=offset,
     )
-    if not package_id:
-        return items
+    if package_id:
+        return [_serialize_package_item(item) for item in items]
 
-    return [_serialize_package_item(item) for item in items]
+    # Sealed collections are opened here, in the one place that reads a whole page
+    # of items, so no other endpoint has to remember to do it.
+    locked = await locked_collection_ids(db)
+    await open_items(db, items)
+    serialized = [
+        _apply_lock_state(
+            # Always a dict: handing this an ORM row would write the alias into a
+            # column the next commit flushes.
+            _serialize_full_item(item) if include_images else _serialize_list_item(item),
+            item,
+            locked=item.collection_id in locked,
+        )
+        for item in items
+    ]
+    return serialized
+
+
+def _serialize_list_item(item) -> dict:
+    """Light list serialization: embedded images stay out of the payload.
+
+    A pasted photo can be several megabytes of base64; inlining hundreds of
+    them made the list endpoint take tens of seconds. Tiles load the bytes
+    lazily via `/api/vault/items/{id}/image` when `has_image` is set.
+    """
+    serialized = VaultItemResponse.model_validate(item).model_dump()
+    if decode_data_image(serialized.get("og_image")):
+        serialized["og_image"] = None
+        serialized["has_image"] = True
+    _apply_media_state(serialized, item)
+    return serialized
+
+
+def _serialize_full_item(item) -> dict:
+    """Every field, including the embedded image bytes the list endpoint drops."""
+    serialized = VaultItemResponse.model_validate(item).model_dump()
+    _apply_media_state(serialized, item)
+    return serialized
+
+
+def _apply_lock_state(serialized: dict, item, *, locked: bool) -> dict:
+    """Swap in the alias when a sealed item is locked, and say so.
+
+    This is the boundary that keeps a locked vault from leaking through the list
+    endpoint: the readable columns are already blank on disk, so the only way a
+    real title could appear here is if it were decrypted first.
+    """
+    sealed = bool(getattr(item, "sealed_payload", None))
+    alias = getattr(item, "public_title", None) or DEFAULT_ITEM_ALIAS
+    serialized["is_sealed"] = sealed
+    serialized["is_locked"] = bool(sealed and locked)
+    serialized["public_title"] = alias if sealed else None
+    if sealed and locked:
+        serialized["title"] = alias
+        # Driven off SEALED_FIELDS rather than a hand-written list: a field added
+        # to the sealed set must not silently start leaking here.
+        for field in SEALED_FIELDS:
+            serialized[field] = None
+        serialized["title"] = alias
+        serialized["tags"] = []
+        serialized["canvas_data"] = {}
+        serialized["has_image"] = False
+        serialized["has_media"] = False
+        serialized["media_status"] = "locked"
+        serialized["media_duration"] = None
+    return serialized
+
+
+def _apply_media_state(serialized: dict, item) -> dict:
+    """Expose what a media card needs without leaking its storage path."""
+    media = item.canvas_data or {}
+    serialized["has_media"] = bool(getattr(item, "media_path", None))
+    serialized["media_status"] = media.get("media_status")
+    duration = media.get("media_duration")
+    serialized["media_duration"] = int(duration) if isinstance(duration, (int, float)) else None
+    # A download that already produced a poster should use it as the card face.
+    if serialized["has_media"] and not serialized.get("has_image") and media.get("media_thumbnail_path"):
+        serialized["og_image"] = f"/api/vault/items/{item.id}/thumbnail"
+    return serialized
 
 
 def _serialize_package_item(item) -> dict:
@@ -155,9 +273,199 @@ async def create_item(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Create a new vault item (bookmark, rating, thought)."""
+    """Create a new vault item (bookmark, rating, thought).
+
+    A sealed collection accepts this without the passphrase: the write is sealed
+    under its public inbox key, which is exactly the blind write the extension
+    relies on. Nothing readable is stored, locked or not.
+    """
     item = await create_vault_item(db, item_in)
-    return item
+    collection = await collection_for(db, item.collection_id)
+    locked = False
+    if is_sealed_collection(collection):
+        item.public_title = item_in.public_title or DEFAULT_ITEM_ALIAS
+        seal_item(item, require_inbox_public_key(collection))
+        await db.commit()
+        await db.refresh(item)
+        locked = await data_key_for(collection) is None
+    return _apply_lock_state(_serialize_full_item(item), item, locked=locked)
+
+
+@router.post("/api/vault/capture", response_model=VaultCaptureResponse, status_code=201)
+async def create_capture(
+    capture_in: VaultCaptureCreate,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_bearer_user),
+):
+    """Store a screenshot, a media element, or a queued video from the extension.
+
+    The endpoint takes a bearer token only: an extension is an external client,
+    and letting it ride the browser session cookie would hand the owner's
+    session to any page that can reach this path.
+    """
+    try:
+        item = await create_captured_item(db, capture_in, user=user)
+        # A capture into a sealed collection must be sealed too. This used to be
+        # missing entirely, which meant the extension wrote screenshots, titles and
+        # URLs into a locked vault in the clear, silently.
+        collection = await collection_for(db, getattr(item, "collection_id", None))
+        if is_sealed_collection(collection):
+            item.public_title = capture_in.public_title or DEFAULT_ITEM_ALIAS
+            seal_item(item, require_inbox_public_key(collection))
+            await db.commit()
+            await db.refresh(item)
+    except IntegrationUnavailableError as exc:
+        # The module that owns video archiving is not installed or not enabled.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except IntegrationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrationRejectedError as exc:
+        # The archive refused the URL: unsupported platform, or a playlist.
+        # It is a ValueError subclass, so it must be caught before the generic
+        # validation failure below.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    messages = {
+        "screenshot": "Screenshot saved to Vault",
+        "media": "Media saved to Vault",
+        "video": "Video queued for archiving",
+    }
+    return VaultCaptureResponse(
+        item_id=item.id,
+        kind=capture_in.kind,
+        title=item.title,
+        image_url=f"/api/vault/items/{item.id}/image" if item.og_image else None,
+        task_id=item.related_entity_id if capture_in.kind == "video" else None,
+        message=messages[capture_in.kind],
+    )
+
+
+@router.get("/api/vault/items/{item_id}/media", include_in_schema=False)
+async def get_item_media(
+    item_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Stream the video a media card owns, so the file lives with the entry.
+
+    Range requests are honoured for every video. Without them the player cannot
+    seek, and it downloads the whole file before the first frame — which is what
+    `Accept-Ranges: none` used to force here.
+    """
+    item = await get_vault_item(db, item_id)
+    if not item or not item.media_path:
+        raise HTTPException(status_code=404, detail="Vault media not found")
+    storage = get_storage()
+    try:
+        size = item.media_size or storage.get_file_size(item.media_path)
+        seekable = storage.is_seekable_encrypted(item.media_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Vault media file is missing") from exc
+
+    media_type = item.media_mime or "video/mp4"
+    range_header = request.headers.get("range")
+
+    if range_header and size:
+        span = _parse_byte_range(range_header, size)
+        if span is None:
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"},
+            )
+        start, end = span
+        body = _iter_media(storage, item.media_path, start, end - start + 1, seekable)
+        return StreamingResponse(
+            body,
+            status_code=206,
+            media_type=media_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes {start}-{end}/{size}",
+                "Content-Length": str(end - start + 1),
+                "Cache-Control": "private, max-age=86400",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(size) if size else "",
+        "Cache-Control": "private, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+    }
+    headers = {key: value for key, value in headers.items() if value}
+    return StreamingResponse(
+        _iter_media(storage, item.media_path, 0, size, seekable),
+        media_type=media_type,
+        headers=headers,
+    )
+
+
+def _parse_byte_range(header: str, size: int) -> tuple[int, int] | None:
+    """Parse a single `bytes=` range. Multi-range requests are answered whole."""
+    if not header.startswith("bytes="):
+        return None
+    spec = header[len("bytes=") :].split(",")[0].strip()
+    if "-" not in spec:
+        return None
+    first, _, last = spec.partition("-")
+    try:
+        if not first:
+            # A suffix range: the final N bytes.
+            length = int(last)
+            if length <= 0:
+                return None
+            start = max(0, size - length)
+            return start, size - 1
+        start = int(first)
+        end = int(last) if last else size - 1
+    except ValueError:
+        return None
+    if start >= size or start < 0:
+        return None
+    return start, min(end, size - 1)
+
+
+def _iter_media(storage, path: str, start: int, length: int, seekable: bool):
+    """Yield the requested plaintext bytes without ever holding the whole file."""
+    if seekable:
+        yield from storage.read_seekable_range(path, start, length)
+        return
+    with storage.get_file_stream(path) as stream:
+        stream.seek(start)
+        remaining = length
+        while remaining > 0:
+            block = stream.read(min(remaining, 1024 * 1024))
+            if not block:
+                break
+            remaining -= len(block)
+            yield block
+
+
+@router.get("/api/vault/items/{item_id}/thumbnail", include_in_schema=False)
+async def get_item_thumbnail(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Serve the poster a media download stored, when there is one."""
+    item = await get_vault_item(db, item_id)
+    path = (item.canvas_data or {}).get("media_thumbnail_path") if item else None
+    if not path:
+        raise HTTPException(status_code=404, detail="Vault thumbnail not found")
+    try:
+        with get_storage().get_file_stream(path) as stream:
+            content = stream.read()
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Vault thumbnail file is missing") from exc
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/api/vault/items/{item_id}", response_model=VaultItemResponse)
@@ -170,7 +478,18 @@ async def get_item_by_id(
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
-    return item
+    collection = await collection_for(db, item.collection_id)
+    locked = False
+    if is_sealed_collection(collection):
+        private_key = await data_key_for(collection)
+        if private_key is None:
+            locked = True
+        else:
+            open_item(private_key, item)
+    # The media flags are derived, not columns, so they have to be filled in.
+    serialized = VaultItemResponse.model_validate(item).model_dump()
+    _apply_media_state(serialized, item)
+    return _apply_lock_state(serialized, item, locked=locked)
 
 
 @router.get("/api/vault/items/{item_id}/preview", include_in_schema=False)
@@ -204,6 +523,30 @@ async def get_item_preview(
     )
 
 
+@router.get("/api/vault/items/{item_id}/image", include_in_schema=False)
+async def get_item_image(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Serve an embedded (pasted) Vault image so list responses stay light."""
+    item = await get_vault_item(db, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Vault item not found")
+    decoded = decode_data_image(item.og_image)
+    if not decoded:
+        raise HTTPException(status_code=404, detail="Vault image not found")
+    content, media_type = decoded
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.patch("/api/vault/items/{item_id}", response_model=VaultItemResponse)
 async def update_item(
     item_id: int,
@@ -211,11 +554,31 @@ async def update_item(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Update vault item properties."""
+    """Update vault item properties.
+
+    A sealed item is opened, edited and re-sealed in one transaction. While its
+    Vault is locked the contents cannot be edited at all — only the public alias
+    can, since that field is readable by design.
+    """
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
+    collection = await collection_for(db, item.collection_id)
+    if is_sealed_collection(collection):
+        changed = set(update_in.model_dump(exclude_unset=True))
+        private_key = await data_key_for(collection)
+        if private_key is None:
+            if changed - {"public_title"}:
+                raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы изменить содержимое")
+            updated = await update_vault_item(db, item, update_in)
+            return _apply_lock_state(_serialize_full_item(updated), updated, locked=True)
+        updated = await update_sealed_item(
+            db, item, update_in, private_key, require_inbox_public_key(collection)
+        )
+        return _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
+
     updated = await update_vault_item(db, item, update_in)
+    return _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
     return updated
 
 
@@ -324,7 +687,8 @@ async def get_collections(
 ):
     """List all collection folders."""
     colls = await list_collections(db)
-    return colls
+    locked = await locked_collection_ids(db)
+    return [_serialize_collection(collection, locked=collection.id in locked) for collection in colls]
 
 
 @router.post("/api/vault/collections", response_model=VaultCollectionResponse)
@@ -333,9 +697,86 @@ async def create_new_collection(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Create a new collection."""
-    coll = await create_collection(db, coll_in)
-    return coll
+    """Create a collection, optionally a sealed one.
+
+    A sealed collection is created already unlocked: the caller supplied the
+    passphrase in this same request, so making them type it twice would be noise.
+    """
+    if coll_in.passphrase:
+        collection = await create_sealed_collection(
+            db,
+            coll_in.name,
+            coll_in.passphrase,
+            description=coll_in.description,
+            color=coll_in.color,
+            icon=coll_in.icon,
+            public_name=coll_in.public_name or DEFAULT_SEALED_ALIAS,
+        )
+    else:
+        collection = await create_collection(db, coll_in)
+    return _serialize_collection(collection, locked=False)
+
+
+def _serialize_collection(collection, *, locked: bool) -> dict:
+    """Show the alias, not the name, while a sealed collection is locked.
+
+    The caller decides `locked`: asking Redis once per collection would cost a
+    round-trip per row of the sidebar, when one call per request is enough.
+    """
+    locked = bool(is_sealed_collection(collection) and locked)
+    alias = collection.public_name or DEFAULT_SEALED_ALIAS
+    payload = VaultCollectionResponse.model_validate(collection).model_dump()
+    payload["is_encrypted"] = bool(collection.is_encrypted)
+    payload["public_name"] = alias if collection.is_encrypted else None
+    payload["is_locked"] = bool(locked)
+    if locked:
+        payload["name"] = alias
+        payload["description"] = None
+    return payload
+
+
+@router.post("/api/vault/collections/{coll_id}/unlock", response_model=VaultUnlockResponse)
+async def unlock_collection_route(
+    coll_id: int,
+    body: VaultUnlockRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Supply the passphrase and hold this collection's key for the session."""
+    collection = await db.get(VaultCollection, coll_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Vault not found")
+    if not is_sealed_collection(collection):
+        raise HTTPException(status_code=400, detail="This Vault is not sealed")
+    try:
+        await unlock_collection(collection, body.passphrase)
+    except VaultUnlockError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return VaultUnlockResponse(
+        collection_id=collection.id,
+        name=collection.name,
+        unlocked_collections=sorted(set(await sealed_collection_ids(db)) - await locked_collection_ids(db)),
+        locked_collections=sorted(await locked_collection_ids(db)),
+    )
+
+
+@router.post("/api/vault/collections/{coll_id}/lock", response_model=VaultLockResponse)
+async def lock_collection_route(
+    coll_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Forget the key for this session. The ciphertext on disk is untouched."""
+    await lock_collection(coll_id)
+    return VaultLockResponse(collection_id=coll_id)
+
+
+@router.get("/api/vault/lock-state")
+async def vault_lock_state(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Which sealed collections are open right now."""
+    sealed = await sealed_collection_ids(db)
+    locked = await locked_collection_ids(db)
+    return {"sealed": sorted(sealed), "locked": sorted(locked), "unlocked": sorted(sealed - locked)}
 
 
 @router.delete("/api/vault/collections/{coll_id}")

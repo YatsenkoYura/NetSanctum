@@ -121,6 +121,20 @@ class ExternalFetchSecurityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             validate_music_url("https://soundcloud.com.evil.example/track", resolve=False)
 
+    def test_typed_entry_points_stay_strict_while_a_clicked_url_does_not(self):
+        # A pasted URL can be a typo or a look-alike host, so the whitelist that
+        # guards it must keep refusing unknown hosts.
+        for url in ("https://youtube.com.evil.example/video", "https://example.com/video"):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                PlatformRegistry.require_supported_url(url)
+        # A capture URL came from the user clicking an element on a page they were
+        # already reading: refusing every host without special support here would
+        # defeat the feature, and yt-dlp gets the final say anyway.
+        self.assertIsInstance(
+            PlatformRegistry.get_provider("https://youtube.com.evil.example/video"), GenericProvider
+        )
+        self.assertIsInstance(PlatformRegistry.get_provider("https://example.com/v/1"), GenericProvider)
+
 
 class CoreBoundarySecurityTests(unittest.TestCase):
     @staticmethod

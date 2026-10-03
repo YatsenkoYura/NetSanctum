@@ -3,21 +3,64 @@ import datetime
 import logging
 import re
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
+import redis.asyncio as aioredis
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.modules import module_registry
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked, validate_remote_url
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.schemas import (
+    MAX_IMAGE_BYTES,
+    VaultCaptureCreate,
     VaultCollectionCreate,
     VaultItemCreate,
     VaultItemUpdate,
 )
+from app.modules.vault.tasks import download_vault_video_task
 
 logger = logging.getLogger(__name__)
+
+redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+
+# Tracked download progress, declared by the module manifest.
+MEDIA_PROGRESS_PREFIX = "vault_media"
+
+LOCAL_IMAGE_PREFIXES = (
+    "data:image/gif;base64,",
+    "data:image/jpeg;base64,",
+    "data:image/png;base64,",
+    "data:image/webp;base64,",
+)
+LOCAL_IMAGE_MEDIA_TYPES = {
+    "data:image/gif;base64": "image/gif",
+    "data:image/jpeg;base64": "image/jpeg",
+    "data:image/png;base64": "image/png",
+    "data:image/webp;base64": "image/webp",
+}
+
+
+def decode_data_image(value: str | None) -> tuple[bytes, str] | None:
+    """Decode an embedded `data:image/...;base64,` URL into raw bytes and media type."""
+    import base64
+    import binascii
+
+    if not value:
+        return None
+    header, separator, payload = value.partition(",")
+    media_type = LOCAL_IMAGE_MEDIA_TYPES.get(header.lower())
+    if not separator or not media_type or len(payload) > (MAX_IMAGE_BYTES * 4 // 3) + 4:
+        return None
+    try:
+        content = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not content or len(content) > MAX_IMAGE_BYTES:
+        return None
+    return content, media_type
 
 
 def vault_tag_filter(tag: str):
@@ -139,6 +182,154 @@ async def create_vault_item(session: AsyncSession, item_in: VaultItemCreate) -> 
     session.add(item)
     await session.commit()
     await session.refresh(item)
+    return item
+
+
+async def create_captured_item(
+    session: AsyncSession,
+    capture: VaultCaptureCreate,
+    *,
+    user: Any = None,
+) -> VaultItem:
+    """Store an extension capture exactly like a dashboard paste or bookmark.
+
+    The image travels as a data URL and lands in `og_image`, so the item reuses
+    the existing embedded-image path: the list endpoint omits the bytes and
+    `/api/vault/items/{id}/image` serves them. Metadata fetching is off unless
+    the caller asks for it, because the extension already knows the title.
+    """
+    if capture.kind == "video":
+        return await create_video_capture_item(session, capture, user=user)
+    if not decode_data_image(capture.image or ""):
+        raise ValueError("Capture image must be a supported data:image URL within the size limit")
+
+    content_parts = []
+    if capture.alt_text:
+        content_parts.append(capture.alt_text)
+    if capture.source_url and capture.source_url != capture.page_url:
+        content_parts.append(f"Source: {capture.source_url}")
+    if capture.page_url:
+        content_parts.append(f"Page: {capture.page_url}")
+
+    return await create_vault_item(
+        session,
+        VaultItemCreate(
+            entry_type="bookmark",
+            node_type="image",
+            title=capture.title,
+            content="\n\n".join(content_parts) or None,
+            url=capture.page_url,
+            og_title=capture.title,
+            og_description=capture.alt_text,
+            og_image=capture.image,
+            tags=capture.tags,
+            collection_id=capture.collection_id,
+            parent_id=capture.parent_id,
+            auto_fetch_og=capture.auto_fetch_og,
+        ),
+    )
+
+
+def _is_acceptable_still(image: str | None) -> bool:
+    """A video's preview may be an address, not just embedded bytes.
+
+    A poster is normally a remote URL, and Vault already serves those through
+    its preview proxy. Embedded bytes still have to decode.
+    """
+    if not image:
+        return True
+    if image.startswith("data:"):
+        return bool(decode_data_image(image))
+    parsed = urlparse(image)
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+
+
+async def queue_video_download(
+    session: AsyncSession,
+    item_id: int,
+    url: str,
+    *,
+    quality: str = "720",
+    title: str | None = None,
+) -> str | None:
+    """Ask the worker to pull the video into Vault's storage.
+
+    Dispatch failures are not fatal: the card is already written and simply keeps
+    its "not downloaded" state, which the card renders honestly instead of
+    pretending the video is there.
+    """
+    try:
+        from app.core.task_dispatch import dispatch_tracked_async
+
+        task = await dispatch_tracked_async(
+            download_vault_video_task,
+            redis_client,
+            MEDIA_PROGRESS_PREFIX,
+            {"url": url, "item_id": item_id, "status": "queued", "progress": "0%"},
+            kwargs={"item_id": item_id, "url": url, "quality": quality, "title": title},
+        )
+    except Exception:
+        logger.warning("could not queue a Vault video download for item %s", item_id, exc_info=True)
+        return None
+    return task.id
+
+
+async def create_video_capture_item(
+    session: AsyncSession,
+    capture: VaultCaptureCreate,
+    *,
+    user: Any = None,
+) -> VaultItem:
+    """Record a video capture in Vault and queue the download into Vault's own storage.
+
+    Vault keeps the file itself. Pushing it at another module by default made the
+    two records drift apart — the archive built its own title and thumbnail while
+    Vault held a bare note pointing at a job id that expires with Redis — and it
+    meant picking a video could silently fail for reasons the user never chose.
+    Handing a stored video to another module is a separate, explicit action.
+    """
+    if capture.image and not _is_acceptable_still(capture.image):
+        raise ValueError("Capture image must be a supported data:image URL or an HTTP image address")
+
+    parts = []
+    if capture.source_url and capture.source_url != capture.page_url:
+        # Shown as text on purpose: a blob: or data: provenance string is not an
+        # address, and must never be promoted to the item's clickable link.
+        parts.append(f"Source: {capture.source_url}")
+
+    item = await create_vault_item(
+        session,
+        VaultItemCreate(
+            entry_type="bookmark",
+            node_type="video",
+            title=capture.title,
+            content="\n\n".join(parts) or None,
+            url=capture.page_url or capture.video_url,
+            og_title=capture.title,
+            og_description=capture.alt_text,
+            og_image=capture.image,
+            tags=capture.tags,
+            collection_id=capture.collection_id,
+            parent_id=capture.parent_id,
+            auto_fetch_og=capture.auto_fetch_og,
+        ),
+    )
+    task_id = await queue_video_download(
+        session,
+        item.id,
+        str(capture.video_url),
+        quality=capture.quality,
+        title=capture.title,
+    )
+    # The job id lives in the card's own metadata, not in related_entity_id:
+    # it is a Redis key with a 24h life, and a durable field holding an expired
+    # id is exactly the dead link this flow used to have.
+    item.canvas_data = {
+        **(item.canvas_data or {}),
+        "media_status": "queued" if task_id else "not queued",
+        "media_task": task_id,
+    }
+    await session.commit()
     return item
 
 
@@ -284,39 +475,45 @@ async def list_vault_package_items(session: AsyncSession) -> list[VaultItem]:
 
 
 async def get_vault_stats(session: AsyncSession) -> dict[str, Any]:
-    """Calculate vault statistics summary."""
-    stmt_all = select(VaultItem).where(not VaultItem.is_archived)
-    res = await session.execute(stmt_all)
-    items = list(res.scalars().all())
+    """Calculate vault statistics summary with SQL aggregates (no full-row load)."""
+    active = VaultItem.is_archived.is_(False)
 
-    total = len(items)
-    bookmarks = sum(1 for i in items if i.entry_type == "bookmark")
-    ratings = sum(1 for i in items if i.entry_type == "rating")
-    thoughts = sum(1 for i in items if i.entry_type == "thought")
-    completed = sum(1 for i in items if i.status == "completed")
-    watching = sum(1 for i in items if i.status == "watching")
-    pinned = sum(1 for i in items if i.is_pinned)
+    async def count_where(*conditions) -> int:
+        result = await session.execute(select(func.count(VaultItem.id)).where(*conditions))
+        return result.scalar() or 0
 
-    # Archived count
-    stmt_arch = select(func.count(VaultItem.id)).where(VaultItem.is_archived)
-    arch_res = await session.execute(stmt_arch)
-    archived_count = arch_res.scalar() or 0
+    total = await count_where(active)
+    bookmarks = await count_where(active, VaultItem.entry_type == "bookmark")
+    ratings = await count_where(active, VaultItem.entry_type == "rating")
+    thoughts = await count_where(active, VaultItem.entry_type == "thought")
+    completed = await count_where(active, VaultItem.status == "completed")
+    watching = await count_where(active, VaultItem.status == "watching")
+    pinned = await count_where(active, VaultItem.is_pinned.is_(True))
+    archived_count = await count_where(VaultItem.is_archived.is_(True))
 
-    scores = [i.score for i in items if i.score is not None]
-    avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+    avg_result = await session.execute(
+        select(func.avg(VaultItem.score)).where(active, VaultItem.score.is_not(None))
+    )
+    avg_value = avg_result.scalar()
+    avg_score = round(float(avg_value), 1) if avg_value is not None else 0.0
 
-    # Categories breakdown
+    # Categories breakdown (group by the bare column: repeating a coalesce()
+    # in SELECT and GROUP BY yields distinct bind params, which PostgreSQL
+    # rejects with a GroupingError).
     categories_breakdown: dict[str, int] = {}
-    for i in items:
-        cat = i.category or "other"
-        categories_breakdown[cat] = categories_breakdown.get(cat, 0) + 1
+    cat_rows = await session.execute(
+        select(VaultItem.category, func.count(VaultItem.id)).where(active).group_by(VaultItem.category)
+    )
+    for category, count in cat_rows.all():
+        categories_breakdown[category or "other"] = count
 
-    # Tags frequency
+    # Tags frequency (tags column only — full rows stay out of memory)
     tag_counts: dict[str, int] = {}
-    for i in items:
-        if i.tags:
-            for t in i.tags:
-                tag_counts[t] = tag_counts.get(t, 0) + 1
+    tag_rows = await session.execute(select(VaultItem.tags).where(active))
+    for (tags,) in tag_rows.all():
+        if tags:
+            for tag in tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
     sorted_tags = [
         {"tag": k, "count": v} for k, v in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:15]

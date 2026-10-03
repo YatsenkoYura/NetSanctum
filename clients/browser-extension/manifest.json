@@ -1,0 +1,79 @@
+{
+  "manifest_version": 2,
+  "name": "NetSanctum Capture",
+  "short_name": "NetSanctum",
+  "version": "1.0.0",
+  "description": "Save the page under your finger to NetSanctum Vault: the media element you touched, or a screenshot of everything else.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "contextMenus",
+    "storage",
+    "notifications",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "errors.js",
+      "api.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "Save to NetSanctum Vault"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "errors.js",
+        "api.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": false
+    }
+  ],
+  "commands": {
+    "arm-capture": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Dim the page and pick what to save to NetSanctum Vault"
+    },
+    "capture-page": {
+      "description": "Save the whole visible tab to NetSanctum Vault"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "netsanctum-capture@netsanctum.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}
