@@ -1178,7 +1178,7 @@ async def trigger_download(
     if not _is_allowed_lib_url(req.url):
         raise HTTPException(status_code=400, detail="Unsupported source URL")
     if req.token:
-        from app.modules.settings import service as settings_service
+        from app.modules.system.settings import service as settings_service
 
         await settings_service.upsert_setting(
             db,
@@ -1596,7 +1596,7 @@ async def get_settings_ui(
     """Render the alllib settings panel (HTMX partial)."""
     from sqlalchemy import and_
 
-    from app.modules.settings.models import Setting
+    from app.modules.system.settings.models import Setting
 
     result = await db.execute(
         select(Setting.value).where(
@@ -1655,8 +1655,8 @@ async def save_settings(
     """Save alllib module settings (auth token)."""
     from sqlalchemy import and_
 
-    from app.modules.settings import service as settings_service
-    from app.modules.settings.models import Setting
+    from app.modules.system.settings import service as settings_service
+    from app.modules.system.settings.models import Setting
 
     form = await request.form()
     token_input = (form.get("lib_auth_token") or "").strip()
@@ -1722,7 +1722,7 @@ async def save_token_external(payload: ExternalTokenRequest, db: AsyncSession = 
 
     token = payload.token.strip()
     if token and len(token) > 20 and (token.startswith("eyJhbG") or token.startswith("eyJ0eX")):
-        from app.modules.settings import service as settings_service
+        from app.modules.system.settings import service as settings_service
 
         await settings_service.upsert_setting(
             db,

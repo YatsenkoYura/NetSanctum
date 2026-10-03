@@ -11,7 +11,7 @@ from app.modules.miku.schemas import (
     MikuProviderSettingsUpdate,
     MikuProviderStatus,
 )
-from app.modules.settings.service import resolve_many, upsert_setting
+from app.modules.system.settings.service import resolve_many, upsert_setting
 
 PROVIDER_KINDS = ("llm", "stt", "tts")
 DEFAULT_MODELS = {"llm": "gpt-4o-mini", "stt": "whisper-1", "tts": "tts-1"}

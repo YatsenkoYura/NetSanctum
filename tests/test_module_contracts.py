@@ -420,14 +420,26 @@ class ModuleManifestTests(unittest.TestCase):
             for path in (modules_root / source_module).glob("*.py"):
                 tree = ast.parse(path.read_text(), filename=str(path))
                 imported_modules = {
-                    node.module.split(".")[2]
+                    node.module
                     for node in ast.walk(tree)
                     if isinstance(node, ast.ImportFrom)
                     and node.module
                     and node.module.startswith("app.modules.")
                 }
-                forbidden = imported_modules - {source_module, "settings"}
-                self.assertFalse(forbidden, f"{path} imports product modules: {sorted(forbidden)}")
+                # Settings is the one module a product module may read; it now
+                # lives inside the system group, so compare full module paths.
+                # Submodules of the source module itself stay allowed.
+                own = f"app.modules.{source_module}"
+                allowed_prefixes = (own, "app.modules.system.settings")
+                forbidden = sorted(
+                    module_path
+                    for module_path in imported_modules
+                    if not any(
+                        module_path == prefix or module_path.startswith(f"{prefix}.")
+                        for prefix in allowed_prefixes
+                    )
+                )
+                self.assertFalse(forbidden, f"{path} imports product modules: {forbidden}")
 
 
 class ModuleActivationSmokeTests(unittest.TestCase):

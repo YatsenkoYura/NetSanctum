@@ -9,9 +9,9 @@ from fastapi import HTTPException
 from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
 
-from app.modules.storage.capabilities import resolve_package_resources as resolve_storage_resources
-from app.modules.storage.module import MODULE as STORAGE_MODULE
-from app.modules.storage.router import get_storage_sync_manifest, storage_dashboard
+from app.modules.system.storage.capabilities import resolve_package_resources as resolve_storage_resources
+from app.modules.system.storage.module import MODULE as STORAGE_MODULE
+from app.modules.system.storage.router import get_storage_sync_manifest, storage_dashboard
 from app.modules.vault.capabilities import resolve_package_resources as resolve_vault_resources
 from app.modules.vault.module import MODULE as VAULT_MODULE
 from app.modules.vault.router import get_package_items, get_vault_sync_manifest
@@ -136,7 +136,7 @@ class StoragePackageTests(unittest.TestCase):
     def test_storage_declares_strict_package_provider(self):
         self.assertEqual(("storage_manager",), STORAGE_MODULE.package_prefixes)
         self.assertEqual(
-            "app.modules.storage.capabilities:resolve_package_resources",
+            "app.modules.system.storage.capabilities:resolve_package_resources",
             STORAGE_MODULE.package_resolver,
         )
         with self.assertRaises(ValueError):
@@ -165,10 +165,10 @@ class StoragePackageTests(unittest.TestCase):
         )
         with (
             patch(
-                "app.modules.storage.router.asyncio.to_thread",
+                "app.modules.system.storage.router.asyncio.to_thread",
                 AsyncMock(return_value={"modules": [], "large_files": []}),
             ),
-            patch("app.modules.storage.router.templates.TemplateResponse") as render,
+            patch("app.modules.system.storage.router.templates.TemplateResponse") as render,
         ):
             run(storage_dashboard(request, package_id="storage_manager", user=object()))
 
@@ -181,7 +181,7 @@ class StoragePackageTests(unittest.TestCase):
 
     def test_storage_read_only_template_hides_all_mutation_controls(self):
         environment = Environment(
-            loader=FileSystemLoader(ROOT / "app/modules/storage/templates"),
+            loader=FileSystemLoader(ROOT / "app/modules/system/storage/templates"),
             autoescape=True,
         )
         template = environment.get_template("storage_content.html")

@@ -27,7 +27,7 @@ redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_response
 from app.modules.music.schemas import DownloadRequest
 from app.modules.music.security import validate_music_url
 from app.modules.music.tasks import process_youtube_url_task
-from app.modules.settings import service as settings_service
+from app.modules.system.settings import service as settings_service
 
 
 def _get_lang(request: Request) -> str:

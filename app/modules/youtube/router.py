@@ -14,8 +14,8 @@ from app.core.database import get_db
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked, validate_remote_url
 from app.core.security import get_current_user
 from app.core.templates import templates
-from app.modules.settings import service as settings_service
-from app.modules.settings.models import Setting
+from app.modules.system.settings import service as settings_service
+from app.modules.system.settings.models import Setting
 from app.modules.youtube.services import (
     YouTubeAPIError,
     YouTubeClient,

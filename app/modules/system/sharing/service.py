@@ -2,7 +2,7 @@ import hashlib
 import hmac
 from datetime import UTC, datetime
 
-from app.modules.sharing.models import ShareLink
+from app.modules.system.sharing.models import ShareLink
 
 MAX_SESSION_SECONDS = 86400 * 7
 MAX_SHARE_SESSIONS = 32

@@ -5,8 +5,8 @@ MODULE = ModuleSpec(
     version="0.1.0",
     title_en="Settings",
     title_ru="Настройки",
-    router="app.modules.settings.router:router",
-    models="app.modules.settings.models",
+    router="app.modules.system.settings.router:router",
+    models="app.modules.system.settings.models",
     migrations=MigrationSpec(
         path="migrations",
         baseline_revision="settings_0001",
@@ -14,6 +14,6 @@ MODULE = ModuleSpec(
         legacy_tables=("settings",),
     ),
     templates="templates",
-    i18n="app.modules.settings.i18n",
+    i18n="app.modules.system.settings.i18n",
     required=True,
 )

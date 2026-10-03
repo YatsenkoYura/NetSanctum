@@ -16,16 +16,16 @@ from app.core.modules import ModuleRegistry
 from app.core.security import OPERATOR_SHARE_COOKIE, get_operator_share_id
 from app.modules.alllib.share import AllLibShareProvider
 from app.modules.music.share import MusicShareProvider, _selected_songs
-from app.modules.sharing import router as sharing_router
-from app.modules.sharing.router import (
+from app.modules.system.sharing import router as sharing_router
+from app.modules.system.sharing.router import (
     _dispatch_shared_api,
     _harden_shared_response,
     _render_shared_application,
     shared_application,
     shared_module_api,
 )
-from app.modules.sharing.schemas import ShareCreate
-from app.modules.sharing.service import (
+from app.modules.system.sharing.schemas import ShareCreate
+from app.modules.system.sharing.service import (
     CLEAR_SHARE_SESSIONS_SCRIPT,
     CREATE_SESSION_SCRIPT,
     MAX_SHARE_SESSIONS,
@@ -504,7 +504,7 @@ class ShareProviderTests(unittest.TestCase):
         self.assertEqual(["video-2", "video-3"], [video.id for video in selected_videos])
 
     def test_sharing_ui_builds_multi_type_selectors_and_bulk_revoke(self):
-        template = (ROOT / "app/modules/sharing/templates/shares_dashboard.html").read_text()
+        template = (ROOT / "app/modules/system/sharing/templates/shares_dashboard.html").read_text()
 
         self.assertIn("input.dataset.selectorKey", template)
         self.assertIn("revokeAllShares", template)
@@ -524,7 +524,7 @@ class ShareProviderTests(unittest.TestCase):
     def test_shared_video_template_uses_only_scoped_resource_urls(self):
         template = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
         provider = (ROOT / "app/modules/video_archiver/share.py").read_text()
-        router = (ROOT / "app/modules/sharing/router.py").read_text()
+        router = (ROOT / "app/modules/system/sharing/router.py").read_text()
 
         self.assertIn('extends module_base|default("base.html")', template)
         self.assertNotIn("handle_api", provider)

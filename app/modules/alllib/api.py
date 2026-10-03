@@ -16,7 +16,7 @@ from sqlalchemy import and_, select
 
 from app.core.database import SyncSessionLocal
 from app.core.secret_values import decrypt_secret_value
-from app.modules.settings.models import Setting
+from app.modules.system.settings.models import Setting
 
 logger = logging.getLogger(__name__)
 

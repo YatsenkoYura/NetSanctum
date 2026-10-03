@@ -41,6 +41,22 @@
 .tile-card:hover { border-color:#3f3f46; transform:translateY(-1px); }
 .tile-card.pinned { border-color:#2dd4bf; }
 
+/* Card-stack grip: bottom-center handle to drag a card onto another one. */
+.tile-grip { position:absolute; left:50%; bottom:2px; transform:translateX(-50%); z-index:5; opacity:0; cursor:grab; font-size:10px; line-height:1.6; color:#71717a; background:rgba(0,0,0,.75); border:1px solid #27272a; padding:0 9px; user-select:none; }
+.tile-card:hover .tile-grip { opacity:.9; }
+.tile-grip:active { cursor:grabbing; }
+
+/* Collapsed stack bar appended under the cover tile. */
+.tile-stackbar { border-top:1px solid #27272a; background:#0c0c0e; }
+.tile-stacktoggle { display:flex; align-items:center; gap:6px; width:100%; padding:5px 12px; font-size:10px; font-weight:800; color:#a1a1aa; text-transform:uppercase; background:none; border:none; cursor:pointer; }
+.tile-stacktoggle:hover { color:#2dd4bf; }
+.stack-child { display:flex; align-items:center; gap:6px; padding:5px 12px 5px 18px; border-top:1px solid #1c1c1f; font-size:11px; color:#d4d4d8; }
+.stack-child .stack-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.stack-child .stack-title:hover { color:#2dd4bf; }
+.stack-child button { flex-shrink:0; font-size:10px; font-weight:700; color:#71717a; background:none; border:none; cursor:pointer; text-transform:uppercase; }
+.stack-child button:hover { color:#fff; }
+.stack-child button.stack-out:hover { color:#f87171; }
+
 .drag-over-active { border:2px dashed #2dd4bf !important; background:rgba(45,212,191,.05) !important; }
 
 /* Plus Dropdown Menu */
@@ -948,12 +964,16 @@ function __vaultAttachRootDrop() {
   if (!root || root.dataset.vaultDropBound) return;
   root.dataset.vaultDropBound = '1';
 
-  root.addEventListener('dragover', (e) => { e.preventDefault(); root.classList.add('drag-over-active'); });
+  root.addEventListener('dragover', (e) => {
+    if (window.vaultDragCardId) return;
+    e.preventDefault(); root.classList.add('drag-over-active');
+  });
   root.addEventListener('dragleave', () => { root.classList.remove('drag-over-active'); });
   root.addEventListener('drop', async (e) => {
     if (readOnlyMode) return;
     e.preventDefault();
     root.classList.remove('drag-over-active');
+    if (window.vaultDragCardId) return;
 
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
@@ -1245,6 +1265,14 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
   </div>`;
 }
 
+// Bottom-center stack grip: grab a card here to drop it onto another one.
+// Hidden for locked cards (restacking them is refused with 423 anyway) and
+// in read-only mode.
+function stackGripHtml(item, itemId) {
+  if (readOnlyMode || item.is_locked) return '';
+  return `<span class="tile-grip" draggable="true" data-grip="${itemId}" title="Перетащить в стопку">⠿</span>`;
+}
+
 /* A media tile is the picture, at most one line of caption, and the shared footer. */
 function mediaTileHtml(item, itemId, displayImg, clickHandler) {
   const isVideo = item.node_type === 'video';
@@ -1268,8 +1296,8 @@ function mediaTileHtml(item, itemId, displayImg, clickHandler) {
     }
   }
 
-  return `
-  <div class="tile-card sm:col-span-2 lg:col-span-2 ${item.is_pinned ? 'pinned' : ''}">
+    return `
+    <div class="tile-card sm:col-span-2 lg:col-span-2 ${item.is_pinned ? 'pinned' : ''}" data-tile-id="${itemId}">
     <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center relative"
          style="min-height: 120px" onclick="${clickHandler}">
       ${displayImg
@@ -1279,6 +1307,7 @@ function mediaTileHtml(item, itemId, displayImg, clickHandler) {
     </div>
     ${caption ? `<div class="px-3 pt-2 text-xs text-zinc-200 truncate cursor-pointer hover:text-teal-400" onclick="${clickHandler}">${escapeHtml(caption)}</div>` : ''}
     ${tileFooterHtml(item, itemId, clickHandler, true)}
+    ${stackGripHtml(item, itemId)}
   </div>`;
 }
 
@@ -2614,7 +2643,25 @@ function renderTiles(items) {
   const grid = document.getElementById('tiles-grid');
   document.getElementById('vault-empty').classList.toggle('hidden', items.length > 0 || activeView !== 'tiles');
 
-  const sortedItems = [...items].sort((a, b) => {
+  // Card stacks: children (parent_id set, cover on this page) collapse under
+  // their cover instead of rendering as tiles. Orphan children (cover off-page)
+  // stay visible as plain tiles so no card ever vanishes.
+  const byId = new Map(items.map(card => [Number(card.id), card]));
+  const kidsByParent = {};
+  const tops = [];
+  items.forEach(card => {
+    const pid = card.parent_id === null || card.parent_id === undefined ? null : Number(card.parent_id);
+    if (pid !== null && byId.has(pid)) {
+      (kidsByParent[pid] || (kidsByParent[pid] = [])).push(card);
+    } else {
+      tops.push(card);
+    }
+  });
+  // The dropped card lands inside last: entry order, oldest first.
+  Object.values(kidsByParent).forEach(kids => kids.sort((a, b) =>
+    new Date(a.created_at) - new Date(b.created_at) || Number(a.id) - Number(b.id)));
+
+  const sortedItems = tops.sort((a, b) => {
     if (a.is_pinned !== b.is_pinned) return b.is_pinned ? 1 : -1;
     return new Date(b.created_at) - new Date(a.created_at);
   });
@@ -2680,7 +2727,7 @@ function renderTiles(items) {
     const escapedUrl = escapeAttr(itemUrl);
 
     return `
-    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}">
+    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}">
       ${displayImg ? `
         <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" onclick="${clickHandler}">
           <img src="${escapeAttr(displayImg)}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
@@ -2703,12 +2750,18 @@ function renderTiles(items) {
 
         ${tileFooterHtml(item, itemId, clickHandler, false)}
       </div>
+      ${stackGripHtml(item, itemId)}
     </div>`;
   }).join('');
 
-  // Old spans die with the old nodes; every fresh card is measured now and
-  // then kept correct by the observer (late/broken images, fonts, edits).
+  // Old spans die with the old nodes; stack bars go on before measuring so
+  // covers reserve their height. Searches force every stack open.
   vaultUnobserveTiles();
+  const searchActive = document.getElementById('vault-search').value.trim() !== '';
+  Object.keys(kidsByParent).forEach(pid => {
+    const tile = grid.querySelector(`[data-tile-id="${pid}"]`);
+    if (tile) tile.appendChild(buildStackBar(byId.get(Number(pid)), kidsByParent[pid], searchActive));
+  });
   grid.querySelectorAll('.tile-card').forEach(card => {
     resizeGridItem(card);
     vaultObserveTile(card);
@@ -2723,6 +2776,134 @@ async function deleteItem(id) {
   if (!confirm('Удалить?')) return;
   const deleted = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {method:'DELETE'}, 'Не удалось удалить карточку');
   if (deleted) { loadWorkspace(); loadVaultSummary(); }
+}
+
+// ── CARD STACKS (collections inside one workspace) ───────────────────────
+// Grab a card by the bottom-center grip and drop it onto another card: the
+// target stays the cover (first), the dropped card lands inside last. Both
+// stay separate entities (parent_id link only), search still sees every
+// card's text, and unstacking restores the tile.
+
+var vaultDragCardId = null;
+var vaultExpandedStacks = {};
+
+function toggleStack(coverId) {
+  vaultExpandedStacks[coverId] = !vaultExpandedStacks[coverId];
+  renderTiles(currentItems);
+}
+
+function buildStackBar(cover, kids, forceOpen) {
+  const open = forceOpen || vaultExpandedStacks[cover.id];
+  const wrap = document.createElement('div');
+  wrap.className = 'tile-stackbar';
+  const toggle = document.createElement('button');
+  toggle.className = 'tile-stacktoggle';
+  toggle.textContent = `${open ? '▾' : '▸'} ▤ ${kids.length} внутри`;
+  toggle.addEventListener('click', () => toggleStack(cover.id));
+  wrap.appendChild(toggle);
+  if (open) {
+    kids.forEach(kid => {
+      const row = document.createElement('div');
+      row.className = 'stack-child';
+      const title = document.createElement('span');
+      title.className = 'stack-title';
+      title.textContent = kid.title || kid.og_title || `Карточка #${kid.id}`;
+      title.addEventListener('click', () => openVaultItemView(window._vaultCache[kid.id] || kid));
+      const openBtn = document.createElement('button');
+      openBtn.textContent = 'Открыть';
+      openBtn.addEventListener('click', () => openVaultItemView(window._vaultCache[kid.id] || kid));
+      const outBtn = document.createElement('button');
+      outBtn.className = 'stack-out';
+      outBtn.textContent = '✕';
+      outBtn.title = 'Убрать из стопки';
+      outBtn.addEventListener('click', () => vaultUnstack(kid.id));
+      row.append(title, openBtn, outBtn);
+      wrap.appendChild(row);
+    });
+  }
+  return wrap;
+}
+
+async function vaultUnstack(id) {
+  const freed = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent_id: null })
+  }, 'Не удалось разобрать стопку');
+  if (!freed) return;
+  updateCachedItem(freed);
+  loadWorkspace();
+}
+
+function vaultStackRefusal(fromId, toId) {
+  const from = window._vaultCache[fromId];
+  const to = window._vaultCache[toId];
+  if (!from || !to) return 'Карточка уже не на экране';
+  if (from.is_locked || to.is_locked) return 'Стопки собираются только в открытом воркспейсе';
+  if (from.sealed_payload || to.sealed_payload) return 'Зашифрованные карточки в стопки не собираются';
+  if ((from.collection_id ?? null) !== (to.collection_id ?? null)) return 'Стопка живёт внутри одного воркспейса';
+  if (to.parent_id !== null && to.parent_id !== undefined) return 'Бросайте на обложку стопки, а не внутрь неё';
+  return null;
+}
+
+function vaultStackTargetValid(fromId, toId) {
+  if (!Number.isInteger(fromId) || !Number.isInteger(toId) || fromId === toId) return false;
+  return vaultStackRefusal(fromId, toId) === null;
+}
+
+async function vaultStackDrop(fromId, toId) {
+  if (fromId === toId) return;
+  const refusal = vaultStackRefusal(fromId, toId);
+  if (refusal) { showToast(refusal, true); return; }
+  const moved = await mutationJson(`/api/vault/items/${pathSegment(fromId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent_id: toId })
+  }, 'Не удалось собрать стопку');
+  if (!moved) return;
+  updateCachedItem(moved);
+  vaultExpandedStacks[toId] = true;
+  loadWorkspace();
+}
+
+function __vaultBindCardStacks() {
+  const grid = document.getElementById('tiles-grid');
+  if (!grid || grid.dataset.vaultStackBound) return;
+  grid.dataset.vaultStackBound = '1';
+  grid.addEventListener('dragstart', function (e) {
+    const grip = e.target.closest ? e.target.closest('[data-grip]') : null;
+    if (!grip || readOnlyMode) return;
+    vaultDragCardId = Number(grip.dataset.grip);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('application/x-vault-card', String(vaultDragCardId)); } catch (err) {}
+  });
+  grid.addEventListener('dragover', function (e) {
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    const toId = tile ? Number(tile.dataset.tileId) : NaN;
+    if (!tile || vaultStackTargetValid(vaultDragCardId, toId) !== true) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    tile.classList.add('drag-over-active');
+  });
+  grid.addEventListener('dragleave', function (e) {
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    if (tile) tile.classList.remove('drag-over-active');
+  });
+  grid.addEventListener('drop', function (e) {
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    grid.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
+    const toId = tile ? Number(tile.dataset.tileId) : NaN;
+    const fromId = vaultDragCardId;
+    vaultDragCardId = null;
+    if (!tile || !Number.isInteger(toId)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    vaultStackDrop(fromId, toId);
+  });
+  grid.addEventListener('dragend', function () {
+    vaultDragCardId = null;
+    grid.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
+  });
 }
 
 async function exportItems() {
@@ -2819,6 +3000,7 @@ function handleSheetPaste(e) {
 function __vaultBoot() {
   __vaultAttachRootDrop();
   __vaultBindWorkspaceDrop();
+  __vaultBindCardStacks();
   if (!window.__vaultHashBound) {
     window.__vaultHashBound = true;
     window.addEventListener('hashchange', onVaultHashChange);

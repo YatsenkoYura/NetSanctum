@@ -216,7 +216,7 @@ class CoreBoundarySecurityTests(unittest.TestCase):
 
     def test_private_share_secret_is_fragment_bootstrapped(self):
         root = Path(__file__).resolve().parents[1]
-        router = (root / "app/modules/sharing/router.py").read_text()
+        router = (root / "app/modules/system/sharing/router.py").read_text()
         bootstrap = (root / "static/share-bootstrap.js").read_text()
 
         self.assertIn('f"/s/{share.id}#{secret}"', router)

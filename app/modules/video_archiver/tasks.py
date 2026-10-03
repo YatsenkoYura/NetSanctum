@@ -24,7 +24,7 @@ from app.core.ytdlp_pipeline import (
     extract_info,
     is_youtube_single_video_url,
 )
-from app.modules.settings.models import Setting
+from app.modules.system.settings.models import Setting
 from app.modules.video_archiver.compression import (
     COMPRESSION_PROFILE,
     run_compression_batch,

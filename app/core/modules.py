@@ -90,6 +90,26 @@ class ModuleRegistry:
             )
             if is_package
         )
+        # System group: settings/storage/sharing live one level deeper under
+        # app/modules/system/ but keep their module ids. Table ownership and
+        # manifests are unchanged — only the package path moved. The container
+        # itself holds no MODULE and is skipped, not failed.
+        discovered_packages = [p for p in discovered_packages if p != "app.modules.system"]
+        try:
+            import app.modules.system as system_package
+
+            discovered_packages.extend(
+                sorted(
+                    module_name
+                    for _importer, module_name, is_package in pkgutil.iter_modules(
+                        system_package.__path__, prefix="app.modules.system."
+                    )
+                    if is_package
+                )
+            )
+        except ImportError:
+            pass
+        discovered_packages = sorted(set(discovered_packages))
         for package in discovered_packages:
             package_id = package.rsplit(".", 1)[-1]
             if (

@@ -23,9 +23,9 @@ from app.core.security import (
     verify_password,
 )
 from app.core.templates import templates
-from app.modules.sharing.models import ShareLink
-from app.modules.sharing.schemas import ShareCreate
-from app.modules.sharing.service import (
+from app.modules.system.sharing.models import ShareLink
+from app.modules.system.sharing.schemas import ShareCreate
+from app.modules.system.sharing.service import (
     CLEAR_SHARE_SESSIONS_SCRIPT,
     CREATE_SESSION_SCRIPT,
     MAX_SHARE_SESSIONS,

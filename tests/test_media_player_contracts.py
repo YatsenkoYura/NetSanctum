@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class MediaPlayerContractTests(unittest.TestCase):
     def test_core_and_shared_layouts_load_common_player_controller(self):
         base = (ROOT / "app/core/templates/base.html").read_text()
-        shared = (ROOT / "app/modules/sharing/templates/shared_base.html").read_text()
+        shared = (ROOT / "app/modules/system/sharing/templates/shared_base.html").read_text()
         controller = (ROOT / "app/core/templates/media_player_script.html").read_text()
 
         self.assertIn('{% include "media_player_script.html" %}', base)
@@ -69,7 +69,7 @@ class MediaPlayerContractTests(unittest.TestCase):
     def test_youtube_persistence_cleans_up_bindings_and_preserves_autoplay_intent(self):
         base = (ROOT / "app/core/templates/base.html").read_text()
         youtube = (ROOT / "app/modules/youtube/templates/youtube_watch.html").read_text()
-        shared_base = (ROOT / "app/modules/sharing/templates/shared_base.html").read_text()
+        shared_base = (ROOT / "app/modules/system/sharing/templates/shared_base.html").read_text()
 
         self.assertIn("player._youtubePageBindings?.abort()", base)
         self.assertIn("player._netSanctumPlayerBindings?.abort()", base)

@@ -7,9 +7,9 @@ MODULE = ModuleSpec(
     title_ru="Хранилище",
     dashboard_url="/storage/dashboard",
     order=60,
-    router="app.modules.storage.router:router",
+    router="app.modules.system.storage.router:router",
     templates="templates",
-    i18n="app.modules.storage.i18n",
+    i18n="app.modules.system.storage.i18n",
     package_prefixes=("storage_manager",),
-    package_resolver="app.modules.storage.capabilities:resolve_package_resources",
+    package_resolver="app.modules.system.storage.capabilities:resolve_package_resources",
 )

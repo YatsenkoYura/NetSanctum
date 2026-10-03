@@ -207,7 +207,7 @@ class TrackedDispatchTests(unittest.TestCase):
 class ControlCenterContractTests(unittest.TestCase):
     def test_control_endpoints_require_current_user(self):
         from app.core.security import get_current_user
-        from app.modules.settings.router import router
+        from app.modules.system.settings.router import router
 
         control_routes = [
             route

@@ -35,7 +35,7 @@ from app.core.ytdlp_pipeline import (
 from app.modules.music.models import Playlist, PlaylistSong, Song
 from app.modules.music.schemas import MusicModel, VideoModel
 from app.modules.music.security import MUSIC_IMAGE_HOSTS, validate_music_url
-from app.modules.settings.models import Setting
+from app.modules.system.settings.models import Setting
 
 logger = logging.getLogger(__name__)
 

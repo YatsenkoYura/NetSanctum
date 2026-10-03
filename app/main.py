@@ -84,7 +84,7 @@ async def lifespan(application: FastAPI):
     # Encrypt secret settings created by older versions before serving requests.
     try:
         from app.core.secret_values import rotate_secret_value, secret_value_uses_current_key
-        from app.modules.settings.models import Setting
+        from app.modules.system.settings.models import Setting
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Setting).where(Setting.is_secret.is_(True)))
@@ -100,7 +100,7 @@ async def lifespan(application: FastAPI):
 
     # 3. Ensure every default exists without overwriting operator changes.
     try:
-        from app.modules.settings.service import ensure_setting
+        from app.modules.system.settings.service import ensure_setting
 
         async with AsyncSessionLocal() as session:
             defaults = (
@@ -253,7 +253,7 @@ async def _get_lang(request: Request) -> str:
     try:
         from sqlalchemy import select
 
-        from app.modules.settings.models import Setting
+        from app.modules.system.settings.models import Setting
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(Setting).where(Setting.key == "system_language"))

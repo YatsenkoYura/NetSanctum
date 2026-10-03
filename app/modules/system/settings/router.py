@@ -36,8 +36,8 @@ from app.core.modules import module_registry
 from app.core.secret_values import decrypt_secret_value, encrypt_secret_value
 from app.core.security import get_current_user
 from app.core.templates import templates
-from app.modules.settings import schemas, service
-from app.modules.settings.schemas import (
+from app.modules.system.settings import schemas, service
+from app.modules.system.settings.schemas import (
     SettingBulkCreate,
     SettingCreate,
     SettingListResponse,

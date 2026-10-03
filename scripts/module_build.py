@@ -30,11 +30,25 @@ def generate_catalog(project: Path) -> dict:
     for _importer, package, is_package in pkgutil.iter_modules(
         modules_package.__path__, prefix="app.modules."
     ):
-        if not is_package:
+        if not is_package or package == "app.modules.system":
             continue
         spec = importlib.import_module(f"{package}.module").MODULE
         if spec.bundled:
             specs.append(spec)
+    # System group lives one level deeper; ids are unchanged.
+    try:
+        import app.modules.system as system_package
+
+        for _importer, package, is_package in pkgutil.iter_modules(
+            system_package.__path__, prefix="app.modules.system."
+        ):
+            if not is_package:
+                continue
+            spec = importlib.import_module(f"{package}.module").MODULE
+            if spec.bundled:
+                specs.append(spec)
+    except ImportError:
+        pass
 
     modules = {}
     for spec in sorted(specs, key=lambda item: item.id):

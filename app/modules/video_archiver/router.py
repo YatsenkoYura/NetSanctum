@@ -22,7 +22,7 @@ from app.core.security import get_current_user
 from app.core.storage import LocalStorage, get_storage, stream_size_sha256
 from app.core.task_dispatch import dispatch_tracked_async, is_terminal_task_payload
 from app.core.templates import templates
-from app.modules.settings.models import Setting
+from app.modules.system.settings.models import Setting
 from app.modules.video_archiver.compression import (
     COMPRESSION_LOCK_KEY,
     COMPRESSION_LOCK_TTL,
@@ -112,7 +112,7 @@ async def trigger_download(
     req: DownloadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)
 ):
     """Schedules a video/playlist download task with automatic platform detection."""
-    from app.modules.settings import service as settings_service
+    from app.modules.system.settings import service as settings_service
 
     if req.cookies_text and req.cookie_platform:
         key = f"{req.cookie_platform}_cookies"
@@ -487,7 +487,7 @@ async def start_youtube_oauth(user=Depends(get_current_user)):
 @router.get("/api/video-archiver/cookies/{platform}")
 async def get_cookies(platform: str, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """API: Gets saved cookies and auth status for a platform."""
-    from app.modules.settings.models import Setting
+    from app.modules.system.settings.models import Setting
 
     key = f"{platform}_cookies"
     res = await db.execute(
@@ -515,7 +515,7 @@ async def clear_cookies(platform: str, db: AsyncSession = Depends(get_db), user=
     """API: Clears saved cookies for a platform."""
     import os
 
-    from app.modules.settings.models import Setting
+    from app.modules.system.settings.models import Setting
 
     key = f"{platform}_cookies"
     await revoke_browser_credentials(platform)

@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.secret_values import encrypt_secret_value
-from app.modules.settings.models import Setting
+from app.modules.system.settings.models import Setting
 
 
 # ── Type casting helper ──────────────────────────────────

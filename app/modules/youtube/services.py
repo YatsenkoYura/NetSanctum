@@ -23,7 +23,7 @@ from app.core.ytdlp_pipeline import (
     classify_ytdlp_error,
     extract_info,
 )
-from app.modules.settings import service as settings_service
+from app.modules.system.settings import service as settings_service
 
 ENTITY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{2,255}$")
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")

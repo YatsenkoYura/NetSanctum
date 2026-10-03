@@ -149,17 +149,36 @@
                 <!-- Desktop Module Switcher (Horizontal stark tabs) -->
                 <div class="hidden md:flex items-center gap-2 border-l-2 border-zinc-800 pl-4">
                     {% if navigation_modules %}
-                    {% for mod in navigation_modules %}
+                    {% for mod in navigation_modules if mod.name not in ('storage', 'sharing') %}
                     <a href="{{ mod.dashboard_url }}"
                         class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase whitespace-nowrap">
                         {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
                     </a>
                     {% endfor %}
                     {% endif %}
-                    <a href="/dashboard"
-                        class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase whitespace-nowrap">
-                        {% if lang == 'ru' %}Конфигурация{% else %}Configuration{% endif %}
-                    </a>
+                    <!-- System group: /dashboard + storage + sharing under one button.
+                         The trio lives in app/modules/system/ but keeps its own
+                         module ids and URLs; only the nav groups them. -->
+                    <details class="relative">
+                        <summary
+                            class="text-xs font-mono font-bold tracking-wider px-3 py-1.5 bg-zinc-900 border border-zinc-700 text-teal-400 rounded-none hover:bg-zinc-800 transition-colors uppercase whitespace-nowrap cursor-pointer list-none">
+                            {% if lang == 'ru' %}Система{% else %}System{% endif %} ▾
+                        </summary>
+                        <div class="absolute left-0 top-full mt-1 min-w-44 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
+                            <a href="/dashboard"
+                                class="block px-3 py-1.5 text-[11px] font-mono font-bold text-zinc-300 hover:bg-zinc-900 hover:text-teal-400 uppercase">
+                                {% if lang == 'ru' %}Конфигурация{% else %}Configuration{% endif %}
+                            </a>
+                            {% if navigation_modules %}
+                            {% for mod in navigation_modules if mod.name in ('storage', 'sharing') %}
+                            <a href="{{ mod.dashboard_url }}"
+                                class="block px-3 py-1.5 text-[11px] font-mono font-bold text-zinc-300 hover:bg-zinc-900 hover:text-teal-400 uppercase">
+                                {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
+                            </a>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                    </details>
                 </div>
                 {% endif %}
             </div>
@@ -172,15 +191,22 @@
                     <select onchange="if(this.value && !window.netSanctumNavigate?.(this.value)) window.location.href=this.value;"
                         class="bg-zinc-950 border border-teal-500/50 text-teal-400 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 font-bold uppercase cursor-pointer max-w-[130px] truncate">
                         {% if navigation_modules %}
-                        {% for mod in navigation_modules %}
+                        {% for mod in navigation_modules if mod.name not in ('storage', 'sharing') %}
                         <option value="{{ mod.dashboard_url }}" {% if request.url.path.startswith(mod.dashboard_url) %}selected{% endif %}>
                             {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
                         </option>
                         {% endfor %}
+                        <optgroup label="{% if lang == 'ru' %}Система{% else %}System{% endif %}">
+                            <option value="/dashboard" {% if request.url.path == '/dashboard' %}selected{% endif %}>
+                                {% if lang == 'ru' %}Конфигурация{% else %}Config{% endif %}
+                            </option>
+                            {% for mod in navigation_modules if mod.name in ('storage', 'sharing') %}
+                            <option value="{{ mod.dashboard_url }}" {% if request.url.path.startswith(mod.dashboard_url) %}selected{% endif %}>
+                                {% if lang == 'ru' %}{{ mod.title_ru }}{% else %}{{ mod.title_en }}{% endif %}
+                            </option>
+                            {% endfor %}
+                        </optgroup>
                         {% endif %}
-                        <option value="/dashboard" {% if request.url.path == '/dashboard' %}selected{% endif %}>
-                            {% if lang == 'ru' %}Конфигурация{% else %}Config{% endif %}
-                        </option>
                     </select>
                 </div>
                 {% endif %}
