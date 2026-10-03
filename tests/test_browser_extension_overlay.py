@@ -127,3 +127,55 @@ class SourceIsValidTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TeardownScopeTests(unittest.TestCase):
+    """`cleanup` must not name anything declared inside `build`.
+
+    It reached for `onLeave` directly and threw `ReferenceError: onLeave is not
+    defined` the moment a capture was dismissed. `node --check` passes on that code:
+    it is a scope error, not a syntax error, so nothing about the file's shape would
+    have caught it. These tests check the shape instead.
+    """
+
+    def _cleanup_body(self) -> str:
+        body = SOURCE[SOURCE.index("function cleanup() {") :]
+        return body[: body.index("\n  function ")]
+
+    def test_every_listener_teardown_goes_through_the_handlers_object(self):
+        """Each detached listener must be `handlers.x`, or a module-level name.
+
+        Asserting the name merely appears would pass on the very bug this was
+        written for, since the identifier is present either way. The argument has to
+        match one of the two shapes exactly.
+        """
+        body = self._cleanup_body()
+        arguments = re.findall(r"removeEventListener\(\s*\"[a-z]+\",\s*([^)]*?)\s*[,)]", body)
+        self.assertTrue(arguments, "no listener teardown found to check")
+        allowed = re.compile(r"^(?:handlers\.[A-Za-z_$][\w$]*|dismiss|cleanup)$")
+        for argument in arguments:
+            self.assertRegex(
+                argument.strip(),
+                allowed,
+                f"{argument.strip()!r} is not a module-level name and not off the handlers object",
+            )
+
+    @staticmethod
+    def _handed_over() -> set[str]:
+        # The real hand-over, not the placeholder the stale-copy path writes.
+        for literal in re.findall(r"__netsanctum = \{([^}]*)\}", SOURCE):
+            if "onMove" in literal:
+                return {part.strip().split(":")[0].strip() for part in literal.split(",") if part.strip()}
+        return set()
+
+    def test_every_handler_the_teardown_uses_is_handed_over(self):
+        used = set(re.findall(r"handlers\.([A-Za-z_$][\w$]*)", self._cleanup_body()))
+        for name in used:
+            self.assertIn(name, self._handed_over(), f"handlers.{name} is never provided")
+
+    def test_the_builder_hands_over_every_handler_it_attaches(self):
+        attached = set(re.findall(r"addEventListener\(\s*\"[a-z]+\",\s*([A-Za-z_$][\w$]*)", SOURCE))
+        for name in attached:
+            if name in {"dismiss", "cleanup"}:
+                continue
+            self.assertIn(name, self._handed_over(), f"{name} is attached but never handed to cleanup")

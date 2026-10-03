@@ -720,7 +720,10 @@ function mediaRequest(entry) {
     overlay.root.addEventListener("wheel", (event) => event.preventDefault(), { passive: false });
     window.addEventListener("keydown", onKey, true);
 
-    overlay.host.__netsanctum = { onMove, onDown, onUp, onKey, boxes };
+    /* Every handler the teardown needs lives here. `cleanup` is a module-level
+       function and cannot see the locals declared inside this closure, so the
+       references are handed over rather than closed over. */
+    overlay.host.__netsanctum = { onMove, onDown, onUp, onKey, onLeave, boxes };
     askChildrenForTargets();
   }
 
@@ -801,7 +804,7 @@ function mediaRequest(entry) {
       overlay.root.removeEventListener("pointermove", handlers.onMove);
       overlay.root.removeEventListener("pointerdown", handlers.onDown);
       overlay.root.removeEventListener("pointerup", handlers.onUp);
-      overlay.root.removeEventListener("pointerleave", onLeave);
+      overlay.root.removeEventListener("pointerleave", handlers.onLeave);
       overlay.root.removeEventListener("contextmenu", dismiss);
       window.removeEventListener("keydown", handlers.onKey, true);
     }
