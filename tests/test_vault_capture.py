@@ -15,8 +15,8 @@ from starlette.requests import Request
 from app.core.http_security import is_cross_site_request
 from app.core.security import get_current_bearer_user
 from app.modules.vault.router import create_capture
-from app.modules.vault.schemas import VaultCaptureCreate
-from app.modules.vault.services import MAX_IMAGE_BYTES, create_captured_item
+from app.modules.vault.schemas import MAX_IMAGE_BYTES, VaultCaptureCreate
+from app.modules.vault.services import create_captured_item
 
 # A 1x1 transparent PNG, the smallest payload the server accepts.
 PNG_1PX = base64.b64decode(

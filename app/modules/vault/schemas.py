@@ -110,6 +110,13 @@ class VaultCollectionResponse(BaseModel):
         from_attributes = True
 
 
+class VaultCollectionMerge(BaseModel):
+    """Move every card from one workspace into another, deleting the emptied one."""
+
+    from_id: int = Field(..., ge=1)
+    into_id: int | None = Field(default=None, ge=1)
+
+
 class VaultItemCreate(BaseModel):
     entry_type: str = Field("bookmark", description="bookmark, rating, or thought")
     title: str | None = Field(default="", max_length=1000)

@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.modules import module_registry
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked, validate_remote_url
+from app.modules.vault import images as _vault_images
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.schemas import (
-    MAX_IMAGE_BYTES,
     VaultCaptureCreate,
     VaultCollectionCreate,
     VaultItemCreate,
@@ -29,38 +29,13 @@ redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_response
 # Tracked download progress, declared by the module manifest.
 MEDIA_PROGRESS_PREFIX = "vault_media"
 
-LOCAL_IMAGE_PREFIXES = (
-    "data:image/gif;base64,",
-    "data:image/jpeg;base64,",
-    "data:image/png;base64,",
-    "data:image/webp;base64,",
-)
-LOCAL_IMAGE_MEDIA_TYPES = {
-    "data:image/gif;base64": "image/gif",
-    "data:image/jpeg;base64": "image/jpeg",
-    "data:image/png;base64": "image/png",
-    "data:image/webp;base64": "image/webp",
-}
-
-
-def decode_data_image(value: str | None) -> tuple[bytes, str] | None:
-    """Decode an embedded `data:image/...;base64,` URL into raw bytes and media type."""
-    import base64
-    import binascii
-
-    if not value:
-        return None
-    header, separator, payload = value.partition(",")
-    media_type = LOCAL_IMAGE_MEDIA_TYPES.get(header.lower())
-    if not separator or not media_type or len(payload) > (MAX_IMAGE_BYTES * 4 // 3) + 4:
-        return None
-    try:
-        content = base64.b64decode(payload, validate=True)
-    except (binascii.Error, ValueError):
-        return None
-    if not content or len(content) > MAX_IMAGE_BYTES:
-        return None
-    return content, media_type
+# NOTE: embedded-image helpers are owned by images.py; these aliases keep existing
+# `from app.modules.vault.services import decode_data_image` imports working.
+decode_data_image = _vault_images.decode_data_image
+LOCAL_IMAGE_PREFIXES = _vault_images.LOCAL_IMAGE_PREFIXES
+LOCAL_IMAGE_MEDIA_TYPES = _vault_images.LOCAL_IMAGE_MEDIA_TYPES
+# NOTE: MAX_IMAGE_BYTES lives in schemas.py; import it from there
+# (`from app.modules.vault.schemas import MAX_IMAGE_BYTES`).
 
 
 def vault_tag_filter(tag: str):
@@ -608,6 +583,43 @@ async def delete_collection(session: AsyncSession, coll_id: int) -> None:
     if coll:
         await session.delete(coll)
         await session.commit()
+
+
+class VaultCollectionNotFoundError(LookupError):
+    """The merge source or target workspace does not exist."""
+
+
+class VaultMergeError(ValueError):
+    """The merge would break the sealed-workspace promise."""
+
+
+async def merge_collections(session: AsyncSession, from_id: int, into_id: int | None) -> int:
+    """Move every card from one workspace into another and delete the emptied one.
+
+    Cards keep their ids, history and data — only the workspace link changes, so
+    the target reads as one space with the merged cards at its end. Sealed
+    workspaces are refused outright: a sealed card moved under a plain
+    collection would lose the key lookup that opens it and stay locked forever.
+    """
+    if into_id is not None and from_id == into_id:
+        raise VaultMergeError("Нельзя слить воркспейс с самим собой")
+    src = await session.get(VaultCollection, from_id)
+    if src is None:
+        raise VaultCollectionNotFoundError(f"Workspace {from_id} not found")
+    dst = None
+    if into_id is not None:
+        dst = await session.get(VaultCollection, into_id)
+        if dst is None:
+            raise VaultCollectionNotFoundError(f"Workspace {into_id} not found")
+    if src.is_encrypted or (dst is not None and dst.is_encrypted):
+        raise VaultMergeError("Зашифрованные воркспейсы нельзя сливать")
+    result = await session.execute(select(VaultItem).where(VaultItem.collection_id == from_id))
+    items = list(result.scalars().all())
+    for item in items:
+        item.collection_id = into_id
+    await session.delete(src)
+    await session.commit()
+    return len(items)
 
 
 async def resolve_soft_entity_info(

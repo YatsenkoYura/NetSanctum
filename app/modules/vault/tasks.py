@@ -7,7 +7,6 @@ whose only link is another module's row.
 
 import logging
 import os
-import re
 import tempfile
 from pathlib import Path
 
@@ -17,8 +16,18 @@ from app.core.scheduler import celery_app
 from app.core.storage import get_storage
 from app.core.ytdlp_pipeline import YtDlpPipelineError, error_status, extract_info
 from app.modules.vault.models import VaultCollection, VaultItem
+from app.modules.vault.paths import (
+    safe_segment as _sanitize_segment,
+    storage_root as _storage_root,
+    within_root as _within_root,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_segment(value: str, fallback: str = "video") -> str:
+    """Sanitize a video filename segment (shared impl, Vault-flavoured default)."""
+    return _sanitize_segment(value, fallback)
 
 
 def _human(size: int) -> str:
@@ -30,22 +39,6 @@ def _human(size: int) -> str:
 
 STORAGE_PREFIX = "vault/videos"
 THUMBNAIL_PREFIX = "vault/thumbnails"
-SAFE_SEGMENT = re.compile(r"[^a-zA-Z0-9._-]+")
-
-
-def _storage_root() -> Path:
-    return Path(get_settings().LOCAL_STORAGE_ROOT)
-
-
-def _safe_segment(value: str, fallback: str = "video") -> str:
-    cleaned = SAFE_SEGMENT.sub("-", str(value or "")).strip("-.")
-    return (cleaned or fallback)[:80]
-
-
-def _within_root(candidate: Path) -> bool:
-    root = _storage_root().resolve()
-    resolved = candidate.resolve()
-    return resolved.is_relative_to(root)
 
 
 def _format_selector(quality: str | None) -> str:
@@ -146,7 +139,7 @@ def download_vault_video_task(
         stem = _safe_segment((info.get("id") or "") or Path(url).stem)
         ext = (video_file.suffix or ".mp4").lower()[:6]
         destination = _storage_root() / STORAGE_PREFIX / f"{item_id}-{stem}{ext}"
-        if not _within_root(destination):
+        if not _within_root(destination, root=_storage_root()):
             report("error: refused path")
             return "Error: refused storage path"
         destination.parent.mkdir(parents=True, exist_ok=True)

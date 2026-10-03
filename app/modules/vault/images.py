@@ -14,14 +14,17 @@ reading this later should not mistake the file key for a per-collection key.
 
 Existing rows keep their embedded data URL and are still served from it, so nothing
 is lost while `externalize_image` moves new writes out of the database.
+
+This module is the single owner of the embedded-image helpers
+(`LOCAL_IMAGE_PREFIXES`, `LOCAL_IMAGE_MEDIA_TYPES`, `decode_data_image`):
+`services.py` and `router.py` import them from here rather than keeping copies.
 """
 
 import logging
-from pathlib import Path
 
-from app.core.config import get_settings
 from app.core.storage import get_storage
-from app.modules.vault.services import decode_data_image
+from app.modules.vault.paths import safe_segment as _safe_segment, storage_root, within_root
+from app.modules.vault.schemas import MAX_IMAGE_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +35,44 @@ IMAGE_MEDIA_TYPES = {
     "image/gif": "gif",
     "image/webp": "webp",
 }
-SAFE_SEGMENT = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+
+LOCAL_IMAGE_PREFIXES = (
+    "data:image/gif;base64,",
+    "data:image/jpeg;base64,",
+    "data:image/png;base64,",
+    "data:image/webp;base64,",
+)
+LOCAL_IMAGE_MEDIA_TYPES = {
+    "data:image/gif;base64": "image/gif",
+    "data:image/jpeg;base64": "image/jpeg",
+    "data:image/png;base64": "image/png",
+    "data:image/webp;base64": "image/webp",
+}
 
 
-def storage_root() -> Path:
-    return Path(get_settings().LOCAL_STORAGE_ROOT)
+def decode_data_image(value: str | None) -> tuple[bytes, str] | None:
+    """Decode an embedded `data:image/...;base64,` URL into raw bytes and media type."""
+    import base64
+    import binascii
+
+    if not value:
+        return None
+    header, separator, payload = value.partition(",")
+    media_type = LOCAL_IMAGE_MEDIA_TYPES.get(header.lower())
+    if not separator or not media_type or len(payload) > (MAX_IMAGE_BYTES * 4 // 3) + 4:
+        return None
+    try:
+        content = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not content or len(content) > MAX_IMAGE_BYTES:
+        return None
+    return content, media_type
 
 
 def safe_segment(value: str, fallback: str = "image") -> str:
-    cleaned = "".join(char if char in SAFE_SEGMENT else "-" for char in str(value or "")).strip("-.")
-    return (cleaned or fallback)[:80]
+    """Sanitize a filename segment. Kept here so existing imports keep working."""
+    return _safe_segment(value, fallback)
 
 
 def store_image_bytes(payload: bytes, media_type: str, item_id: int) -> str:
@@ -57,8 +88,7 @@ def store_image_bytes(payload: bytes, media_type: str, item_id: int) -> str:
         raise ValueError(f"Unsupported image type {media_type!r}")
 
     destination = storage_root() / IMAGE_PREFIX / f"{item_id}.{suffix}.enc"
-    resolved = destination.resolve()
-    if not str(resolved).startswith(str(storage_root().resolve())):
+    if not within_root(destination, root=storage_root()):
         raise ValueError("Refused a Vault image path outside the storage root")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +130,8 @@ def image_bytes(item) -> tuple[bytes, str] | None:
 
 
 def media_type_for(path: str) -> str:
+    from pathlib import Path
+
     name = Path(path).name
     for media_type, suffix in IMAGE_MEDIA_TYPES.items():
         if name.endswith(f".{suffix}.enc"):

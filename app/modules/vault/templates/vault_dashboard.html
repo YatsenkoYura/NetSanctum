@@ -22,13 +22,15 @@
 .ws-item { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; cursor:pointer; border-left:2px solid transparent; transition:all .12s; }
 .ws-item:hover { color:#e4e4e7; background:rgba(255,255,255,.03); }
 .ws-item.active { color:#2dd4bf; border-left-color:#2dd4bf; background:rgba(45,212,191,.06); }
+.ws-item[draggable="true"] { cursor:grab; }
+.ws-item[draggable="true"]:active { cursor:grabbing; }
 
-/* Tetris-Dense Masonry Grid */
+/* Tetris-Dense Masonry Grid (plain row flow: visual order always matches DOM) */
 #tiles-grid {
   display: grid;
   grid-template-columns: repeat(1, minmax(0, 1fr));
   grid-auto-rows: 8px;
-  grid-auto-flow: dense;
+  grid-auto-flow: row;
   gap: 12px;
 }
 @media (min-width: 640px) { #tiles-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -112,6 +114,28 @@
 .ncal-pop-create .vcal-btn { flex:1; }
 .vcal-input { width:100%; background:#000; border:1px solid #27272a; color:#e4e4e7; font-size:12px; padding:6px 8px; color-scheme:dark; }
 .vcal-input:focus { outline:none; border-color:#2dd4bf; }
+.vcal-count { font-size:10px; font-weight:700; color:#71717a; text-transform:none; letter-spacing:0; }
+
+/* Locked-workspace gate: a sealed space shows this instead of any tiles until
+   the passphrase is supplied. Plain CSS (not Tailwind) so no css rebuild. */
+#view-locked-container { max-width:24rem; margin:0 auto; padding:4rem 1rem; text-align:center; }
+.vault-gate-box { border:1px solid #27272a; background:#09090b; padding:1.5rem; display:flex; flex-direction:column; gap:.8rem; }
+.vault-gate-icon { font-size:1.6rem; line-height:1; }
+.vault-gate-title { font-size:12px; font-weight:800; color:#fff; text-transform:uppercase; letter-spacing:.06em; }
+.vault-gate-sub { font-size:11px; color:#71717a; }
+.vault-gate-error { font-size:11px; color:#fca5a5; }
+.vault-gate-error.hidden { display:none; }
+.vault-gate-input { width:100%; background:#000; border:1px solid #27272a; color:#e4e4e7; font-size:13px; padding:8px 10px; color-scheme:dark; }
+.vault-gate-input:focus { outline:none; border-color:#2dd4bf; }
+.vault-gate-btn { width:100%; padding:8px 10px; background:#2dd4bf; color:#000; font-weight:800; font-size:11px; text-transform:uppercase; cursor:pointer; border:none; }
+.vault-gate-btn:hover { background:#5eead4; }
+
+/* Workspace "move to…" menu (touch fallback for sidebar drag-and-drop). */
+.ws-move-menu { position:fixed; z-index:100; width:190px; max-height:60vh; overflow-y:auto; background:#09090b; border:1px solid #27272a; box-shadow:0 10px 25px rgba(0,0,0,.9); }
+.ws-move-menu.hidden { display:none; }
+.ws-move-head { padding:6px 12px; font-size:9px; font-weight:800; color:#71717a; text-transform:uppercase; border-bottom:1px solid #1c1c1f; }
+.ws-move-opt { display:block; width:100%; padding:8px 12px; font-size:11px; text-align:left; color:#a1a1aa; font-weight:700; text-transform:uppercase; background:none; border:none; cursor:pointer; }
+.ws-move-opt:hover { background:#18181b; color:#2dd4bf; }
 
 /* Whiteboard Canvas Viewport */
 .wb-viewport { position:relative; width:100%; height:clamp(420px, 68dvh, 720px); background:#050505; border:1px solid #27272a; overflow:hidden; user-select:none; touch-action:none; }
@@ -199,7 +223,7 @@
       {% if not is_readonly %}<button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
     </div>
 
-    <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
+    <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5" id="vault-workspace-list">
       <div onclick="selectWorkspace(null, 'Все карточки')" id="ws-item-all" class="ws-item active">
         <div class="flex items-center gap-2">
           <span class="w-1.5 h-1.5 bg-zinc-400 inline-block"></span>
@@ -210,20 +234,28 @@
 
       <div id="vault-collections" class="contents">
       {% for c in collections %}
-      <div onclick="selectWorkspace({{ c.id|int }}, this.querySelector('[data-workspace-name]').textContent)" id="ws-item-{{ c.id|int }}" class="ws-item">
+      <div onclick="selectWorkspace({{ c.id|int }}, this.querySelector('[data-workspace-name]').textContent)" id="ws-item-{{ c.id|int }}" class="ws-item" draggable="true">
         <div class="flex items-center gap-2 truncate">
           <span class="w-1.5 h-1.5 {{ 'bg-red-500' if c.is_locked else 'bg-teal-400' }} inline-block"></span>
           <span class="truncate" data-workspace-name>{{ c.name }}</span>
         </div>
-        {% if c.is_encrypted %}
-        <button onclick="event.stopPropagation(); {{ 'openUnlockModal(' ~ c.id|int ~ ", this.closest(\'.ws-item\').querySelector(\'[data-workspace-name]\').textContent)" if c.is_locked else 'lockWorkspace(' ~ c.id|int ~ ')' }}"
-                class="text-red-400 hover:text-red-300 text-xs" title="{{ 'Разблокировать' if c.is_locked else 'Заблокировать' }}">{{ '🔒' if c.is_locked else '🔓' }}</button>
-        {% else %}
-        <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
-        {% endif %}
+        <div class="flex items-center gap-1 shrink-0">
+          {% if c.is_encrypted %}
+          <button onclick="event.stopPropagation(); {{ 'openUnlockModal(' ~ c.id|int ~ ", this.closest(\'.ws-item\').querySelector(\'[data-workspace-name]\').textContent)" if c.is_locked else 'lockWorkspace(' ~ c.id|int ~ ')' }}"
+                  class="text-red-400 hover:text-red-300 text-xs" title="{{ 'Разблокировать' if c.is_locked else 'Заблокировать' }}">{{ '🔒' if c.is_locked else '🔓' }}</button>
+          {% else %}
+          <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
+          <button onclick="event.stopPropagation(); openMoveMenu(event, {{ c.id|int }})" class="text-zinc-700 hover:text-white text-xs px-1 leading-none" title="Слить в другой воркспейс…">⋯</button>
+          {% endif %}
+        </div>
       </div>
       {% endfor %}
       </div>
+    </div>
+
+    <div id="ws-move-menu" class="ws-move-menu hidden">
+      <div class="ws-move-head">Слить в…</div>
+      <div id="ws-move-options"></div>
     </div>
 
     <div class="px-3 pt-2 border-t border-zinc-800 text-[10px] text-zinc-600 flex justify-between">
@@ -246,7 +278,7 @@
           <span class="text-white font-bold uppercase tracking-wider" id="active-ws-title">Все карточки</span>
         </div>
 
-        {% if not is_readonly %}<div class="relative ml-2">
+        {% if not is_readonly %}<div class="relative ml-2" id="vault-create-wrap">
           <button onclick="togglePlusDropdown(event)" class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
             <span>+</span> <span class="text-[10px] uppercase hidden sm:inline">Создать</span> ▾
           </button>
@@ -286,7 +318,7 @@
       <!-- ── SPACE MINI-CALENDAR (planner events bound to this workspace) ── -->
       <div id="vault-cal-panel" class="hidden">
         <div class="vcal-bar">
-          <span class="vcal-title">Календарь пространства</span>
+          <span class="vcal-title">Календарь пространства <span class="vcal-count" id="vcal-count"></span></span>
           <div class="vcal-nav">
             <button class="vcal-btn" id="vcal-prev" title="Прошлый месяц">‹</button>
             <span class="vcal-label" id="vcal-label">…</span>
@@ -339,6 +371,19 @@
         <div id="tiles-grid"></div>
         <div class="flex justify-center pt-4">
           <button id="vault-load-more" onclick="loadMoreVault()" class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
+        </div>
+      </div>
+
+      <!-- 1b. LOCKED-WORKSPACE GATE: sealed spaces never render tiles. -->
+      <div id="view-locked-container" class="hidden">
+        <div class="vault-gate-box">
+          <div class="vault-gate-icon">🔒</div>
+          <div class="vault-gate-title" id="gate-title">Зашифрованный воркспейс</div>
+          <div class="vault-gate-sub">Внутрь — только по паролю. Содержимое не загружается, пока воркспейс заперт.</div>
+          <input type="password" id="gate-passphrase-input" autocomplete="current-password" placeholder="Пароль"
+                 class="vault-gate-input" onkeydown="if(event.key==='Enter')submitGateUnlock()">
+          <div class="vault-gate-error hidden" id="gate-error">Неверный пароль</div>
+          <button onclick="submitGateUnlock()" class="vault-gate-btn">Разблокировать</button>
         </div>
       </div>
 
@@ -464,11 +509,13 @@
         </div>
       </div>
 
-      <!-- EMPTY STATE -->
-      <div id="vault-empty" class="hidden py-24 text-center space-y-3">
-        <div class="w-10 h-10 border border-zinc-800 mx-auto flex items-center justify-center"><span class="text-zinc-700 text-xl font-mono">∅</span></div>
-        <div class="text-xs font-bold text-zinc-600 uppercase tracking-widest">Пространство пусто</div>
-        <div class="text-[11px] text-zinc-700">{% if is_shared %}В этой публикации нет доступных карточек{% elif is_readonly %}В офлайн-пакете нет доступных карточек{% else %}Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера{% endif %}</div>
+      <!-- EMPTY STATE (same box language as the locked gate) -->
+      <div id="vault-empty" class="hidden py-24">
+        <div class="vault-gate-box" style="max-width:24rem;margin:0 auto;text-align:center">
+          <div class="w-10 h-10 border border-zinc-800 mx-auto flex items-center justify-center"><span class="text-zinc-700 text-xl font-mono">∅</span></div>
+          <div class="text-xs font-bold text-zinc-600 uppercase tracking-widest">Пространство пусто</div>
+          <div class="text-[11px] text-zinc-700">{% if is_shared %}В этой публикации нет доступных карточек{% elif is_readonly %}В офлайн-пакете нет доступных карточек{% else %}Перетащите файлы/CSV сюда или нажмите Ctrl+V для вставки из буфера{% endif %}</div>
+        </div>
       </div>
 
     </div>
@@ -596,6 +643,11 @@ var wbSaveTimer = null;
 var searchTimer = null;
 var activeCell = null;
 window._vaultCache = {};
+// Lock state of known workspaces (id -> {name, is_locked, is_encrypted}),
+// refreshed by loadVaultSummary. Drives the locked gate, not the tiles.
+var vaultCollectionsById = {};
+// The sealed workspace currently behind the gate (its tiles never load).
+var lockedGateId = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, ch => ({
@@ -749,6 +801,7 @@ if (!window.__vaultClickBound) {
   document.addEventListener('click', () => {
     document.getElementById('plus-dropdown')?.classList.remove('show');
     document.getElementById('export-dropdown')?.classList.add('hidden');
+    document.getElementById('ws-move-menu')?.classList.add('hidden');
   });
 }
 
@@ -1155,6 +1208,7 @@ function openMediaView(item) {
   hideViews();
   document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('view-media-container').classList.remove('hidden');
+  syncVaultHash();
 }
 
 function statusLabel(status) {
@@ -1168,8 +1222,30 @@ function statusLabel(status) {
   return labels[text] || text;
 }
 
-/* A media tile is the picture and, at most, one line of caption. No date strip,
-   no "Открыть", no pin row: those belong to the document tiles. */
+// ── SHARED TILE FOOTER ───────────────────────────────────────────────────
+// One footer for every tile kind: pin, date, open, quick delete. Media tiles
+// sit directly on the card (no padded body wrapper), so `framed` restores the
+// horizontal rhythm document tiles get from theirs.
+function tileFooterHtml(item, itemId, clickHandler, framed) {
+  const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString('ru-RU') : '';
+  const pinned = Boolean(item.is_pinned);
+  const pin = readOnlyMode
+    ? `<span class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600'}">${pinned ? '★' : '☆'}</span>`
+    : `<button onclick="togglePin(${itemId})" class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600 hover:text-zinc-400'}" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '★' : '☆'}</button>`;
+  return `
+  <div class="flex items-center justify-between text-[10px] text-zinc-600 ${framed ? 'px-3 py-2 mt-2' : 'pt-2 mt-1'} border-t border-zinc-900">
+    <div class="flex items-center gap-2">
+      ${pin}
+      <span>${escapeHtml(dateStr)}</span>
+    </div>
+    <div class="flex gap-2 font-bold">
+      <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
+      ${readOnlyMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase" title="Удалить">✕</button>`}
+    </div>
+  </div>`;
+}
+
+/* A media tile is the picture, at most one line of caption, and the shared footer. */
 function mediaTileHtml(item, itemId, displayImg, clickHandler) {
   const isVideo = item.node_type === 'video';
   const caption = String(item.title || item.og_title || '').trim();
@@ -1202,6 +1278,7 @@ function mediaTileHtml(item, itemId, displayImg, clickHandler) {
       ${badge}
     </div>
     ${caption ? `<div class="px-3 pt-2 text-xs text-zinc-200 truncate cursor-pointer hover:text-teal-400" onclick="${clickHandler}">${escapeHtml(caption)}</div>` : ''}
+    ${tileFooterHtml(item, itemId, clickHandler, true)}
   </div>`;
 }
 
@@ -1219,6 +1296,7 @@ async function closeMediaView() {
   hideViews();
   document.getElementById('view-tiles-container').classList.remove('hidden');
   renderTiles(currentItems);
+  syncVaultHash();
 }
 
 /* Saved on blur rather than on every keystroke: a caption is two lines, and a
@@ -1271,6 +1349,7 @@ function openEditorView(item) {
   document.getElementById('view-sheet-container').classList.add('hidden');
   document.getElementById('view-whiteboard-container').classList.add('hidden');
   document.getElementById('view-editor-container').classList.remove('hidden');
+  syncVaultHash();
 }
 
 async function closeEditorView() {
@@ -1281,6 +1360,7 @@ async function closeEditorView() {
   document.getElementById('view-tiles-container').classList.remove('hidden');
   activeView = 'tiles';
   renderTiles(currentItems);
+  syncVaultHash();
   return savePromise;
 }
 
@@ -1327,6 +1407,7 @@ function openSheetView(item) {
   document.getElementById('view-editor-container').classList.add('hidden');
   document.getElementById('view-whiteboard-container').classList.add('hidden');
   document.getElementById('view-sheet-container').classList.remove('hidden');
+  syncVaultHash();
 }
 
 async function closeSheetView() {
@@ -1337,6 +1418,7 @@ async function closeSheetView() {
   document.getElementById('view-tiles-container').classList.remove('hidden');
   activeView = 'tiles';
   renderTiles(currentItems);
+  syncVaultHash();
   return savePromise;
 }
 
@@ -1501,6 +1583,7 @@ function openWhiteboardView(item) {
   document.getElementById('view-whiteboard-container').classList.remove('hidden');
 
   initWbCanvas();
+  syncVaultHash();
 }
 
 async function closeWhiteboardView() {
@@ -1511,6 +1594,7 @@ async function closeWhiteboardView() {
   document.getElementById('view-tiles-container').classList.remove('hidden');
   activeView = 'tiles';
   renderTiles(currentItems);
+  syncVaultHash();
   return savePromise;
 }
 
@@ -1972,7 +2056,11 @@ async function submitUnlock() {
   vaultUnlockToken = result.unlock_token || vaultUnlockToken;
   closeUnlockModal();
   await loadVaultSummary();
-  await loadWorkspace();
+  if (!syncLockedView()) {
+    document.getElementById('view-tiles-container').classList.remove('hidden');
+    await loadWorkspace();
+  }
+  if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
 }
 
 async function lockWorkspace(collectionId) {
@@ -1982,11 +2070,12 @@ async function lockWorkspace(collectionId) {
   // One token covers the whole tab, so dropping it locks everything it opened.
   vaultUnlockToken = '';
   await loadVaultSummary();
-  await loadWorkspace();
+  if (!syncLockedView()) await loadWorkspace();
+  if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
 }
 
 async function selectWorkspace(id, name) {
-  closeActiveView();
+  await closeActiveView();
   currentCollectionId = id;
   document.querySelectorAll('.ws-item').forEach(el => el.classList.remove('active'));
   const target = id ? document.getElementById('ws-item-' + id) : document.getElementById('ws-item-all');
@@ -1994,8 +2083,329 @@ async function selectWorkspace(id, name) {
 
   document.getElementById('active-ws-title').innerText = name;
   closeSidebar();
-  loadWorkspace();
+  // A sealed workspace never loads its tiles: the gate owns the viewport
+  // until the passphrase is supplied.
+  if (!syncLockedView()) loadWorkspace();
+  syncVaultHash();
   if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
+}
+
+// ── LOCKED-WORKSPACE GATE ──────────────────────────────────────────────
+// Entering a sealed space is refused outright: no tiles, no aliases grid,
+// no calendar. The readable sidebar alias is the only thing visible.
+
+function isWorkspaceLocked(id) {
+  if (id === null || id === undefined) return false;
+  const known = vaultCollectionsById[id];
+  return Boolean(known && known.is_locked);
+}
+
+function workspaceDisplayName(id) {
+  if (id === null || id === undefined) return 'Все карточки';
+  const known = vaultCollectionsById[id];
+  return (known && known.name) || 'Воркспейс';
+}
+
+function showLockedGate(id, name) {
+  lockedGateId = id;
+  hideViews();
+  document.getElementById('view-tiles-container').classList.add('hidden');
+  document.getElementById('vault-empty').classList.add('hidden');
+  document.getElementById('vault-status').classList.add('hidden');
+  document.getElementById('vault-load-more').classList.add('hidden');
+  document.getElementById('gate-title').textContent = name || 'Зашифрованный воркспейс';
+  document.getElementById('gate-passphrase-input').value = '';
+  document.getElementById('gate-error').classList.add('hidden');
+  document.getElementById('view-locked-container').classList.remove('hidden');
+  const createWrap = document.getElementById('vault-create-wrap');
+  if (createWrap) createWrap.classList.add('hidden');
+}
+
+function hideLockedGate() {
+  lockedGateId = null;
+  document.getElementById('view-locked-container').classList.add('hidden');
+  const createWrap = document.getElementById('vault-create-wrap');
+  if (createWrap) createWrap.classList.remove('hidden');
+}
+
+// True when the viewport is (or must be) the gate. Callers load tiles only
+// when this returns false.
+function syncLockedView() {
+  if (currentCollectionId && isWorkspaceLocked(currentCollectionId)) {
+    if (lockedGateId !== currentCollectionId) {
+      showLockedGate(currentCollectionId, workspaceDisplayName(currentCollectionId));
+    }
+    return true;
+  }
+  if (lockedGateId) hideLockedGate();
+  return false;
+}
+
+async function submitGateUnlock() {
+  const input = document.getElementById('gate-passphrase-input');
+  const passphrase = input.value;
+  const target = lockedGateId;
+  if (!target || !passphrase) return;
+  document.getElementById('gate-error').classList.add('hidden');
+  let result = null;
+  try {
+    result = await requestJson(`/api/vault/collections/${pathSegment(target)}/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: passphrase })
+    }, 'Не удалось разблокировать');
+  } catch (error) {
+    if (error.status === 401) {
+      document.getElementById('gate-error').classList.remove('hidden');
+      input.select();
+      return;
+    }
+    showToast(error.message || 'Не удалось разблокировать', true);
+    return;
+  }
+  vaultUnlockToken = (result && result.unlock_token) || vaultUnlockToken;
+  await loadVaultSummary();
+  if (!syncLockedView()) {
+    document.getElementById('view-tiles-container').classList.remove('hidden');
+    loadWorkspace();
+  }
+  if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
+}
+
+// ── DEEP URLS (hash routing) ──────────────────────────────────────────
+// Every space and every item has a URL: `#/`, `#/ws/12`, `#/ws/12/item/34`,
+// `#/all/item/34`. No backend change: the hash is parsed on boot and on
+// back/forward, and written on every navigation (idempotent — an already
+// correct hash is left alone, so no event churn).
+
+function parseVaultHash(hash) {
+  const text = String(hash || '').replace(/^#/, '');
+  let m = text.match(/^\/?ws\/(\d+)(?:\/item\/(\d+))?\/?$/);
+  if (m) return { space: Number(m[1]), item: m[2] ? Number(m[2]) : null };
+  m = text.match(/^\/?all\/item\/(\d+)\/?$/);
+  if (m) return { space: null, item: Number(m[1]) };
+  if (text === '' || text === '/') return { space: null, item: null };
+  return null;
+}
+
+function vaultOpenItemId() {
+  let field = null;
+  if (activeView === 'editor') field = 'editor-id';
+  else if (activeView === 'sheet') field = 'sheet-id';
+  else if (activeView === 'media') field = 'media-id';
+  else if (activeView === 'whiteboard') field = 'wb-id';
+  if (!field) return null;
+  const node = document.getElementById(field);
+  const id = node ? Number(node.value) : NaN;
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function vaultDesiredHash() {
+  const item = activeView === 'tiles' ? null : vaultOpenItemId();
+  if (item) {
+    return (currentCollectionId ? '#/ws/' + currentCollectionId : '#/all') + '/item/' + item;
+  }
+  return currentCollectionId ? '#/ws/' + currentCollectionId : '#/';
+}
+
+function syncVaultHash() {
+  if (readOnlyMode) return;
+  const want = vaultDesiredHash();
+  if (window.location.hash !== want) window.location.hash = want;
+}
+
+function openVaultItemView(item) {
+  if (!item) return;
+  if (item.node_type === 'table') openSheetView(item);
+  else if (item.node_type === 'whiteboard') openWhiteboardView(item);
+  else if (isMediaCard(item)) openMediaView(item);
+  else openEditorView(item);
+}
+
+async function navigateVaultRoute(parsed) {
+  await closeActiveView();
+  currentCollectionId = parsed.space;
+  document.querySelectorAll('.ws-item').forEach(el => el.classList.remove('active'));
+  const target = parsed.space
+    ? document.getElementById('ws-item-' + parsed.space)
+    : document.getElementById('ws-item-all');
+  if (target) target.classList.add('active');
+  document.getElementById('active-ws-title').innerText = workspaceDisplayName(parsed.space);
+  closeSidebar();
+  if (!syncLockedView()) {
+    await loadWorkspace();
+    if (parsed.item) {
+      let item = window._vaultCache[parsed.item];
+      if (!item) {
+        try {
+          item = await requestJson(`/api/vault/items/${pathSegment(parsed.item)}`, {}, 'Карточка не найдена');
+          if (item) window._vaultCache[item.id] = item;
+        } catch (error) {
+          item = null;
+        }
+      }
+      if (item) openVaultItemView(item);
+      else showToast('Карточка не найдена', true);
+    }
+  }
+  syncVaultHash();
+  if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
+}
+
+// Back/forward support. A hash that already matches the live state is a
+// programmatic echo and is ignored.
+async function onVaultHashChange() {
+  if (readOnlyMode) return;
+  const parsed = parseVaultHash(window.location.hash);
+  if (!parsed) return;
+  const openId = activeView === 'tiles' ? null : vaultOpenItemId();
+  if (parsed.space === currentCollectionId && parsed.item === openId && !lockedGateId) return;
+  await navigateVaultRoute(parsed);
+}
+
+// Boot deep-link: `#/ws/12/item/34` reopens exactly that. Returns true when
+// the hash owned the boot and the default load must be skipped.
+function restoreVaultRoute() {
+  if (readOnlyMode) return false;
+  const parsed = parseVaultHash(window.location.hash);
+  if (!parsed || (parsed.space === null && parsed.item === null)) return false;
+  navigateVaultRoute(parsed);
+  return true;
+}
+
+// ── WORKSPACE "MOVE TO…" MENU ──────────────────────────────────────────
+// Touch fallback for sidebar drag-and-drop: pick a target workspace from a
+// menu instead of dragging onto it. Reuses the merge confirm + endpoint.
+
+var vaultMoveFromId = null;
+
+function openMoveMenu(event, id) {
+  const src = vaultCollectionsById[id];
+  if (!src || src.is_encrypted) {
+    showToast('Зашифрованный воркспейс нельзя сливать', true);
+    return;
+  }
+  vaultMoveFromId = id;
+  const body = document.getElementById('ws-move-options');
+  const targets = [{ id: null, name: 'Все карточки (убрать из воркспейса)' }];
+  Object.keys(vaultCollectionsById).forEach(key => {
+    const cid = Number(key);
+    const candidate = vaultCollectionsById[key];
+    if (cid === id || candidate.is_encrypted) return;
+    targets.push({ id: cid, name: candidate.name });
+  });
+  body.innerHTML = targets.map(target =>
+    `<button class="ws-move-opt" onclick="vaultMoveTo(${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+  ).join('');
+  const menu = document.getElementById('ws-move-menu');
+  const anchor = event.currentTarget.getBoundingClientRect();
+  menu.style.left = Math.min(window.innerWidth - 200, anchor.right + 6) + 'px';
+  menu.style.top = Math.max(8, Math.min(window.innerHeight - 160, anchor.top - 4)) + 'px';
+  menu.classList.remove('hidden');
+}
+
+function closeMoveMenu() {
+  document.getElementById('ws-move-menu').classList.add('hidden');
+}
+
+async function vaultMoveTo(toId) {
+  const fromId = vaultMoveFromId;
+  vaultMoveFromId = null;
+  closeMoveMenu();
+  if (fromId === null || fromId === undefined) return;
+  if (toId === fromId) return;
+  const dst = toId === null ? null : vaultCollectionsById[toId];
+  if (toId !== null && (!dst || dst.is_encrypted)) return;
+  await vaultDropWorkspace(fromId, toId);
+}
+// Drop workspace A onto B: every card moves into B (at its end, keeping ids
+// and data), the emptied A is deleted. Sealed workspaces refuse the drop on
+// both ends — the server enforces the same rule. Drop onto "Все карточки"
+// unfiles the cards (workspace link cleared).
+
+var vaultDragWsId = null;
+
+function wsIdFromNode(node) {
+  if (!node || !node.id) return undefined;
+  if (node.id === 'ws-item-all') return null;
+  const m = node.id.match(/^ws-item-(\d+)$/);
+  return m ? Number(m[1]) : undefined;
+}
+
+function vaultDropTargetValid(fromId, toNode) {
+  const toId = wsIdFromNode(toNode);
+  if (toId === undefined || fromId === null || fromId === undefined) return false;
+  if (toId === fromId) return false;
+  const src = vaultCollectionsById[fromId];
+  if (!src || src.is_encrypted) return false;
+  if (toId !== null) {
+    const dst = vaultCollectionsById[toId];
+    if (!dst || dst.is_encrypted) return false;
+  }
+  return true;
+}
+
+async function vaultDropWorkspace(fromId, toId) {
+  const src = vaultCollectionsById[fromId] || { name: 'Воркспейс', items_count: 0 };
+  const dstName = toId === null ? 'Все карточки' : ((vaultCollectionsById[toId] || {}).name || 'Воркспейс');
+  const count = src.items_count || 0;
+  const where = toId === null
+    ? ' из воркспейса (карточки станут без воркспейса)'
+    : ` в «${dstName}»`;
+  if (!confirm(`Перенести ${count} карт. из «${src.name}»${where}? Пустой воркспейс будет удалён.`)) return;
+  const merged = await mutationJson('/api/vault/collections/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from_id: fromId, into_id: toId })
+  }, 'Не удалось слить воркспейсы');
+  if (!merged) return;
+  showToast(`Перенесено: ${merged.moved}`);
+  await loadVaultSummary();
+  if (currentCollectionId === fromId) {
+    await selectWorkspace(toId, toId === null ? 'Все карточки' : workspaceDisplayName(toId));
+  } else {
+    if (!syncLockedView()) loadWorkspace();
+    if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
+  }
+}
+
+function __vaultBindWorkspaceDrop() {
+  // No once-guard: like vcalBoot, the list nodes are fresh after every htmx
+  // swap, so listeners must be bound to the fresh elements each time.
+  const list = document.getElementById('vault-workspace-list');
+  if (!list) return;
+  list.addEventListener('dragstart', function (e) {
+    const row = e.target.closest ? e.target.closest('.ws-item') : null;
+    const id = row ? wsIdFromNode(row) : undefined;
+    if (id === undefined || id === null) { e.preventDefault(); return; }
+    vaultDragWsId = id;
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(id)); } catch (err) {}
+  });
+  list.addEventListener('dragover', function (e) {
+    const row = e.target.closest ? e.target.closest('.ws-item') : null;
+    if (!row || !vaultDropTargetValid(vaultDragWsId, row)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    row.classList.add('drag-over-active');
+  });
+  list.addEventListener('dragleave', function (e) {
+    const row = e.target.closest ? e.target.closest('.ws-item') : null;
+    if (row) row.classList.remove('drag-over-active');
+  });
+  list.addEventListener('drop', function (e) {
+    const row = e.target.closest ? e.target.closest('.ws-item') : null;
+    list.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
+    if (!row || !vaultDropTargetValid(vaultDragWsId, row)) { vaultDragWsId = null; return; }
+    e.preventDefault();
+    const fromId = vaultDragWsId;
+    vaultDragWsId = null;
+    vaultDropWorkspace(fromId, wsIdFromNode(row));
+  });
+  list.addEventListener('dragend', function () {
+    vaultDragWsId = null;
+    list.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
+  });
 }
 
 async function loadVaultSummary() {
@@ -2008,11 +2418,22 @@ async function loadVaultSummary() {
     document.getElementById('stat-total').textContent = vaultStats.total_items;
     document.getElementById('stat-score').textContent = vaultStats.avg_score;
 
+    vaultCollectionsById = {};
+    vaultCollections.forEach(collection => {
+      vaultCollectionsById[collection.id] = {
+        name: collection.name,
+        is_locked: Boolean(collection.is_locked),
+        is_encrypted: Boolean(collection.is_encrypted),
+        items_count: collection.items_count || 0,
+      };
+    });
+
     const root = document.getElementById('vault-collections');
     root.replaceChildren(...vaultCollections.map(collection => {
       const item = document.createElement('div');
       item.id = `ws-item-${collection.id}`;
       item.className = collection.id === currentCollectionId ? 'ws-item active' : 'ws-item';
+      item.draggable = true;
       item.addEventListener('click', () => selectWorkspace(collection.id, collection.name));
 
       const label = document.createElement('div');
@@ -2026,9 +2447,11 @@ async function loadVaultSummary() {
       name.dataset.workspaceName = '';
       name.textContent = collection.name;
       label.append(marker, name);
+      const right = document.createElement('div');
+      right.className = 'flex items-center gap-1 shrink-0';
       if (collection.is_encrypted) {
         const lock = document.createElement('button');
-        lock.className = 'ml-auto text-red-400 hover:text-red-300 text-xs';
+        lock.className = 'text-red-400 hover:text-red-300 text-xs';
         lock.title = collection.is_locked ? 'Разблокировать' : 'Заблокировать';
         lock.textContent = collection.is_locked ? '🔒' : '🔓';
         lock.addEventListener('click', event => {
@@ -2036,13 +2459,25 @@ async function loadVaultSummary() {
           if (collection.is_locked) openUnlockModal(collection.id, collection.name);
           else lockWorkspace(collection.id);
         });
-        label.append(lock);
+        right.append(lock);
+      } else {
+        // A locked workspace shows the lock only: even the card count is
+        // information the owner chose to keep out of the sidebar.
+        const count = document.createElement('span');
+        count.className = 'text-[9px] text-zinc-600 font-bold';
+        count.textContent = collection.items_count;
+        right.append(count);
+        const move = document.createElement('button');
+        move.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+        move.title = 'Слить в другой воркспейс…';
+        move.textContent = '⋯';
+        move.addEventListener('click', event => {
+          event.stopPropagation();
+          openMoveMenu(event, collection.id);
+        });
+        right.append(move);
       }
-
-      const count = document.createElement('span');
-      count.className = 'text-[9px] text-zinc-600 font-bold';
-      count.textContent = collection.items_count;
-      item.append(label, count);
+      item.append(label, right);
       return item;
     }));
   } catch (error) {
@@ -2052,6 +2487,8 @@ async function loadVaultSummary() {
 }
 
 async function loadWorkspace({append = false} = {}) {
+  // The gate owns the viewport while sealed: never fetch tiles behind it.
+  if (isWorkspaceLocked(currentCollectionId)) return;
   const loadId = ++workspaceLoadId;
   const search = document.getElementById('vault-search').value.trim();
   const status = document.getElementById('vault-status');
@@ -2130,13 +2567,36 @@ function loadMoreVault() {
 }
 
 // ── TETRIS MASONRY RESIZING ──────────────────────────────────────────────────
+// Row spans track live content height via ResizeObserver: late images,
+// broken-image hides, font swaps and edits re-span their own card instead of
+// clipping it or leaving a hole. The grid keeps plain row flow (no `dense`
+// backfill), so visual order always matches the sorted DOM order and cards
+// never jump around after load.
+var vaultGridRO = null;
+
 function resizeGridItem(item) {
   const rowHeight = 8;
   const rowGap = 12;
   item.style.gridRowEnd = 'none';
   const contentHeight = item.getBoundingClientRect().height;
-  const rowSpan = Math.ceil((contentHeight + rowGap) / (rowHeight + rowGap));
+  const rowSpan = Math.max(1, Math.ceil((contentHeight + rowGap) / (rowHeight + rowGap)));
   item.style.gridRowEnd = `span ${rowSpan}`;
+}
+
+function vaultObserveTile(card) {
+  if (!('ResizeObserver' in window)) { resizeGridItem(card); return; }
+  if (!vaultGridRO) {
+    // Cards are height:fit-content, so re-spanning never changes the card's
+    // own size: the observer converges after one pass, no feedback loop.
+    vaultGridRO = new ResizeObserver(entries => {
+      entries.forEach(entry => resizeGridItem(entry.target));
+    });
+  }
+  vaultGridRO.observe(card);
+}
+
+function vaultUnobserveTiles() {
+  if (vaultGridRO) vaultGridRO.disconnect();
 }
 
 function resizeAllGridItems() {
@@ -2241,34 +2701,17 @@ function renderTiles(items) {
 
         ${miniTableHtml}
 
-        <div class="flex items-center justify-between text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 mt-1">
-          <div class="flex items-center gap-2">
-            ${readOnlyMode ? `<span class="text-xs ${item.is_pinned ? 'text-teal-400' : 'text-zinc-600'}">${item.is_pinned ? '★' : '☆'}</span>` : `<button onclick="togglePin(${itemId})" class="text-xs ${item.is_pinned?'text-teal-400':'text-zinc-600 hover:text-zinc-400'}" title="${item.is_pinned?'Открепить':'Закрепить'}">
-              ${item.is_pinned ? '★' : '☆'}
-            </button>`}
-            <span>${new Date(item.created_at).toLocaleDateString('ru-RU')}</span>
-          </div>
-
-          <div class="flex gap-2 font-bold">
-            <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
-            ${readOnlyMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase">✕</button>`}
-          </div>
-        </div>
+        ${tileFooterHtml(item, itemId, clickHandler, false)}
       </div>
     </div>`;
   }).join('');
 
-  setTimeout(resizeAllGridItems, 40);
-
-  const images = grid.querySelectorAll('img');
-  images.forEach(img => {
-    if (img.complete) {
-      resizeGridItem(img.closest('.tile-card'));
-    } else {
-      img.addEventListener('load', () => {
-        resizeGridItem(img.closest('.tile-card'));
-      });
-    }
+  // Old spans die with the old nodes; every fresh card is measured now and
+  // then kept correct by the observer (late/broken images, fonts, edits).
+  vaultUnobserveTiles();
+  grid.querySelectorAll('.tile-card').forEach(card => {
+    resizeGridItem(card);
+    vaultObserveTile(card);
   });
 }
 
@@ -2375,8 +2818,15 @@ function handleSheetPaste(e) {
 // so when the document is already ready the dashboard must start immediately.
 function __vaultBoot() {
   __vaultAttachRootDrop();
-  loadVaultSummary();
-  loadWorkspace();
+  __vaultBindWorkspaceDrop();
+  if (!window.__vaultHashBound) {
+    window.__vaultHashBound = true;
+    window.addEventListener('hashchange', onVaultHashChange);
+  }
+  loadVaultSummary().then(function () {
+    // A deep link (`#/ws/12/item/34`) owns the boot; otherwise the aggregate.
+    if (!restoreVaultRoute()) loadWorkspace();
+  });
   const sheetCanvas = document.getElementById('sheet-canvas');
   if (sheetCanvas && !sheetCanvas.dataset.vaultPasteBound) {
     sheetCanvas.dataset.vaultPasteBound = '1';
@@ -2398,7 +2848,9 @@ if (document.readyState === 'loading') {
 // drag-to-move, "+ещё" popover. `var` on purpose (htmx re-executes this).
 var vcalCursor = null;
 var vcalSelectedKey = null;
-var vcalCollapsed = false;
+// Collapsed by default everywhere: the bar is a one-line strip with a count,
+// the grid is one tap away. Phones behaved this way already; desktop joins them.
+var vcalCollapsed = true;
 var vcalCache = { events: [], tasks: [], byDay: {} };
 var vcalLoading = false;
 
@@ -2409,7 +2861,17 @@ function vcalIsMobile() { return window.matchMedia('(max-width: 767px)').matches
 function vcalVisible() {
   if (readOnlyMode) return false;
   if (activeView !== 'tiles') return false;
+  if (lockedGateId) return false;
+  if (isWorkspaceLocked(currentCollectionId)) return false;
   return currentCollectionId !== null && currentCollectionId !== undefined;
+}
+
+function vcalCountLabel(total) {
+  const n = Number(total) || 0;
+  const mod10 = n % 10, mod100 = n % 100;
+  const word = (mod10 === 1 && mod100 !== 11) ? 'событие'
+    : ([2, 3, 4].indexOf(mod10) !== -1 && [12, 13, 14].indexOf(mod100) === -1) ? 'события' : 'событий';
+  return n + ' ' + word;
 }
 
 function refreshVaultCalendar() {
@@ -2425,13 +2887,11 @@ function refreshVaultCalendar() {
   }
   if (!vcalCursor) { vcalCursor = NSC.startOfDay(new Date()); vcalSelectedKey = NSC.dayKey(new Date()); }
   if (!vcalVisible()) { panel.classList.add('hidden'); return; }
-  panel.classList.remove('hidden');
-  document.getElementById('vcal-body').classList.toggle('collapsed', vcalCollapsed);
-  document.getElementById('vcal-toggle').textContent = vcalCollapsed ? 'Развернуть' : 'Свернуть';
-  document.getElementById('vcal-label').textContent = NSC.monthTitle(vcalCursor);
-  if (vcalCollapsed) return;
+  // The count decides visibility, so the fetch runs even while collapsed: an
+  // empty month hides the whole panel instead of an empty grid.
   var weeks = NSC.monthWeeks(vcalCursor);
   var range = NSC.rangeOfWeeks(weeks);
+  document.getElementById('vcal-label').textContent = NSC.monthTitle(vcalCursor);
   vcalLoading = true;
   NSC.fetchCalendar({ from: range.from, to: range.to, space_kind: 'collection', space_id: currentCollectionId })
     .then(function (data) {
@@ -2439,6 +2899,13 @@ function refreshVaultCalendar() {
       vcalCache.events = data.events || [];
       vcalCache.tasks = data.tasks || [];
       vcalCache.byDay = NSC.groupByDay(vcalCache.events, vcalCache.tasks);
+      var total = vcalCache.events.length + vcalCache.tasks.length;
+      if (!total) { panel.classList.add('hidden'); return; }
+      panel.classList.remove('hidden');
+      document.getElementById('vcal-count').textContent = '· ' + vcalCountLabel(total);
+      document.getElementById('vcal-body').classList.toggle('collapsed', vcalCollapsed);
+      document.getElementById('vcal-toggle').textContent = vcalCollapsed ? 'Развернуть' : 'Свернуть';
+      if (vcalCollapsed) return;
       renderVaultCalendar(weeks);
     })
     .catch(function (e) {
@@ -2565,11 +3032,10 @@ function submitVcalModal() {
       document.head.appendChild(s);
       return;
     }
-    // Phones start collapsed: the grid is one tap away and the tiles stay on screen.
+    // The panel starts collapsed: one line with a count, grid one tap away.
     if (!vcalCursor) {
       vcalCursor = NSC.startOfDay(new Date());
       vcalSelectedKey = NSC.dayKey(new Date());
-      vcalCollapsed = vcalIsMobile();
     }
     document.getElementById('vcal-prev').addEventListener('click', function () {
       vcalCursor = NSC.addMonths(vcalCursor, -1); refreshVaultCalendar();

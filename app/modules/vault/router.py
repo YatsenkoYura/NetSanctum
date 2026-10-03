@@ -16,13 +16,21 @@ from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked
 from app.core.security import get_current_bearer_user, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
+from app.modules.vault.capabilities import VAULT_PACKAGE_ID
 from app.modules.vault.crypto import VaultUnlockError
-from app.modules.vault.images import externalize_image, has_image, image_bytes
+from app.modules.vault.images import (
+    LOCAL_IMAGE_PREFIXES,
+    decode_data_image,
+    externalize_image,
+    has_image,
+    image_bytes,
+)
 from app.modules.vault.models import VaultCollection
 from app.modules.vault.schemas import (
     VaultCaptureCreate,
     VaultCaptureResponse,
     VaultCollectionCreate,
+    VaultCollectionMerge,
     VaultCollectionResponse,
     VaultItemCreate,
     VaultItemResponse,
@@ -51,10 +59,11 @@ from app.modules.vault.sealing import (
     update_sealed_item,
 )
 from app.modules.vault.services import (
+    VaultCollectionNotFoundError,
+    VaultMergeError,
     create_captured_item,
     create_collection,
     create_vault_item,
-    decode_data_image,
     delete_collection,
     delete_vault_item,
     fetch_url_metadata,
@@ -64,6 +73,7 @@ from app.modules.vault.services import (
     list_collections,
     list_vault_items,
     list_vault_package_items,
+    merge_collections,
     resolve_soft_entity_info,
     toggle_archive_item,
     toggle_pin_item,
@@ -77,13 +87,6 @@ router = APIRouter()
 # Vault takes it as a header rather than reading a server-side session.
 UNLOCK_HEADER = Header(None, alias="X-Vault-Unlock")
 settings = get_settings()
-VAULT_PACKAGE_ID = "vault_all"
-LOCAL_IMAGE_PREFIXES = (
-    "data:image/gif;base64,",
-    "data:image/jpeg;base64,",
-    "data:image/png;base64,",
-    "data:image/webp;base64,",
-)
 
 
 async def _get_lang(request: Request) -> str:
@@ -592,7 +595,6 @@ async def update_item(
 
     updated = await update_vault_item(db, item, update_in)
     return _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
-    return updated
 
 
 @router.delete("/api/vault/items/{item_id}")
@@ -801,6 +803,22 @@ async def vault_lock_state(
     sealed = await sealed_collection_ids(db)
     locked = await locked_collection_ids(db, unlock_token)
     return {"sealed": sorted(sealed), "locked": sorted(locked), "unlocked": sorted(sealed - locked)}
+
+
+@router.post("/api/vault/collections/merge")
+async def merge_collections_route(
+    payload: VaultCollectionMerge,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Drag-and-drop merge: move every card into another workspace, delete the emptied one."""
+    try:
+        moved = await merge_collections(db, payload.from_id, payload.into_id)
+    except VaultCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VaultMergeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok", "moved": moved, "into_id": payload.into_id}
 
 
 @router.delete("/api/vault/collections/{coll_id}")

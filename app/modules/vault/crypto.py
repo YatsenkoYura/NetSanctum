@@ -12,7 +12,6 @@ of every image and every video byte in the collection.
 
 import base64
 import hashlib
-import hmac
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -138,14 +137,6 @@ def is_sealed(value: str | None) -> bool:
     return bool(value) and value.startswith(PAYLOAD_PREFIX)
 
 
-def token_for(value: str, length: int = 24) -> str:
-    return _b64(os.urandom(length))[:length]
-
-
-def constant_time_equal(left: str, right: str) -> bool:
-    return hmac.compare_digest(str(left), str(right))
-
-
 def context_for(kind: str, identifier: Any) -> bytes:
     """Bind ciphertext to its row so a blob cannot be pasted somewhere else."""
     return f"netsanctum:vault:{kind}:{identifier}".encode()
@@ -160,7 +151,6 @@ def context_for(kind: str, identifier: Any) -> bytes:
 # unlock needs in order to open anything.
 
 INBOX_PREFIX = "nsi:v1:"
-INBOX_KDF_CONTEXT = b"netsanctum:vault:inbox-key:v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,19 +168,6 @@ def generate_inbox_keypair() -> tuple[bytes, bytes]:
         private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()),
         private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw),
     )
-
-
-def seal_inbox_private_key(
-    private_key: bytes, passphrase: str, *, context: bytes = INBOX_KDF_CONTEXT
-) -> WrappedKey:
-    """Seal a collection's inbox private key under its passphrase."""
-    return wrap_data_key(private_key, passphrase, context=context)
-
-
-def open_inbox_private_key(
-    wrapped: WrappedKey, passphrase: str, *, context: bytes = INBOX_KDF_CONTEXT
-) -> bytes:
-    return unwrap_data_key(wrapped, passphrase, context=context)
 
 
 def seal_for_inbox(payload: bytes, public_key: bytes, *, context: bytes) -> SealedWrite:
