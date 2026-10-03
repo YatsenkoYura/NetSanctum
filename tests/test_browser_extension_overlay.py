@@ -24,22 +24,43 @@ SOURCE = CONTENT.read_text(encoding="utf-8")
 
 
 class OverlayOwnershipTests(unittest.TestCase):
-    def test_a_frame_hands_the_overlay_over_when_the_pointer_enters_a_child(self):
-        self.assertRegex(SOURCE, r"childFrameAt\(event\.clientX, event\.clientY\)")
+    """Only the top frame draws; children report upward.
 
-    def test_handing_over_stops_drawing_rather_than_adding_a_second_overlay(self):
-        # `release` must tear the overlay down, not build another one.
-        self.assertRegex(SOURCE, r"function release\(\)")
-        body = SOURCE[SOURCE.index("function release()") : SOURCE.index("function watchForReturn")]
-        self.assertIn("cleanup()", body)
-        self.assertNotIn("buildOverlay()", body)
+    Handing the overlay to whichever frame held the pointer was tried and dropped:
+    the ancestor's overlay starves the descendant of pointer events, and a frame
+    that gave its overlay away could not reliably take it back. These tests hold the
+    single-owner rule instead.
+    """
 
-    def test_a_frame_that_handed_over_can_take_it_back(self):
-        # Otherwise moving into an iframe disarms the page for good.
-        self.assertRegex(SOURCE, r"function watchForReturn\(\)")
+    def test_only_the_top_frame_asks_and_only_children_report(self):
+        self.assertRegex(SOURCE, r"function reportTargets\(\)")
+        self.assertRegex(SOURCE, r"if \(window\.top === window\.self\) return;")
 
-    def test_a_built_overlay_is_never_duplicated(self):
-        self.assertRegex(SOURCE, r"function build\(\)\s*\{\s*if \(overlay\) return;")
+    def test_the_parent_asks_its_children_once_it_is_built(self):
+        self.assertIn("askChildrenForTargets()", SOURCE)
+
+    def test_the_relayed_overlay_is_removed(self):
+        for gone in ("function release(", "function watchForReturn(", "childFrameAt(event"):
+            self.assertNotIn(gone, SOURCE)
+
+    def test_a_child_outline_is_marked_so_the_click_can_be_forwarded(self):
+        self.assertIn("remote: true", SOURCE)
+        self.assertRegex(SOURCE, r"function forwardClick\(entry\)")
+        self.assertIn("netsanctum:pick", SOURCE)
+
+    def test_a_relayed_outline_keeps_the_description_the_child_computed(self):
+        # describeBox reads the local DOM, which does not exist for a remote box.
+        self.assertRegex(SOURCE, r"if \(entry\.remote\) return entry\.info")
+
+    def test_escape_from_a_child_frame_reaches_the_overlay(self):
+        # Focus inside a player meant Escape went nowhere at all before this.
+        self.assertIn("netsanctum:dismiss", SOURCE)
+        self.assertRegex(SOURCE, r'event\.key !== "Escape"')
+
+    def test_escape_stops_propagation(self):
+        body = SOURCE[SOURCE.index("const onKey = (event) => {") :]
+        body = body[: body.index("const paint")]
+        self.assertIn("event.stopPropagation()", body)
 
     def test_an_iframe_is_not_itself_a_capture_target(self):
         self.assertRegex(SOURCE, r'if \(tag === "iframe"\) return false;')
@@ -78,8 +99,19 @@ class LayerCyclingTests(unittest.TestCase):
 
     def test_layer_keys_do_not_fire_during_a_region_drag(self):
         on_key = SOURCE[SOURCE.index("const onKey = (event) => {") :]
-        on_key = on_key[: on_key.index("overlay.root.addEventListener")]
+        on_key = on_key[: on_key.index("const paint")]
         self.assertIn("drag", on_key)
+
+    def test_the_arrow_keys_are_swallowed_even_with_a_single_layer(self):
+        # Otherwise an arrow quietly scrolls the page and the extension looks mute.
+        on_key = SOURCE[SOURCE.index("const onKey = (event) => {") :]
+        on_key = on_key[: on_key.index("const paint")]
+        self.assertLess(on_key.index("preventDefault()"), on_key.index("stack.length < 2"))
+
+    def test_tab_shift_tab_are_not_doubled_as_up_and_down(self):
+        on_key = SOURCE[SOURCE.index("const onKey = (event) => {") :]
+        on_key = on_key[: on_key.index("const paint")]
+        self.assertIn('event.key === "Tab" && event.shiftKey', on_key)
 
     def test_leaving_the_frame_drops_the_stack(self):
         self.assertRegex(SOURCE, r"const onLeave = \(\) => \{[\s\S]*?stack = \[\];")

@@ -431,6 +431,10 @@ function mediaRequest(entry) {
   /* What the tooltip says about a hovered outline. Everything here is already
      known to the page, so it is read on hover rather than for every element. */
   function describeBox(entry) {
+    /* An outline owned by another frame arrives as the summary that frame already
+       computed. Everything below reads the local DOM, which does not exist here,
+       so returning the summary is the only way to keep the details. */
+    if (entry.remote) return entry.info || { kind: "image", tagName: "?", size: null, shown: "", origin: "inline", label: "" };
     const info = entry.info || {};
     const element = entry.element;
     const tagName = element && element.tagName ? element.tagName.toLowerCase() : info.element || "media";
@@ -608,12 +612,6 @@ function mediaRequest(entry) {
     };
 
     const onMove = (event) => {
-      /* The pointer is over a frame that draws its own overlay. Give it up
-         before it blocks that frame from ever seeing a pointer event. */
-      if (!drag && !event.altKey && childFrameAt(event.clientX, event.clientY)) {
-        release();
-        return;
-      }
       if (drag) {
         drag.x = event.clientX;
         drag.y = event.clientY;
@@ -631,21 +629,23 @@ function mediaRequest(entry) {
     };
 
     const onKey = (event) => {
+      /* Escape has to reach here even if the page thinks it owns the keyboard, so
+         it is handled before anything else and stops propagation on success. */
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         dismiss();
         return;
       }
-      /* Only while a media is actually under the pointer, and never while a drag
-         is in progress, so the keys never fight the page for a normal gesture. */
-      if (stack.length < 2 || drag) return;
-      if (event.key === "ArrowDown" || event.key === "Tab") {
-        event.preventDefault();
-        cycleLayer(1);
-      } else if (event.key === "ArrowUp" || event.key === "Shift+Tab") {
-        event.preventDefault();
-        cycleLayer(-1);
-      }
+      if (drag) return;
+      const isDown = event.key === "ArrowDown" || event.key === "Tab";
+      const isUp = event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey);
+      if (!isDown && !isUp) return;
+      /* Swallow the key even with a single layer under the pointer: an arrow that
+         silently scrolls the page looks like the extension ignoring the keyboard. */
+      event.preventDefault();
+      if (stack.length < 2) return;
+      cycleLayer(isDown ? 1 : -1);
     };
 
     const paint = () => {
@@ -670,6 +670,11 @@ function mediaRequest(entry) {
       if (event.button !== 0) return;
       const chosen = stack.length ? stack[Math.min(layerIndex, stack.length - 1)] : null;
       const found = event.altKey ? null : chosen;
+      if (found && found.remote) {
+        /* The outline belongs to another frame; let it do its own capture. */
+        if (!forwardClick(found)) dismiss();
+        return;
+      }
       if (found) {
         submit(mediaRequest(found));
         return;
@@ -716,53 +721,76 @@ function mediaRequest(entry) {
     window.addEventListener("keydown", onKey, true);
 
     overlay.host.__netsanctum = { onMove, onDown, onUp, onKey, boxes };
+    askChildrenForTargets();
   }
 
-  /* Hand the overlay to whichever frame the pointer is in.
+  /* Every frame would otherwise draw its own overlay, and the ancestor's would
+     hide the descendant's while starving it of pointer events. So only the top
+     frame draws. A child frame contributes outlines by posting its rectangles up
+     to the parent, which translates them and adds them to the same list, and a
+     click on one is posted back so the child can do the reading itself — the bytes
+     of a blob: stream are only available in the frame that owns them. */
 
-     Every frame receives `arm`, and each overlay covers its whole viewport, so
-     two overlays would stack and the outer one would eat the events the inner
-     player needs. There is no cross-frame protocol here on purpose: the frame
-     under the pointer owns the overlay, and crossing a frame boundary is enough
-     to swap that ownership. */
-  function childFrameAt(x, y) {
-    let frames;
+  function childFrames() {
     try {
-      frames = document.querySelectorAll("iframe, embed, object, frame");
+      return Array.from(document.querySelectorAll("iframe, frame")).filter((frame) => {
+        const rect = frame.getBoundingClientRect();
+        return rect.width >= 2 && rect.height >= 2;
+      });
     } catch (error) {
-      return null;
+      return [];
     }
-    for (const frame of frames) {
-      const rect = frame.getBoundingClientRect();
-      if (rect.width < 2 || rect.height < 2) continue;
-      if (x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height) {
-        return frame;
+  }
+
+  function askChildrenForTargets() {
+    for (const frame of childFrames()) {
+      try {
+        frame.contentWindow.postMessage({ type: "netsanctum:scan" }, "*");
+      } catch (error) {
+        /* A cross-origin frame may refuse the post. The page's own media still works. */
       }
     }
-    return null;
   }
 
-  function release() {
-    /* Stays armed on purpose: the pointer leaving this frame is not the user
-       cancelling, it is the move into a child that will now draw. */
-    cleanup();
-    watchForReturn();
-  }
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || typeof data !== "object" || !overlay) return;
+    if (data.type !== "netsanctum:targets") return;
 
-  function watchForReturn() {
-    if (suspended || !armed || returning) return;
-    returning = true;
-    const onMove = (event) => {
-      if (overlay || !armed) return stop();
-      if (childFrameAt(event.clientX, event.clientY)) return;
-      stop();
-      build();
-    };
-    const stop = () => {
-      returning = false;
-      window.removeEventListener("pointermove", onMove, true);
-    };
-    window.addEventListener("pointermove", onMove, true);
+    const owner = overlay.host.__netsanctum;
+    if (!owner) return;
+    /* The frame that sent these may already have been torn down. */
+    for (const entry of data.targets || []) {
+      if (owner.boxes.length >= MAX_BOXES) break;
+      const box = document.createElement("div");
+      box.className = "box";
+      box.style.left = `${entry.rect.left}px`;
+      box.style.top = `${entry.rect.top}px`;
+      box.style.width = `${entry.rect.width}px`;
+      box.style.height = `${entry.rect.height}px`;
+      overlay.root.appendChild(box);
+      /* `remote` marks an outline owned by another frame. The click has to go back
+         to that frame, because a blob: stream can only be read where it lives. */
+      owner.boxes.push({
+        element: null,
+        info: entry.info || {},
+        rect: entry.rect,
+        box,
+        remote: true,
+        frame: event.source,
+        remoteIndex: (data.targets || []).indexOf(entry),
+      });
+    }
+  });
+
+  function forwardClick(entry) {
+    if (!entry.frame || typeof entry.frame.postMessage !== "function") return false;
+    try {
+      entry.frame.postMessage({ type: "netsanctum:pick", index: entry.remoteIndex }, "*");
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   function cleanup() {
@@ -878,6 +906,65 @@ function mediaRequest(entry) {
       entry.box.style.width = `${Math.max(0, rect.width)}px`;
       entry.box.style.height = `${Math.max(0, rect.height)}px`;
     }
+  }
+
+  /* ── Cross-frame reporting ────────────────────────────────
+     Only the top frame draws an overlay. A frame below it posts its own media up
+     so the outline appears in one place, and takes the click back when the user
+     picks it. */
+
+  function reportTargets() {
+    if (window.top === window.self) return;
+    const targets = collectTargets()
+      .filter((target) => target.rect.width >= 1 && target.rect.height >= 1)
+      .slice(0, MAX_BOXES)
+      .map((target) => ({
+        rect: { left: target.rect.left, top: target.rect.top, width: target.rect.width, height: target.rect.height },
+        info: describeBox(target),
+      }));
+    if (!targets.length) return;
+    try {
+      window.parent.postMessage({ type: "netsanctum:targets", targets }, "*");
+    } catch (error) {
+      /* The parent may be cross-origin to us in a way that blocks postMessage. */
+    }
+  }
+
+  /* Only the top frame draws an overlay, so only it listens for the keyboard. A
+     key press with focus inside a player never reaches it, which is why Escape
+     used to do nothing at all; the frame that has focus has to pass it up. */
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || window.top === window.self) return;
+    try {
+      window.parent.postMessage({ type: "netsanctum:dismiss" }, "*");
+    } catch (error) {
+      /* Nothing above us to tell. */
+    }
+  }, true);
+
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type === "netsanctum:dismiss") {
+      if (overlay) dismiss();
+      return;
+    }
+    if (data.type === "netsanctum:scan") {
+      reportTargets();
+      return;
+    }
+    if (data.type === "netsanctum:pick") {
+      const target = reportIndexTargets()[data.index];
+      if (target) submit(mediaRequest(target));
+    }
+  });
+
+  /* The same order `reportTargets` sends, kept in step so an index means the same
+     rectangle on both sides. */
+  function reportIndexTargets() {
+    return collectTargets()
+      .filter((target) => target.rect.width >= 1 && target.rect.height >= 1)
+      .slice(0, MAX_BOXES);
   }
 
   /* ── Messaging ────────────────────────────────────────── */
