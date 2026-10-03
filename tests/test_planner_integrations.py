@@ -23,6 +23,7 @@ from app.modules.miku.briefing import build_briefing
 from app.modules.miku.models import MikuCascadeLog, MikuEpisodeMemory, MikuTask
 from app.modules.planner import integrations
 from app.modules.planner.models import PlannerEvent, PlannerTask
+from app.modules.search.models import SearchRefreshOutbox
 
 
 class PlannerSession:
@@ -82,6 +83,7 @@ class PlannerIntegrationTests(unittest.TestCase):
                 MikuTask.__table__,
                 MikuEpisodeMemory.__table__,
                 MikuCascadeLog.__table__,
+                SearchRefreshOutbox.__table__,
             ],
         )
         self.session = Session(self.engine, expire_on_commit=False)
@@ -299,6 +301,7 @@ class PlannerBriefingTests(unittest.TestCase):
                 MikuTask.__table__,
                 MikuEpisodeMemory.__table__,
                 MikuCascadeLog.__table__,
+                SearchRefreshOutbox.__table__,
             ],
         )
         self.session = Session(self.engine, expire_on_commit=False)

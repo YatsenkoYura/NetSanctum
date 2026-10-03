@@ -108,6 +108,15 @@ MODULE = ModuleSpec(
             effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
         ),
         IntegrationSpec(
+            id="planner.search.documents.v1",
+            handler="app.modules.planner.search:search_documents",
+            request_model="app.contracts.search_documents_v1:SearchDocumentsRequest",
+            result_model="app.contracts.search_documents_v1:SearchDocumentsResult",
+            description="Publish open and done tasks and active events to the private search index.",
+            contract="search.documents.v1",
+            effects=IntegrationEffects(effect=IntegrationEffect.READ, idempotent=True),
+        ),
+        IntegrationSpec(
             id="planner.resolve_space.v1",
             handler="app.modules.planner.integrations:resolve_space",
             request_model="app.contracts.planner_v1:PlannerResolveSpaceRequest",

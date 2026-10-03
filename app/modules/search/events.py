@@ -9,6 +9,8 @@ INDEXED_TABLE_MODULES = {
     "lib_media": "alllib",
     "lib_chapters": "alllib",
     "vault_items": "vault",
+    "planner_task": "planner",
+    "planner_event": "planner",
 }
 _registered = False
 
