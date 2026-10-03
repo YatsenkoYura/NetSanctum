@@ -57,6 +57,8 @@
 
   let overlay = null;
   let suspended = null;
+  let armed = false;
+  let returning = false;
 
   /* ── Media resolution ─────────────────────────────────── */
 
@@ -386,7 +388,12 @@ function mediaRequest(entry) {
     if (!element || !element.tagName) return false;
     const tag = element.tagName.toLowerCase();
     if (tag === "video" || tag === "audio") return true;
-    if (tag === "iframe" || tag === "embed") return true;
+    /* An iframe is where the player lives, not the media itself. The content
+       script runs inside it too and draws the real outline there, so treating
+       the frame as a target as well would box the player and everything in it. */
+    if (tag === "iframe") return false;
+    /* `embed` is the exception: it has no document of its own to descend into. */
+    if (tag === "embed") return true;
     return false;
   }
 
@@ -452,7 +459,7 @@ function mediaRequest(entry) {
     return { kind, tagName, size, shown, origin, label };
   }
 
-  function renderTag(entry) {
+  function renderTag(entry, layerIndex = 0, layerCount = 1) {
     const tag = overlay.tag;
     const info = describeBox(entry);
     tag.textContent = "";
@@ -471,6 +478,8 @@ function mediaRequest(entry) {
       bits.push(`shown ${info.shown}`);
     }
     bits.push(info.origin);
+    /* Only worth saying when there is something underneath to reach. */
+    if (layerCount > 1) bits.push(`слой ${layerIndex + 1} из ${layerCount}`);
     facts.textContent = ` ${bits.join(" · ")}`;
     head.appendChild(facts);
     tag.appendChild(head);
@@ -501,11 +510,20 @@ function mediaRequest(entry) {
   }
 
   function arm() {
+    /* Remembered so a frame that handed its overlay away can take it back when
+       the pointer returns. Without this, entering an iframe would leave the page
+       permanently unarmed. */
+    armed = true;
     if (overlay) {
       overlay.hint.textContent = "";
       overlay.hint.append("Already armed");
       return;
     }
+    build();
+  }
+
+  function build() {
+    if (overlay) return;
     overlay = buildOverlay();
     document.documentElement.appendChild(overlay.host);
 
@@ -536,41 +554,97 @@ function mediaRequest(entry) {
       const counter = document.createElement("span");
       counter.textContent = `${boxes.length} media found`;
       overlay.hint.appendChild(counter);
+      /* The layer keys are invisible until something is stacked under the
+         pointer, so say once that they exist. */
+      const layerHelp = document.createElement("span");
+      layerHelp.className = "d";
+      layerHelp.textContent = "· ↑↓ слои · Esc отмена";
+      overlay.hint.appendChild(layerHelp);
     }
 
-    let hovered = null;
     let drag = null;
 
-    const targetAt = (x, y) => {
+    /* Every outline under the pointer, topmost first.
+
+       Media stacks: a poster image under a <video>, a thumbnail under the player
+       that replaced it, a lightbox over the page it opened. The old lookup
+       returned one box, always the topmost, so the layers underneath could not
+       be reached at all — and they are usually the better capture. Returning the
+       whole stack lets the caller step through it. */
+    const stackAt = (x, y) => {
+      const hits = [];
       for (let index = boxes.length - 1; index >= 0; index -= 1) {
         const entry = boxes[index];
         const r = entry.rect;
-        if (x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height) return entry;
+        if (x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height) hits.push(entry);
       }
-      return null;
+      return hits;
+    };
+
+    let hovered = null;
+    let stack = [];
+    let layerIndex = 0;
+
+    const showHovered = () => {
+      if (!stack.length) return;
+      const entry = stack[Math.min(layerIndex, stack.length - 1)];
+      if (entry === hovered) return;
+      if (hovered) hovered.box.classList.remove("hover");
+      hovered = entry;
+      if (hovered) {
+        hovered.box.classList.add("hover");
+        renderTag(hovered, stack.length ? Math.min(layerIndex, stack.length - 1) : 0, stack.length);
+      } else {
+        hideTag();
+      }
+    };
+
+    /* Step through the stack, wrapping so the last layer hands back to the first
+       rather than dead-ending. */
+    const cycleLayer = (step) => {
+      if (stack.length < 2) return;
+      layerIndex = (layerIndex + step + stack.length) % stack.length;
+      showHovered();
     };
 
     const onMove = (event) => {
+      /* The pointer is over a frame that draws its own overlay. Give it up
+         before it blocks that frame from ever seeing a pointer event. */
+      if (!drag && !event.altKey && childFrameAt(event.clientX, event.clientY)) {
+        release();
+        return;
+      }
       if (drag) {
         drag.x = event.clientX;
         drag.y = event.clientY;
         paint();
         return;
       }
-      const found = targetAt(event.clientX, event.clientY);
-      if (found === hovered) {
-        // Still hovering the same outline: keep the tooltip pinned to it even
-        // when the page scrolls underneath.
-        if (hovered) renderTag(hovered);
+      const hits = stackAt(event.clientX, event.clientY);
+      const sameStack = hits.length === stack.length && hits.every((entry, i) => entry === stack[i]);
+      stack = hits;
+      if (!sameStack) layerIndex = 0;
+      // Still hovering the same outline: keep the tooltip pinned to it even
+      // when the page scrolls underneath.
+      showHovered();
+      if (hovered) renderTag(hovered, Math.min(layerIndex, stack.length - 1), stack.length);
+    };
+
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismiss();
         return;
       }
-      if (hovered) hovered.box.classList.remove("hover");
-      hovered = found;
-      if (hovered) {
-        hovered.box.classList.add("hover");
-        renderTag(hovered);
-      } else {
-        hideTag();
+      /* Only while a media is actually under the pointer, and never while a drag
+         is in progress, so the keys never fight the page for a normal gesture. */
+      if (stack.length < 2 || drag) return;
+      if (event.key === "ArrowDown" || event.key === "Tab") {
+        event.preventDefault();
+        cycleLayer(1);
+      } else if (event.key === "ArrowUp" || event.key === "Shift+Tab") {
+        event.preventDefault();
+        cycleLayer(-1);
       }
     };
 
@@ -590,10 +664,12 @@ function mediaRequest(entry) {
     };
 
     /* Alt overrides a media hit so a region can still be dragged over a big
-     * full-bleed banner. */
+     * full-bleed banner. Otherwise the click takes the layer the arrows selected,
+     * which is not always the topmost one. */
     const onDown = (event) => {
       if (event.button !== 0) return;
-      const found = event.altKey ? null : targetAt(event.clientX, event.clientY);
+      const chosen = stack.length ? stack[Math.min(layerIndex, stack.length - 1)] : null;
+      const found = event.altKey ? null : chosen;
       if (found) {
         submit(mediaRequest(found));
         return;
@@ -621,22 +697,72 @@ function mediaRequest(entry) {
       submit({ action: "region", rect, viewport: viewportSize() });
     };
 
-    const onKey = (event) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      dismiss();
-    };
-
     overlay.root.addEventListener("pointermove", onMove);
     overlay.root.addEventListener("pointerdown", onDown);
     overlay.root.addEventListener("pointerup", onUp);
-    overlay.root.addEventListener("pointerleave", hideTag);
+    /* Leaving the page drops the stack, so coming back does not resume a stale
+       layer choice against whatever is now underneath. */
+    const onLeave = () => {
+      stack = [];
+      layerIndex = 0;
+      if (hovered) hovered.box.classList.remove("hover");
+      hovered = null;
+      hideTag();
+    };
+    overlay.root.addEventListener("pointerleave", onLeave);
     overlay.root.addEventListener("contextmenu", dismiss);
     // A stray wheel event must not scroll the page behind the veil.
     overlay.root.addEventListener("wheel", (event) => event.preventDefault(), { passive: false });
     window.addEventListener("keydown", onKey, true);
 
     overlay.host.__netsanctum = { onMove, onDown, onUp, onKey, boxes };
+  }
+
+  /* Hand the overlay to whichever frame the pointer is in.
+
+     Every frame receives `arm`, and each overlay covers its whole viewport, so
+     two overlays would stack and the outer one would eat the events the inner
+     player needs. There is no cross-frame protocol here on purpose: the frame
+     under the pointer owns the overlay, and crossing a frame boundary is enough
+     to swap that ownership. */
+  function childFrameAt(x, y) {
+    let frames;
+    try {
+      frames = document.querySelectorAll("iframe, embed, object, frame");
+    } catch (error) {
+      return null;
+    }
+    for (const frame of frames) {
+      const rect = frame.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) continue;
+      if (x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height) {
+        return frame;
+      }
+    }
+    return null;
+  }
+
+  function release() {
+    /* Stays armed on purpose: the pointer leaving this frame is not the user
+       cancelling, it is the move into a child that will now draw. */
+    cleanup();
+    watchForReturn();
+  }
+
+  function watchForReturn() {
+    if (suspended || !armed || returning) return;
+    returning = true;
+    const onMove = (event) => {
+      if (overlay || !armed) return stop();
+      if (childFrameAt(event.clientX, event.clientY)) return;
+      stop();
+      build();
+    };
+    const stop = () => {
+      returning = false;
+      window.removeEventListener("pointermove", onMove, true);
+    };
+    window.addEventListener("pointermove", onMove, true);
   }
 
   function cleanup() {
@@ -647,7 +773,7 @@ function mediaRequest(entry) {
       overlay.root.removeEventListener("pointermove", handlers.onMove);
       overlay.root.removeEventListener("pointerdown", handlers.onDown);
       overlay.root.removeEventListener("pointerup", handlers.onUp);
-      overlay.root.removeEventListener("pointerleave", hideTag);
+      overlay.root.removeEventListener("pointerleave", onLeave);
       overlay.root.removeEventListener("contextmenu", dismiss);
       window.removeEventListener("keydown", handlers.onKey, true);
     }
@@ -656,6 +782,7 @@ function mediaRequest(entry) {
   }
 
   function dismiss() {
+    armed = false;
     cleanup();
     if (SHARED_HELPERS_MISSING) return;
     netsanctumCall(chrome.runtime, "sendMessage", { type: "netsanctum:disarmed" }).catch(() => {});
