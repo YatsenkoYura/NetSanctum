@@ -357,7 +357,11 @@ async function ensureContentScript(tabId) {
     return basePayload("video", page, {
       title: (page.title || "Video").slice(0, 500),
       source_url: storableUrl(info.url),
-      video_url: request.videoUrl || info.url || page.url,
+      video_url:
+        /* The archive fetches this, so a blob: segment is useless here and the
+           server rejects it outright. The tab URL is the real watch page and is
+           the honest fallback when the player streams from memory. */
+        storableUrl(request.videoUrl) || storableUrl(info.url) || storableUrl(page.url),
       quality: settings.videoQuality,
       image: still ? await normalizeImage(still) : null,
       tags: settings.tags,

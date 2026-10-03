@@ -364,7 +364,7 @@ function mediaRequest(entry) {
         ...base,
         action: "video",
         asVideo: true,
-        videoUrl: videoSourceUrl(entry.element) || pageUrl(),
+        videoUrl: videoSourceUrl(entry.element) || pageUrl() || null,
         info,
         still: stillFrom(entry.element),
       };
@@ -398,8 +398,20 @@ function mediaRequest(entry) {
     return absolute(candidate);
   }
 
+  /* The page a card should point back to. Inside a blob: or data: frame — the
+     shape every JavaScript video player uses — `location.href` is the blob
+     itself, which is meaningless once stored. The watch page is the top document,
+     which is reachable whenever the frame shares its origin and throws otherwise. */
   function pageUrl() {
-    return location.href.split("#")[0];
+    const here = location.href.split("#")[0];
+    if (!/^(blob:|data:|about:)/.test(here)) return here;
+    try {
+      const top = window.top.location.href.split("#")[0];
+      if (top && !/^(blob:|data:|about:)/.test(top)) return top;
+    } catch (error) {
+      /* A cross-origin top document: no page to name, so send nothing. */
+    }
+    return "";
   }
 
   function stillFrom(element) {
