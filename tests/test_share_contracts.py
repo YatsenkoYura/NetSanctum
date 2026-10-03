@@ -263,12 +263,12 @@ class ShareRouteSecurityTests(unittest.IsolatedAsyncioTestCase):
             ) as dispatch,
             patch.object(sharing_router, "_has_session", AsyncMock()) as has_session,
         ):
-            response = await shared_module_api("share-id", "video-archiver/videos", request, db)
+            response = await shared_module_api("share-id", "api/video-archiver/videos", request, db)
 
         self.assertEqual(b"asset", response.body)
         active_share.assert_awaited_once_with(db, "share-id")
         has_session.assert_not_awaited()
-        dispatch.assert_awaited_once_with(request, share, db, "video-archiver/videos")
+        dispatch.assert_awaited_once_with(request, share, db, "api/video-archiver/videos")
 
     async def test_password_rate_limit_has_retry_after_header(self):
         request = make_request()
@@ -571,7 +571,7 @@ class SharedVideoUiTests(unittest.IsolatedAsyncioTestCase):
                 request,
                 share,
                 AsyncMock(),
-                "video-archiver/videos/video-id",
+                "api/video-archiver/videos/video-id",
             )
 
         provider.assert_not_called()
@@ -587,7 +587,7 @@ class SharedVideoUiTests(unittest.IsolatedAsyncioTestCase):
                 request,
                 share,
                 AsyncMock(),
-                "video-archiver/videos",
+                "api/video-archiver/videos",
             )
 
         self.assertEqual(200, response.status_code)
@@ -597,9 +597,28 @@ class SharedVideoUiTests(unittest.IsolatedAsyncioTestCase):
                 request,
                 share,
                 AsyncMock(),
-                "video-archiver/undeclared",
+                "api/video-archiver/undeclared",
             )
         self.assertEqual(404, raised.exception.status_code)
+
+    async def test_core_dispatches_full_api_paths_as_served_by_router(self):
+        # FastAPI captures `path` from `/s/{share_id}/api/{path:path}`, so it
+        # keeps the leading `api/` segment. Dispatch must accept it, otherwise
+        # every shared API/asset request ends in 404.
+        request = make_request()
+        share = SimpleNamespace(id="share-id", module_id="video_archiver")
+        provider = SimpleNamespace(entities=AsyncMock(return_value=[{"id": "video-id"}]))
+
+        with patch.object(sharing_router, "_provider", return_value=provider):
+            response = await _dispatch_shared_api(
+                request,
+                share,
+                AsyncMock(),
+                "api/video-archiver/videos",
+            )
+
+        self.assertEqual(200, response.status_code)
+        provider.entities.assert_awaited_once()
 
 
 if __name__ == "__main__":

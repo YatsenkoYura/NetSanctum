@@ -129,7 +129,10 @@ async def _dispatch_shared_api(
 
     spec = _share_spec(share.module_id)
     provider = _provider(share.module_id)
-    expected_prefix = spec.api_prefix.removeprefix("/api/")
+    # The `{path:path}` captured by `/s/{share_id}/api/{path:path}` keeps the
+    # leading `api/` segment (e.g. `api/music/audio/7`), so match against the
+    # full API prefix instead of stripping it.
+    expected_prefix = spec.api_prefix.strip("/")
     normalized = path.strip("/")
     if normalized == expected_prefix:
         relative_path = ""
