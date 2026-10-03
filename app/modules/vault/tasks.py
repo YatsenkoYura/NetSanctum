@@ -20,7 +20,14 @@ from app.modules.vault.models import VaultCollection, VaultItem
 
 logger = logging.getLogger(__name__)
 
-MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024
+
+def _human(size: int) -> str:
+    """A limit the user can act on needs a number in it, not just a refusal."""
+    if size >= 1024**3:
+        return f"{size / 1024**3:.0f} GiB"
+    return f"{size / 1024**2:.0f} MiB"
+
+
 STORAGE_PREFIX = "vault/videos"
 THUMBNAIL_PREFIX = "vault/thumbnails"
 SAFE_SEGMENT = re.compile(r"[^a-zA-Z0-9._-]+")
@@ -88,13 +95,18 @@ def download_vault_video_task(
     storage = get_storage()
     workdir = Path(tempfile.mkdtemp(prefix="vault_video_"))
 
+    limit = get_settings().VAULT_MAX_VIDEO_BYTES
+
+    def too_large() -> RuntimeError:
+        return RuntimeError(f"The video is larger than the Vault media limit of {_human(limit)}")
+
     def hook(download: dict):
         total = download.get("total_bytes") or download.get("total_bytes_estimate") or 0
-        if total and total > MAX_VIDEO_BYTES:
-            raise RuntimeError("The video is larger than the Vault media limit")
+        if total and total > limit:
+            raise too_large()
         done = download.get("downloaded_bytes") or 0
-        if done > MAX_VIDEO_BYTES:
-            raise RuntimeError("The video is larger than the Vault media limit")
+        if done > limit:
+            raise too_large()
         if total:
             report(f"downloading {min(100, round(done * 100 / total))}%")
 
@@ -127,9 +139,9 @@ def download_vault_video_task(
             return "Error: nothing was downloaded"
         video_file = max(files, key=lambda p: p.stat().st_size)
         size = video_file.stat().st_size
-        if size > MAX_VIDEO_BYTES:
+        if size > limit:
             report("error: too large")
-            return "Error: The video is larger than the Vault media limit"
+            return f"Error: The video is larger than the Vault media limit of {_human(limit)}"
 
         stem = _safe_segment((info.get("id") or "") or Path(url).stem)
         ext = (video_file.suffix or ".mp4").lower()[:6]

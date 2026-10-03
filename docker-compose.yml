@@ -644,7 +644,7 @@ services:
       - media-control
     read_only: true
     tmpfs:
-      - /tmp:size=2g
+      - /tmp:size=${VAULT_WORKER_TMPFS:-6g}
     cap_drop:
       - ALL
     security_opt:

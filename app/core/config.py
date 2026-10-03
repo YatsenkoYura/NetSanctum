@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
     LOCAL_STORAGE_ROOT: str = "./storage"
     VIDEO_COMPRESSION_WORKDIR: str = ""
+    # Ceiling for a Vault video, in bytes. A download is staged in the worker's
+    # /tmp before it is moved into storage, so the worker's tmpfs must be larger
+    # than this or a file at the limit dies with ENOSPC instead of a clear refusal.
+    VAULT_MAX_VIDEO_BYTES: int = 4 * 1024 * 1024 * 1024
 
     # S3 settings (used when STORAGE_BACKEND=s3)
     S3_BUCKET_NAME: str = ""
