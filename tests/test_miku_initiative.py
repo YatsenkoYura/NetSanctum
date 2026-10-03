@@ -209,6 +209,41 @@ class InitiativeTests(unittest.TestCase):
         asyncio.run(run())
         invalidate_provider_cache(777)
 
+    def test_continue_loop_arms_exactly_once(self):
+        from app.modules.miku import tasks as miku_tasks
+
+        store = {}
+
+        async def fake_set(key, value, ex=None, nx=False):
+            if nx and key in store:
+                return None
+            store[key] = value
+            return True
+
+        async def run():
+            applied = []
+            with (
+                patch.object(miku_tasks, "redis_client", SimpleNamespace(set=fake_set)),
+                patch.object(
+                    miku_tasks.continue_tasks,
+                    "apply_async",
+                    side_effect=lambda **kwargs: applied.append(kwargs),
+                ),
+            ):
+                await miku_tasks.ensure_continue_armed()
+                await miku_tasks.ensure_continue_armed()
+            return applied
+
+        applied = asyncio.run(run())
+        self.assertEqual([{"countdown": 15 * 60}], applied)
+
+    def test_continue_worker_ready_kicks_ensure(self):
+        from app.modules.miku import tasks as miku_tasks
+
+        with patch.object(miku_tasks, "ensure_continue_armed", AsyncMock()) as ensure:
+            miku_tasks.arm_continue_on_worker_ready()
+        ensure.assert_awaited_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

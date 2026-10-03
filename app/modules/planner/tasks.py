@@ -8,6 +8,8 @@ ensure_sweep_armed, so a worker restart heals itself on the next API call.
 import asyncio
 import logging
 
+from celery.signals import worker_ready
+
 from app.core.database import AsyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.security import redis_client
@@ -56,4 +58,13 @@ def sweep_reminders() -> None:
     sweep_reminders.apply_async(countdown=SELF_RESCHEDULE_SECONDS)
 
 
-__all__ = ["ensure_sweep_armed", "sweep_reminders"]
+@worker_ready.connect(weak=False)
+def arm_sweep_on_worker_ready(**kwargs) -> None:
+    """First kick after a (re)start. SETNX-gated: never forks a second loop."""
+    try:
+        asyncio.run(ensure_sweep_armed())
+    except Exception:
+        logger.warning("planner sweep could not be armed on worker ready", exc_info=True)
+
+
+__all__ = ["arm_sweep_on_worker_ready", "ensure_sweep_armed", "sweep_reminders"]
