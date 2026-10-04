@@ -50,44 +50,46 @@ class _Adapter:
 class InboxCryptoTests(unittest.TestCase):
     def test_a_public_key_alone_can_seal(self):
         private_key, public_key = generate_inbox_keypair()
-        write = seal_for_inbox(b"capture bytes", public_key, context=b"item:1")
+        write = seal_for_inbox(b"capture bytes", public_key, collection_id=7, kind="item", row_id=1)
 
         self.assertNotIn(b"capture bytes", write.payload.encode())
-        self.assertEqual(b"capture bytes", open_from_inbox(write, private_key, context=b"item:1"))
+        self.assertEqual(
+            b"capture bytes", open_from_inbox(write, private_key, collection_id=7, kind="item", row_id=1)
+        )
 
     def test_a_different_private_key_cannot_open_it(self):
         _, public_key = generate_inbox_keypair()
         other_private, _ = generate_inbox_keypair()
-        write = seal_for_inbox(b"capture bytes", public_key, context=b"item:1")
+        write = seal_for_inbox(b"capture bytes", public_key, collection_id=7, kind="item", row_id=1)
 
         with self.assertRaises(ValueError):
-            open_from_inbox(write, other_private, context=b"item:1")
+            open_from_inbox(write, other_private, collection_id=7, kind="item", row_id=1)
 
     def test_the_public_key_alone_opens_nothing(self):
         _, public_key = generate_inbox_keypair()
-        write = seal_for_inbox(b"secret", public_key, context=b"item:1")
+        write = seal_for_inbox(b"secret", public_key, collection_id=7, kind="item", row_id=1)
 
         with self.assertRaises(ValueError):
-            open_from_inbox(write, public_key, context=b"item:1")
+            open_from_inbox(write, public_key, collection_id=7, kind="item", row_id=1)
 
     def test_two_writes_to_one_collection_use_different_keys(self):
         _, public_key = generate_inbox_keypair()
-        first = seal_for_inbox(b"one", public_key, context=b"item:1")
-        second = seal_for_inbox(b"two", public_key, context=b"item:2")
+        first = seal_for_inbox(b"one", public_key, collection_id=7, kind="item", row_id=1)
+        second = seal_for_inbox(b"two", public_key, collection_id=7, kind="item", row_id=2)
 
         self.assertNotEqual(first.wrapped_key, second.wrapped_key)
         self.assertNotEqual(first.payload, second.payload)
 
     def test_a_write_cannot_be_moved_to_another_item(self):
         private_key, public_key = generate_inbox_keypair()
-        write = seal_for_inbox(b"capture", public_key, context=b"item:1")
+        write = seal_for_inbox(b"capture", public_key, collection_id=7, kind="item", row_id=1)
 
         with self.assertRaises(ValueError):
-            open_from_inbox(write, private_key, context=b"item:2")
+            open_from_inbox(write, private_key, collection_id=7, kind="item", row_id=2)
 
     def test_a_tampered_payload_is_refused(self):
         private_key, public_key = generate_inbox_keypair()
-        write = seal_for_inbox(b"capture", public_key, context=b"item:1")
+        write = seal_for_inbox(b"capture", public_key, collection_id=7, kind="item", row_id=1)
         raw = bytearray(base64.urlsafe_b64decode(write.payload.removeprefix("nsp:v1:")))
         raw[-1] ^= 0xFF
         forged = SealedWrite(
@@ -96,7 +98,7 @@ class InboxCryptoTests(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError):
-            open_from_inbox(forged, private_key, context=b"item:1")
+            open_from_inbox(forged, private_key, collection_id=7, kind="item", row_id=1)
 
 
 class BlindWriteTests(unittest.TestCase):
@@ -199,7 +201,9 @@ class BlindWriteTests(unittest.TestCase):
             open_from_inbox(
                 SealedWrite(payload=stored.sealed_payload, wrapped_key=stored.wrapped_key),
                 self.private_key,
-                context=b"netsanctum:vault:item:" + str(stored.id).encode(),
+                collection_id=stored.collection_id,
+                kind="item",
+                row_id=stored.id,
             )
         )
         self.assertEqual("приватная заметка", decoded["content"])

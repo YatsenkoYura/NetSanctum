@@ -21,7 +21,10 @@ from app.modules.vault.sealing import (
 )
 
 
-def make_item(collection_id: int | None = None) -> VaultItem:
+def make_item(collection_id: int | None = 1) -> VaultItem:
+    # A sealed card always belongs to the collection whose public key sealed it:
+    # the envelope is bound to that collection, so there is nothing to bind to
+    # without one.
     now = datetime.datetime(2026, 1, 1)
     return VaultItem(
         id=7,
@@ -142,7 +145,7 @@ class SealedCollectionModelTests(unittest.TestCase):
         Base.metadata.create_all(engine, tables=[VaultCollection.__table__, VaultItem.__table__])
         session = Session(engine, expire_on_commit=False)
         private_key, public_key = generate_inbox_keypair()
-        item = make_item()
+        item = make_item(collection_id=1)
         session.add(item)
         session.commit()
         seal_item(item, public_key)

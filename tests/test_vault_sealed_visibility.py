@@ -45,8 +45,16 @@ class _Context:
 
 
 def sealed_and_plain(session, public_key):
+    # The sealed card belongs to a collection: a blind write is bound to the
+    # collection whose public key sealed it, so there is no such thing as a
+    # sealed card without one.
     sealed = VaultItem(
-        id=1, entry_type="bookmark", title="Личное название", content="Личный текст", tags=["secret"]
+        id=1,
+        entry_type="bookmark",
+        title="Личное название",
+        content="Личный текст",
+        tags=["secret"],
+        collection_id=1,
     )
     plain = VaultItem(id=2, entry_type="bookmark", title="Обычная закладка", content="публичный текст")
     session.add_all([sealed, plain])
@@ -86,9 +94,7 @@ class SealedVisibilityTests(unittest.TestCase):
             self.assertNotIn("Личное название", entry["title"])
 
     def test_spaces_never_publishes_a_sealed_folder(self):
-        folder = VaultItem(
-            id=3, entry_type="folder", is_folder=True, title="Личная папка", collection_id=None
-        )
+        folder = VaultItem(id=3, entry_type="folder", is_folder=True, title="Личная папка", collection_id=1)
         self.session.add(folder)
         self.session.flush()
         _seal(folder, self.public_key)

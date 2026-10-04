@@ -21,7 +21,7 @@ MODULE = ModuleSpec(
     migrations=MigrationSpec(
         path="migrations",
         baseline_revision="vault_0001",
-        tables=("vault_collections", "vault_items"),
+        tables=("vault_collections", "vault_items", "vault_media_upgrades"),
         legacy_tables=("vault_collections", "vault_items"),
     ),
     templates="templates",

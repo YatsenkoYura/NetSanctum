@@ -151,3 +151,33 @@ class VaultItem(Base):
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class VaultMediaUpgrade(Base):
+    """What the media envelope migration has already done, and what it could not.
+
+    The migration itself is idempotent without this table: whether a file needs
+    rewriting is a fact about its header, and whether it is done is a fact about
+    the row that points at it. What the table adds is the part neither of those
+    can hold — that a particular file was tried and failed, with the reason, so a
+    long run over gigabytes can be resumed with a report instead of hammering one
+    unreadable file forever, and so an operator can see the job's progress
+    without scanning storage.
+    """
+
+    __tablename__ = "vault_media_upgrades"
+
+    # The stored path at the time of the attempt. Primary key, because one file
+    # is one unit of work: re-running finds the same row and counts the attempt.
+    path = Column(String, primary_key=True)
+    item_id = Column(Integer, nullable=True)
+    column_name = Column(String, nullable=True)
+    # pending, done, failed. Only `failed` stops a retry; `pending` is written
+    # before the work starts, so a crash mid-file is visible as unfinished.
+    state = Column(String, nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    # The envelope version the file ended on, for the record.
+    result_version = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

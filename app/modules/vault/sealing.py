@@ -48,10 +48,13 @@ from app.modules.vault.crypto import (
     context_for,
     derive_file_key,
     generate_inbox_keypair,
+    inbox_pub_fingerprint,
     inbox_pub_mac as crypto_inbox_pub_mac,
     is_sealed,
     kek_for_wrapper,
     open_from_inbox,
+    open_inbox_key,
+    rewrap_inbox_key,
     seal_for_inbox,
     verify_inbox_pub_mac,
     wrap_data_key,
@@ -883,9 +886,20 @@ def seal_item(item: VaultItem, public_key: bytes) -> VaultItem:
     what lets the browser extension drop a capture into a locked vault. Every item
     gets its own key, wrapped under the public key, so one compromised item key
     never exposes the rest of the collection.
+
+    Always the current envelope. A row that arrived under the previous one is
+    upgraded the next time it is written — by an edit, a move, or being filed
+    somewhere else — and untouched rows stay readable, so nothing has to walk
+    the table to move it off a version nobody should still be writing.
     """
     payload = json.dumps(_payload_for(item), ensure_ascii=False, separators=(",", ":")).encode()
-    write = seal_for_inbox(payload, public_key, context=context_for("item", item.id))
+    write = seal_for_inbox(
+        payload,
+        public_key,
+        collection_id=item.collection_id,
+        kind="item",
+        row_id=item.id,
+    )
     item.sealed_payload = write.payload
     item.wrapped_key = write.wrapped_key
     _blank_sealed_columns(item)
@@ -908,7 +922,9 @@ def seal_collection_fields(collection: VaultCollection, public_key: bytes) -> Va
     write = seal_for_inbox(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
         public_key,
-        context=context_for("collection", collection.id),
+        collection_id=collection.id,
+        kind="collection",
+        row_id=collection.id,
     )
     collection.sealed_payload = write.payload
     collection.sealed_wrapped_key = write.wrapped_key
@@ -924,7 +940,9 @@ def open_collection_fields(collection: VaultCollection, private_key: bytes) -> d
     write = SealedWrite(payload=collection.sealed_payload, wrapped_key=collection.sealed_wrapped_key)
     if not write.wrapped_key:
         return {}
-    raw = open_from_inbox(write, private_key, context=context_for("collection", collection.id))
+    raw = open_from_inbox(
+        write, private_key, collection_id=collection.id, kind="collection", row_id=collection.id
+    )
     try:
         return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
@@ -968,7 +986,11 @@ def open_item(private_key: bytes, item: VaultItem) -> VaultItem:
     if not item.wrapped_key:
         raise ValueError(f"Sealed Vault item {item.id} has no wrapped key")
     write = SealedWrite(payload=item.sealed_payload, wrapped_key=item.wrapped_key)
-    raw = json.loads(open_from_inbox(write, private_key, context=context_for("item", item.id)).decode())
+    raw = json.loads(
+        open_from_inbox(
+            write, private_key, collection_id=item.collection_id, kind="item", row_id=item.id
+        ).decode()
+    )
     for field in SEALED_FIELDS:
         setattr(item, field, raw.get(field))
     item.title = raw.get("title") or ""
@@ -1030,6 +1052,141 @@ async def update_sealed_item(
 
 class VaultMoveError(ValueError):
     """The card cannot change spaces without becoming unopenable."""
+
+
+class VaultRekeyError(ValueError):
+    """The collection's inbox key could not be replaced."""
+
+
+async def rekey_collection(
+    session,
+    collection: VaultCollection,
+    passphrase: str,
+    *,
+    unlock_token: str = "",
+) -> dict[str, Any]:
+    """Replace a collection's inbox keypair, and re-wrap everything under it.
+
+    A separate operation, never a side effect: rotating a key because one may
+    have leaked is a decision with a cost, and it must not ride along on an
+    unlock or a save. What it does:
+
+    * a fresh X25519 keypair, whose public half is published for blind writes
+      and whose private half is wrapped by the passphrase, exactly as at
+      creation;
+    * the public key's MAC recomputed, since the old one vouched for the old key
+      — leaving it would make the next unlock refuse the vault just rekeyed;
+    * every sealed row re-wrapped: its item key is recovered with the old
+      private key and wrapped again under the new public key. No payload is
+      decrypted and no payload is rewritten — only the small wrapper around each
+      item key changes, so this is minutes of work rather than a rewrite.
+
+    What it cannot do here is the files. The file key is derived from the inbox
+    private key, so a new one means every file-key file has to be re-encrypted,
+    and until that runs those files open under a key this operation has stopped
+    deriving. The returned count says how many are waiting: a rekey that
+    silently orphaned a vault's pictures would be worse than one that refuses.
+
+    Refuses a locked vault: without the old private key there is nothing to
+    re-wrap from, and re-wrapping blind would seal every card under a key the
+    owner has not proved they hold.
+    """
+    old_private = await data_key_for(collection, unlock_token)
+    if old_private is None:
+        raise VaultRekeyError("Разблокируйте Vault, чтобы сменить ключ")
+    old_public = inbox_public_key(collection)
+    if old_public is None:
+        raise VaultRekeyError("У этого Vault нет входящего ключа")
+
+    new_private, new_public = generate_inbox_keypair()
+    wrapped = wrap_data_key(new_private, passphrase, context=context_for("collection", collection.id))
+    kek, _salt = kek_for_wrapper(wrapped, passphrase)
+
+    rows = list(
+        (
+            await session.execute(
+                select(VaultItem).where(
+                    VaultItem.collection_id == collection.id,
+                    VaultItem.wrapped_key.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rewrapped = 0
+    skipped = 0
+    for item in rows:
+        try:
+            item_key = open_inbox_key(
+                SealedWrite(payload=item.sealed_payload, wrapped_key=item.wrapped_key),
+                old_private,
+                collection_id=collection.id,
+                kind="item",
+                row_id=item.id,
+            )
+        except ValueError:
+            # A row whose wrapper is not a version we know is corruption.
+            # Rewriting it would replace a diagnosable error with a row that
+            # cannot be opened at all, so it is left and counted.
+            skipped += 1
+            continue
+        item.wrapped_key = rewrap_inbox_key(
+            item_key, new_public, collection_id=collection.id, kind="item", row_id=item.id
+        )
+        rewrapped += 1
+
+    if collection.sealed_payload and collection.sealed_wrapped_key:
+        collection_key_pair = open_inbox_key(
+            SealedWrite(payload=collection.sealed_payload, wrapped_key=collection.sealed_wrapped_key),
+            old_private,
+            collection_id=collection.id,
+            kind="collection",
+            row_id=collection.id,
+        )
+        collection.sealed_wrapped_key = rewrap_inbox_key(
+            collection_key_pair,
+            new_public,
+            collection_id=collection.id,
+            kind="collection",
+            row_id=collection.id,
+        )
+
+    collection.inbox_public_key = b64encode(new_public).decode("ascii")
+    collection.inbox_pub_mac = crypto_inbox_pub_mac(kek, new_public, collection.id)
+    store_wrapper(collection, wrapped)
+    await session.commit()
+    await session.refresh(collection)
+
+    # The session this tab holds is registered under the old private key, so it
+    # is dropped: the tab must unlock again, which is what proves the new pair
+    # works before anyone relies on it.
+    await lock_collection(collection.id, unlock_token)
+
+    return {
+        "collection_id": collection.id,
+        "rewrapped_items": rewrapped,
+        "skipped_items": skipped,
+        "files_awaiting_reencryption": await _count_collection_files(session, collection.id),
+        "inbox_fingerprint": inbox_pub_fingerprint(new_public),
+    }
+
+
+async def _count_collection_files(session, collection_id: int) -> int:
+    """How many stored files a rekey leaves waiting for the new file key."""
+    from sqlalchemy import func, or_
+
+    result = await session.execute(
+        select(func.count(VaultItem.id)).where(
+            VaultItem.collection_id == collection_id,
+            or_(
+                VaultItem.image_path.is_not(None),
+                VaultItem.media_thumbnail_path.is_not(None),
+                VaultItem.media_path.is_not(None),
+            ),
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 async def move_sealed_item(

@@ -223,6 +223,67 @@ class StorageInterface(ABC):
             return 1
         return 0
 
+    def seekable_envelope_version(self, path: str) -> int:
+        """0 for a plain object, 1 or 2 for a chunked envelope.
+
+        Read from the header, never the name: which version an object is comes
+        from its first bytes, and a migration that trusted the filename would
+        rewrite files that were already fine and skip files that were not.
+        """
+        with self.get_file_stream(path) as stream:
+            return self._seekable_version(stream.read(SEEKABLE_HEADER_MAX_SIZE))
+
+    @staticmethod
+    def upgraded_envelope_path(path: str) -> str:
+        """Where the v2 copy of a v1 object belongs.
+
+        A new name, because the envelope binds its own path: rewriting in place
+        would invalidate every chunk it had already written. The marker goes
+        before `.enc` so the suffix parsers (`media_type_for`, the storage
+        browser's inner-name guess) still see a file they recognise.
+        """
+        if path.endswith(ENCRYPTED_SUFFIX):
+            return f"{path[: -len(ENCRYPTED_SUFFIX)]}.v2{ENCRYPTED_SUFFIX}"
+        return f"{path}.v2"
+
+    def upgrade_seekable_envelope(self, path: str, *, key: bytes | None = None) -> str:
+        """Rewrite a v1 chunked object as v2 and return the new path.
+
+        The new object is written in full, read back and compared before this
+        returns, so a caller that gets a path back has a verified file: the
+        verification is here rather than in the caller because every caller
+        would otherwise have to remember it, and a migration that does not
+        verify is a migration that eats files.
+
+        Raises ValueError for anything it cannot do safely — a v2 object, a
+        plain object, a file that does not open — and leaves the original in
+        place in every one of those cases. Deleting the old file is the
+        caller's decision, once the row points at the new one.
+        """
+        version = self.seekable_envelope_version(path)
+        if version != 1:
+            raise ValueError(f"'{path}' is not a v1 seekable object")
+        total = self.get_seekable_plaintext_size(path)
+        plaintext = b"".join(self.read_seekable_range(path, 0, total, key=key))
+        if len(plaintext) != total:
+            raise ValueError(f"'{path}' decrypted short")
+        target = self.upgraded_envelope_path(path)
+        with tempfile.TemporaryDirectory(prefix="envelope_") as workdir:
+            staged = Path(workdir) / "payload"
+            with staged.open("wb") as sink:
+                sink.write(plaintext)
+            with staged.open("rb") as source:
+                self.save_file_encrypted_seekable(source, target, key=key)
+        if self.seekable_envelope_version(target) != 2:
+            raise ValueError(f"'{target}' did not come out as v2")
+        check_total = self.get_seekable_plaintext_size(target)
+        if check_total != total:
+            raise ValueError(f"'{target}' has a different length than '{path}'")
+        restored = b"".join(self.read_seekable_range(target, 0, check_total, key=key))
+        if not secrets.compare_digest(restored, plaintext):
+            raise ValueError(f"'{target}' does not read back as '{path}' did")
+        return target
+
     def is_seekable_encrypted(self, path: str) -> bool:
         """Whether the stored object uses the chunked envelope, either version."""
         with self.get_file_stream(path) as stream:
