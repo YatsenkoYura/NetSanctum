@@ -840,6 +840,68 @@ function itemImageUrl(item) {
   return packageUrl(`/api/vault/items/${pathSegment(item.id)}/image`);
 }
 
+// Vault file bytes behind the lock arrive through an authorized fetch() into a
+// blob URL. `<img>` cannot send the unlock header, and no URL can carry the
+// session-side file key — so the tile renders a placeholder with the address in
+// `data-vault-file`, and the binder below swaps the bytes in once they are
+// here. Remote pictures and plain collections keep a direct `src`: their bytes
+// were never sealed. Locked cards never reach this: they render no address.
+// A vault file address is same-origin under the items path: the image, the
+// poster proxy and (for the player) the video. Anything else is somebody
+// else's host and must never gain our unlock header — a cross-origin fetch
+// with a custom header dies in preflight, and the address would leak where
+// the owner looks.
+function isVaultFileUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(String(url), window.location.origin);
+    return parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/vault/items/');
+  } catch (e) { return false; }
+}
+
+function vaultImgTag(item, url, cls) {
+  if (!url) return '';
+  if (item && item.is_sealed && isVaultFileUrl(url)) {
+    return `<img data-vault-file="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy" onerror="this.style.display='none'">`;
+  }
+  return `<img src="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy" onerror="this.style.display='none'">`;
+}
+
+// Blob URLs minted by the binder, by file address. Revoked on every grid
+// render: tiles are rebuilt from scratch there, and a blob that outlives its
+// element holds decoded bytes for nothing. Re-fetching is cheap — file
+// responses carry a private cache header, so the browser serves the repeat.
+const vaultBlobUrls = new Map();
+function revokeVaultBlobUrls() {
+  vaultBlobUrls.forEach(blobUrl => { try { URL.revokeObjectURL(blobUrl); } catch (e) {} });
+  vaultBlobUrls.clear();
+}
+async function bindVaultFileImages(root) {
+  const scope = root || document;
+  if (!scope.querySelectorAll) return;
+  const imgs = Array.from(scope.querySelectorAll('img[data-vault-file]'));
+  await Promise.all(imgs.map(async (img) => {
+    const url = img.getAttribute('data-vault-file');
+    if (!url || img.src.startsWith('blob:')) return;
+    try {
+      let blobUrl = vaultBlobUrls.get(url);
+      if (!blobUrl) {
+        const response = await fetch(url, { headers: vaultUnlockHeader({}) });
+        if (!response.ok) throw new Error(String(response.status));
+        blobUrl = URL.createObjectURL(await response.blob());
+        vaultBlobUrls.set(url, blobUrl);
+      }
+      img.src = blobUrl;
+      img.removeAttribute('data-vault-file');
+    } catch (e) {
+      // Locked between render and bind, or the file is gone: hide the frame.
+      // The tile around it already paints the lock fallback, so there is no
+      // broken-image icon where a picture was promised.
+      img.style.display = 'none';
+    }
+  }));
+}
+
 var wbMode = 'select';
 var wbZoom = 1.0;
 var wbPanX = 0;
@@ -1247,6 +1309,10 @@ function isMediaCard(item) {
 }
 
 function mediaUrl(item) {
+  // An unlocked sealed card carries its own signed player URL: `<video>`
+  // cannot send the unlock header, so the authorization travels in the query
+  // and dies with its expiry. Everything else builds the plain address.
+  if (item && item.media_url) return item.media_url;
   const base = packageUrl(`/api/vault/items/${pathSegment(item.id)}`);
   return `${base}/media`;
 }
@@ -1285,35 +1351,62 @@ function openMediaView(item) {
     else link.classList.add('hidden');
   }
 
-  const poster = safeImageUrl(card.og_image) || itemImageUrl(card);
+  // A sealed card's own file is behind the lock: it cannot ride a `poster`
+  // attribute, which sends no header. The player preloads its own frame from
+  // the signed URL instead; a still picture goes through the blob binder like
+  // every other tile image. A remote picture is somebody else's host and stays
+  // a direct address — it was never sealed.
+  const directPoster = safeImageUrl(card.og_image);
+  const filePoster = itemImageUrl(card);
+  const posterAttr = directPoster && !isVaultFileUrl(directPoster) ? directPoster : '';
+  const stillUrl = (directPoster && !isVaultFileUrl(directPoster)) ? directPoster : (filePoster || (isVaultFileUrl(directPoster) ? directPoster : ''));
   const isVideo = card.node_type === 'video';
   // Only a card that actually holds bytes plays. Otherwise say what is going on
   // rather than showing a player that will never load.
   const playable = isVideo && card.has_media;
 
   if (isVideo && !playable) {
-    const status = card.media_status || 'ожидает';
+    const status = card.media_status || (card.is_locked ? 'locked' : 'ожидает');
+    const failed = String(card.media_status || '').startsWith('error:');
+    // A failed or never-queued download can be asked again — from an unlocked
+    // tab, so the worker stores under the file key this time. While locked the
+    // attempt opens the unlock dialog instead (mutationJson maps the 423).
+    const canRetry = failed || card.media_status === 'not queued';
     stage.innerHTML = `
       <div class="text-center px-6 py-10 space-y-2">
-        ${poster ? `<img src="${escapeAttr(poster)}" class="max-h-[40vh] mx-auto opacity-60" onerror="this.style.display='none'">` : ''}
+        ${card.is_locked ? `<div class="text-3xl">🔒</div>` : ''}
+        ${posterAttr ? `<img src="${escapeAttr(posterAttr)}" class="max-h-[40vh] mx-auto opacity-60" onerror="this.style.display='none'">` : ''}
         <div class="text-xs text-zinc-400 font-mono">${escapeHtml(statusLabel(status))}</div>
+        ${canRetry ? `<button onclick="retryVideoDownload(${item.id})" class="text-teal-400 hover:text-white text-xs font-mono uppercase">↻ Повторить загрузку</button>` : ''}
       </div>`;
   } else if (isVideo) {
     const duration = formatDuration(card.media_duration);
-    stage.innerHTML = `<video src="${escapeAttr(mediaUrl(card))}" ${poster ? `poster="${escapeAttr(poster)}"` : ''}
+    stage.innerHTML = `<video src="${escapeAttr(mediaUrl(card))}" ${posterAttr ? `poster="${escapeAttr(posterAttr)}"` : ''}
       controls preload="metadata" class="max-h-[70vh] w-auto max-w-full"></video>
       ${duration ? `<div class="absolute bottom-2 right-3 text-[10px] font-mono text-zinc-300">${duration}</div>` : ''}`;
     stage.classList.add('relative');
   } else {
-    stage.innerHTML = poster
-      ? `<img src="${escapeAttr(poster)}" class="max-h-[70vh] w-auto max-w-full object-contain" onerror="this.style.display='none'">`
+    stage.innerHTML = stillUrl
+      ? vaultImgTag(card, stillUrl, 'max-h-[70vh] w-auto max-w-full object-contain')
       : `<div class="text-xs text-zinc-500 font-mono px-6 py-10">Изображение недоступно</div>`;
   }
 
   hideViews();
   document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('view-media-container').classList.remove('hidden');
+  bindVaultFileImages(stage);
   syncVaultHash();
+}
+
+/* Re-queue a video from an unlocked tab, so the worker stores under the file
+   key. The header travels with the request, which is what lends the token. */
+async function retryVideoDownload(id) {
+  const done = await mutationJson(`/api/vault/items/${pathSegment(id)}/video/retry`, {method: 'POST'}, 'Не удалось поставить загрузку');
+  if (!done) return;
+  const card = window._vaultCache[id];
+  if (card) card.media_status = 'queued';
+  openMediaView({id});
+  showToast('Загрузка поставлена в очередь');
 }
 
 function statusLabel(status) {
@@ -1323,7 +1416,7 @@ function statusLabel(status) {
   if (text.startsWith('resolving')) return 'Определяем источник…';
   if (text.startsWith('error:')) return text.replace('error:', 'Не удалось:').trim();
   // Internal words never reach the card as-is.
-  const labels = { queued: 'В очереди на загрузку', completed: 'Готово', 'not queued': 'Загрузка не запущена' };
+  const labels = { queued: 'В очереди на загрузку', completed: 'Готово', 'not queued': 'Загрузка не запущена', locked: 'Зашифровано — разблокируйте Vault' };
   return labels[text] || text;
 }
 
@@ -1424,7 +1517,7 @@ function mediaTileHtml(item, itemId, displayImg, clickHandler) {
     <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center relative"
          style="min-height: 120px" onclick="${clickHandler}">
       ${displayImg
-        ? `<img src="${escapeAttr(displayImg)}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" loading="lazy" onerror="this.style.display='none'">`
+        ? vaultImgTag(item, displayImg, 'w-full h-auto max-h-[420px] object-contain block mx-auto')
         : `<div class="text-[10px] text-zinc-600 font-mono px-4 py-10 text-center">${fallback}</div>`}
       ${badge}
     </div>
@@ -1492,9 +1585,10 @@ function openEditorView(item) {
   const imageUrl = safeImageUrl(item.og_image) || itemImageUrl(item);
   if (imageUrl) {
     imgContainer.innerHTML = `<div class="mb-4 border border-zinc-800 bg-zinc-950 p-2 flex items-center justify-center rounded-sm">
-      <img src="${escapeAttr(imageUrl)}" class="max-h-[65vh] w-auto object-contain rounded">
+      ${vaultImgTag(item, imageUrl, 'max-h-[65vh] w-auto object-contain rounded')}
     </div>`;
     imgContainer.classList.remove('hidden');
+    bindVaultFileImages(imgContainer);
   } else {
     imgContainer.replaceChildren();
     imgContainer.classList.add('hidden');
@@ -3129,6 +3223,9 @@ if (!window.__vaultResizeBound) {
 function renderTiles(items) {
   const grid = document.getElementById('tiles-grid');
   document.getElementById('vault-empty').classList.toggle('hidden', items.length > 0 || activeView !== 'tiles');
+  // The grid is rebuilt from scratch, so every blob minted for the old tiles
+  // dies with them. Re-fetching is cheap against the private cache header.
+  revokeVaultBlobUrls();
 
   // Card stacks: children (parent_id set, cover on this page) collapse under
   // their cover instead of rendering as tiles. Orphan children (cover off-page)
@@ -3217,7 +3314,7 @@ function renderTiles(items) {
     <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}" draggable="true">
       ${displayImg ? `
         <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" onclick="${clickHandler}">
-          <img src="${escapeAttr(displayImg)}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
+          ${vaultImgTag(item, displayImg, 'w-full h-auto max-h-[420px] object-contain block mx-auto')}
         </div>
       ` : ''}
 
@@ -3253,6 +3350,9 @@ function renderTiles(items) {
     resizeGridItem(card);
     vaultObserveTile(card);
   });
+  // Sealed pictures arrive through the authorized fetch; the rest already have
+  // a `src` and are untouched by the binder.
+  bindVaultFileImages(grid);
 }
 
 async function togglePin(id) {

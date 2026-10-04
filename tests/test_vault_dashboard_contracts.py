@@ -526,5 +526,49 @@ class BootContractTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, f"block {index}: {result.stderr[:400]}")
 
 
+class SealedFileServingContractTests(unittest.TestCase):
+    """A locked vault's files reached the browser with no authorization at all.
+
+    The file endpoints now check the lock, and that moves work into the page:
+    `<img>` cannot send the unlock header, so sealed pictures come from an
+    authorized `fetch()` into a blob URL. The wiring *is* the feature here —
+    a tile that falls back to a plain `src` gets a 423 and a broken picture.
+    """
+
+    def test_a_sealed_card_own_file_goes_through_the_binder(self):
+        tag = TEMPLATE.split("function vaultImgTag(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("data-vault-file", tag, "a sealed card's file must not ride a plain src")
+        self.assertIn("isVaultFileUrl(url)", tag, "only our own file endpoints are fetched with the header")
+
+    def test_a_remote_picture_never_gets_the_unlock_header(self):
+        """A cross-origin fetch with a custom header dies in preflight."""
+        classify = TEMPLATE.split("function isVaultFileUrl(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("parsed.origin === window.location.origin", classify)
+        self.assertIn("parsed.pathname.startsWith('/api/vault/items/')", classify)
+
+    def test_the_binder_sends_the_unlock_header(self):
+        binder = TEMPLATE.split("async function bindVaultFileImages(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("vaultUnlockHeader", binder)
+        self.assertIn("URL.createObjectURL", binder)
+        self.assertIn("URL.revokeObjectURL", TEMPLATE, "blob URLs must be revocable or they leak bytes")
+
+    def test_the_grid_binds_its_pictures_and_revokes_the_old_blobs(self):
+        render = TEMPLATE.split("function renderTiles(items)", 1)[1].split("\nasync function", 1)[0]
+        self.assertIn("revokeVaultBlobUrls();", render, "a rebuilt grid must not keep the old blobs alive")
+        self.assertIn("bindVaultFileImages(grid);", render)
+
+    def test_the_player_uses_the_signed_url_the_server_minted(self):
+        media = TEMPLATE.split("function mediaUrl(item)", 1)[1].split("\n}", 1)[0]
+        self.assertIn("item.media_url", media, "a sealed card's video must not be rebuilt client-side")
+        retry = TEMPLATE.split("async function retryVideoDownload(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("/video/retry", retry)
+
+    def test_a_locked_card_says_so_instead_of_showing_a_broken_frame(self):
+        media_view = TEMPLATE.split("function openMediaView(item)", 1)[1].split("\n}", 1)[0]
+        self.assertIn("locked", media_view)
+        self.assertIn("🔒", media_view)
+        self.assertIn("bindVaultFileImages(stage);", media_view)
+
+
 if __name__ == "__main__":
     unittest.main()

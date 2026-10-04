@@ -162,6 +162,8 @@ def download_vault_video_task(
         handoff_data = asyncio.run(take_download_handoff(handoff))
         url = handoff_data.get("url")
         title = title or handoff_data.get("title") or None
+    else:
+        handoff_data = {}
     if not url:
         report("error: expired")
         return "Error: the download request expired before the worker picked it up"
@@ -235,17 +237,30 @@ def download_vault_video_task(
             sealed = bool(getattr(parent, "sealed_payload", None)) or _collection_is_sealed(session, parent)
 
         if sealed:
+            # The file key when the queueing tab lent its token through the
+            # handoff, else None — resolved once, up front, so no TTL matters
+            # after this point. Without it the application key applies, exactly
+            # as before, and the lock check on the endpoints is the protection.
+            from app.modules.vault.services import resolve_download_file_key
+
+            file_key = resolve_download_file_key(handoff, handoff_data, item_id) if handoff_data else None
+        else:
+            file_key = None
+
+        if sealed:
             # A video in a sealed Vault has to be seekable from the player, which
             # rules out a single AES-GCM blob: GCM authenticates the whole
             # ciphertext, so any range would mean decrypting from byte zero.
             destination = destination.with_suffix(destination.suffix + ".enc")
             with video_file.open("rb") as stream:
-                storage.save_file_encrypted_seekable(stream, str(destination.relative_to(_storage_root())))
+                storage.save_file_encrypted_seekable(
+                    stream, str(destination.relative_to(_storage_root())), key=file_key
+                )
         else:
             with video_file.open("rb") as stream:
                 storage.save_stream(stream, str(destination.relative_to(_storage_root())))
 
-        thumbnail_path = _store_thumbnail(storage, info, item_id)
+        thumbnail_path = _store_thumbnail(storage, info, item_id, key=file_key)
 
         with SyncSessionLocal() as session:
             item = session.get(VaultItem, item_id)
@@ -281,11 +296,11 @@ def download_vault_video_task(
             pass
 
 
-def _store_thumbnail(storage, info: dict, item_id: int) -> str | None:
+def _store_thumbnail(storage, info: dict, item_id: int, *, key: bytes | None = None) -> str | None:
     """Best-effort poster for the card. Its absence must not fail the download.
 
-    Encrypted with the application file key, exactly like the video next to it and
-    like `images.py` does for pasted screenshots. It used to be written in the
+    Under the collection's file key when the queueing tab lent one, else under
+    the application key like the video next to it. It used to be written in the
     clear, which meant a sealed collection held an encrypted video beside a
     readable poster.
     """
@@ -304,7 +319,7 @@ def _store_thumbnail(storage, info: dict, item_id: int) -> str | None:
         suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(content_type, ".jpg")
         destination = _storage_root() / THUMBNAIL_PREFIX / f"{item_id}{suffix}.enc"
         destination.parent.mkdir(parents=True, exist_ok=True)
-        storage.save_file_encrypted(content, str(destination.relative_to(_storage_root())))
+        storage.save_file_encrypted(content, str(destination.relative_to(_storage_root())), key=key)
         return str(destination.relative_to(_storage_root()))
     except Exception:
         logger.debug("no thumbnail stored for vault item %s", item_id, exc_info=True)

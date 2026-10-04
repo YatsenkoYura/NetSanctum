@@ -157,9 +157,9 @@ class Listing:
 
 
 def _looks_encrypted(head: bytes) -> bool:
-    from app.core.storage import ENCRYPTED_FILE_MAGIC, SEEKABLE_MAGIC
+    from app.core.storage import ENCRYPTED_FILE_MAGIC, StorageInterface
 
-    return head.startswith(ENCRYPTED_FILE_MAGIC) or head.startswith(SEEKABLE_MAGIC)
+    return head.startswith(ENCRYPTED_FILE_MAGIC) or StorageInterface._seekable_version(head) > 0
 
 
 def list_local(path: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Listing:

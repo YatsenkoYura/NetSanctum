@@ -242,6 +242,7 @@ async def queue_video_download(
     *,
     quality: str = "720",
     title: str | None = None,
+    unlock_token: str | None = None,
 ) -> str | None:
     """Ask the worker to pull the video into Vault's storage.
 
@@ -254,15 +255,25 @@ async def queue_video_download(
     same Redis instance that runs with AOF on — so an argument is a plaintext copy
     of a sealed card's content sitting in a file on disk. The handoff narrows that
     to a record the worker deletes the moment it reads it.
+
+    A download queued from an unlocked tab additionally lends the worker that
+    tab's unlock token — sealed under the server key inside the same handoff,
+    never in the arguments — so the video can be stored under the collection's
+    file key. A capture queued by the extension carries no token and keeps the
+    application key, access-gated like everything else the keyless worker writes.
     """
     handoff = secrets.token_urlsafe(18)
     try:
         from app.core.task_dispatch import dispatch_tracked_async
+        from app.modules.vault.sealing import seal_handoff_token
 
+        handoff_payload: dict[str, str] = {"url": url, "title": title or ""}
+        if unlock_token:
+            handoff_payload["token_box"] = seal_handoff_token(handoff, unlock_token)
         await redis_client.setex(
             f"{MEDIA_HANDOFF_PREFIX}:{handoff}",
             MEDIA_HANDOFF_TTL_SECONDS,
-            json.dumps({"url": url, "title": title or ""}),
+            json.dumps(handoff_payload),
         )
         task = await dispatch_tracked_async(
             download_vault_video_task,
@@ -306,6 +317,52 @@ async def take_download_handoff(handoff: str) -> dict:
         return json.loads(raw)
     except (TypeError, ValueError):
         return {}
+
+
+def resolve_download_file_key(handoff_id: str, handoff_data: dict, item_id: int) -> bytes | None:
+    """The file key for a queued download, when the queueing tab was unlocked.
+
+    The token arrives sealed inside the handoff, never in the task arguments,
+    and is resolved here — once, at the start of the task — into the file key
+    the worker then holds in memory for the whole download. Resolving late is
+    what makes the handoff and session TTLs harmless mid-download: by the time
+    bytes flow, nothing time-limited is consulted again.
+
+    None is the normal fallback, not an error: no token (extension captures),
+    an expired handoff, an expired session, a rotated server key — all mean the
+    video is stored under the application key instead, access-gated like the
+    rest of what the keyless worker writes.
+
+    The session is read without touching its sliding TTL: a download running
+    for hours is not the owner using the tab, and must not keep the vault
+    unlocked past them walking away.
+    """
+    from app.core.database import SyncSessionLocal
+    from app.modules.vault.sealing import (
+        data_key_for,
+        derive_file_key,
+        open_handoff_token,
+    )
+
+    token = open_handoff_token(handoff_id, (handoff_data or {}).get("token_box"))
+    if not token:
+        return None
+    with SyncSessionLocal() as session:
+        item = session.get(VaultItem, item_id)
+        collection = (
+            session.get(VaultCollection, item.collection_id)
+            if item is not None and item.collection_id is not None
+            else None
+        )
+        if collection is None or not collection.is_encrypted:
+            return None
+        # Inside the session: `data_key_for` reads the row's attributes, and a
+        # detached row outside it would go stale on exactly this path.
+        private_key = asyncio.run(data_key_for(collection, token, touch=False))
+        if private_key is None:
+            logger.info("vault download %s proceeds without the file key: the vault is locked", item_id)
+            return None
+        return derive_file_key(private_key, collection.id)
 
 
 async def create_video_capture_item(
@@ -473,6 +530,18 @@ async def _assert_can_move_card(
 
 async def delete_vault_item(session: AsyncSession, item: VaultItem) -> None:
     """Delete vault item."""
+    for path in (item.image_path, item.media_path, item.media_thumbnail_path):
+        if not path:
+            continue
+        try:
+            from app.core.storage import get_storage
+
+            get_storage().delete_file(path)
+        except Exception:
+            # The row is the record; a file that outlives it is litter, not a
+            # leak — it stays encrypted, and failing the delete over it would
+            # leave the card behind instead.
+            logger.debug("could not remove Vault file %s", path, exc_info=True)
     await session.delete(item)
     await session.commit()
 

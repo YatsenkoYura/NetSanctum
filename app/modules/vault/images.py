@@ -6,11 +6,13 @@ every list query drag megabytes through the connection, and — most importantly
 left the most personal thing in Vault as plain text in the database, while video
 went through `save_file_encrypted`.
 
-Images now land in storage under the vault namespace and are encrypted with the
-application file key. This is a deliberate trust boundary: sealed collections
-protect their *text* against a full database dump, and their images and videos are
-protected only against someone who reaches storage without the key volume. Anyone
-reading this later should not mistake the file key for a per-collection key.
+Images now land in storage under the vault namespace. An image of a sealed
+collection is encrypted with that collection's file key under a random name; the
+rest use the application file key. This is a deliberate trust boundary: sealed
+collections protect their *text* against a full database dump, sealed images add
+the file key on top, and videos and worker posters are protected only against
+someone who reaches storage without the key volume. Anyone reading this later
+should not mistake any of these keys for another.
 
 Existing rows keep their embedded data URL and are still served from it, so nothing
 is lost while `externalize_image` moves new writes out of the database.
@@ -75,19 +77,29 @@ def safe_segment(value: str, fallback: str = "image") -> str:
     return _safe_segment(value, fallback)
 
 
-def store_image_bytes(payload: bytes, media_type: str, item_id: int) -> str:
+def store_image_bytes(
+    payload: bytes, media_type: str, item_id: int, *, key: bytes | None = None, sealed: bool = False
+) -> str:
     """Encrypt an image into storage and return its logical path.
 
     The plaintext never touches disk: the bytes go through the seekable envelope
     from a temporary file, so a large screenshot is not held twice in memory.
+
+    Roles, not one key for everything: an image of a sealed collection is
+    encrypted under that collection's file key (`key`) and named at random, so
+    neither the key nor the filename says what the file is. Anything else —
+    plain collections, and whatever the keyless worker writes — uses the shared
+    application key under the deterministic name, exactly as before.
     """
+    import secrets
     import tempfile
 
     suffix = IMAGE_MEDIA_TYPES.get(media_type.lower())
     if suffix is None:
         raise ValueError(f"Unsupported image type {media_type!r}")
 
-    destination = storage_root() / IMAGE_PREFIX / f"{item_id}.{suffix}.enc"
+    stem = f"{item_id}-{secrets.token_hex(8)}" if sealed else str(item_id)
+    destination = storage_root() / IMAGE_PREFIX / f"{stem}.{suffix}.enc"
     if not within_root(destination, root=storage_root()):
         raise ValueError("Refused a Vault image path outside the storage root")
 
@@ -97,29 +109,50 @@ def store_image_bytes(payload: bytes, media_type: str, item_id: int) -> str:
         staging.write(payload)
         staging.flush()
         staging.seek(0)
-        storage.save_file_encrypted_seekable(staging, str(destination.relative_to(storage_root())))
-    return f"{IMAGE_PREFIX}/{item_id}.{suffix}.enc"
+        storage.save_file_encrypted_seekable(staging, str(destination.relative_to(storage_root())), key=key)
+    return f"{IMAGE_PREFIX}/{stem}.{suffix}.enc"
 
 
-def externalize_image(item) -> bool:
+def externalize_image(item, *, key: bytes | None = None, sealed: bool = False) -> bool:
     """Move an item's embedded data URL into storage. Returns whether it moved.
 
     An external URL in `og_image` is left alone: it is a reference, not content.
+    The key and the role travel together: callers pass the collection's file key
+    for a sealed collection they have unlocked, and nothing for the rest.
     """
     decoded = decode_data_image(item.og_image)
     if decoded is None:
         return False
     payload, media_type = decoded
-    item.image_path = store_image_bytes(payload, media_type, item.id)
+    item.image_path = store_image_bytes(payload, media_type, item.id, key=key, sealed=sealed)
     item.og_image = None
-    logger.debug("Vault item %s image moved to %s", item.id, item.image_path)
+    # By id only. The stored path is a credential in effect: it is half of what
+    # opens the file, and for a sealed collection the name is random precisely
+    # so it says nothing to whoever can list the volume.
+    logger.debug("Vault item %s image moved to encrypted storage", item.id)
     return True
 
 
-def image_bytes(item) -> tuple[bytes, str] | None:
-    """The image's bytes and media type, from the file, else from the old column."""
+def image_bytes(item, *, file_key: bytes | None = None) -> tuple[bytes, str] | None:
+    """The image's bytes and media type, from the file, else from the old column.
+
+    A sealed collection's file opens under its file key first. Files from before
+    the file key existed still open under the application key afterwards — the
+    unlock heals them, but a file the heal skipped must keep serving as it did
+    rather than read as missing. The two keys never mix: the file key is tried
+    exactly once, with no legacy rotation behind it.
+    """
     if item.image_path:
         storage = get_storage()
+        if file_key is not None:
+            try:
+                return storage.get_file_decrypted(item.image_path, key=file_key), media_type_for(
+                    item.image_path
+                )
+            except FileNotFoundError:
+                raise
+            except ValueError:
+                logger.debug("Vault item %s image is not under the file key", item.id)
         try:
             return storage.get_file_decrypted(item.image_path), media_type_for(item.image_path)
         except (FileNotFoundError, ValueError) as error:

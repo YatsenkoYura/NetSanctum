@@ -15,9 +15,11 @@ embedded picture — moves inside one AEAD blob.
 import asyncio
 import datetime
 import hashlib
+import hmac
 import json
 import logging
 import secrets
+import time
 from base64 import b64decode, b64encode
 from typing import Any
 
@@ -44,6 +46,7 @@ from app.modules.vault.crypto import (
     _unwrap_with_kek,
     check_passphrase_strength,
     context_for,
+    derive_file_key,
     generate_inbox_keypair,
     inbox_pub_mac as crypto_inbox_pub_mac,
     is_sealed,
@@ -53,6 +56,7 @@ from app.modules.vault.crypto import (
     verify_inbox_pub_mac,
     wrap_data_key,
 )
+from app.modules.vault.images import media_type_for, store_image_bytes
 from app.modules.vault.models import VaultCollection, VaultItem
 
 logger = logging.getLogger(__name__)
@@ -330,6 +334,8 @@ async def create_sealed_collection(
     # it later needs the KEK again, which is exactly what an unlock recovers.
     kek, _salt = kek_for_wrapper(wrapped, passphrase)
     collection.inbox_pub_mac = crypto_inbox_pub_mac(kek, public_key, collection.id)
+    # No file-key wrapping here: the file key is derived from the private key,
+    # so there is nothing to store and no backfill for older rows.
     # The description goes in under the public key too, so creating a sealed
     # collection never needs its own private key in memory.
     seal_collection_fields(collection, public_key)
@@ -377,10 +383,305 @@ async def unlock_collection(
     )
     if session is not None:
         await upgrade_wrapper(session, collection, private_key, passphrase)
+        await heal_collection_images(session, collection, derive_file_key(private_key, collection.id))
         collection_public_key = inbox_public_key(collection)
         if collection_public_key is not None:
             await seal_collection_plaintext(session, collection, collection_public_key)
     return token
+
+
+async def file_key_for(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:
+    """This tab's file key for a sealed collection, or None while it stays locked.
+
+    Derived from the session's data key, never stored: there is no column, no
+    backfill and no "missing key" state, because derivation cannot be missing.
+    Every sealed row yields its file key the moment it is unlocked, including
+    rows written before the file key existed.
+    """
+    if collection is None:
+        return None
+    private_key = await data_key_for(collection, unlock_token)
+    if private_key is None:
+        return None
+    return derive_file_key(private_key, collection.id)
+
+
+async def file_key_for_write(
+    collection: VaultCollection, unlock_token: str = ""
+) -> tuple[bytes | None, bool]:
+    """The file key for writing, and whether the collection is locked."""
+    private_key = await data_key_for(collection, unlock_token)
+    if private_key is None:
+        return None, True
+    return derive_file_key(private_key, collection.id), False
+
+
+# ── Short-lived file URLs ──────────────────────────────────────────────
+# `<video>` cannot send the unlock header, and neither can `<img>` without
+# giving up caching and seeking. Images, posters and previews go through an
+# authorized `fetch()` into a blob URL — the page holds the token, so the
+# header goes along. The player cannot do that and still seek, so it gets a
+# URL that carries its own authorization.
+#
+# The signature binds the collection, the item, the stored path, the expiry
+# and the collection's media epoch, under a server key. The epoch is the
+# implementable form of "bound to the unlock token": the token itself cannot
+# be checked statelessly — it never travels in the player request — but every
+# lock bumps the epoch, so locking the vault kills every player URL it ever
+# issued. Bytes already in flight cannot be unsent, but the next Range
+# request fails and playback freezes at the end of the buffer.
+#
+# Fifteen minutes, one file, media only: images need the session-side file
+# key, which no URL can carry, so there is no signed form of them.
+
+FILE_URL_TTL_SECONDS = 15 * 60
+FILE_URL_KINDS = ("media",)
+
+
+def media_epoch_key(collection_id: int) -> str:
+    return f"vault_media_epoch:{collection_id}"
+
+
+async def media_epoch(collection_id: int | None) -> int:
+    """The collection's current media epoch. Missing Redis reads as zero."""
+    if collection_id is None:
+        return 0
+    try:
+        raw = await redis_client.get(media_epoch_key(collection_id))
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+    except Exception:
+        logger.debug("could not read the media epoch for Vault %s", collection_id, exc_info=True)
+        return 0
+
+
+async def bump_media_epoch(collection_id: int | None) -> None:
+    """Invalidate every player URL ever issued for this collection."""
+    if collection_id is None:
+        return
+    try:
+        await redis_client.incr(media_epoch_key(collection_id))
+    except Exception:
+        # The lock itself must still succeed: the residual is bounded by the
+        # fifteen-minute signature expiry, and the log says it happened.
+        logger.warning("could not bump the media epoch for Vault %s", collection_id, exc_info=True)
+
+
+def media_signing_key() -> bytes:
+    """The key that signs player URLs, derived off the application file key."""
+    from app.core.encryption_keys import primary_encryption_key
+
+    return hmac.new(primary_encryption_key(), b"netsanctum:vault:media-url:v1", hashlib.sha256).digest()
+
+
+def sign_file_url(
+    collection_id: int | None, item_id: int, kind: str, path: str, epoch: int, *, now: int | None = None
+) -> tuple[int, str]:
+    """An expiry and a signature for one player URL."""
+    if kind not in FILE_URL_KINDS:
+        raise ValueError(f"Cannot sign a Vault file URL for {kind!r}")
+    if collection_id is None or not path:
+        raise ValueError("A signed Vault file URL needs a collection and a path")
+    expires = int(now if now is not None else time.time()) + FILE_URL_TTL_SECONDS
+    tag = hmac.new(
+        media_signing_key(),
+        f"{collection_id}:{item_id}:{kind}:{path}:{expires}:{epoch}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return expires, tag
+
+
+def verify_file_url_signature(
+    collection_id: int | None,
+    item_id: int,
+    kind: str,
+    path: str,
+    expires: str | None,
+    signature: str | None,
+    epoch: int,
+) -> bool:
+    """Whether a player URL's signature is genuine and still alive. Pure:
+    the caller supplies the epoch it read, so this stays testable without Redis."""
+    if kind not in FILE_URL_KINDS or not expires or not signature:
+        return False
+    try:
+        if int(expires) < int(time.time()):
+            return False
+        epoch = int(epoch)
+    except (TypeError, ValueError):
+        return False
+    expected = hmac.new(
+        media_signing_key(),
+        f"{collection_id}:{item_id}:{kind}:{path}:{expires}:{epoch}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+async def verify_file_url(
+    collection_id: int | None,
+    item_id: int,
+    kind: str,
+    path: str,
+    expires: str | None,
+    signature: str | None,
+) -> bool:
+    """A player URL against the live epoch. A lock since minting voids it.
+
+    Redis failing here fails closed: the sessions this protects live in Redis
+    too, so a sealed video is unusable without it anyway — and failing open
+    would trade an outage for an open vault.
+    """
+    if collection_id is None or not path or not expires or not signature:
+        return False
+    try:
+        live = await redis_client.get(media_epoch_key(collection_id))
+        epoch = int(live or 0)
+    except Exception:
+        logger.debug("could not read the media epoch for Vault %s", collection_id, exc_info=True)
+        return False
+    return verify_file_url_signature(collection_id, item_id, kind, path, expires, signature, epoch)
+
+
+# ── Download handoff token ─────────────────────────────────────────────
+# The video worker has no vault key, but a download queued from an unlocked
+# tab can lend it one: the tab's unlock token, sealed under the server key
+# and placed in the one-shot handoff next to the url and the title. The task
+# arguments carry only the handoff id — the broker is the same Redis that
+# keeps an AOF on disk, so a token in the arguments would be a session on
+# disk. The handoff id is already the only thing a queued task names.
+HANDOFF_TOKEN_AAD_PREFIX = b"vault-handoff"
+
+
+def seal_handoff_token(handoff_id: str, unlock_token: str) -> str:
+    """Seal a tab's unlock token for the download worker.
+
+    The box is bound to its handoff id: a box lifted from one handoff does
+    not open under another's. Fifteen hundred seconds of life at most — the
+    handoff TTL decides, not this function.
+    """
+    nonce = secrets.token_bytes(12)
+    blob = nonce + AESGCM(media_signing_key()).encrypt(
+        nonce,
+        unlock_token.encode("utf-8"),
+        HANDOFF_TOKEN_AAD_PREFIX + b":" + handoff_id.encode("utf-8"),
+    )
+    return b64encode(blob).decode("ascii")
+
+
+def open_handoff_token(handoff_id: str, box: str | None) -> str | None:
+    """Recover the token, or None for anything unreadable.
+
+    None is the worker's normal fallback, not an error: an expired handoff, a
+    rotated server key, or a capture queued with no token all mean the video
+    is stored under the application key instead, access-gated like the rest.
+    """
+    if not handoff_id or not box:
+        return None
+    try:
+        # `validate=True`: base64 decoding silently drops characters outside the
+        # alphabet, so without it a tampered box can decode back to the original
+        # plaintext. The AEAD tag would still catch a real forgery, but a box
+        # that survives editing is a box nobody can reason about.
+        raw = b64decode(box.encode("ascii"), validate=True)
+        if len(raw) <= 12:
+            return None
+        return (
+            AESGCM(media_signing_key())
+            .decrypt(raw[:12], raw[12:], HANDOFF_TOKEN_AAD_PREFIX + b":" + handoff_id.encode("utf-8"))
+            .decode("utf-8")
+        )
+    except Exception:
+        return None
+
+
+# How many pre-file-key images one unlock moves over. Every one is small
+# (bounded by the image size cap), but an unlock is not the place for an
+# unbounded migration — the rest converge on later unlocks.
+HEAL_BATCH_LIMIT = 25
+
+
+async def heal_collection_images(session, collection: VaultCollection, file_key: bytes) -> int:
+    """Move pre-file-key images onto the file key, once each.
+
+    Images written before the file key used the shared application key under the
+    old deterministic name (`{item_id}.{suffix}.enc`). They are small — bounded
+    by the image size cap — so re-encrypting them on unlock is cheap, and the
+    rename to the random pattern means a healed file is never touched again:
+    the next unlock finds nothing matching the old pattern and does nothing.
+    Videos and worker posters are excluded on purpose: the keyless worker owns
+    them, and rewriting gigabytes on unlock would punish opening the vault.
+
+    A file that no longer opens is left in place and logged. Deleting it would
+    destroy the only copy on a guess, and the read path still tries the
+    application key afterwards, so a skipped file keeps serving as it did.
+
+    At most HEAL_BATCH_LIMIT files per unlock: every one is small, but an
+    unlock is not the place for an unbounded migration. The rest converge on
+    later unlocks — healed files never match the old pattern again.
+    """
+    import re
+
+    from app.core.storage import get_storage
+
+    if not is_sealed_collection(collection):
+        return 0
+    try:
+        rows = (
+            (
+                await session.execute(
+                    select(VaultItem)
+                    .where(
+                        VaultItem.collection_id == collection.id,
+                        VaultItem.image_path.is_not(None),
+                    )
+                    .order_by(VaultItem.id.asc())
+                    .limit(HEAL_BATCH_LIMIT)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        logger.debug("could not list Vault %s images for healing", collection.id, exc_info=True)
+        return 0
+    storage = get_storage()
+    healed = 0
+    for item in rows:
+        old_path = item.image_path or ""
+        name = old_path.rsplit("/", 1)[-1]
+        if re.fullmatch(rf"{item.id}-[0-9a-f]{{16}}\.[a-z0-9]+\.enc", name):
+            continue
+        try:
+            plaintext = await asyncio.to_thread(storage.get_file_decrypted, old_path)
+            new_path = await asyncio.to_thread(
+                store_image_bytes,
+                plaintext,
+                media_type_for(old_path),
+                item.id,
+                key=file_key,
+                sealed=True,
+            )
+        except Exception:
+            logger.warning("Vault item %s image could not move to the file key", item.id, exc_info=True)
+            continue
+        try:
+            item.image_path = new_path
+            await session.commit()
+        except Exception:
+            logger.warning("Vault item %s healed image could not be recorded", item.id, exc_info=True)
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            continue
+        try:
+            await asyncio.to_thread(storage.delete_file, old_path)
+        except Exception:
+            logger.debug("stale Vault image %s could not be removed", old_path, exc_info=True)
+        healed += 1
+    return healed
 
 
 async def verify_collection_key(collection: VaultCollection, kek: bytes, session=None) -> None:
@@ -509,7 +810,9 @@ async def collection_for(session, collection_id: int | None) -> VaultCollection 
     return await session.get(VaultCollection, collection_id)
 
 
-async def data_key_for(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:
+async def data_key_for(
+    collection: VaultCollection | None, unlock_token: str = "", *, touch: bool = True
+) -> bytes | None:
     """This tab's key for a sealed collection, or None while it stays locked."""
     if not is_sealed_collection(collection) or collection is None:
         return None
@@ -529,7 +832,10 @@ async def data_key_for(collection: VaultCollection | None, unlock_token: str = "
         await redis_client.delete(collection_key(collection.id, unlock_token))
         return None
     # Reading the key is activity: push the expiry out so a tab in use stays open.
-    await redis_client.expire(collection_key(collection.id, unlock_token), UNLOCK_TTL_SECONDS)
+    # A background worker resolving the key is not user activity — it must not
+    # keep the vault unlocked past the owner walking away, so it reads untouched.
+    if touch:
+        await redis_client.expire(collection_key(collection.id, unlock_token), UNLOCK_TTL_SECONDS)
     return private_key
 
 
@@ -675,7 +981,13 @@ def open_item(private_key: bytes, item: VaultItem) -> VaultItem:
 
 
 async def update_sealed_item(
-    session, item: VaultItem, update_in, private_key: bytes, public_key: bytes
+    session,
+    item: VaultItem,
+    update_in,
+    private_key: bytes,
+    public_key: bytes,
+    *,
+    file_key: bytes | None = None,
 ) -> VaultItem:
     """Apply an update to a sealed item and re-seal it inside a single commit.
 
@@ -692,6 +1004,24 @@ async def update_sealed_item(
     for field, value in update_in.model_dump(exclude_unset=True).items():
         setattr(item, field, value)
     item.updated_at = datetime.datetime.utcnow()
+    if file_key is not None:
+        # A blind write keeps its picture as a data URL inside the sealed
+        # payload — the locked vault has no file key to store it under. The
+        # first save while unlocked moves it out into storage, so the payload
+        # stops carrying megabytes and the file gains the file key. Without
+        # this the payload images never leave the row they arrived in.
+        from app.modules.vault.images import decode_data_image, externalize_image
+
+        if decode_data_image(item.og_image):
+            old_path = item.image_path
+            if externalize_image(item, key=file_key, sealed=True):
+                if old_path and old_path != item.image_path:
+                    try:
+                        from app.core.storage import get_storage
+
+                        get_storage().delete_file(old_path)
+                    except Exception:
+                        logger.debug("stale Vault image %s could not be removed", old_path, exc_info=True)
     seal_item(item, public_key)
     await session.commit()
     await session.refresh(item)

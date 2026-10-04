@@ -227,6 +227,10 @@ class VaultItemResponse(BaseModel):
     has_media: bool = False
     media_status: str | None = None
     media_duration: int | None = None
+    # A short-lived signed video URL, present only for an unlocked sealed card.
+    # `<video>` cannot send the unlock header, so the player gets a URL that
+    # carries its own authorization instead. Locked cards never have one.
+    media_url: str | None = None
     score: float | None = None
     status: str | None = None
     progress_current: int

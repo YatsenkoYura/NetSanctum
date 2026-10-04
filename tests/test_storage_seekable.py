@@ -11,7 +11,13 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from app.core.storage import SEEKABLE_CHUNK_SIZE, LocalStorage
+from app.core.storage import (
+    SEEKABLE_CHUNK_SIZE,
+    SEEKABLE_HEADER_V2_SIZE,
+    SEEKABLE_MAGIC,
+    SEEKABLE_MAGIC_V2,
+    LocalStorage,
+)
 
 
 class _CountingStream(io.RawIOBase):
@@ -149,6 +155,135 @@ class SeekableEnvelopeTests(unittest.TestCase):
         path = self._write("empty.bin.enc", b"")
 
         self.assertEqual(b"", b"".join(self.storage.read_seekable_range(path, 0, 10)))
+
+
+class SeekableV2Tests(unittest.TestCase):
+    """The current envelope: the header's sizes are authenticated, not trusted.
+
+    v1 bound each chunk to the path and the file nonce, and the plaintext length
+    in the header was a promise nobody checked. v2 binds the length, the chunk
+    size and the chunk count into every chunk, so editing the header voids the
+    chunks. New writes use v2; v1 objects keep reading as they always did.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.storage = LocalStorage(str(self.root))
+
+    def _write(self, name: str, payload: bytes, *, key=None) -> str:
+        self.storage.save_file_encrypted_seekable(io.BytesIO(payload), name, key=key)
+        return name
+
+    def _stored(self, path: str) -> bytearray:
+        return bytearray((self.root / path).read_bytes())
+
+    def test_new_writes_carry_the_v2_magic(self):
+        path = self._write("v2.bin.enc", b"versioned" * 100)
+
+        self.assertTrue(self._stored(path).startswith(SEEKABLE_MAGIC_V2))
+        self.assertTrue(self.storage.is_seekable_encrypted(path))
+        self.assertEqual(len(b"versioned" * 100), self.storage.get_seekable_plaintext_size(path))
+
+    def test_a_v2_round_trip_matches_at_every_offset(self):
+        payload = os.urandom(SEEKABLE_CHUNK_SIZE * 2 + 1234)
+        path = self._write("v2seek.bin.enc", payload)
+
+        self.assertEqual(payload, self.storage.get_file_decrypted(path))
+        for start in (0, 4096, SEEKABLE_CHUNK_SIZE - 1, SEEKABLE_CHUNK_SIZE, len(payload) - 50):
+            chunk = b"".join(self.storage.read_seekable_range(path, start, 2000))
+            self.assertEqual(payload[start : start + 2000], chunk, f"range at {start}")
+
+    def test_a_rewritten_length_voids_the_chunks(self):
+        """The v1 hole, closed: the length is in the AAD now, so editing it fails."""
+        payload = os.urandom(5000)
+        path = self._write("v2len.bin.enc", payload)
+        stored = self.root / path
+        raw = self._stored(path)
+        # Claim twice the plaintext without touching a chunk.
+        raw[21:29] = (len(payload) * 2).to_bytes(8, "big")
+        stored.write_bytes(bytes(raw))
+
+        with self.assertRaises(ValueError):
+            list(self.storage.read_seekable_range(path, 0, 100))
+
+    def test_a_rewritten_chunk_count_is_refused_before_any_chunk(self):
+        payload = os.urandom(5000)
+        path = self._write("v2count.bin.enc", payload)
+        stored = self.root / path
+        raw = self._stored(path)
+        raw[29:33] = (999).to_bytes(4, "big")
+        stored.write_bytes(bytes(raw))
+
+        with self.assertRaises(ValueError):
+            list(self.storage.read_seekable_range(path, 0, 100))
+
+    def test_a_truncated_object_is_damage_not_a_short_file(self):
+        payload = os.urandom(SEEKABLE_CHUNK_SIZE + 100)
+        path = self._write("v2cut.bin.enc", payload)
+        stored = self.root / path
+        raw = bytes(self._stored(path))
+        stored.write_bytes(raw[: SEEKABLE_HEADER_V2_SIZE + 100])
+
+        with self.assertRaises(ValueError):
+            list(self.storage.read_seekable_range(path, 0, len(payload)))
+
+    def test_a_read_past_the_end_still_ends(self):
+        payload = os.urandom(5000)
+        path = self._write("v2tail.bin.enc", payload)
+
+        chunk = b"".join(self.storage.read_seekable_range(path, len(payload) - 10, 5000))
+
+        self.assertEqual(payload[-10:], chunk)
+
+    def test_an_empty_object_still_round_trips(self):
+        path = self._write("v2empty.bin.enc", b"")
+
+        self.assertEqual(b"", b"".join(self.storage.read_seekable_range(path, 0, 10)))
+        self.assertEqual(0, self.storage.get_seekable_plaintext_size(path))
+
+    def test_a_chunk_moved_to_another_file_is_rejected(self):
+        payload = os.urandom(5000)
+        path = self._write("v2bound.bin.enc", payload)
+        self.storage.save_file_from_path(self.root / path, "v2elsewhere.bin.enc")
+
+        with self.assertRaises(ValueError):
+            list(self.storage.read_seekable_range("v2elsewhere.bin.enc", 0, 10))
+
+    def test_an_explicit_key_opens_only_with_that_key(self):
+        """A per-collection file key stands alone: no legacy rotation applies."""
+        file_key = os.urandom(32)
+        payload = os.urandom(5000)
+        path = self._write("v2fk.bin.enc", payload, key=file_key)
+
+        self.assertEqual(payload, self.storage.get_file_decrypted(path, key=file_key))
+        with self.assertRaises(ValueError):
+            self.storage.get_file_decrypted(path)
+        with self.assertRaises(ValueError):
+            self.storage.get_file_decrypted(path, key=os.urandom(32))
+
+    def test_a_v1_object_still_reads_after_the_upgrade(self):
+        """The writer moved on; the reader did not leave v1 behind."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from app.core.storage import SEEKABLE_FILE_NONCE_SIZE
+
+        payload = os.urandom(5000)
+        file_nonce = os.urandom(SEEKABLE_FILE_NONCE_SIZE)
+        aesgcm = AESGCM(self.storage._get_encryption_key())
+        aad = SEEKABLE_MAGIC + b"\x00" + file_nonce + b"v1old.bin.enc"
+        stored = (
+            SEEKABLE_MAGIC
+            + file_nonce
+            + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big")
+            + len(payload).to_bytes(8, "big")
+            + aesgcm.encrypt(file_nonce + (0).to_bytes(4, "big"), payload, aad + (0).to_bytes(4, "big"))
+        )
+        (self.root / "v1old.bin.enc").write_bytes(stored)
+
+        self.assertEqual(payload, self.storage.get_file_decrypted("v1old.bin.enc"))
+        self.assertEqual(len(payload), self.storage.get_seekable_plaintext_size("v1old.bin.enc"))
 
 
 class LegacyFormatTests(unittest.TestCase):

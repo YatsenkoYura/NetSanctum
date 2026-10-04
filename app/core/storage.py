@@ -39,6 +39,17 @@ SEEKABLE_FILE_NONCE_SIZE = 8
 # from the stored size alone.
 SEEKABLE_HEADER_SIZE = len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE + 4 + 8
 
+# Second version of the chunked envelope. v1 bound each chunk to the path and the
+# file nonce only: the plaintext length in the header was unauthenticated, so a
+# rewritten length changed what the size helpers reported while every chunk still
+# verified. v2 binds the length, the chunk size and the chunk count into every
+# chunk's associated data, so a header edit voids the chunks instead of the report.
+# New writes use v2; v1 objects keep reading with their original associated data.
+SEEKABLE_MAGIC_V2 = b"NSENCS\x02\x00\x00"
+# magic | file nonce | chunk size | plaintext length | chunk count.
+SEEKABLE_HEADER_V2_SIZE = len(SEEKABLE_MAGIC_V2) + SEEKABLE_FILE_NONCE_SIZE + 4 + 8 + 4
+SEEKABLE_HEADER_MAX_SIZE = max(SEEKABLE_HEADER_SIZE, SEEKABLE_HEADER_V2_SIZE)
+
 
 def stream_size_sha256(stream: BinaryIO, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
     """Read a stream incrementally and return its byte length and SHA-256 digest."""
@@ -91,20 +102,20 @@ class StorageInterface(ABC):
         with open(source_path, "rb") as stream:
             return self.save_stream(stream, path)
 
-    def save_file_encrypted(self, data: bytes, path: str) -> str:
+    def save_file_encrypted(self, data: bytes, path: str, *, key: bytes | None = None) -> str:
         """
         Encrypt binary data using AES-256-GCM and persist it at the given logical path.
         Returns the canonical path/key where the file was stored.
         """
-        return self.save_file(self._encrypt_payload(data, path), path)
+        return self.save_file(self._encrypt_payload(data, path, key=key), path)
 
     @staticmethod
     def _associated_data(path: str) -> bytes:
         return ENCRYPTED_FILE_MAGIC + b"\x00" + path.encode("utf-8")
 
-    def _encrypt_payload(self, data: bytes, path: str) -> bytes:
+    def _encrypt_payload(self, data: bytes, path: str, *, key: bytes | None = None) -> bytes:
         nonce = os.urandom(NONCE_SIZE)
-        ciphertext = AESGCM(self._get_encryption_key()).encrypt(
+        ciphertext = AESGCM(key if key is not None else self._get_encryption_key()).encrypt(
             nonce,
             data,
             self._associated_data(path),
@@ -136,7 +147,7 @@ class StorageInterface(ABC):
         """
         ...
 
-    def get_file_stream_decrypted(self, path: str) -> BinaryIO:
+    def get_file_stream_decrypted(self, path: str, *, key: bytes | None = None) -> BinaryIO:
         """
         Retrieve the encrypted file, decrypt it using AES-256-GCM, and return a readable stream.
         """
@@ -144,7 +155,7 @@ class StorageInterface(ABC):
             # Callers such as alllib and computercraft reach the file through this
             # one method, so it has to speak both envelopes.
             total = self.get_seekable_plaintext_size(path)
-            return io.BytesIO(b"".join(self.read_seekable_range(path, 0, total)))
+            return io.BytesIO(b"".join(self.read_seekable_range(path, 0, total, key=key)))
 
         stream = self.get_file_stream(path)
         try:
@@ -161,44 +172,78 @@ class StorageInterface(ABC):
     # every chunk is its own AEAD with the path bound into its associated data.
     # A range then touches only the chunks it covers.
 
-    def save_file_encrypted_seekable(self, stream: BinaryIO, path: str) -> str:
-        """Encrypt a stream into the chunked envelope without buffering it whole."""
+    def save_file_encrypted_seekable(self, stream: BinaryIO, path: str, *, key: bytes | None = None) -> str:
+        """Encrypt a stream into the chunked (v2) envelope without buffering it whole.
+
+        An explicit `key` encrypts under that key instead of the application file
+        key — sealed Vault collections keep a per-collection file key this way.
+        Whatever the key, only that key opens the object: an explicit key is never
+        mixed with the legacy rotation the application key gets, because a wrong
+        file key must fail rather than fall through to an unrelated one.
+        """
         file_nonce = os.urandom(SEEKABLE_FILE_NONCE_SIZE)
-        aad = self._seekable_associated_data(path, file_nonce)
-        aesgcm = AESGCM(self._get_encryption_key())
-        plaintext_length = 0
+        # The count has to be known before the first chunk is sealed, because it
+        # is part of every chunk's associated data. The input stream is spooled
+        # to disk first — chunked, so RAM stays flat — which costs one transient
+        # copy of the plaintext next to the ciphertext the writer already holds.
         with tempfile.TemporaryDirectory(prefix="seekenc_") as workdir:
+            spooled = Path(workdir) / "plaintext"
+            plaintext_length = 0
+            with spooled.open("wb") as sink:
+                while True:
+                    piece = stream.read(SEEKABLE_CHUNK_SIZE)
+                    if not piece:
+                        break
+                    sink.write(piece)
+                    plaintext_length += len(piece)
+            chunk_count = (plaintext_length + SEEKABLE_CHUNK_SIZE - 1) // SEEKABLE_CHUNK_SIZE
+            aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count)
+            aesgcm = AESGCM(key if key is not None else self._get_encryption_key())
             temporary = Path(workdir) / "payload"
-            with temporary.open("wb") as sink:
-                sink.write(SEEKABLE_MAGIC + file_nonce + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big"))
-                sink.write((0).to_bytes(8, "big"))  # patched below, once known
+            with spooled.open("rb") as source, temporary.open("wb") as sink:
+                sink.write(SEEKABLE_MAGIC_V2 + file_nonce + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big"))
+                sink.write(plaintext_length.to_bytes(8, "big"))
+                sink.write(chunk_count.to_bytes(4, "big"))
                 index = 0
                 while True:
-                    chunk = stream.read(SEEKABLE_CHUNK_SIZE)
+                    chunk = source.read(SEEKABLE_CHUNK_SIZE)
                     if not chunk:
                         break
                     index_bytes = index.to_bytes(4, "big")
                     sink.write(aesgcm.encrypt(file_nonce + index_bytes, chunk, aad + index_bytes))
-                    plaintext_length += len(chunk)
                     index += 1
-                sink.seek(len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE + 4)
-                sink.write(plaintext_length.to_bytes(8, "big"))
             return self.save_file_from_path(temporary, path)
 
+    @staticmethod
+    def _seekable_version(header: bytes) -> int:
+        """Which chunked envelope a stored object uses, from its first bytes."""
+        if header.startswith(SEEKABLE_MAGIC_V2):
+            return 2
+        if header.startswith(SEEKABLE_MAGIC):
+            return 1
+        return 0
+
     def is_seekable_encrypted(self, path: str) -> bool:
-        """Whether the stored object uses the chunked envelope."""
+        """Whether the stored object uses the chunked envelope, either version."""
         with self.get_file_stream(path) as stream:
-            return stream.read(len(SEEKABLE_MAGIC)) == SEEKABLE_MAGIC
+            return self._seekable_version(stream.read(len(SEEKABLE_MAGIC_V2))) > 0
 
     def get_seekable_plaintext_size(self, path: str) -> int:
         """Plaintext length of a chunked envelope, computed from stored sizes alone."""
         with self.get_file_stream(path) as stream:
-            header = stream.read(SEEKABLE_HEADER_SIZE)
-        if len(header) < SEEKABLE_HEADER_SIZE or not header.startswith(SEEKABLE_MAGIC):
-            raise ValueError(f"Invalid encrypted file '{path}': header is truncated.")
-        return int.from_bytes(header[-8:], "big")
+            header = stream.read(SEEKABLE_HEADER_MAX_SIZE)
+        version = self._seekable_version(header)
+        if version == 2 and len(header) >= SEEKABLE_HEADER_V2_SIZE:
+            base = len(SEEKABLE_MAGIC_V2) + SEEKABLE_FILE_NONCE_SIZE + 4
+            return int.from_bytes(header[base : base + 8], "big")
+        if version == 1 and len(header) >= SEEKABLE_HEADER_SIZE:
+            base = len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE + 4
+            return int.from_bytes(header[base : base + 8], "big")
+        raise ValueError(f"Invalid encrypted file '{path}': header is truncated.")
 
-    def read_seekable_range(self, path: str, start: int, length: int) -> Iterator[bytes]:
+    def read_seekable_range(
+        self, path: str, start: int, length: int, *, key: bytes | None = None
+    ) -> Iterator[bytes]:
         """Yield plaintext bytes `[start, start + length)` in chunks.
 
         Only the chunks that overlap the range are read and decrypted, so a seek
@@ -207,46 +252,134 @@ class StorageInterface(ABC):
         if length <= 0:
             return
         with self.get_file_stream(path) as stream:
-            header = stream.read(SEEKABLE_HEADER_SIZE)
-            if not header.startswith(SEEKABLE_MAGIC):
-                raise ValueError(f"File '{path}' is not a seekable encrypted object.")
-            offset = len(header)
-            file_nonce = header[len(SEEKABLE_MAGIC) : len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE]
-            aad = self._seekable_associated_data(path, file_nonce)
+            header = stream.read(SEEKABLE_HEADER_MAX_SIZE)
+            version = self._seekable_version(header)
+            if version == 2:
+                if len(header) < SEEKABLE_HEADER_V2_SIZE:
+                    raise ValueError(f"Invalid encrypted file '{path}': header is truncated.")
+                yield from self._read_seekable_v2_range(stream, header, path, start, length, key)
+                return
+            if version == 1:
+                yield from self._read_seekable_v1_range(stream, header, path, start, length, key)
+                return
+            raise ValueError(f"File '{path}' is not a seekable encrypted object.")
 
-            # Every chunk but the last is exactly SEEKABLE_CHUNK_SIZE bytes, so the
-            # covering chunk can be computed instead of found by reading forward.
-            wanted_end = start + length
-            index = start // SEEKABLE_CHUNK_SIZE
-            position = index * SEEKABLE_CHUNK_SIZE
-            while position < wanted_end:
-                stream.seek(offset + index * (SEEKABLE_CHUNK_SIZE + 16))
-                stored = stream.read(SEEKABLE_CHUNK_SIZE + 16)
-                if not stored:
-                    return
-                chunk_plain = len(stored) - 16
-                chunk_start = position
-                chunk_end = position + chunk_plain
-                if chunk_end > start:
-                    index_bytes = index.to_bytes(4, "big")
-                    plaintext = self._decrypt_chunk(
-                        stored,
-                        file_nonce + index_bytes,
-                        aad + index_bytes,
-                        path,
-                    )
-                    trim_start = max(0, start - chunk_start)
-                    piece = plaintext[trim_start : trim_start + (wanted_end - max(chunk_start, start))]
-                    if piece:
-                        yield piece
-                position = chunk_end
-                index += 1
+    def _read_seekable_v1_range(
+        self, stream, header: bytes, path: str, start: int, length: int, key
+    ) -> Iterator[bytes]:
+        """The original envelope: chunks bound to the path and the file nonce."""
+        magic = len(SEEKABLE_MAGIC)
+        file_nonce = header[magic : magic + SEEKABLE_FILE_NONCE_SIZE]
+        aad = self._seekable_associated_data(path, file_nonce)
+        yield from self._read_seekable_chunks(
+            stream,
+            SEEKABLE_HEADER_SIZE,
+            SEEKABLE_CHUNK_SIZE,
+            file_nonce,
+            aad,
+            path,
+            start,
+            length,
+            key,
+            plaintext_length=int.from_bytes(
+                header[magic + SEEKABLE_FILE_NONCE_SIZE + 4 : magic + SEEKABLE_FILE_NONCE_SIZE + 12], "big"
+            ),
+        )
 
-    def _decrypt_chunk(self, stored: bytes, nonce: bytes, aad: bytes, path: str) -> bytes:
-        last_error = None
-        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+    def _read_seekable_v2_range(
+        self, stream, header: bytes, path: str, start: int, length: int, key
+    ) -> Iterator[bytes]:
+        """The current envelope: the header's sizes are authenticated, not trusted."""
+        magic = len(SEEKABLE_MAGIC_V2)
+        file_nonce = header[magic : magic + SEEKABLE_FILE_NONCE_SIZE]
+        base = magic + SEEKABLE_FILE_NONCE_SIZE
+        chunk_size = int.from_bytes(header[base : base + 4], "big")
+        plaintext_length = int.from_bytes(header[base + 4 : base + 12], "big")
+        chunk_count = int.from_bytes(header[base + 12 : base + 16], "big")
+        if chunk_size <= 0 or chunk_size > 64 * 1024 * 1024:
+            raise ValueError(f"Invalid encrypted file '{path}': bad chunk size.")
+        expected = (plaintext_length + chunk_size - 1) // chunk_size if plaintext_length else 0
+        if chunk_count != expected:
+            raise ValueError(f"Invalid encrypted file '{path}': header sizes disagree.")
+        aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count)
+        yield from self._read_seekable_chunks(
+            stream,
+            SEEKABLE_HEADER_V2_SIZE,
+            chunk_size,
+            file_nonce,
+            aad,
+            path,
+            start,
+            length,
+            key,
+            plaintext_length=plaintext_length,
+        )
+
+    def _read_seekable_chunks(
+        self,
+        stream,
+        offset: int,
+        chunk_size: int,
+        file_nonce: bytes,
+        aad: bytes,
+        path: str,
+        start: int,
+        length: int,
+        key,
+        *,
+        plaintext_length: int | None = None,
+    ) -> Iterator[bytes]:
+        # Every chunk but the last is exactly chunk_size bytes, so the
+        # covering chunk can be computed instead of found by reading forward.
+        wanted_end = start + length
+        index = start // chunk_size
+        position = index * chunk_size
+        while position < wanted_end:
+            if plaintext_length is not None and position >= plaintext_length:
+                # Past the end the header promises. A read past EOF ends here;
+                # a file that ends *before* its promise fails below instead.
+                return
+            stream.seek(offset + index * (chunk_size + 16))
+            stored = stream.read(chunk_size + 16)
+            if not stored:
+                # The object ends before its header says it does. Returning short
+                # would serve a truncated file as whole; the header is covered by
+                # the chunk AAD, so a mismatch here is damage, not a short file.
+                raise ValueError(f"Invalid encrypted file '{path}': object is truncated.")
+            chunk_plain = len(stored) - 16
+            chunk_start = position
+            chunk_end = position + chunk_plain
+            if chunk_end > start:
+                index_bytes = index.to_bytes(4, "big")
+                plaintext = self._decrypt_chunk(
+                    stored,
+                    file_nonce + index_bytes,
+                    aad + index_bytes,
+                    path,
+                    key=key,
+                )
+                trim_start = max(0, start - chunk_start)
+                piece = plaintext[trim_start : trim_start + (wanted_end - max(chunk_start, start))]
+                if piece:
+                    yield piece
+            position = chunk_end
+            index += 1
+
+    def _decrypt_chunk(
+        self, stored: bytes, nonce: bytes, aad: bytes, path: str, *, key: bytes | None = None
+    ) -> bytes:
+        if key is not None:
+            # An explicit key stands alone: falling through to the application's
+            # legacy keys would open one collection's file with another secret's
+            # history, and a wrong file key must fail instead of wandering.
             try:
                 return AESGCM(key).decrypt(nonce, stored, aad)
+            except Exception as error:
+                raise ValueError(f"Failed to decrypt file '{path}': {error}") from error
+        last_error = None
+        for candidate in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+            try:
+                return AESGCM(candidate).decrypt(nonce, stored, aad)
             except Exception as error:
                 last_error = error
         raise ValueError(f"Failed to decrypt file '{path}': {last_error}")
@@ -254,18 +387,31 @@ class StorageInterface(ABC):
     def _seekable_associated_data(self, path: str, file_nonce: bytes) -> bytes:
         return SEEKABLE_MAGIC + b"\x00" + file_nonce + path.encode("utf-8")
 
-    def get_file_decrypted(self, path: str) -> bytes:
+    def _seekable_v2_associated_data(
+        self, path: str, file_nonce: bytes, plaintext_length: int, chunk_count: int
+    ) -> bytes:
+        return (
+            SEEKABLE_MAGIC_V2
+            + b"\x00"
+            + file_nonce
+            + path.encode("utf-8")
+            + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big")
+            + plaintext_length.to_bytes(8, "big")
+            + chunk_count.to_bytes(4, "big")
+        )
+
+    def get_file_decrypted(self, path: str, *, key: bytes | None = None) -> bytes:
         """
         Retrieve the encrypted file, decrypt it, and return its raw bytes.
         """
-        with self.get_file_stream_decrypted(path) as f:
+        with self.get_file_stream_decrypted(path, key=key) as f:
             return f.read()
 
     def get_encrypted_plaintext_size(self, path: str) -> int:
         """Return the envelope's plaintext length without decrypting the whole object."""
         with self.get_file_stream(path) as stream:
-            prefix = stream.read(max(len(ENCRYPTED_FILE_MAGIC), len(SEEKABLE_MAGIC)))
-        if prefix.startswith(SEEKABLE_MAGIC):
+            prefix = stream.read(max(len(ENCRYPTED_FILE_MAGIC), len(SEEKABLE_MAGIC_V2)))
+        if self._seekable_version(prefix) > 0:
             return self.get_seekable_plaintext_size(path)
         stored_size = self.get_file_size(path)
         overhead = NONCE_SIZE + 16
@@ -301,11 +447,9 @@ class StorageInterface(ABC):
         same logical path holds a plaintext object before a module starts
         encrypting and an envelope afterwards.
         """
-        if self.is_seekable_encrypted(path):
-            return True
         with self.get_file_stream(path) as stream:
-            head = stream.read(max(len(ENCRYPTED_FILE_MAGIC), len(SEEKABLE_MAGIC)))
-        return head.startswith(ENCRYPTED_FILE_MAGIC) or head.startswith(SEEKABLE_MAGIC)
+            head = stream.read(max(len(ENCRYPTED_FILE_MAGIC), len(SEEKABLE_MAGIC_V2)))
+        return head.startswith(ENCRYPTED_FILE_MAGIC) or self._seekable_version(head) > 0
 
     def read_maybe_encrypted(self, path: str) -> bytes:
         """The object's bytes, decrypted if it is an envelope.

@@ -415,3 +415,32 @@ def open_from_inbox(write: SealedWrite, private_key: bytes, *, context: bytes) -
     kek = hashlib.sha256(INBOX_PREFIX.encode("ascii") + shared).digest()
     item_key = unseal(kek, raw[32:].decode("utf-8"), context=context)
     return unseal(item_key, write.payload, context=context)
+
+
+# ── Per-collection file key ────────────────────────────────────────────
+# Sealed collections used to encrypt their pictures with the shared application
+# file key. A file key per collection narrows that — and it is derived, not
+# stored: `HKDF(inbox_private, salt=collection, info=file-key:v1)`. There is no
+# column, no backfill and no "missing key" state, because derivation cannot be
+# missing: every sealed row yields its file key the moment it is unlocked.
+# A stored wrapper was considered and rejected. It would buy rotation without
+# re-encryption, which is theater — a rotated key that still opens old files is
+# not a rotation — while adding a migration, a backfill and a corrupt state.
+# Rotating here means bumping the info version and re-encrypting, the same work
+# either way. Compromising the inbox key gives both keys in both designs; the
+# info string keeps their domains apart.
+
+FILE_KEY_INFO = b"ns:vault:file-key:v1"
+
+
+def derive_file_key(private_key: bytes, collection_id: int) -> bytes:
+    """The collection's file key. Deterministic, 32 bytes, unique per collection."""
+    if len(private_key) != DEK_BYTES:
+        raise ValueError("A data key must be 32 bytes")
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=DEK_BYTES,
+        salt=f"ns:vault:file-key:{collection_id}".encode(),
+        info=FILE_KEY_INFO,
+    )
+    return hkdf.derive(private_key)
