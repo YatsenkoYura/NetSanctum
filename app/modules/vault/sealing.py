@@ -824,6 +824,23 @@ async def heal_collection_images(session, collection: VaultCollection, file_key:
     return healed
 
 
+def verify_space_passphrase(collection: VaultCollection, passphrase: str) -> None:
+    """Whether this passphrase opens this space. Synchronous: Argon2id.
+
+    Not "is a passphrase present" and not "does the wrapper exist" — the whole
+    point is that destroying a sealed space is irreversible, so the proof has to
+    be the one the unlock makes: derive the KEK at the stored cost and check it
+    against the sealed public key. A passphrase that is merely accepted would make
+    the prompt a speed bump rather than a guard.
+    """
+    kek, _salt = kek_for_wrapper(wrapper_for(collection), passphrase)
+    public_key = inbox_public_key(collection)
+    if public_key is None:
+        raise VaultUnlockError("This Vault has no inbox key")
+    if not verify_inbox_pub_mac(kek, public_key, collection.id, collection.inbox_pub_mac):
+        raise VaultUnlockError("Wrong passphrase for this Vault")
+
+
 async def verify_collection_key(collection: VaultCollection, kek: bytes, session=None) -> None:
     """Check the inbox public key against the passphrase, or refuse the unlock.
 

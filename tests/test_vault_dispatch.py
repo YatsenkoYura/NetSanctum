@@ -253,8 +253,7 @@ console.log(JSON.stringify(outcome));
         self.assertGreaterEqual(len(blocks), 2, "the page registers from more than one script block")
 
         for index, block in enumerate(blocks):
-            code = re.sub(r"//[^\n]*", "", block)
-            bare = re.findall(r"(?:^|[{,])\s*([A-Za-z_$][\w$]*)\s*(?=[,}\n])", code, re.M)
+            bare = registry_entries_without_a_value(block)
             self.assertEqual([], bare, f"registry block {index} has a bare reference: {bare}")
 
 
@@ -314,6 +313,30 @@ class DispatcherTests(unittest.TestCase):
 
     def test_malformed_arguments_do_nothing_rather_than_throw(self):
         self.assertTrue(self.cases["bad_json"])
+
+
+def registry_entries_without_a_value(block: str) -> list[str]:
+    """Entries in a registry block that name something without giving a value.
+
+    Split on the commas that separate entries, tracking nesting, because a
+    regular expression cannot tell `{ a, b }` from `fn(a, b)` — and getting that
+    wrong turns a real check into one that cries wolf on every call argument.
+    """
+    body = re.sub(r"//[^\n]*", "", block)
+    body = body[body.index("{") + 1 :]
+    entries, depth, current = [], 0, []
+    for char in body:
+        if char in "{([":
+            depth += 1
+        elif char in "})]":
+            depth -= 1
+        if char == "," and depth == 0:
+            entries.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    entries.append("".join(current))
+    return [e.strip() for e in entries if e.strip() and ":" not in e]
 
 
 def allowlist_blocks(source: str) -> list[str]:

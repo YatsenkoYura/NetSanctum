@@ -125,7 +125,7 @@ class SpaceTreeContractTests(unittest.TestCase):
         )
 
     def test_sealed_spaces_are_offered_as_nesting_targets(self):
-        menu = TEMPLATE.split("function openNestMenu(event, id) {", 1)[1].split("\n}", 1)[0]
+        menu = TEMPLATE.split("function openNestMenu(event, id, element) {", 1)[1].split("\n}", 1)[0]
         self.assertNotIn("if (record.is_encrypted) return;", menu)
 
 
@@ -308,6 +308,173 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         body = TEMPLATE.split("function vaultSidebarRows(", 1)[1].split("\nfunction ", 1)[0]
         self.assertIn("collection.is_encrypted && collection.is_locked", body)
         self.assertIn("vaultSidebarRow(collection, depth, false)", body)
+
+
+class DeleteSpaceTests(unittest.TestCase):
+    """Destroying a space is a separate thing from dissolving or merging one.
+
+    A folder dissolves and its contents move up. A merge empties one space into
+    another. Neither removes anything, and neither can be done to a sealed space
+    at all — its cards cannot leave without a key. So delete is its own action,
+    and it takes the passphrase because there is no copy anywhere.
+    """
+
+    def test_the_server_asks_for_the_passphrase(self):
+        route = Path("app/modules/vault/router.py").read_text()
+        body = route.split('@router.delete("/api/vault/collections/{coll_id}")', 1)[1].split("\n@router.", 1)[
+            0
+        ]
+
+        self.assertIn("Нужен пароль для зашифрованного воркспейса", body)
+        self.assertIn("Неверный пароль", body)
+        self.assertIn("verify_space_passphrase", body)
+
+    def test_the_passphrase_is_checked_by_opening_it(self):
+        """Not accepted on its word: the proof has to be the one the unlock makes."""
+        sealing = Path("app/modules/vault/sealing.py").read_text()
+        body = sealing.split("def verify_space_passphrase(", 1)[1].split("\ndef ", 1)[0]
+
+        self.assertIn("kek_for_wrapper", body)
+        self.assertIn("verify_inbox_pub_mac", body)
+
+    def test_a_wrong_passphrase_goes_through_the_failure_counter(self):
+        route = Path("app/modules/vault/router.py").read_text()
+        body = route.split('@router.delete("/api/vault/collections/{coll_id}")', 1)[1].split("\n@router.", 1)[
+            0
+        ]
+
+        self.assertIn("record_unlock_failure", body)
+        self.assertIn("status_code=401", body)
+
+    def test_the_cards_go_with_the_space_and_their_files(self):
+        """`collection_id` is SET NULL on delete, so a plain delete would orphan
+        every card and leave its pictures on disk with no way to reach them."""
+        services = Path("app/modules/vault/services.py").read_text()
+        body = services.split("async def delete_collection(", 1)[1].split("\nclass ", 1)[0]
+
+        self.assertIn("VaultItem", body)
+        self.assertIn("image_path", body)
+        self.assertIn("media_path", body)
+        self.assertIn("media_thumbnail_path", body)
+        self.assertIn("get_storage().delete_file", body)
+
+    def test_nested_spaces_are_deleted_too(self):
+        services = Path("app/modules/vault/services.py").read_text()
+        body = services.split("async def delete_collection(", 1)[1].split("\nclass ", 1)[0]
+
+        self.assertIn("VaultCollection.parent_id == coll_id", body)
+        self.assertIn("await delete_collection(session, child.id)", body)
+
+    def test_it_says_what_it_removed(self):
+        services = Path("app/modules/vault/services.py").read_text()
+        body = services.split("async def delete_collection(", 1)[1].split("\nclass ", 1)[0]
+
+        self.assertIn('"cards": 0', body)
+        self.assertIn('"spaces": 0', body)
+
+    def test_the_ui_asks_before_it_calls(self):
+        body = TEMPLATE.split("async function deleteSpace(", 1)[1].split("\nfunction ", 1)[0]
+
+        self.assertIn("vaultConfirm(", body)
+        self.assertIn("Отменить будет нельзя, копии нет", body)
+
+    def test_a_sealed_space_gets_the_password_prompt(self):
+        body = TEMPLATE.split("async function deleteSpace(", 1)[1].split("\nfunction ", 1)[0]
+
+        self.assertIn("vaultPromptPassword", body)
+        self.assertIn("if (collection.is_encrypted)", body)
+
+    def test_the_password_prompt_is_not_the_unlock_field(self):
+        """Unlocking is ordinary and its field is usually on screen; a passphrase
+        typed for one purpose should not be sitting in the DOM for another."""
+        self.assertIn('id="modal-passphrase"', TEMPLATE)
+        self.assertIn('id="space-passphrase-input"', TEMPLATE)
+        self.assertIn('id="unlock-passphrase-input"', TEMPLATE)
+        # Distinct elements, each with one id: sharing the unlock field would put
+        # a passphrase typed for one purpose into the DOM for another.
+        prompt = TEMPLATE.split('id="space-passphrase-input"', 1)[0]
+        unlock = TEMPLATE.split('id="unlock-passphrase-input"', 1)[0]
+        self.assertNotEqual(prompt, unlock)
+        self.assertEqual(1, TEMPLATE.count('id="space-passphrase-input"'))
+
+    def test_deleting_the_open_space_leaves_it_open(self):
+        body = TEMPLATE.split("async function deleteSpace(", 1)[1].split("\nfunction ", 1)[0]
+
+        self.assertIn("vaultIsDescendantOf", body)
+        self.assertIn("currentCollectionId = null", body)
+        self.assertIn("vaultUnlockToken = ''", body)
+
+
+class LockedSerializationTests(unittest.TestCase):
+    """A locked view must not invent nulls the schema forbids.
+
+    `progress_current` and `rewatch_count` are NOT NULL columns and the response
+    schema declares them as integers, so blanking them to None in the locked
+    branch turned every read, create and edit of a card in a locked space into a
+    500 — which is how the sealed-counters change of the previous cycle turned out
+    to be reachable.
+    """
+
+    def test_the_locked_branch_uses_the_zeroing_table(self):
+        route = Path("app/modules/vault/router.py").read_text()
+        branch = route.split("if sealed and locked:", 1)[1].split("return serialized", 1)[0]
+
+        self.assertIn("SEALED_ZEROED_FIELDS.get(field)", branch)
+        self.assertNotIn("serialized[field] = None", branch)
+
+    def test_every_sealed_field_settles_on_something_valid(self):
+        from app.modules.vault.schemas import VaultItemResponse
+        from app.modules.vault.sealing import SEALED_FIELDS, SEALED_ZEROED_FIELDS
+
+        route = Path("app/modules/vault/router.py").read_text()
+        branch = route.split("if sealed and locked:", 1)[1].split("return serialized", 1)[0]
+        required = {name for name, field in VaultItemResponse.model_fields.items() if field.is_required()}
+        # `title` and `tags` are settled by explicit lines — a locked card shows
+        # its alias and no tags. What is left is the set that produces a 500.
+        handled = set(re.findall(r'serialized\["(\w+)"\]\s*=', branch))
+
+        for field in sorted((set(SEALED_FIELDS) & required) - handled):
+            self.assertIn(field, SEALED_ZEROED_FIELDS, f"{field} is sealed, required and never given a value")
+            self.assertIsNotNone(SEALED_ZEROED_FIELDS[field])
+        self.assertEqual({"progress_current", "rewatch_count"}, set(SEALED_ZEROED_FIELDS))
+
+
+class MenuAnchorTests(unittest.TestCase):
+    """A floating menu needs the button's rectangle, and the event will not give it.
+
+    A delegated action runs inside a listener on the document, so
+    `event.currentTarget` is that document — which has no
+    `getBoundingClientRect`, and the menu threw a TypeError on every open. The
+    element travels with the call instead.
+    """
+
+    def test_nothing_reads_a_rectangle_off_the_event(self):
+        self.assertNotIn("event.currentTarget.getBoundingClientRect", TEMPLATE)
+
+    def test_there_is_one_helper_and_the_menus_use_it(self):
+        self.assertIn("function anchorRect(event, element)", TEMPLATE)
+        self.assertEqual(3, TEMPLATE.count("const anchor = anchorRect(event, element);"))
+
+    def test_the_helper_falls_back_instead_of_throwing(self):
+        """A caller that cannot say which element it came from gets a rectangle
+        at the origin rather than a TypeError in the middle of a click."""
+        self.assertIn("typeof source.getBoundingClientRect === 'function'", TEMPLATE)
+        self.assertIn("return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };", TEMPLATE)
+
+    def test_each_menu_takes_the_element(self):
+        for name in (
+            "openMoveCardMenu(event, cardId, element)",
+            "openMoveMenu(event, id, element)",
+            "openNestMenu(event, id, element)",
+        ):
+            self.assertIn(name, TEMPLATE)
+
+    def test_the_delegated_wrappers_hand_over_the_element_they_were_called_on(self):
+        self.assertIn("openMoveCardMenu(window.netSanctumEvent, id, this)", TEMPLATE)
+        self.assertIn("openMoveMenu(window.netSanctumEvent, id, this)", TEMPLATE)
+
+    def test_a_direct_listener_passes_its_own_target(self):
+        self.assertIn("openNestMenu(event, collection.id, event.currentTarget)", TEMPLATE)
 
 
 class ConfirmationDialogTests(unittest.TestCase):

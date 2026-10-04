@@ -18,7 +18,11 @@ from app.core.security import get_current_bearer_user, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
 from app.modules.vault.capabilities import VAULT_PACKAGE_ID
-from app.modules.vault.crypto import VaultUnlockError, WeakPassphraseError, inbox_pub_fingerprint
+from app.modules.vault.crypto import (
+    VaultUnlockError,
+    WeakPassphraseError,
+    inbox_pub_fingerprint,
+)
 from app.modules.vault.images import (
     LOCAL_IMAGE_PREFIXES,
     decode_data_image,
@@ -40,6 +44,7 @@ from app.modules.vault.schemas import (
     VaultItemResponse,
     VaultItemUpdate,
     VaultLockResponse,
+    VaultSpaceDeleteRequest,
     VaultStatsResponse,
     VaultUnlockRequest,
     VaultUnlockResponse,
@@ -48,6 +53,7 @@ from app.modules.vault.sealing import (
     DEFAULT_ITEM_ALIAS,
     DEFAULT_SEALED_ALIAS,
     SEALED_FIELDS,
+    SEALED_ZEROED_FIELDS,
     VaultMoveError,
     bump_media_epoch,
     clear_unlock_failures,
@@ -74,6 +80,7 @@ from app.modules.vault.sealing import (
     unlock_collection,
     update_sealed_item,
     verify_file_url,
+    verify_space_passphrase,
 )
 from app.modules.vault.services import (
     VaultCollectionNotFoundError,
@@ -262,8 +269,14 @@ def _apply_lock_state(serialized: dict, item, *, locked: bool) -> dict:
         serialized["title"] = alias
         # Driven off SEALED_FIELDS rather than a hand-written list: a field added
         # to the sealed set must not silently start leaking here.
+        #
+        # Zeroed rather than nulled where the column is NOT NULL, using the same
+        # table the write path uses. These two are integers the response schema
+        # declares as required, so blanking them to None did not hide a value — it
+        # turned every read, create and edit of a card in a locked space into a
+        # 500.
         for field in SEALED_FIELDS:
-            serialized[field] = None
+            serialized[field] = SEALED_ZEROED_FIELDS.get(field)
         serialized["title"] = alias
         serialized["tags"] = []
         serialized["canvas_data"] = {}
@@ -1180,12 +1193,47 @@ async def merge_collections_route(
 @router.delete("/api/vault/collections/{coll_id}")
 async def delete_coll(
     coll_id: int,
+    request: Request,
+    body: VaultSpaceDeleteRequest | None = None,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Delete a collection."""
-    await delete_collection(db, coll_id)
-    return {"status": "ok", "message": "Collection deleted"}
+    """Delete a space and everything in it.
+
+    A sealed space asks for its passphrase first, and the passphrase is checked by
+    opening it rather than accepted on its word. The space holds the only copy of
+    whatever is in it — there is no backup path and no recovery — so being able to
+    destroy one by typing its id is not a property worth having. A wrong passphrase
+    gets the same answer as a wrong one anywhere else here, and nothing is
+    removed.
+
+    Plain spaces need no passphrase: nothing secret is lost by deleting them, and
+    asking for one would be a prompt the owner cannot satisfy by looking at it.
+    """
+    collection = await db.get(VaultCollection, coll_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Воркспейс не найден")
+
+    if collection.is_encrypted:
+        passphrase = (body.passphrase if body else None) or ""
+        if not passphrase:
+            raise HTTPException(status_code=422, detail="Нужен пароль для зашифрованного воркспейса")
+        client_ip = request.client.host if request.client else ""
+        try:
+            await asyncio.to_thread(verify_space_passphrase, collection, passphrase)
+        except VaultUnlockError:
+            await record_unlock_failure(coll_id, client_ip)
+            raise HTTPException(status_code=401, detail="Неверный пароль") from None
+        except WeakPassphraseError:
+            raise HTTPException(status_code=422, detail="Пароль слишком короткий") from None
+
+    removed = await delete_collection(db, coll_id)
+    return {
+        "status": "ok",
+        "message": "Воркспейс удалён",
+        "cards": removed["cards"],
+        "spaces": removed["spaces"],
+    }
 
 
 @router.get("/api/vault/entity-meta")

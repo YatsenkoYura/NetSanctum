@@ -328,6 +328,16 @@ class VaultItemResponse(BaseModel):
         from_attributes = True
 
 
+class VaultSpaceDeleteRequest(BaseModel):
+    """The passphrase that opens a space, when the owner is destroying one.
+
+    Only sent for a sealed space. A plain one needs nothing, and asking for a
+    passphrase there would be a prompt nobody could satisfy by looking at it.
+    """
+
+    passphrase: str | None = Field(default=None, max_length=512)
+
+
 class VaultUnlockRequest(BaseModel):
     passphrase: str = Field(..., min_length=1, max_length=512)
 

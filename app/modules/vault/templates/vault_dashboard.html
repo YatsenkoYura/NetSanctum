@@ -639,6 +639,22 @@
   </div>
 </div>
 
+<!-- Modal: Passphrase for a destructive action on a sealed Vault -->
+<div id="modal-passphrase" class="hidden fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-4 font-mono">
+  <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
+    <div class="p-4 space-y-3">
+      <p class="text-xs text-zinc-200 leading-relaxed">Пароль этого воркспейса. Он не восстанавливается и не подсказывается.</p>
+      <input type="password" id="space-passphrase-input" autocomplete="current-password"
+             class="w-full bg-black border border-zinc-800 focus:border-red-400 px-3 py-1.5 text-xs text-white focus:outline-none">
+      <p id="space-passphrase-error" class="hidden text-[10px] text-red-400">Неверный пароль</p>
+    </div>
+    <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
+      <button id="space-passphrase-cancel" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button id="space-passphrase-ok" class="px-4 py-1 bg-red-500 hover:bg-red-400 text-black font-black text-xs uppercase">Удалить</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Confirm -->
 <div id="modal-confirm" class="hidden fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-4 font-mono">
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
@@ -1161,6 +1177,50 @@ function openWorkspaceModal(parentId) {
 }
 function closeWorkspaceModal() { document.getElementById('modal-workspace').classList.add('hidden'); }
 
+// A passphrase prompt for a destructive action on a sealed space.
+//
+// Separate from the unlock dialog on purpose: unlocking is an ordinary thing to do
+// and its field is on screen most of the time, while this one opens because
+// something irreversible is about to happen. Reusing the unlock field would mean
+// a passphrase typed for one purpose sitting in the DOM for another.
+let vaultPassphraseResolver = null;
+
+function vaultPromptPassword(message) {
+  const modal = document.getElementById('modal-passphrase');
+  if (message) modal.querySelector('p').textContent = message;
+  const input = document.getElementById('space-passphrase-input');
+  input.value = '';
+  document.getElementById('space-passphrase-error').classList.add('hidden');
+  modal.classList.remove('hidden');
+  setTimeout(() => input.focus(), 20);
+  return new Promise(resolve => { vaultPassphraseResolver = resolve; });
+}
+
+function vaultPassphraseClose(result) {
+  document.getElementById('modal-passphrase').classList.add('hidden');
+  const resolve = vaultPassphraseResolver;
+  vaultPassphraseResolver = null;
+  if (resolve) resolve(result);
+}
+
+function vaultPassphraseBind() {
+  document.getElementById('space-passphrase-ok').addEventListener('click', () => {
+    vaultPassphraseClose(document.getElementById('space-passphrase-input').value);
+  });
+  document.getElementById('space-passphrase-cancel').addEventListener('click', () => vaultPassphraseClose(null));
+  document.getElementById('space-passphrase-input').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      vaultPassphraseClose(document.getElementById('space-passphrase-input').value);
+    } else if (event.key === 'Escape') {
+      vaultPassphraseClose(null);
+    }
+  });
+  document.getElementById('modal-passphrase').addEventListener('click', event => {
+    if (event.target.id === 'modal-passphrase') vaultPassphraseClose(null);
+  });
+}
+
 // A confirmation dialog of our own, in place of `confirm()`.
 //
 // The native one blocks the page, cannot be styled, and — the reason this
@@ -1177,6 +1237,7 @@ function vaultConfirm(message, { confirmLabel = 'Удалить' } = {}) {
   if (!window.__vaultConfirmBound) {
     window.__vaultConfirmBound = true;
     vaultConfirmBind();
+    vaultPassphraseBind();
   }
   const modal = document.getElementById('modal-confirm');
   document.getElementById('confirm-message').textContent = message;
@@ -1559,7 +1620,21 @@ function tileFooterHtml(item, itemId, openAction, framed) {
 
 // Filing a card into another space, without dragging. Reuses the move menu shell
 // so it looks and behaves like the workspace menu next to it.
-function openMoveCardMenu(event, cardId) {
+// Where a floating menu should hang.
+//
+// The element travels with the call rather than being read off the event: a
+// delegated action runs inside a listener on the document, so `event.currentTarget`
+// is that document and not the button that was pressed. Reading a rectangle from
+// it throws, which is a TypeError on an otherwise working menu.
+function anchorRect(event, element) {
+  const source = element || (event && event.currentTarget);
+  if (source && typeof source.getBoundingClientRect === 'function') {
+    return source.getBoundingClientRect();
+  }
+  return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+}
+
+function openMoveCardMenu(event, cardId, element) {
   const card = window._vaultCache[cardId];
   if (!card) return;
   // A sealed card has no "no space" option: its payload belongs to the space it
@@ -1582,7 +1657,7 @@ function openMoveCardMenu(event, cardId) {
   ).join('');
   vaultMoveCardFromId = cardId;
   const menu = document.getElementById('ws-move-menu');
-  const anchor = event.currentTarget.getBoundingClientRect();
+  const anchor = anchorRect(event, element);
   menu.style.left = Math.min(window.innerWidth - 200, Math.max(8, anchor.right - 200)) + 'px';
   menu.style.top = Math.max(8, Math.min(window.innerHeight - 160, anchor.top - 120)) + 'px';
   menu.classList.remove('hidden');
@@ -2652,7 +2727,7 @@ var vaultNestFromId = null;
 // Where the next created space goes: null for a root, an id for a folder.
 var vaultNewSpaceParentId = null;
 
-function openMoveMenu(event, id) {
+function openMoveMenu(event, id, element) {
   const src = vaultCollectionsById[id];
   if (!src || src.is_encrypted) {
     showToast('Зашифрованный воркспейс нельзя сливать', true);
@@ -2671,7 +2746,7 @@ function openMoveMenu(event, id) {
     `<button class="ws-move-opt" data-net-action="vaultMoveTo" data-net-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   const menu = document.getElementById('ws-move-menu');
-  const anchor = event.currentTarget.getBoundingClientRect();
+  const anchor = anchorRect(event, element);
   menu.style.left = Math.min(window.innerWidth - 200, anchor.right + 6) + 'px';
   menu.style.top = Math.max(8, Math.min(window.innerHeight - 160, anchor.top - 4)) + 'px';
   menu.classList.remove('hidden');
@@ -2729,7 +2804,7 @@ function vaultDescendantIds(rootId) {
   return found;
 }
 
-function openNestMenu(event, id) {
+function openNestMenu(event, id, element) {
   const blocked = vaultDescendantIds(id);
   blocked.add(Number(id));
   const options = [{ id: null, name: '— на верхний уровень —' }];
@@ -2750,7 +2825,7 @@ function openNestMenu(event, id) {
   ).join('');
   vaultNestFromId = id;
   const menu = document.getElementById('ws-move-menu');
-  const anchor = event.currentTarget.getBoundingClientRect();
+  const anchor = anchorRect(event, element);
   menu.style.left = Math.min(window.innerWidth - 200, anchor.right + 6) + 'px';
   menu.style.top = Math.max(8, Math.min(window.innerHeight - 160, anchor.top - 4)) + 'px';
   menu.classList.remove('hidden');
@@ -3182,7 +3257,7 @@ function vaultSidebarRow(collection, depth, hasChildren) {
     nest.textContent = '⇥';
     nest.addEventListener('click', event => {
       event.stopPropagation();
-      openNestMenu(event, collection.id);
+      openNestMenu(event, collection.id, event.currentTarget);
     });
     right.append(nest);
     // A folder — a space with a parent — carries the way back out. It dissolves
@@ -3207,9 +3282,69 @@ function vaultSidebarRow(collection, depth, hasChildren) {
       openMoveMenu(event, collection.id);
     });
     right.append(move);
+    // Destroying a space is separate from dissolving a folder and from merging
+    // one: everything inside goes with it, files included, and there is no way
+    // back. Sealed spaces ask for the passphrase, which is why this is behind
+    // its own button rather than folded into the merge menu.
+    const remove = document.createElement('button');
+    remove.className = 'text-red-800 hover:text-red-400 text-xs px-1 leading-none';
+    remove.title = 'Удалить воркспейс вместе со всем содержимым';
+    remove.textContent = '␡';
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      deleteSpace(collection);
+    });
+    right.append(remove);
   }
   item.append(label, right);
   return item;
+}
+
+async function deleteSpace(collection) {
+  const count = collection.items_count || 0;
+  const what = count === 1 ? '1 карточка' : `${count} карт.`;
+  const where = collection.is_encrypted
+    ? ` Воркспейс зашифрован: нужен его пароль, и удалить его можно будет только им.`
+    : '';
+  if (!await vaultConfirm(`Удалить «${collection.name}» вместе со всем содержимым (${what})? Отменить будет нельзя, копии нет.${where}`, { confirmLabel: 'Удалить' })) {
+    return;
+  }
+
+  let passphrase = null;
+  if (collection.is_encrypted) {
+    const entered = await vaultPromptPassword('Пароль воркспейса');
+    if (entered === null) return;
+    passphrase = entered;
+  }
+
+  const removed = await mutationJson(`/api/vault/collections/${pathSegment(collection.id)}`, {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ passphrase: passphrase })
+  }, 'Не удалось удалить воркспейс');
+  if (!removed) return;
+
+  // The space may have been the one open, or the parent of the one open.
+  if (vaultIsDescendantOf(currentCollectionId, collection.id)) {
+    currentCollectionId = null;
+    vaultUnlockToken = '';
+  }
+  await loadVaultSummary();
+  if (!syncLockedView()) await loadWorkspace();
+  showToast(`Удалено: ${removed.cards || 0} карт.${removed.spaces ? `, ${removed.spaces} папок` : ''}`);
+}
+
+function vaultIsDescendantOf(collectionId, maybeAncestor) {
+  let cursor = (vaultCollectionsById || {})[collectionId];
+  const target = Number(maybeAncestor);
+  const seen = new Set();
+  while (cursor && cursor.parent_id !== null && cursor.parent_id !== undefined) {
+    if (Number(cursor.parent_id) === target) return true;
+    if (seen.has(cursor.id)) return false;
+    seen.add(cursor.id);
+    cursor = (vaultCollectionsById || {})[cursor.parent_id];
+  }
+  return Number(collectionId) === target;
 }
 
 async function loadWorkspace({append = false} = {}) {
@@ -3766,11 +3901,11 @@ Object.assign(window.netSanctumActions, {
   },
   openMoveMenuFromRow: function (id) {
     window.netSanctumEvent.stopPropagation();
-    openMoveMenu(window.netSanctumEvent, id);
+    openMoveMenu(window.netSanctumEvent, id, this);
   },
   openMoveCardMenuFromTile: function (id) {
     window.netSanctumEvent.stopPropagation();
-    openMoveCardMenu(window.netSanctumEvent, id);
+    openMoveCardMenu(window.netSanctumEvent, id, this);
   },
 });
 
@@ -3835,11 +3970,11 @@ Object.assign(window.netSanctumActions, {
   },
   openMoveMenuFromRow: function (id) {
     window.netSanctumEvent.stopPropagation();
-    openMoveMenu(window.netSanctumEvent, id);
+    openMoveMenu(window.netSanctumEvent, id, this);
   },
   openMoveCardMenuFromTile: function (id) {
     window.netSanctumEvent.stopPropagation();
-    openMoveCardMenu(window.netSanctumEvent, id);
+    openMoveCardMenu(window.netSanctumEvent, id, this);
   },
 });
 

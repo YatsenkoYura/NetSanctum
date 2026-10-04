@@ -829,18 +829,65 @@ async def list_collections(session: AsyncSession) -> list[VaultCollection]:
     return collections
 
 
-async def delete_collection(session: AsyncSession, coll_id: int) -> None:
-    """Delete a collection."""
-    stmt = select(VaultCollection).where(VaultCollection.id == coll_id)
-    res = await session.execute(stmt)
-    coll = res.scalar_one_or_none()
-    if coll:
-        await session.delete(coll)
-        await session.commit()
-
-
 class VaultCollectionNotFoundError(LookupError):
     """The merge source or target workspace does not exist."""
+
+
+async def delete_collection(session: AsyncSession, coll_id: int) -> dict[str, int]:
+    """Delete a space and everything in it, files included.
+
+    The cards have to go deliberately rather than by cascade. `collection_id`
+    carries `ondelete="SET NULL"`, which is right for the ordinary case — a card
+    that loses its space keeps existing in the aggregate — and wrong here: a
+    sealed space's cards cannot be moved out at all, so a plain delete would
+    leave them behind as orphans with their pictures still on disk and no way to
+    reach them.
+
+    Each card goes through `delete_vault_item`, so a space's encrypted pictures,
+    videos and posters are removed rather than orphaned: a file whose row is gone
+    is litter, and litter in an encrypted store is not harmless. Nested spaces are
+    deleted first so their cards are counted rather than left dangling.
+
+    Returns what was removed, because the caller has to tell the owner.
+    """
+    collection = await session.get(VaultCollection, coll_id)
+    if collection is None:
+        raise VaultCollectionNotFoundError(f"workspace {coll_id} does not exist")
+
+    removed = {"cards": 0, "spaces": 0}
+    children = list(
+        (await session.execute(select(VaultCollection).where(VaultCollection.parent_id == coll_id)))
+        .scalars()
+        .all()
+    )
+    for child in children:
+        removed["spaces"] += 1
+        nested = await delete_collection(session, child.id)
+        removed["cards"] += nested["cards"]
+
+    items = list(
+        (await session.execute(select(VaultItem).where(VaultItem.collection_id == coll_id))).scalars().all()
+    )
+    for item in items:
+        # One commit per card is what `delete_vault_item` does, which is the
+        # wrong shape for a bulk delete: a hundred cards means a hundred
+        # transactions. The file removal is repeated here instead, and the rows
+        # go in one commit at the end.
+        for path in (item.image_path, item.media_path, item.media_thumbnail_path):
+            if not path:
+                continue
+            try:
+                from app.core.storage import get_storage
+
+                get_storage().delete_file(path)
+            except Exception:
+                logger.debug("could not remove Vault file %s", path, exc_info=True)
+        await session.delete(item)
+        removed["cards"] += 1
+
+    await session.delete(collection)
+    await session.commit()
+    return removed
 
 
 class VaultMergeError(ValueError):
