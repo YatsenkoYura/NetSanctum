@@ -324,15 +324,35 @@ async def get_vault_item(session: AsyncSession, item_id: int) -> VaultItem | Non
 async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: VaultItemUpdate) -> VaultItem:
     """Update vault item properties."""
     update_data = update_in.model_dump(exclude_unset=True)
+    moved_to = None
     if "collection_id" in update_data:
         await _assert_can_move_card(session, item, update_data["collection_id"])
+        moved_to = update_data["collection_id"]
     for field, val in update_data.items():
         setattr(item, field, val)
+
+    if moved_to is not None:
+        await _move_stack_with_cover(session, item, moved_to)
 
     item.updated_at = datetime.datetime.utcnow()
     await session.commit()
     await session.refresh(item)
     return item
+
+
+async def _move_stack_with_cover(session: AsyncSession, cover: VaultItem, collection_id: int | None) -> int:
+    """Carry a card stack into the new space with its cover.
+
+    A stack is a `parent_id` link, not a folder, so nothing about moving the cover
+    moved what was inside it: the children stayed behind and became orphans, still
+    pointing at a cover in another space. They go in the same transaction, because
+    a half-moved stack is exactly the state this is meant to avoid.
+    """
+    result = await session.execute(select(VaultItem).where(VaultItem.parent_id == cover.id))
+    kids = list(result.scalars().all())
+    for kid in kids:
+        kid.collection_id = collection_id
+    return len(kids)
 
 
 async def _assert_can_move_card(session: AsyncSession, item: VaultItem, collection_id: int | None) -> None:
@@ -348,10 +368,16 @@ async def _assert_can_move_card(session: AsyncSession, item: VaultItem, collecti
         return
     if item.sealed_payload:
         raise VaultMoveError("Зашифрованную карточку нельзя перенести в другое пространство")
-    if collection_id is not None:
-        target = await session.get(VaultCollection, collection_id)
-        if target is not None and target.is_encrypted:
-            raise VaultMoveError("В зашифрованное пространство можно переносить только закрытые карточки")
+    if collection_id is None:
+        return
+    target = await session.get(VaultCollection, collection_id)
+    # An unknown target has to be refused here. Without this the write reaches the
+    # foreign key and comes back as a 500 from the database — SQLite does not
+    # enforce the constraint, so only a real Postgres run ever noticed.
+    if target is None:
+        raise VaultMoveError("Пространство не найдено")
+    if target.is_encrypted:
+        raise VaultMoveError("В зашифрованное пространство можно переносить только закрытые карточки")
 
 
 async def delete_vault_item(session: AsyncSession, item: VaultItem) -> None:
@@ -864,9 +890,15 @@ async def _ancestor_ids(session: AsyncSession, collection_id: int) -> set[int]:
 
 
 async def _assert_can_nest(session: AsyncSession, collection: VaultCollection, parent_id: int | None) -> None:
-    """Refuse any nesting that would leak a sealed space or build a loop."""
-    if collection.is_encrypted and parent_id is not None:
-        raise VaultOrderError("Зашифрованное пространство всегда остаётся на верхнем уровне")
+    """Refuse only what cannot work: a self-drop and a cycle.
+
+    Nesting anything into anything is allowed, a sealed space included. The old
+    refusals here were not about cryptography — they stood in for a sidebar that
+    listed every child of every space, which would show the children of a locked
+    sealed space by name. The sidebar now keeps a sealed space's branch folded
+    while it is locked, and that is where a name can actually leak: not in the
+    `parent_id` column, which is structural and readable by design.
+    """
     if parent_id is None:
         return
     if parent_id == collection.id:
@@ -874,10 +906,6 @@ async def _assert_can_nest(session: AsyncSession, collection: VaultCollection, p
     parent = await session.get(VaultCollection, parent_id)
     if parent is None:
         raise VaultCollectionNotFoundError(f"Пространство {parent_id} не найдено")
-    if parent.is_encrypted:
-        # A locked sealed space shows only its alias, so children hanging under it
-        # would either be invisible or would have to show their names next to it.
-        raise VaultOrderError("В зашифрованное пространство нельзя вложить другое")
     # The loop to look for is above the *target*: if the space being moved is
     # among the target's ancestors, the target is its own descendant.
     if collection.id in await _ancestor_ids(session, parent_id):
@@ -948,14 +976,14 @@ async def dissolve_space(session: AsyncSession, collection_id: int) -> dict[str,
     they were in, and the level is renumbered afterwards because positions are
     no longer meaningful once a slot is gone.
 
-    Refused for a sealed space (it has no parent by construction) and for a root
-    space (there is nothing to dissolve it into).
+    A sealed folder may be dissolved too, as long as it holds no cards: those
+    cards are sealed under *its* key, and lifting them into another space would
+    move ciphertext the new space cannot open. An empty sealed folder — the usual
+    case — has nothing to carry, so it goes like any other.
     """
     folder = await session.get(VaultCollection, collection_id)
     if folder is None:
         raise VaultCollectionNotFoundError(f"Пространство {collection_id} не найдено")
-    if folder.is_encrypted:
-        raise VaultDissolveError("Зашифрованное пространство нельзя распустить")
     if folder.parent_id is None:
         raise VaultDissolveError("Это пространство не вложено и распускать нечего")
 
@@ -963,8 +991,17 @@ async def dissolve_space(session: AsyncSession, collection_id: int) -> dict[str,
     parent = await session.get(VaultCollection, parent_id)
     if parent is None:
         raise VaultCollectionNotFoundError(f"Пространство {parent_id} не найдено")
-    if parent.is_encrypted:
-        raise VaultDissolveError("В зашифрованное пространство нельзя ничего распустить")
+    if folder.is_encrypted:
+        held = list(
+            (
+                await session.execute(select(VaultItem.id).where(VaultItem.collection_id == collection_id))
+            ).scalars()
+        )
+        if held:
+            raise VaultDissolveError(
+                "Зашифрованную папку можно распустить, только если в ней нет карточек — "
+                "они зашифрованы её ключом"
+            )
 
     # Where the folder sat among its siblings, and who came after it. The lifted
     # spaces are spliced in at that index, which is what "takes the folder's

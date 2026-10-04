@@ -1086,10 +1086,6 @@ async function submitWorkspace() {
   const parentId = vaultNewSpaceParentId;
   if (sealed && !passphrase) return showToast('Нужен пароль для зашифрованного воркспейса', true);
 
-  // A sealed space stays a root by construction: a locked parent would have to
-  // reveal its children in the tree.
-  if (sealed && parentId !== null) return showToast('Зашифрованный воркспейс не может быть вложен', true);
-
   const payload = { name: name };
   if (parentId !== null) payload.parent_id = parentId;
   if (sealed) {
@@ -2481,8 +2477,20 @@ async function dissolveSpace(collection) {
   if (done.spaces) parts.push(`${done.spaces} папок`);
   if (done.cards) parts.push(`${done.cards} карт.`);
   showToast(parts.length ? `Поднято наверх: ${parts.join(', ')}` : 'Папка распущена');
+  const parentId = vaultParentOf(collection.id);
   await loadVaultSummary();
-  if (!syncLockedView()) loadWorkspace();
+  // The space we were in may have been the folder itself; loadVaultSummary has
+  // already fallen back to the overview, so just redraw what is there now.
+  if (parentId !== undefined && Number(currentCollectionId) === parentId) {
+    selectWorkspace(currentCollectionId, workspaceDisplayName(currentCollectionId));
+  } else if (!syncLockedView()) {
+    loadWorkspace();
+  }
+}
+
+function vaultParentOf(id) {
+  const record = vaultCollectionsById[Number(id)];
+  return record ? (record.parent_id ?? undefined) : undefined;
 }
 
 /* Nesting is a different gesture from merging, so it gets its own menu.
@@ -2510,10 +2518,9 @@ function openNestMenu(event, id) {
   Object.keys(vaultCollectionsById).forEach(key => {
     const candidate = Number(key);
     if (blocked.has(candidate)) return;
-    const record = vaultCollectionsById[key];
-    // Sealed spaces stay roots, so they cannot be a parent and cannot be a child.
-    if (record.is_encrypted) return;
-    options.push({ id: candidate, name: record.name });
+    // A locked sealed space is listed by its alias, which is exactly what should
+    // appear here: the real name only exists once it is open.
+    options.push({ id: candidate, name: vaultCollectionsById[key].name });
   });
   if (options.length === 1) {
     showToast('Это пространство некуда вложить', true);
@@ -2845,6 +2852,17 @@ async function loadVaultSummary() {
       (vaultChildIds[parentKey] || (vaultChildIds[parentKey] = [])).push(Number(collection.id));
     });
 
+    // The space we were standing in can be gone: dissolved from its own row, or
+    // merged away from under us. Loading its cards then returns nothing and the
+    // grid stays empty until a reload resets the state — the symptom that needed
+    // F5. Recover here instead, where the truth about the tree is in hand.
+    if (currentCollectionId !== null && !vaultCollectionsById[currentCollectionId]) {
+      currentCollectionId = null;
+      closeActiveView();
+      document.getElementById('active-ws-title').innerText = 'Все карточки';
+      showToast('Это пространство больше не существует — показан обзор', true);
+    }
+
     const root = document.getElementById('vault-collections');
     root.replaceChildren(...vaultSidebarRows(null, 0));
     renderChildSpaces();
@@ -2862,6 +2880,14 @@ function vaultSidebarRows(parentId, depth) {
     .filter(Boolean);
   const rows = [];
   children.forEach(collection => {
+    // A locked sealed space shows no children. Their names are the owner's, and
+    // `parent_id` is readable by design — so the tree is the only place that has
+    // to keep quiet. This is why nesting a sealed space is allowed: the lock, not
+    // the structure, is what hides it.
+    if (collection.is_encrypted && collection.is_locked) {
+      rows.push(vaultSidebarRow(collection, depth, false));
+      return;
+    }
     const kids = vaultChildIds[collection.id] || [];
     rows.push(vaultSidebarRow(collection, depth, kids.length > 0));
     if (kids.length > 0 && !vaultCollapsedSpaces.has(collection.id)) {

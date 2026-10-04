@@ -123,9 +123,9 @@ class SpaceTreeContractTests(unittest.TestCase):
             TEMPLATE.split("async function selectWorkspace(id, name) {", 1)[1].split("\n}", 1)[0],
         )
 
-    def test_sealed_spaces_are_not_offered_as_nesting_targets(self):
+    def test_sealed_spaces_are_offered_as_nesting_targets(self):
         menu = TEMPLATE.split("function openNestMenu(event, id) {", 1)[1].split("\n}", 1)[0]
-        self.assertIn("if (record.is_encrypted) return;", menu)
+        self.assertNotIn("if (record.is_encrypted) return;", menu)
 
 
 class SidebarRunsTests(unittest.TestCase):
@@ -277,9 +277,12 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         boot = TEMPLATE.split("function __vaultBoot() {", 1)[1].split("\n}", 1)[0]
         self.assertIn("syncFolderOption()", boot)
 
-    def test_a_sealed_space_cannot_be_created_as_a_folder(self):
+    def test_a_sealed_space_can_be_created_as_a_folder(self):
+        """It used to be refused in the browser and on the server, over a leak that
+        had nothing to do with nesting: the sidebar listed the children of a locked
+        space. The sidebar folds that branch instead, which is the actual guard."""
         body = TEMPLATE.split("async function submitWorkspace() {", 1)[1].split("\n}", 1)[0]
-        self.assertIn("if (sealed && parentId !== null)", body)
+        self.assertNotIn("sealed && parentId !== null", body)
 
     def test_creating_a_space_no_longer_reloads_the_page(self):
         """The sidebar is built in JS now; a reload also threw away where you were."""
@@ -287,13 +290,19 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         self.assertNotIn("window.location.reload()", body)
         self.assertIn("loadVaultSummary()", body)
 
-    def test_a_sealed_space_stays_a_root_on_the_server_too(self):
-        # The rule is not only in the browser: the endpoint refuses it, so a
-        # hand-written request cannot get around it.
+    def test_the_server_no_longer_refuses_sealed_nesting(self):
         service = Path("app/modules/vault/services.py").read_text()
-        self.assertIn("Зашифрованное пространство всегда остаётся на верхнем уровне", service)
+        self.assertNotIn("Зашифрованное пространство всегда остаётся на верхнем уровне", service)
+        self.assertNotIn("В зашифрованное пространство нельзя вложить другое", service)
         schema = Path("app/modules/vault/schemas.py").read_text()
         self.assertIn("parent_id: int | None = Field(default=None, ge=1)", schema)
+
+    def test_a_locked_sealed_space_keeps_its_branch_folded(self):
+        """The invariant that replaces the two refusals: a locked sealed space must
+        not enumerate its children, because their names are the owner's."""
+        body = TEMPLATE.split("function vaultSidebarRows(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("collection.is_encrypted && collection.is_locked", body)
+        self.assertIn("vaultSidebarRow(collection, depth, false)", body)
 
 
 class CardOntoSpaceGestureTests(unittest.TestCase):
@@ -360,6 +369,25 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
             TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0],
         ):
             self.assertIn("is_encrypted && !card.is_sealed", body)
+
+
+class StaleSpaceRecoveryTests(unittest.TestCase):
+    """A space that no longer exists must not leave the grid empty.
+
+    Dissolving the folder you are standing in deleted it while `currentCollectionId`
+    still pointed at it, so the next load asked for a space that was gone and came
+    back with nothing. F5 fixed it, because a reload resets the state from the URL.
+    """
+
+    def test_the_summary_recovers_when_the_open_space_is_gone(self):
+        body = TEMPLATE.split("async function loadVaultSummary() {", 1)[1].split("\n  } catch", 1)[0]
+        self.assertIn("!vaultCollectionsById[currentCollectionId]", body)
+        self.assertIn("currentCollectionId = null;", body)
+
+    def test_dissolving_falls_back_to_the_parent_when_that_is_where_we_were(self):
+        body = TEMPLATE.split("async function dissolveSpace(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("vaultParentOf", body)
+        self.assertIn("selectWorkspace(currentCollectionId", body)
 
 
 class ScopeContractTests(unittest.TestCase):

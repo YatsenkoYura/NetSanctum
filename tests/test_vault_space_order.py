@@ -221,19 +221,33 @@ class SpaceTreeTests(OrderingTestCase):
         with self.assertRaises(VaultOrderError):
             run(reorder_space(self.session, 1, 3))
 
-    def test_a_sealed_space_stays_at_the_root(self):
-        self.add_space(1)
+    def test_a_sealed_space_can_be_nested_under_a_sealed_one(self):
+        self.add_space(1, sealed=True)
         self.add_space(2, sealed=True)
 
-        with self.assertRaises(VaultOrderError):
-            run(reorder_space(self.session, 2, 1))
+        run(reorder_space(self.session, 2, 1))
+        self.db.expire_all()
 
-    def test_nothing_can_be_nested_inside_a_sealed_space(self):
+        self.assertEqual(1, self.db.get(VaultCollection, 2).parent_id)
+
+    def test_a_plain_space_can_be_nested_inside_a_sealed_one(self):
         self.add_space(1, sealed=True)
         self.add_space(2)
 
-        with self.assertRaises(VaultOrderError):
-            run(reorder_space(self.session, 2, 1))
+        run(reorder_space(self.session, 2, 1))
+        self.db.expire_all()
+
+        self.assertEqual(1, self.db.get(VaultCollection, 2).parent_id)
+
+    def test_a_sealed_space_can_be_nested_under_a_plain_one(self):
+        # Its name is hidden while locked, so a plain parent leaks nothing.
+        self.add_space(1)
+        self.add_space(2, sealed=True)
+
+        run(reorder_space(self.session, 2, 1))
+        self.db.expire_all()
+
+        self.assertEqual(1, self.db.get(VaultCollection, 2).parent_id)
 
     def test_a_sealed_space_can_still_be_moved_among_the_roots(self):
         self.add_space(1, position=10.0)
@@ -346,16 +360,31 @@ class DissolveSpaceTests(OrderingTestCase):
         with self.assertRaises(VaultDissolveError):
             run(dissolve_space(self.session, 1))
 
-    def test_a_sealed_space_cannot_be_dissolved(self):
+    def test_an_empty_sealed_folder_can_be_dissolved(self):
+        # The case that prompted it: a private space nested in another private one,
+        # with nothing in it. It carries nothing, so it goes like any other.
+        self.add_space(1, sealed=True)
+        self.add_space(2, parent_id=1, sealed=True)
+
+        moved = run(dissolve_space(self.session, 2))
+
+        self.assertEqual({"spaces": 0, "cards": 0, "index": 0}, moved)
+        self.db.expire_all()
+        self.assertIsNone(self.db.get(VaultCollection, 2))
+
+    def test_a_sealed_folder_that_holds_cards_is_kept(self):
+        """Its cards are sealed under its key; lifting them would leave ciphertext
+        the parent space cannot open."""
         from app.modules.vault.services import VaultDissolveError
 
-        self.add_space(1)
-        # Sealed spaces stay at the root by construction, so this also proves the
-        # dissolve path cannot be used to smuggle one out of the tree.
-        self.add_space(2, sealed=True)
+        self.add_space(1, sealed=True)
+        self.add_space(2, parent_id=1, sealed=True)
+        self.add_card(10, 0.0, collection_id=2)
 
         with self.assertRaises(VaultDissolveError):
             run(dissolve_space(self.session, 2))
+
+        self.assertIsNotNone(self.db.get(VaultCollection, 2))
 
 
 if __name__ == "__main__":
@@ -369,6 +398,22 @@ class MoveCardBetweenSpacesTests(OrderingTestCase):
     could walk a card into a sealed space (where no read path shows it) or out of
     one (where its own wrapped key no longer opens anywhere).
     """
+
+    def test_a_card_cannot_be_moved_into_a_space_that_does_not_exist(self):
+        """SQLite does not enforce the foreign key, so without this the write
+        reached the database and came back as a 500."""
+        from app.modules.vault.schemas import VaultItemUpdate
+        from app.modules.vault.services import VaultMoveError
+
+        self.add_space(1)
+        self.add_card(10, 0.0, collection_id=1)
+
+        with self.assertRaises(VaultMoveError):
+            run(
+                update_vault_item(
+                    self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=404)
+                )
+            )
 
     def test_a_plain_card_moves_between_plain_spaces(self):
         from app.modules.vault.schemas import VaultItemUpdate
@@ -419,6 +464,37 @@ class MoveCardBetweenSpacesTests(OrderingTestCase):
 
         with self.assertRaises(VaultMoveError):
             run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=2)))
+
+    def test_a_stack_goes_with_its_cover_into_the_other_space(self):
+        """Children hang off the cover by `parent_id`. Moving only the cover left
+        them behind as orphans pointing into another space."""
+        from app.modules.vault.schemas import VaultItemUpdate
+
+        self.add_space(1)
+        self.add_space(2)
+        self.add_card(10, 0.0, collection_id=1)  # обложка
+        self.add_card(11, 0.0, collection_id=1)
+        self.db.get(VaultItem, 11).parent_id = 10
+        self.db.commit()
+
+        run(update_vault_item(self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=2)))
+        self.db.expire_all()
+
+        self.assertEqual(2, self.db.get(VaultItem, 10).collection_id)
+        self.assertEqual(2, self.db.get(VaultItem, 11).collection_id)
+
+    def test_a_card_without_a_stack_moves_alone(self):
+        from app.modules.vault.schemas import VaultItemUpdate
+
+        self.add_space(1)
+        self.add_space(2)
+        self.add_card(10, 0.0, collection_id=1)
+        self.add_card(11, 0.0, collection_id=1)
+
+        run(update_vault_item(self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=2)))
+        self.db.expire_all()
+
+        self.assertEqual(1, self.db.get(VaultItem, 11).collection_id)
 
     def test_setting_the_same_space_again_is_not_a_move(self):
         from app.modules.vault.schemas import VaultItemUpdate
