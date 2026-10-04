@@ -294,14 +294,57 @@ class UnlockRateLimitTests(unittest.TestCase):
             for _ in range(30):
                 await sealing.record_unlock_failure(9, "1.2.3.4")
             wait = await sealing.unlock_backoff_seconds(9, "1.2.3.4")
-            self.assertLessEqual(wait, sealing.UNLOCK_MAX_BACKOFF_SECONDS)
+            cap = max(sealing.UNLOCK_MAX_BACKOFF_SECONDS, sealing.UNLOCK_VAULT_MAX_BACKOFF_SECONDS)
+            self.assertLessEqual(wait, cap)
 
         asyncio.run(run())
 
-    def test_collections_and_ips_are_counted_separately(self):
-        """Both axes throttle on their own: rotating the collection id does not
-        reset a guessing host, and a hot collection does not let another host
-        guess for free. Only a cold pair is free."""
+    def test_rotating_addresses_still_run_into_the_vault(self):
+        """The per-IP axis alone can be sidestepped by changing who is asking.
+
+        Every attempt below comes from a host that has never failed before, so
+        the caller's own counter stays at one and the per-IP backoff never trips.
+        The vault's counter is what notices, and it is what eventually says no.
+        """
+        from app.modules.vault import sealing
+
+        async def run():
+            for attempt in range(sealing.UNLOCK_VAULT_FREE_ATTEMPTS + 1):
+                await sealing.record_unlock_failure(9, f"10.0.0.{attempt}")
+                wait = await sealing.unlock_backoff_seconds(9, f"10.0.0.{attempt}")
+                if attempt < sealing.UNLOCK_VAULT_FREE_ATTEMPTS:
+                    self.assertEqual(0, wait, f"a fresh address was turned away at {attempt}")
+                else:
+                    self.assertGreater(wait, 0, "the vault never throttled a rotating attack")
+
+        asyncio.run(run())
+
+    def test_the_vault_counter_spares_other_collections(self):
+        """One attacked vault must not lock every other vault in the instance."""
+        from app.modules.vault import sealing
+
+        async def run():
+            for attempt in range(20):
+                await sealing.record_unlock_failure(9, f"10.1.0.{attempt}")
+            self.assertGreater(await sealing.unlock_backoff_seconds(9, "10.1.0.1"), 0)
+            self.assertEqual(0, await sealing.unlock_backoff_seconds(10, "10.1.0.1"))
+
+        asyncio.run(run())
+
+    def test_a_correct_passphrase_clears_the_vault_counter(self):
+        from app.modules.vault import sealing
+
+        async def run():
+            for attempt in range(20):
+                await sealing.record_unlock_failure(9, f"10.2.0.{attempt}")
+            await sealing.clear_unlock_failures(9, "10.2.0.19")
+            self.assertEqual(0, await sealing.unlock_backoff_seconds(9, "10.2.0.1"))
+
+        asyncio.run(run())
+
+    def test_a_guessing_host_is_throttled_across_every_vault(self):
+        """The per-host axis is about the host. Rotating the collection id must
+        not hand a guessing machine a fresh budget."""
         from app.modules.vault import sealing
 
         async def run():
@@ -309,8 +352,31 @@ class UnlockRateLimitTests(unittest.TestCase):
                 await sealing.record_unlock_failure(9, "1.2.3.4")
             self.assertGreater(await sealing.unlock_backoff_seconds(9, "1.2.3.4"), 0)
             self.assertGreater(await sealing.unlock_backoff_seconds(10, "1.2.3.4"), 0)
-            self.assertGreater(await sealing.unlock_backoff_seconds(9, "5.6.7.8"), 0)
+
+        asyncio.run(run())
+
+    def test_another_host_is_spared_until_the_vault_itself_is_attacked(self):
+        """The per-vault axis is slower on purpose, and this is the reason.
+
+        A handful of failures from one address is not evidence that the vault is
+        under attack — it is evidence that somebody mistyped. Until the vault's
+        own counter passes its own threshold, a different address is unaffected,
+        because a shared NAT is the ordinary reason several people fail at once.
+        """
+        from app.modules.vault import sealing
+
+        async def run():
+            for _ in range(7):
+                await sealing.record_unlock_failure(9, "1.2.3.4")
+            self.assertEqual(0, await sealing.unlock_backoff_seconds(9, "5.6.7.8"))
             self.assertEqual(0, await sealing.unlock_backoff_seconds(10, "5.6.7.8"))
+            for attempt in range(sealing.UNLOCK_VAULT_FREE_ATTEMPTS - 7 + 1):
+                await sealing.record_unlock_failure(9, f"5.6.7.{attempt}")
+            self.assertGreater(
+                await sealing.unlock_backoff_seconds(9, "5.6.7.8"),
+                0,
+                "the vault axis never engaged",
+            )
 
         asyncio.run(run())
 

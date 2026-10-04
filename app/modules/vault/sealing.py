@@ -140,8 +140,28 @@ SESSION_ABSOLUTE_TTL_SECONDS = 2 * 60 * 60
 # the pause is a Retry-After, not a sleep.
 UNLOCK_FAIL_PREFIX = "vault_unlock_fail"
 UNLOCK_FAIL_TTL_SECONDS = 15 * 60
-UNLOCK_FREE_ATTEMPTS = 5
-UNLOCK_MAX_BACKOFF_SECONDS = 300
+
+# Two axes, and they are not the same thing.
+#
+# The per-host axis throttles one caller: five free attempts, then a pause that
+# doubles up to five minutes. The per-vault axis is the global one — it counts
+# every failure against the collection from every address, so rotating source
+# addresses buys an attacker nothing. Without it the only limit on a distributed
+# run is the memory the KDF gate bounds.
+#
+# The vault's axis is deliberately slower to trip and waits longer, because
+# unlike a single host it cannot tell an attack from several people failing at
+# once behind the same NAT. Turning a household away because two of them forgot
+# a password is the failure mode to avoid, not the one to optimise against.
+UNLOCK_HOST_FREE_ATTEMPTS = 5
+UNLOCK_HOST_MAX_BACKOFF_SECONDS = 300
+UNLOCK_VAULT_FREE_ATTEMPTS = 12
+UNLOCK_VAULT_MAX_BACKOFF_SECONDS = 900
+
+# The old names, because the rate-limit tests and anything reading these mean
+# them. `coll` is the vault-wide axis, not a per-pair one.
+UNLOCK_FREE_ATTEMPTS = UNLOCK_HOST_FREE_ATTEMPTS
+UNLOCK_MAX_BACKOFF_SECONDS = UNLOCK_VAULT_MAX_BACKOFF_SECONDS
 
 
 def _unlock_fail_keys(collection_id: int, client_ip: str) -> tuple[str, str]:
@@ -151,17 +171,30 @@ def _unlock_fail_keys(collection_id: int, client_ip: str) -> tuple[str, str]:
     )
 
 
+def _backoff(failures: int, free: int, cap: int) -> int:
+    if failures <= free:
+        return 0
+    return min(cap, 2 ** (failures - free - 1))
+
+
 async def unlock_backoff_seconds(collection_id: int, client_ip: str) -> int:
-    """How long this caller must wait before the KDF may run for them, if at all."""
-    keys = _unlock_fail_keys(collection_id, client_ip)
-    counts = await redis_client.mget(keys)
+    """How long this caller must wait before the KDF may run for them, if at all.
+
+    The worse of the two axes. Read before the derivation, never after: counting
+    failures once the KDF has already run would let anyone spend the server's
+    memory by guessing.
+    """
+    vault_key, host_key = _unlock_fail_keys(collection_id, client_ip)
+    vault_count, host_count = await redis_client.mget((vault_key, host_key))
     try:
-        failures = max(int(count or 0) for count in counts)
+        vault_failures = int(vault_count or 0)
+        host_failures = int(host_count or 0)
     except (TypeError, ValueError):
         return 0
-    if failures <= UNLOCK_FREE_ATTEMPTS:
-        return 0
-    return min(UNLOCK_MAX_BACKOFF_SECONDS, 2 ** (failures - UNLOCK_FREE_ATTEMPTS - 1))
+    return max(
+        _backoff(vault_failures, UNLOCK_VAULT_FREE_ATTEMPTS, UNLOCK_VAULT_MAX_BACKOFF_SECONDS),
+        _backoff(host_failures, UNLOCK_HOST_FREE_ATTEMPTS, UNLOCK_HOST_MAX_BACKOFF_SECONDS),
+    )
 
 
 async def record_unlock_failure(collection_id: int, client_ip: str) -> None:

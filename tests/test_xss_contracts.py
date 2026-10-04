@@ -70,3 +70,53 @@ class XssContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DashboardPolicyTests(unittest.TestCase):
+    """The dashboard holds the unlock token, so it needs a policy of its own.
+
+    The strict policy in `http_security` covers share-capability responses. The
+    dashboard was never covered, and it is the page where a script injection is a
+    total compromise: the token lives in the page and unlocks every vault the tab
+    has open.
+    """
+
+    def test_the_policy_is_applied_to_the_dashboard(self):
+        from app.core.http_security import DASHBOARD_CSP_PREFIXES
+
+        self.assertIn("/vault/dashboard", DASHBOARD_CSP_PREFIXES)
+
+    def test_the_minimum_directives_are_all_present(self):
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY as CSP
+
+        policy = CSP
+        for directive in (
+            "object-src 'none'",
+            "base-uri 'none'",
+            "frame-ancestors 'none'",
+            "form-action 'self'",
+            "connect-src 'self'",
+        ):
+            self.assertIn(directive, policy, directive)
+
+    def test_nothing_loads_from_a_third_party(self):
+        """A remote og_image would phone home with the owner's IP and timing."""
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY as CSP
+
+        policy = CSP
+        for directive in ("img-src 'self' data: blob:", "media-src 'self' blob:", "font-src 'self'"):
+            self.assertIn(directive, policy, directive)
+        self.assertNotIn("*", policy.replace("'self' data: blob:", ""))
+
+    def test_eval_is_never_allowed(self):
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY as CSP
+
+        self.assertNotIn("unsafe-eval", CSP)
+
+    def test_the_dashboard_is_not_cacheable(self):
+        """It renders whatever the vaults hold; a shared cache must keep no copy."""
+        from app.core.http_security import security_headers_middleware
+
+        source = Path(security_headers_middleware.__code__.co_filename).read_text()
+        block = source.split("DASHBOARD_CSP_PREFIXES):", 1)[1]
+        self.assertIn('"private, no-store"', block)

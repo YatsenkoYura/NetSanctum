@@ -10,13 +10,14 @@ import logging
 import os
 import secrets
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 
 from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
 from app.core.storage import get_storage
-from app.core.ytdlp_pipeline import YtDlpPipelineError, error_status, extract_info
+from app.core.ytdlp_pipeline import YtDlpErrorKind, YtDlpPipelineError, extract_info
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.paths import (
     safe_segment as _sanitize_segment,
@@ -30,6 +31,54 @@ logger = logging.getLogger(__name__)
 def _safe_segment(value: str, fallback: str = "video") -> str:
     """Sanitize a video filename segment (shared impl, Vault-flavoured default)."""
     return _sanitize_segment(value, fallback)
+
+
+class MediaError(StrEnum):
+    """What a failed download says in the clear.
+
+    `media_status` is a structural column: it stays readable for a card in a
+    locked vault, because the card has to show the download's progress while it
+    is sealed. That makes it a place where the exception text used to leak — and
+    yt-dlp puts the source address, sometimes the title, into almost every
+    message it raises. So the column carries a code from this enum and nothing
+    else, and the same code is what the card renders.
+    """
+
+    EXPIRED = "expired"
+    NOTHING = "nothing"
+    TOO_LARGE = "too large"
+    SOURCE = "source"
+    NETWORK = "network"
+    GEO_BLOCKED = "geo blocked"
+    AUTH_REQUIRED = "auth required"
+    RATE_LIMITED = "rate limited"
+    UNSUPPORTED = "unsupported"
+    GONE = "card is gone"
+    UNKNOWN = "unknown"
+
+
+# YtDlp's own error kinds, mapped onto codes rather than passed through: the
+# kinds are a closed vocabulary, and the words inside them are not.
+_KIND_TO_CODE = {
+    YtDlpErrorKind.AUTH_REQUIRED: MediaError.AUTH_REQUIRED,
+    YtDlpErrorKind.GEO_BLOCKED: MediaError.GEO_BLOCKED,
+    YtDlpErrorKind.NETWORK: MediaError.NETWORK,
+    YtDlpErrorKind.RATE_LIMITED: MediaError.RATE_LIMITED,
+    YtDlpErrorKind.UNAVAILABLE: MediaError.SOURCE,
+    YtDlpErrorKind.UNSUPPORTED: MediaError.UNSUPPORTED,
+}
+
+
+def media_error_code(error: BaseException) -> MediaError:
+    """The one word a failed download leaves in the clear.
+
+    `str(error)` is never used: it is the card's content. An unrecognised
+    exception becomes `unknown`, which says nothing to whoever reads the column
+    and everything to whoever reads the log — where the class name goes instead.
+    """
+    if isinstance(error, YtDlpPipelineError):
+        return _KIND_TO_CODE.get(error.kind, MediaError.UNKNOWN)
+    return MediaError.UNKNOWN
 
 
 def _human(size: int) -> str:
@@ -165,7 +214,7 @@ def download_vault_video_task(
     else:
         handoff_data = {}
     if not url:
-        report("error: expired")
+        report(f"error: {MediaError.EXPIRED}")
         return "Error: the download request expired before the worker picked it up"
 
     limit = get_settings().VAULT_MAX_VIDEO_BYTES
@@ -203,17 +252,26 @@ def download_vault_video_task(
                     platform="other",
                 )
             except YtDlpPipelineError as exc:
-                report(f"error: {error_status(exc)}")
-                return f"Error: {error_status(exc)}"
+                # The code goes to the card; the exception class goes to the log.
+                # Neither carries the text, which is the card's content.
+                code = media_error_code(exc)
+                logger.warning(
+                    "Vault video download failed for item %s (%s, %s)",
+                    item_id,
+                    type(exc).__name__,
+                    code,
+                )
+                report(f"error: {code}")
+                return f"Error: {code}"
 
         files = sorted(p for p in workdir.iterdir() if p.is_file())
         if not files:
-            report("error: nothing was downloaded")
+            report(f"error: {MediaError.NOTHING}")
             return "Error: nothing was downloaded"
         video_file = max(files, key=lambda p: p.stat().st_size)
         size = video_file.stat().st_size
         if size > limit:
-            report("error: too large")
+            report(f"error: {MediaError.TOO_LARGE}")
             return f"Error: The video is larger than the Vault media limit of {_human(limit)}"
 
         with SyncSessionLocal() as session:
@@ -229,7 +287,7 @@ def download_vault_video_task(
         )
         destination = _storage_root() / STORAGE_PREFIX / f"{item_id}-{stem}{ext}"
         if not _within_root(destination, root=_storage_root()):
-            report("error: refused path")
+            report(f"error: {MediaError.SOURCE}")
             return "Error: refused storage path"
         destination.parent.mkdir(parents=True, exist_ok=True)
         with SyncSessionLocal() as session:
@@ -279,11 +337,15 @@ def download_vault_video_task(
             session.commit()
         return f"Saved {size} bytes to Vault"
     except Exception as exc:
-        # The url is the card's content: it belongs in the sealed payload, and a log line
-        # is the one place that would hand it to anyone who can read the logs.
-        logger.warning("Vault video download failed for item %s: %s", item_id, exc)
-        report(f"error: {exc}")
-        return f"Error: {exc}"
+        # The url is the card's content: it belongs in the sealed payload. A log
+        # line and the task's own result string are the two places that would hand
+        # it to anyone who can read them — and the result string lands in the
+        # broker, which is a Redis with an AOF on disk. So both carry the class
+        # name and a code, never the message.
+        code = media_error_code(exc)
+        logger.warning("Vault video download failed for item %s (%s, %s)", item_id, type(exc).__name__, code)
+        report(f"error: {code}")
+        return f"Error: {code}"
     finally:
         for leftover in workdir.glob("*"):
             try:

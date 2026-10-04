@@ -22,10 +22,12 @@ from app.core.templates import templates
 from app.modules.system.storage.browse import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    ModuleOwnedPathError,
     StoragePathError,
     UnsupportedOnBackendError,
     breadcrumbs,
     guess_media_type,
+    is_module_owned,
     is_remote,
     join_folder,
     list_folder,
@@ -256,6 +258,8 @@ async def api_list_folder(
 ):
     try:
         listing = await asyncio.to_thread(list_folder, path, limit=limit, offset=offset)
+    except ModuleOwnedPathError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except StoragePathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except UnsupportedOnBackendError as exc:
@@ -280,6 +284,8 @@ async def api_download(
     """Download one file. Encrypted objects are decrypted on the way out."""
     try:
         stream, size, media_type, name = await asyncio.to_thread(read_object, path)
+    except ModuleOwnedPathError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except StoragePathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -407,6 +413,10 @@ async def api_rename(
     """Rename a file or a folder in place."""
     if is_remote():
         raise HTTPException(status_code=422, detail="Renaming requires the local backend")
+    if is_module_owned(str(payload.get("path") or "")):
+        # Renaming a Vault's file would break the row that points at it, and the
+        # browser has no way to update that row. Same rule as the download.
+        raise HTTPException(status_code=403, detail="This folder belongs to a module and is managed by it")
     try:
         source = normalize_folder(payload.get("path"))
         name = safe_segment(str(payload.get("name") or ""), fallback="")
@@ -452,6 +462,10 @@ async def api_delete_entry(
     user=Depends(get_current_user),
 ):
     """Delete one file, or a folder and everything in it."""
+    if is_module_owned(path):
+        # Deleting from here would leave the owning module's rows pointing at
+        # bytes that are gone, with no cleanup hook to hear about it.
+        raise HTTPException(status_code=403, detail="This folder belongs to a module and is managed by it")
     try:
         target_logical = normalize_folder(path)
     except StoragePathError as exc:

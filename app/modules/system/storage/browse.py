@@ -40,6 +40,41 @@ class UnsupportedOnBackendError(ValueError):
     """The operation has no meaning on the configured backend (e.g. folders on S3)."""
 
 
+class ModuleOwnedPathError(PermissionError):
+    """The path belongs to a module's storage namespace, not to the file manager.
+
+    A module namespace is where that module keeps its own bookkeeping — the Vault
+    its cards and their media, Alllib its books. Those bytes are reachable
+    through the module's own endpoints, which know what the owner is allowed to
+    see and which files a locked vault is still allowed to serve.
+
+    This browser knew none of that. It listed the names, and its download path
+    decrypted anything the application file key could open — so for every file a
+    keyless worker wrote, a sealed Vault's video came out in the clear to anyone
+    who could reach this page. The names were a second, quieter leak: for a
+    sealed collection they are the only thing that says what a file is.
+
+    So: inside a module namespace the browser reports that objects exist and how
+    many bytes they take, and nothing else. No names, no paths, no bytes. It is
+    an honest answer to "is there anything there" and no answer at all to "what".
+    """
+
+
+def module_namespace(path: str) -> str | None:
+    """The module that owns this path's first segment, if any."""
+    from app.core.modules import module_registry
+
+    segments = [segment for segment in (path or "").split("/") if segment]
+    if not segments:
+        return None
+    return module_registry.storage_owner(segments[0])
+
+
+def is_module_owned(path: str) -> bool:
+    """Whether this path is inside a module's storage namespace."""
+    return module_namespace(path) is not None
+
+
 def _storage_root() -> Path:
     return Path(get_settings().LOCAL_STORAGE_ROOT)
 
@@ -126,6 +161,11 @@ class Entry:
     size: int = 0
     modified: float = 0.0
     encrypted: bool = False
+    # A module-owned namespace summarised rather than listed: how many objects
+    # and how many bytes, with no name and nothing to open. `path` stays empty so
+    # no caller can build a download URL out of it by accident.
+    opaque: bool = False
+    objects: int = 0
 
     @property
     def modified_label(self) -> str:
@@ -140,10 +180,12 @@ class Entry:
             "path": self.path,
             "is_dir": self.is_dir,
             "size": self.size,
-            "size_human": "" if self.is_dir else format_size(self.size),
+            "size_human": format_size(self.size),
             "modified": self.modified,
             "modified_label": self.modified_label,
             "encrypted": self.encrypted,
+            "opaque": self.opaque,
+            "objects": self.objects,
         }
 
 
@@ -162,8 +204,52 @@ def _looks_encrypted(head: bytes) -> bool:
     return head.startswith(ENCRYPTED_FILE_MAGIC) or StorageInterface._seekable_version(head) > 0
 
 
+def summarize_module_namespace(folder: Path, namespace: str) -> Entry:
+    """One row for a module's namespace: how much is in there, and nothing else.
+
+    Sizes only. A name would say what the file is, and for a sealed collection
+    the filename is the only remaining description of the contents — the title is
+    in the payload and the alias is deliberately uninformative. The count and the
+    total size answer the only question this browser is left allowed to answer.
+    """
+    total = 0
+    objects = 0
+    newest = 0.0
+    for child in folder.rglob("*"):
+        try:
+            stat = child.stat()
+        except OSError:
+            continue
+        if child.is_file():
+            objects += 1
+            total += stat.st_size
+            newest = max(newest, stat.st_mtime)
+    return Entry(
+        name=f"{namespace}/",
+        path="",
+        is_dir=True,
+        size=total,
+        modified=newest,
+        opaque=True,
+        objects=objects,
+    )
+
+
 def list_local(path: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Listing:
-    """List one folder: directories first, then files, both alphabetical."""
+    """List one folder: directories first, then files, both alphabetical.
+
+    A module's own namespace is not listed at all. It is summarised — see
+    `summarize_module_namespace` — because those files are the module's to serve
+    and its lock to enforce, not the file manager's to hand out.
+    """
+    if is_module_owned(path):
+        namespace = module_namespace(path)
+        assert namespace is not None
+        folder = resolve_local(path)
+        if not folder.is_dir():
+            raise StoragePathError(f"No such folder: {path}")
+        entry = summarize_module_namespace(folder, namespace)
+        return Listing(path=path, entries=[entry], total=1, truncated=False)
     target = resolve_local(path)
     if not target.exists():
         raise StoragePathError(f"No such folder: {path or '/'}")
@@ -206,6 +292,11 @@ def list_local(path: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Lis
 
 def list_remote(prefix: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Listing:
     """List an S3 prefix, folding the flat key space into folders."""
+    if is_module_owned(prefix):
+        raise ModuleOwnedPathError(
+            f"'{prefix}' belongs to a module and is served by that module's own endpoints"
+        )
+
     from app.core.storage import get_storage
 
     backend = get_storage()
@@ -270,6 +361,13 @@ def list_folder(path: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Li
 
 
 def read_object(path: str) -> tuple[Any, int, str, str]:
+    """Open a stored object for download.
+
+    Refused inside a module's namespace: this function decrypts with the
+    application file key and knows nothing about the lock that module applies to
+    its own files. A sealed Vault's worker-written video used to come out of here
+    in the clear, because the browser never asked the Vault whether it was locked.
+    """
     """Return (stream-or-iterator, size, media type, download name) for one file.
 
     Encrypted objects are decrypted on the way out: the operator gets the bytes
@@ -287,6 +385,10 @@ def read_object(path: str) -> tuple[Any, int, str, str]:
 
     if not path:
         raise StoragePathError("A file path is required")
+    if is_module_owned(path):
+        raise ModuleOwnedPathError(
+            f"'{path}' belongs to a module and is served by that module's own endpoints"
+        )
     backend = get_storage()
     if not backend.file_exists(path):
         raise FileNotFoundError(path)

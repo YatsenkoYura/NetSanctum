@@ -65,7 +65,15 @@ class WeakPassphraseError(ValueError):
     so a passphrase nobody could guess has to be demanded when it is chosen."""
 
 
-MIN_PASSPHRASE_LENGTH = 12
+# Fourteen, not twelve. This is the only thing standing between a stolen
+# `vault_collections` row and an offline dictionary run: the row carries the
+# wrapper, its salt and its cost, and nothing else — no pepper, deliberately, so
+# that the passphrase is the whole secret. Argon2id at the chosen cost makes each
+# guess expensive for the attacker and, at these lengths, still unremarkable for
+# the owner. The check runs where the passphrase is chosen and never at unlock,
+# because a check that rejects a passphrase somebody already uses locks them out
+# of their own vault — which is why a raise here is a refusal, not a warning.
+MIN_PASSPHRASE_LENGTH = 14
 # The shortest possible denylist: the passwords that turn an offline attack into a
 # first-try success. Checked in lowercase, with and without a trailing digit run.
 COMMON_PASSPHRASES = frozenset(

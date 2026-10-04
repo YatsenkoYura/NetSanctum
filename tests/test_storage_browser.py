@@ -7,8 +7,10 @@ from unittest.mock import patch
 
 from app.core.storage import LocalStorage
 from app.modules.system.storage.browse import (
+    ModuleOwnedPathError,
     StoragePathError,
     guess_media_type,
+    is_module_owned,
     list_local,
     normalize_folder,
     parent_of,
@@ -77,8 +79,12 @@ class StorageListingTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "storage"
-        (self.root / "vault" / "images").mkdir(parents=True)
-        (self.root / "vault" / "notes.txt").write_bytes(b"hello")
+        (self.root / "uploads" / "images").mkdir(parents=True)
+        (self.root / "uploads" / "notes.txt").write_bytes(b"hello")
+        # A real module namespace, so the guard is tested against something the
+        # registry actually claims rather than a made-up folder name.
+        (self.root / "vault" / "videos").mkdir(parents=True)
+        (self.root / "vault" / "videos" / "clip.mp4.enc").write_bytes(b"\x00" * 64)
         (self.root / "music").mkdir()
         (self.root / "music" / "song.enc").write_bytes(b"\x00" * 32)
         # A loose file at the root, so directory-first ordering is observable.
@@ -93,16 +99,16 @@ class StorageListingTests(unittest.TestCase):
     def test_directories_come_before_files_each_alphabetically(self):
         listing = list_local("")
         self.assertEqual(
-            [("music", True), ("vault", True), ("zzz.txt", False)],
+            [("music", True), ("uploads", True), ("vault", True), ("zzz.txt", False)],
             [(entry.name, entry.is_dir) for entry in listing.entries],
         )
 
     def test_a_folder_lists_only_its_own_children(self):
-        listing = list_local("vault")
+        listing = list_local("uploads")
         self.assertEqual(["images", "notes.txt"], [entry.name for entry in listing.entries])
 
     def test_sizes_are_reported_for_files_and_zero_for_folders(self):
-        listing = list_local("vault")
+        listing = list_local("uploads")
         sizes = {entry.name: entry.size for entry in listing.entries}
         self.assertEqual(5, sizes["notes.txt"])
         self.assertEqual(0, sizes["images"])
@@ -110,7 +116,7 @@ class StorageListingTests(unittest.TestCase):
     def test_listing_reports_totals_and_windowing(self):
         first = list_local("", limit=2)
         self.assertEqual(2, len(first.entries))
-        self.assertEqual(3, first.total)
+        self.assertEqual(4, first.total)
         self.assertTrue(first.truncated)
         last = list_local("", limit=2, offset=2)
         self.assertFalse(last.truncated)
@@ -121,7 +127,7 @@ class StorageListingTests(unittest.TestCase):
 
     def test_a_file_is_not_a_folder(self):
         with self.assertRaises(StoragePathError):
-            list_local("vault/notes.txt")
+            list_local("uploads/notes.txt")
 
 
 class StorageDownloadTests(unittest.TestCase):
@@ -146,38 +152,36 @@ class StorageDownloadTests(unittest.TestCase):
                 closer()
 
     def test_an_encrypted_video_downloads_as_the_video_it_is(self):
-        self.storage.save_file_encrypted(b"plain mp4 bytes", "vault/videos/clip.mp4.enc")
+        self.storage.save_file_encrypted(b"plain mp4 bytes", "uploads/clip.mp4.enc")
 
-        _stream, _size, media_type, name = read_object("vault/videos/clip.mp4.enc")
+        _stream, _size, media_type, name = read_object("uploads/clip.mp4.enc")
 
         self.assertEqual("clip.mp4", name)
         self.assertEqual("video/mp4", media_type)
-        self.assertEqual(b"plain mp4 bytes", self._body("vault/videos/clip.mp4.enc"))
+        self.assertEqual(b"plain mp4 bytes", self._body("uploads/clip.mp4.enc"))
 
     def test_a_seekable_envelope_downloads_under_its_inner_name(self):
         import io
 
-        self.storage.save_file_encrypted_seekable(
-            io.BytesIO(b"seekable mp4 bytes"), "vault/videos/big.mp4.enc"
-        )
+        self.storage.save_file_encrypted_seekable(io.BytesIO(b"seekable mp4 bytes"), "uploads/big.mp4.enc")
 
-        _stream, size, media_type, name = read_object("vault/videos/big.mp4.enc")
+        _stream, size, media_type, name = read_object("uploads/big.mp4.enc")
 
         self.assertEqual(("big.mp4", len(b"seekable mp4 bytes"), "video/mp4"), (name, size, media_type))
-        self.assertEqual(b"seekable mp4 bytes", self._body("vault/videos/big.mp4.enc"))
+        self.assertEqual(b"seekable mp4 bytes", self._body("uploads/big.mp4.enc"))
 
     def test_a_plain_file_keeps_its_own_name(self):
-        self.storage.save_file(b"plain", "vault/notes.txt")
+        self.storage.save_file(b"plain", "uploads/notes.txt")
 
-        stream, _size, media_type, name = read_object("vault/notes.txt")
+        stream, _size, media_type, name = read_object("uploads/notes.txt")
 
         self.assertEqual(("notes.txt", "text/plain; charset=utf-8"), (name, media_type))
         stream.close()
 
     def test_a_name_that_is_only_an_encryption_suffix_is_left_alone(self):
-        self.storage.save_file(b"x", "vault/notes.enc")
+        self.storage.save_file(b"x", "uploads/notes.enc")
 
-        self.assertEqual("notes.enc", read_object("vault/notes.enc")[3])
+        self.assertEqual("notes.enc", read_object("uploads/notes.enc")[3])
 
 
 class StorageBrowserTemplateTests(unittest.TestCase):
@@ -258,3 +262,83 @@ class StorageBrowserTemplateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModuleNamespaceGuardTests(unittest.TestCase):
+    """A module's own storage is the module's to serve, not the browser's.
+
+    The browser used to list the names inside a module namespace and decrypt
+    anything the application file key could open. For a sealed Vault that meant
+    its worker-written videos came out in the clear to anyone who reached this
+    page, and the filenames — which are the only description of the contents that
+    is not in the payload — were listed beside them.
+
+    These tests are the guard. The one that matters most is the refusal, because
+    everything else about a browser is that it can open what it lists.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "storage"
+        (self.root / "vault" / "videos").mkdir(parents=True)
+        (self.root / "vault" / "videos" / "clip.mp4.enc").write_bytes(b"\x00" * 64)
+        (self.root / "vault" / "notes.txt").write_bytes(b"hello")
+        (self.root / "uploads").mkdir()
+        self._patcher = patch(
+            "app.modules.system.storage.browse.storage_root", return_value=self.root.resolve()
+        )
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+        # `read_object` goes through the storage singleton, not through
+        # `browse.storage_root`, so the backend needs pointing at the same tree.
+        self.storage = LocalStorage(str(self.root))
+        backend = patch("app.core.storage.get_storage", return_value=self.storage)
+        backend.start()
+        self.addCleanup(backend.stop)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_a_module_namespace_is_recognised(self):
+        self.assertTrue(is_module_owned("vault/videos/clip.mp4.enc"))
+        self.assertTrue(is_module_owned("vault"))
+        self.assertFalse(is_module_owned("uploads/anything.enc"))
+        self.assertFalse(is_module_owned(""))
+
+    def test_listing_a_module_namespace_shows_no_names(self):
+        listing = list_local("vault")
+
+        self.assertEqual(1, len(listing.entries))
+        entry = listing.entries[0]
+        self.assertTrue(entry.opaque)
+        self.assertEqual("vault/", entry.name)
+        # Nothing to open, and nothing that says what is in there.
+        self.assertEqual("", entry.path)
+        self.assertEqual(2, entry.objects)
+        self.assertEqual(69, entry.size)
+
+    def test_the_summary_is_not_built_into_a_download_url(self):
+        entry = list_local("vault").entries[0]
+
+        payload = entry.as_dict(format_size=lambda size: str(size))
+        self.assertEqual("", payload["path"])
+        self.assertTrue(payload["opaque"])
+        self.assertEqual(2, payload["objects"])
+
+    def test_reading_a_module_file_is_refused(self):
+        with self.assertRaises(ModuleOwnedPathError):
+            read_object("vault/videos/clip.mp4.enc")
+        with self.assertRaises(ModuleOwnedPathError):
+            read_object("vault/notes.txt")
+
+    def test_a_file_outside_any_module_is_unaffected(self):
+        (self.root / "uploads" / "note.txt").write_bytes(b"mine")
+
+        stream, size, _media_type, name = read_object("uploads/note.txt")
+
+        self.assertEqual(b"mine", stream.read())
+        self.assertEqual(4, size)
+        self.assertEqual("note.txt", name)
+
+    def test_the_error_says_where_to_go_instead(self):
+        with self.assertRaises(ModuleOwnedPathError) as caught:
+            read_object("vault/videos/clip.mp4.enc")
+        self.assertIn("module", str(caught.exception))

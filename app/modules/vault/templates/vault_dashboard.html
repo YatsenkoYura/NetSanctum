@@ -1409,12 +1409,31 @@ async function retryVideoDownload(id) {
   showToast('Загрузка поставлена в очередь');
 }
 
+/* A failed download leaves a code, never a message: `media_status` is readable
+   while the vault is sealed, and the exception text is the card's content. The
+   words below are the whole vocabulary the server can put there. */
+const MEDIA_ERROR_LABELS = {
+  'expired': 'загрузка не началась вовремя',
+  'nothing': 'источник ничего не отдал',
+  'too large': 'файл больше лимита',
+  'source': 'источник недоступен',
+  'network': 'ошибка сети',
+  'geo blocked': 'источник недоступен из этого региона',
+  'auth required': 'источник требует входа',
+  'rate limited': 'источник временно ограничил запросы',
+  'unsupported': 'источник не поддерживается',
+  'unknown': 'неизвестная ошибка'
+};
+
 function statusLabel(status) {
   const text = String(status || '');
   if (!text) return 'Видео ещё не загружено';
   if (text.startsWith('downloading')) return `Загрузка ${text.replace('downloading', '').trim()}`;
   if (text.startsWith('resolving')) return 'Определяем источник…';
-  if (text.startsWith('error:')) return text.replace('error:', 'Не удалось:').trim();
+  if (text.startsWith('error:')) {
+    const code = text.replace('error:', '').trim();
+    return `Не удалось: ${MEDIA_ERROR_LABELS[code] || MEDIA_ERROR_LABELS.unknown}`;
+  }
   // Internal words never reach the card as-is.
   const labels = { queued: 'В очереди на загрузку', completed: 'Готово', 'not queued': 'Загрузка не запущена', locked: 'Зашифровано — разблокируйте Vault' };
   return labels[text] || text;

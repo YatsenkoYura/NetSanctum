@@ -64,6 +64,48 @@ def is_cross_site_request(request: Request) -> bool:
     return parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != request_host
 
 
+# The Vault dashboard holds the per-tab unlock token in the page's memory and
+# renders the contents of every vault it has open. That makes it the one page
+# where a script injection is a total compromise, and it had no policy at all:
+# the strict one below is applied only to share-capability responses.
+#
+# What this policy buys, and it is enforced today:
+#   * no plugins (object-src 'none'), no base-tag hijack (base-uri 'none'),
+#     no framing (frame-ancestors 'none'), no form posting anywhere but here
+#     (form-action 'self');
+#   * no network egress: connect-src, img-src and media-src are this origin
+#     only, so an injected script cannot ship the token or a card's text to a
+#     third party, and a remote og_image cannot phone home with the owner's IP
+#     and visit timing;
+#   * no eval. `script-src` allows this origin's files and the page's own inline
+#     blocks, and nothing else.
+#
+# What it does not buy yet: a nonce. Adding one would immediately void the ~80
+# inline `onclick`/`onerror` handlers the tiles are built from, and the result
+# would be a dashboard where every button silently stops working — a much worse
+# failure than no nonce, because it looks like a bug in the seal. Converting the
+# tiles to delegated listeners is the prerequisite, and until it lands the
+# honest thing is to say so here rather than ship a policy that looks stricter
+# than it is.
+DASHBOARD_CSP_PREFIXES = ("/vault/dashboard",)
+
+DASHBOARD_CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'none'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "media-src 'self' blob:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "form-action 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+    )
+)
+
+
 async def security_headers_middleware(request: Request, call_next):
     if is_cross_site_request(request):
         return JSONResponse({"detail": "Cross-site request rejected"}, status_code=403)
@@ -81,6 +123,13 @@ async def security_headers_middleware(request: Request, call_next):
             "script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
             "base-uri 'none'; frame-ancestors 'none'"
         )
+    if request.url.path.startswith(DASHBOARD_CSP_PREFIXES):
+        # The dashboard renders whatever its vaults hold, so it is not something
+        # a shared cache should ever keep a copy of.
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        response.headers["Content-Security-Policy"] = DASHBOARD_CONTENT_SECURITY_POLICY
     if request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
