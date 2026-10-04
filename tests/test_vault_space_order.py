@@ -24,6 +24,7 @@ from app.modules.vault.services import (
     list_vault_items,
     reorder_card,
     reorder_space,
+    update_vault_item,
 )
 
 
@@ -359,3 +360,76 @@ class DissolveSpaceTests(OrderingTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MoveCardBetweenSpacesTests(OrderingTestCase):
+    """A card can change spaces, but not into a state it can never be opened from.
+
+    Merging refused these moves already; the patch path did not, so any client
+    could walk a card into a sealed space (where no read path shows it) or out of
+    one (where its own wrapped key no longer opens anywhere).
+    """
+
+    def test_a_plain_card_moves_between_plain_spaces(self):
+        from app.modules.vault.schemas import VaultItemUpdate
+
+        self.add_space(1)
+        self.add_space(2)
+        self.add_card(10, 0.0, collection_id=1)
+        item = self.db.get(VaultItem, 10)
+
+        run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=2)))
+        self.db.expire_all()
+
+        self.assertEqual(2, self.db.get(VaultItem, 10).collection_id)
+
+    def test_a_plain_card_can_be_unfiled(self):
+        from app.modules.vault.schemas import VaultItemUpdate
+
+        self.add_space(1)
+        self.add_card(10, 0.0, collection_id=1)
+        item = self.db.get(VaultItem, 10)
+
+        run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=None)))
+        self.db.expire_all()
+
+        self.assertIsNone(self.db.get(VaultItem, 10).collection_id)
+
+    def test_a_plain_card_cannot_move_into_a_sealed_space(self):
+        from app.modules.vault.schemas import VaultItemUpdate
+        from app.modules.vault.services import VaultMoveError
+
+        self.add_space(1, sealed=True)
+        self.add_card(10, 0.0, collection_id=None)
+        item = self.db.get(VaultItem, 10)
+
+        with self.assertRaises(VaultMoveError):
+            run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=1)))
+
+    def test_a_sealed_card_cannot_be_carried_into_another_space(self):
+        from app.modules.vault.schemas import VaultItemUpdate
+        from app.modules.vault.services import VaultMoveError
+
+        self.add_space(1)
+        self.add_space(2)
+        self.add_card(10, 0.0, collection_id=1)
+        item = self.db.get(VaultItem, 10)
+        item.sealed_payload = "nsp:v1:blob"
+        self.db.commit()
+
+        with self.assertRaises(VaultMoveError):
+            run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=2)))
+
+    def test_setting_the_same_space_again_is_not_a_move(self):
+        from app.modules.vault.schemas import VaultItemUpdate
+
+        self.add_space(1, sealed=True)
+        self.add_card(10, 0.0, collection_id=1)
+        item = self.db.get(VaultItem, 10)
+        item.sealed_payload = "nsp:v1:blob"
+        self.db.commit()
+
+        # A drag onto the space it already lives in must not raise just because
+        # that space is sealed.
+        run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=1)))
+        self.assertEqual(1, self.db.get(VaultItem, 10).collection_id)

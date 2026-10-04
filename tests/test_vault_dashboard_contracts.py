@@ -88,7 +88,10 @@ class ManualOrderContractTests(unittest.TestCase):
         self.assertIn("vaultReorder.fromId !== null", root_drop)
 
     def test_order_is_refused_where_it_cannot_mean_anything(self):
-        for refusal in ("readOnlyMode", "packageMode", "!currentCollectionId"):
+        # Reordering needs an editable surface. The aggregate view is not refused
+        # here: a card can still be dragged out of it into a space, and the drop
+        # target decides what the gesture meant.
+        for refusal in ("readOnlyMode", "packageMode"):
             self.assertIn(
                 refusal, TEMPLATE.split("function vaultReorderRefusal() {", 1)[1].split("\n}", 1)[0]
             )
@@ -274,6 +277,50 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         self.assertIn("Зашифрованное пространство всегда остаётся на верхнем уровне", service)
         schema = Path("app/modules/vault/schemas.py").read_text()
         self.assertIn("parent_id: int | None = Field(default=None, ge=1)", schema)
+
+
+class CardOntoSpaceGestureTests(unittest.TestCase):
+    """Dropping a card on a space moves it there.
+
+    The gesture did not exist: the sidebar only accepted drags that started
+    inside it, and a card drag starts in the grid, so dropping a card on a space
+    did nothing at all.
+    """
+
+    def test_the_sidebar_accepts_a_card_drag_and_moves_the_card(self):
+        body = TEMPLATE.split("async function vaultMoveCardToSpace(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("collection_id: collectionId", body)
+        self.assertIn("pathSegment(cardId)", body)
+        drop = TEMPLATE.split("list.addEventListener('drop', function (e) {", 1)[1].split("\n  });", 1)[0]
+        self.assertIn("vaultMoveCardToSpace(cardId, targetId)", drop)
+
+    def test_dropping_on_all_cards_unfiles_the_card(self):
+        self.assertIn(
+            "collectionId === null",
+            TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0],
+        )
+
+    def test_a_sealed_space_is_not_offered_as_a_target(self):
+        body = TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("target.is_encrypted", body)
+
+    def test_the_server_refuses_the_moves_the_sidebar_hides(self):
+        service = Path("app/modules/vault/services.py").read_text()
+        self.assertIn("_assert_can_move_card", service)
+        self.assertIn("Зашифрованную карточку нельзя перенести в другое пространство", service)
+
+    def test_the_aggregate_view_still_allows_a_card_to_be_dragged_out(self):
+        """It cannot be reordered there, but it can be filed into a space."""
+        refusal = TEMPLATE.split("function vaultReorderRefusal() {", 1)[1].split("\n}", 1)[0]
+        self.assertNotIn("!currentCollectionId", refusal)
+        commit = TEMPLATE.split("async function vaultCommitReorder() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("Порядок задаётся внутри пространства", commit)
+
+    def test_the_three_drop_targets_are_three_different_meanings(self):
+        """A card on a card reorders; a card on a grip stacks; a card on a space moves."""
+        self.assertIn("if (e.target.closest && e.target.closest('[data-grip]')) return;", TEMPLATE)
+        self.assertIn("/api/vault/items/move", TEMPLATE)
+        self.assertIn("vaultStackDrop(fromId, toId)", TEMPLATE)
 
 
 class ScopeContractTests(unittest.TestCase):

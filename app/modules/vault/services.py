@@ -323,6 +323,8 @@ async def get_vault_item(session: AsyncSession, item_id: int) -> VaultItem | Non
 async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: VaultItemUpdate) -> VaultItem:
     """Update vault item properties."""
     update_data = update_in.model_dump(exclude_unset=True)
+    if "collection_id" in update_data:
+        await _assert_can_move_card(session, item, update_data["collection_id"])
     for field, val in update_data.items():
         setattr(item, field, val)
 
@@ -330,6 +332,29 @@ async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: V
     await session.commit()
     await session.refresh(item)
     return item
+
+
+class VaultMoveError(ValueError):
+    """The card cannot change spaces without becoming unopenable."""
+
+
+async def _assert_can_move_card(session: AsyncSession, item: VaultItem, collection_id: int | None) -> None:
+    """Refuse a card move that would leave it readable-looking but unopenable.
+
+    A sealed card carries its own wrapped key, and a plain card inside a sealed
+    space is filtered out of every read path. Both are one-way mistakes: the card
+    either disappears from every list, or stays a locked tile with no way to open
+    it, because its key lookup is gone. Merging refuses the same moves for the
+    same reason; this is the same guard on the path a drag takes.
+    """
+    if collection_id == item.collection_id:
+        return
+    if item.sealed_payload:
+        raise VaultMoveError("Зашифрованную карточку нельзя перенести в другое пространство")
+    if collection_id is not None:
+        target = await session.get(VaultCollection, collection_id)
+        if target is not None and target.is_encrypted:
+            raise VaultMoveError("В зашифрованное пространство можно переносить только закрытые карточки")
 
 
 async def delete_vault_item(session: AsyncSession, item: VaultItem) -> None:

@@ -2647,6 +2647,38 @@ async function vaultMergeInto(fromId, toId) {
   }
 }
 
+// Three drop targets, three meanings, and they cannot be confused because they
+// are different things: a card dropped on a space moves there, a card dropped on
+// another card is reordered, and a card dropped on a card's grip joins its stack.
+async function vaultMoveCardToSpace(cardId, collectionId) {
+  const card = window._vaultCache[cardId];
+  const targetName = collectionId === null
+    ? 'Все карточки'
+    : ((vaultCollectionsById[collectionId] || {}).name || 'пространство');
+  const moved = await mutationJson(`/api/vault/items/${pathSegment(cardId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ collection_id: collectionId })
+  }, `Не удалось перенести в «${targetName}»`);
+  if (!moved) return;
+  updateCachedItem(moved);
+  await loadVaultSummary();
+  if (Number(collectionId) === Number(currentCollectionId)) loadWorkspace();
+  else if (!syncLockedView()) loadWorkspace();
+}
+
+function vaultCardDropTargetValid(collectionId) {
+  if (collectionId === undefined) return false;
+  if (collectionId === null) return true;                       // "Все карточки" unfiles it
+  const target = vaultCollectionsById[collectionId];
+  // A sealed space has no readable rows for a plain card, so the move would look
+  // like it worked and leave nothing to open. The server refuses it too.
+  if (!target || target.is_encrypted) return false;
+  const card = window._vaultCache[vaultReorder.fromId];
+  if (card && Number(card.collection_id) === Number(collectionId)) return false;
+  return true;
+}
+
 function __vaultBindWorkspaceDrop() {
   // No once-guard: like vcalBoot, the list nodes are fresh after every htmx
   // swap, so listeners must be bound to the fresh elements each time.
@@ -2662,7 +2694,14 @@ function __vaultBindWorkspaceDrop() {
   });
   list.addEventListener('dragover', function (e) {
     const row = e.target.closest ? e.target.closest('.ws-item') : null;
-    if (!row || !vaultDropTargetValid(vaultDragWsId, row)) return;
+    if (!row) return;
+    // A card being dragged in from the grid has no workspace id of its own, and
+    // for it the row means "move into this space" rather than "nest into it".
+    const cardId = vaultReorder && vaultReorder.fromId !== null ? vaultReorder.fromId : null;
+    const valid = cardId !== null
+      ? vaultCardDropTargetValid(wsIdFromNode(row))
+      : vaultDropTargetValid(vaultDragWsId, row);
+    if (!valid) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     row.classList.add('drag-over-active');
@@ -2674,11 +2713,25 @@ function __vaultBindWorkspaceDrop() {
   list.addEventListener('drop', function (e) {
     const row = e.target.closest ? e.target.closest('.ws-item') : null;
     list.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
-    if (!row || !vaultDropTargetValid(vaultDragWsId, row)) { vaultDragWsId = null; return; }
+    if (!row) { vaultDragWsId = null; return; }
+    const targetId = wsIdFromNode(row);
+
+    const cardId = vaultReorder && vaultReorder.fromId !== null ? vaultReorder.fromId : null;
+    if (cardId !== null) {
+      // The card drag is over either way; it must not also leave a reorder armed.
+      vaultReorder.fromId = null;
+      vaultClearDropMarker();
+      if (!vaultCardDropTargetValid(targetId)) return;
+      e.preventDefault();
+      vaultMoveCardToSpace(cardId, targetId);
+      return;
+    }
+
+    if (!vaultDropTargetValid(vaultDragWsId, row)) { vaultDragWsId = null; return; }
     e.preventDefault();
     const fromId = vaultDragWsId;
     vaultDragWsId = null;
-    vaultDropWorkspace(fromId, wsIdFromNode(row));
+    vaultDropWorkspace(fromId, targetId);
   });
   list.addEventListener('dragend', function () {
     vaultDragWsId = null;
@@ -3447,10 +3500,13 @@ function vaultTopTiles() {
   return Array.from(document.querySelectorAll('#tiles-grid > .tile-card'));
 }
 
+/* What stops a card drag from starting at all. The aggregate view is NOT one of
+   them: a card can be dragged out of "Все карточки" into a space even though it
+   cannot be reordered there, and the drop target decides which of the two the
+   gesture meant. */
 function vaultReorderRefusal() {
-  if (readOnlyMode) return 'В этом режиме порядок не меняется';
-  if (packageMode) return 'В офлайн-пакете порядок не меняется';
-  if (!currentCollectionId) return 'Порядок задаётся внутри пространства';
+  if (readOnlyMode) return 'В этом режиме перемещение недоступно';
+  if (packageMode) return 'В офлайн-пакете перемещение недоступно';
   return null;
 }
 
@@ -3508,7 +3564,11 @@ async function vaultCommitReorder() {
   const afterId = vaultReorder.afterId;
   vaultReorder.fromId = null;
   vaultClearDropMarker();
-  if (fromId === null || (beforeId === null && afterId === null)) return;
+  if (fromId === null) return;
+  // Order is per space, so a card dropped on another card in the aggregate has
+  // nowhere to store it. Dropping it on a space still works from there.
+  if (!currentCollectionId) { showToast('Порядок задаётся внутри пространства', true); return; }
+  if (beforeId === null && afterId === null) return;
   if (beforeId === fromId || afterId === fromId) return;
 
   const moved = await mutationJson('/api/vault/items/move', {

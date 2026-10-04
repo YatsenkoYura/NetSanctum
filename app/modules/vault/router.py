@@ -65,6 +65,7 @@ from app.modules.vault.services import (
     VaultCollectionNotFoundError,
     VaultDissolveError,
     VaultMergeError,
+    VaultMoveError,
     VaultOrderError,
     create_captured_item,
     create_collection,
@@ -605,7 +606,10 @@ async def update_item(
         )
         return _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
 
-    updated = await update_vault_item(db, item, update_in)
+    try:
+        updated = await update_vault_item(db, item, update_in)
+    except VaultMoveError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
 
 
