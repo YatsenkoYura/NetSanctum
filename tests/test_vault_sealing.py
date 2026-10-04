@@ -325,6 +325,13 @@ class MoveSealedItemTests(unittest.TestCase):
         self.assertEqual("", self.item.title)
         self.assertEqual({}, self.item.canvas_data)
 
+    def test_a_sealed_card_may_not_be_unfiled(self):
+        """ "Все карточки" would leave it sealed under a key nothing outside the
+        space holds. The client no longer offers the option; the server refuses it
+        rather than tripping over a missing target."""
+        with self.assertRaises(VaultMoveError):
+            asyncio.run(move_sealed_item(_Session(), self.item, None, self.source_private))
+
     def test_a_sealed_card_may_not_be_moved_into_a_plain_space(self):
         plain = VaultCollection(name="Обычное", is_encrypted=False)
 

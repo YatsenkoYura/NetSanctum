@@ -345,6 +345,10 @@ async def move_sealed_item(
     the only way it stays readable — which is why this needs the source Vault
     unlocked, exactly like editing a sealed card does.
     """
+    if target is None:
+        # Reached by filing a sealed card onto "Все карточки". Its payload is
+        # sealed under the space it came from, so there is nowhere for it to go.
+        raise VaultMoveError("Зашифрованную карточку нельзя убрать из пространства")
     if not target.is_encrypted:
         raise VaultMoveError("Зашифрованную карточку можно перенести только в зашифрованное пространство")
     open_item(source_private_key, item)

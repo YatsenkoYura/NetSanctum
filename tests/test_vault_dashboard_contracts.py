@@ -383,6 +383,15 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
             TEMPLATE.split("function openMoveCardMenu(", 1)[1].split("\n}", 1)[0],
         )
 
+    def test_a_sealed_card_is_nowhere_offered_to_leave_its_space(self):
+        """Both paths used to offer it: the menu's "no space" entry and a drop on
+        "Все карточки". The server refused neither with a word — it tripped over a
+        missing target and answered 500."""
+        menu = TEMPLATE.split("function openMoveCardMenu(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("const targets = card.is_sealed ? []", menu)
+        drop = TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("if (collectionId === null) return !card.is_sealed;", drop)
+
 
 class InlineHandlerTests(unittest.TestCase):
     """Every `onclick="fn(...)"` in the template must name a function that exists.

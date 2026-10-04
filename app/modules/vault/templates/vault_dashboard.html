@@ -1358,7 +1358,9 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
 function openMoveCardMenu(event, cardId) {
   const card = window._vaultCache[cardId];
   if (!card) return;
-  const targets = [{ id: null, name: '— без пространства —' }];
+  // A sealed card has no "no space" option: its payload belongs to the space it
+  // came from, so there is nowhere outside it to put it.
+  const targets = card.is_sealed ? [] : [{ id: null, name: '— без пространства —' }];
   Object.keys(vaultCollectionsById).forEach(key => {
     const target = vaultCollectionsById[key];
     if (Number(key) === Number(card.collection_id ?? null)) return;
@@ -2752,8 +2754,10 @@ async function vaultMoveCardToSpace(cardId, collectionId) {
 
 function vaultCardDropTargetValid(collectionId) {
   if (collectionId === undefined) return false;
-  if (collectionId === null) return true;                       // "Все карточки" unfiles it
   const card = window._vaultCache[vaultReorder.fromId] || {};
+  // "Все карточки" unfiles the card — impossible for a sealed one, which stays
+  // in the space whose key opens it.
+  if (collectionId === null) return !card.is_sealed;
   const target = vaultCollectionsById[collectionId];
   if (!target) return false;
   // Both kinds may go into a sealed space: a plain card is sealed there on the way
