@@ -43,7 +43,11 @@ class VaultCollection(Base):
     position = Column(Float, nullable=True)
 
     parent = relationship("VaultCollection", remote_side=[id], backref="children")
-    items = relationship("VaultItem", back_populates="collection")
+    # `passive_deletes` because the column already says `ondelete="SET NULL"`, and
+    # without it the ORM does its own nullifying on delete: re-homing a card and
+    # then deleting its old space came out as collection_id = NULL, because the
+    # cascade ran after the assignment and overwrote it.
+    items = relationship("VaultItem", back_populates="collection", passive_deletes=True)
 
 
 class VaultItem(Base):

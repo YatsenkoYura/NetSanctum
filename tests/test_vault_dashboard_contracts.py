@@ -183,6 +183,56 @@ class SidebarRunsTests(unittest.TestCase):
             self.assertIn("flex-1", row["labelClasses"])
 
 
+class FolderGestureContractTests(unittest.TestCase):
+    """Dragging a space nests it; dissolving a folder is a separate, marked move.
+
+    The drag used to merge, which emptied the dragged space and deleted it — a
+    destructive result hidden behind a gesture that looks like filing a folder.
+    Merging survives in the ⋯ menu, behind a confirm.
+    """
+
+    def test_the_drag_path_nests_and_never_merges(self):
+        body = TEMPLATE.split("async function vaultDropWorkspace(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("/api/vault/collections/move", body)
+        self.assertNotIn("/api/vault/collections/merge", body)
+
+    def test_merging_is_reachable_only_through_the_menu(self):
+        merge = TEMPLATE.split("async function vaultMergeInto(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("/api/vault/collections/merge", merge)
+        self.assertIn("confirm(", merge, "merging destroys a workspace and must ask")
+        # The only caller is the move menu; the definition itself does not count.
+        callers = [
+            line
+            for line in TEMPLATE.split("\n")
+            if "vaultMergeInto(" in line and not line.startswith("async function")
+        ]
+        self.assertEqual(1, len(callers), callers)
+        menu = TEMPLATE.split("async function vaultMoveTo(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("vaultMergeInto(fromId, toId)", menu)
+
+    def test_a_nested_space_carries_the_cross_that_dissolves_it(self):
+        row = TEMPLATE.split("function vaultSidebarRow(", 1)[1].split("\nfunction ", 1)[0]
+        self.assertIn("collection.parent_id !== null", row, "only a folder can be dissolved")
+        self.assertIn("dissolveSpace(collection)", row)
+
+    def test_dissolving_goes_to_its_own_endpoint_and_says_what_moves(self):
+        body = TEMPLATE.split("async function dissolveSpace(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("/dissolve", body)
+        self.assertIn("confirm(", body)
+        self.assertIn("done.spaces", body)
+        self.assertIn("done.cards", body)
+
+    def test_the_tile_of_a_nested_space_carries_the_cross_too(self):
+        render = TEMPLATE.split("function renderChildSpaces(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("space-tile-dissolve", render)
+        self.assertIn("dissolveSpace(child)", render)
+
+    def test_a_space_cannot_be_dropped_inside_its_own_branch(self):
+        """Refused on the server too, but finding out from a toast after the drop is worse."""
+        body = TEMPLATE.split("function vaultDropTargetValid(", 1)[1].split("\n}", 1)[0]
+        self.assertIn("vaultDescendantIds(fromId)", body)
+
+
 class ScopeContractTests(unittest.TestCase):
     """A function the dashboard calls must live where the call can see it.
 

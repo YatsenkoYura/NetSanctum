@@ -34,10 +34,12 @@
 .ws-item[data-depth="4"] { padding-left:58px; }
 
 /* Spaces nested under the open one. */
-.space-tile { display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left; padding:10px 12px; border:1px solid #27272a; background:#09090b; cursor:pointer; transition:border-color .15s; }
+.space-tile { position:relative; display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left; padding:10px 12px; border:1px solid #27272a; background:#09090b; cursor:pointer; transition:border-color .15s; }
 .space-tile:hover { border-color:#2dd4bf; }
 .space-tile-name { font-size:12px; font-weight:700; color:#e4e4e7; }
 .space-tile-meta { font-size:10px; color:#52525b; }
+.space-tile-dissolve { position:absolute; top:4px; right:6px; font-size:11px; line-height:1; color:#52525b; padding:2px 4px; }
+.space-tile-dissolve:hover { color:#e4e4e7; }
 #vault-child-spaces { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; margin-bottom:12px; }
 .ws-item[draggable="true"]:active { cursor:grabbing; }
 
@@ -2400,6 +2402,24 @@ function closeMoveMenu() {
   document.getElementById('ws-move-menu').classList.add('hidden');
 }
 
+/* Dissolving a folder is not deleting it. The server lifts what was inside into
+   the parent and puts it in the folder's own slot, so the sidebar does not jump;
+   this only has to say what happened and redraw. */
+async function dissolveSpace(collection) {
+  const what = `${collection.items_count} карт.`;
+  if (!confirm(`Распустить папку «${collection.name}»? Всё, что внутри (${what}), поднимется на один уровень и займёт её место.`)) return;
+  const done = await mutationJson(`/api/vault/collections/${pathSegment(collection.id)}/dissolve`, {
+    method: 'POST'
+  }, 'Не удалось распустить папку');
+  if (!done) return;
+  const parts = [];
+  if (done.spaces) parts.push(`${done.spaces} папок`);
+  if (done.cards) parts.push(`${done.cards} карт.`);
+  showToast(parts.length ? `Поднято наверх: ${parts.join(', ')}` : 'Папка распущена');
+  await loadVaultSummary();
+  if (!syncLockedView()) loadWorkspace();
+}
+
 /* Nesting is a different gesture from merging, so it gets its own menu.
    Merging empties one space into another and deletes it; nesting keeps both and
    only changes where the space sits in the tree. The candidates exclude the
@@ -2493,6 +2513,19 @@ function renderChildSpaces() {
     meta.className = 'space-tile-meta';
     meta.textContent = `${child.items_count} карточек`;
     tile.append(name, meta);
+    // A folder can always be dissolved from where it is shown, so the tile
+    // carries the same cross as the sidebar row.
+    const dissolve = document.createElement('span');
+    dissolve.className = 'space-tile-dissolve';
+    dissolve.setAttribute('role', 'button');
+    dissolve.tabIndex = 0;
+    dissolve.title = 'Распустить папку';
+    dissolve.textContent = '✕';
+    dissolve.addEventListener('click', event => {
+      event.stopPropagation();
+      dissolveSpace(child);
+    });
+    tile.append(dissolve);
     return tile;
   }));
 }
@@ -2505,12 +2538,12 @@ async function vaultMoveTo(toId) {
   if (toId === fromId) return;
   const dst = toId === null ? null : vaultCollectionsById[toId];
   if (toId !== null && (!dst || dst.is_encrypted)) return;
-  await vaultDropWorkspace(fromId, toId);
+  await vaultMergeInto(fromId, toId);
 }
-// Drop workspace A onto B: every card moves into B (at its end, keeping ids
-// and data), the emptied A is deleted. Sealed workspaces refuse the drop on
-// both ends — the server enforces the same rule. Drop onto "Все карточки"
-// unfiles the cards (workspace link cleared).
+// Dragging a workspace onto another one nests it: a folder inside that space.
+// Dropping onto "Все карточки" lifts it back to the top level. Both keep the
+// workspace; nothing is destroyed by a drag. Merging — which does delete the
+// emptied workspace — lives in the ⋯ menu behind a confirm.
 
 var vaultDragWsId = null;
 
@@ -2530,11 +2563,37 @@ function vaultDropTargetValid(fromId, toNode) {
   if (toId !== null) {
     const dst = vaultCollectionsById[toId];
     if (!dst || dst.is_encrypted) return false;
+    // A space cannot go inside its own branch; the server refuses it, and finding
+    // that out from a toast after the drop is worse than not offering the drop.
+    if (vaultDescendantIds(fromId).has(toId)) return false;
   }
   return true;
 }
 
 async function vaultDropWorkspace(fromId, toId) {
+  // Dropping a space onto another one makes a FOLDER, the way a file manager
+  // does. It used to merge — the dragged space was emptied and deleted — which is
+  // a destructive gesture hiding behind a drag, and it lost the arrangement the
+  // owner had. Merging is still available, but deliberately, from the ⋯ menu.
+  const src = vaultCollectionsById[fromId] || { name: 'Воркспейс', items_count: 0 };
+  if (toId === null) {
+    if (!confirm(`Вынести «${src.name}» на верхний уровень? Воркспейс останется на месте, просто перестанет быть вложенным.`)) return;
+  }
+  const nested = await mutationJson('/api/vault/collections/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ collection_id: fromId, parent_id: toId })
+  }, 'Не удалось вложить воркспейс');
+  if (!nested) return;
+  await loadVaultSummary();
+  if (Number(currentCollectionId) === Number(toId)) loadWorkspace();
+  else if (!syncLockedView()) loadWorkspace();
+  if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
+}
+
+// Merging is the destructive one, so it is a menu item with a confirm rather
+// than something you can do by brushing a row against another one.
+async function vaultMergeInto(fromId, toId) {
   const src = vaultCollectionsById[fromId] || { name: 'Воркспейс', items_count: 0 };
   const dstName = toId === null ? 'Все карточки' : ((vaultCollectionsById[toId] || {}).name || 'Воркспейс');
   const count = src.items_count || 0;
@@ -2721,6 +2780,19 @@ function vaultSidebarRow(collection, depth, hasChildren) {
       openNestMenu(event, collection.id);
     });
     right.append(nest);
+    // A folder — a space with a parent — carries the way back out. It dissolves
+    // rather than deletes: what was inside moves up and keeps this row's place.
+    if (collection.parent_id !== null) {
+      const dissolve = document.createElement('button');
+      dissolve.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+      dissolve.title = 'Распустить папку';
+      dissolve.textContent = '✕';
+      dissolve.addEventListener('click', event => {
+        event.stopPropagation();
+        dissolveSpace(collection);
+      });
+      right.append(dissolve);
+    }
     const move = document.createElement('button');
     move.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
     move.title = 'Слить в другой воркспейс…';

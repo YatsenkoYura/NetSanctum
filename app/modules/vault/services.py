@@ -889,3 +889,105 @@ async def place_new_space(session: AsyncSession, collection: VaultCollection) ->
     )
     current_max = result.scalar()
     collection.position = (float(current_max) if current_max is not None else -POSITION_STEP) + POSITION_STEP
+
+
+class VaultDissolveError(ValueError):
+    """The folder cannot be dissolved where it stands."""
+
+
+async def _renumber_spaces(session: AsyncSession, parent_id: int | None) -> None:
+    """Give one level of spaces fresh, evenly spaced positions."""
+    rows = await session.execute(
+        select(VaultCollection.id)
+        .where(
+            VaultCollection.parent_id.is_(None)
+            if parent_id is None
+            else VaultCollection.parent_id == parent_id
+        )
+        .order_by(VaultCollection.position.asc().nullslast(), VaultCollection.name.asc())
+    )
+    for index, (collection_id,) in enumerate(rows.all()):
+        await session.execute(
+            update(VaultCollection)
+            .where(VaultCollection.id == collection_id)
+            .values(position=float(index) * POSITION_STEP)
+        )
+
+
+async def dissolve_space(session: AsyncSession, collection_id: int) -> dict[str, int]:
+    """Dissolve a folder: its contents move up and take the folder's own place.
+
+    A folder is a space with a parent. Dissolving it lifts both what hangs under
+    it (nested spaces) and what lives in it (cards) into the parent, and the
+    lifted spaces land where the folder was in the parent's order rather than at
+    the end of it — losing that place would quietly reorder somebody's sidebar.
+
+    Their relative order is kept: the folder's children come out in the order
+    they were in, and the level is renumbered afterwards because positions are
+    no longer meaningful once a slot is gone.
+
+    Refused for a sealed space (it has no parent by construction) and for a root
+    space (there is nothing to dissolve it into).
+    """
+    folder = await session.get(VaultCollection, collection_id)
+    if folder is None:
+        raise VaultCollectionNotFoundError(f"Пространство {collection_id} не найдено")
+    if folder.is_encrypted:
+        raise VaultDissolveError("Зашифрованное пространство нельзя распустить")
+    if folder.parent_id is None:
+        raise VaultDissolveError("Это пространство не вложено и распускать нечего")
+
+    parent_id = folder.parent_id
+    parent = await session.get(VaultCollection, parent_id)
+    if parent is None:
+        raise VaultCollectionNotFoundError(f"Пространство {parent_id} не найдено")
+    if parent.is_encrypted:
+        raise VaultDissolveError("В зашифрованное пространство нельзя ничего распустить")
+
+    # Where the folder sat among its siblings, and who came after it. The lifted
+    # spaces are spliced in at that index, which is what "takes the folder's
+    # place" means once the positions are renumbered.
+    siblings = list(
+        (
+            await session.execute(
+                select(VaultCollection.id, VaultCollection.position)
+                .where(VaultCollection.parent_id == parent_id)
+                .order_by(VaultCollection.position.asc().nullslast(), VaultCollection.name.asc())
+            )
+        ).all()
+    )
+    folder_index = next((i for i, (sid, _pos) in enumerate(siblings) if sid == collection_id), len(siblings))
+
+    inner = list(
+        (
+            await session.execute(
+                select(VaultCollection.id)
+                .where(VaultCollection.parent_id == collection_id)
+                .order_by(VaultCollection.position.asc().nullslast(), VaultCollection.name.asc())
+            )
+        ).all()
+    )
+    for (space_id,) in inner:
+        space = await session.get(VaultCollection, space_id)
+        space.parent_id = parent_id
+
+    cards = list(
+        (await session.execute(select(VaultItem).where(VaultItem.collection_id == collection_id))).scalars()
+    )
+    for card in cards:
+        card.collection_id = parent_id
+
+    await session.delete(folder)
+    await session.flush()
+
+    order = [sid for sid, _pos in siblings if sid != collection_id]
+    order[folder_index:folder_index] = [sid for (sid,) in inner]
+    for position, space_id in enumerate(order):
+        await session.execute(
+            update(VaultCollection)
+            .where(VaultCollection.id == space_id)
+            .values(position=float(position) * POSITION_STEP)
+        )
+    await session.commit()
+
+    return {"spaces": len(inner), "cards": len(cards), "index": folder_index}

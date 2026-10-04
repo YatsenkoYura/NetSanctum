@@ -63,6 +63,7 @@ from app.modules.vault.sealing import (
 )
 from app.modules.vault.services import (
     VaultCollectionNotFoundError,
+    VaultDissolveError,
     VaultMergeError,
     VaultOrderError,
     create_captured_item,
@@ -70,6 +71,7 @@ from app.modules.vault.services import (
     create_vault_item,
     delete_collection,
     delete_vault_item,
+    dissolve_space,
     fetch_url_metadata,
     get_vault_item,
     get_vault_stats,
@@ -851,6 +853,22 @@ async def move_collection(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     locked = await locked_collection_ids(db, unlock_token)
     return _serialize_collection(collection, locked=collection.id in locked)
+
+
+@router.post("/api/vault/collections/{coll_id}/dissolve")
+async def dissolve_collection(
+    coll_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Dissolve a folder: its contents move up and keep the folder's place."""
+    try:
+        moved = await dissolve_space(db, coll_id)
+    except VaultCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VaultDissolveError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok", **moved}
 
 
 @router.get("/api/vault/collections/{coll_id}/children", response_model=list[VaultCollectionResponse])

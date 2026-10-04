@@ -19,6 +19,7 @@ from app.modules.vault.services import (
     POSITION_MIN_GAP,
     VaultOrderError,
     _midpoint,
+    dissolve_space,
     list_child_spaces,
     list_vault_items,
     reorder_card,
@@ -259,6 +260,101 @@ class SpaceTreeTests(OrderingTestCase):
         # Card 3 is a root; it cannot be dropped next to a child of 1.
         with self.assertRaises(VaultOrderError):
             run(reorder_space(self.session, 3, None, 2, None))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class DissolveSpaceTests(OrderingTestCase):
+    """A folder's contents move up and take the folder's own place.
+
+    The place is the whole point: a dissolve that appended to the end would
+    silently reorder the sidebar, which is the arrangement the owner built.
+    """
+
+    def test_a_folder_lifts_its_contents_into_the_parent(self):
+        self.add_space(1)
+        self.add_space(2, parent_id=1)
+        self.add_space(3, parent_id=2)
+        self.add_card(10, 0.0, collection_id=2)
+
+        moved = run(dissolve_space(self.session, 2))
+
+        self.assertEqual({"spaces": 1, "cards": 1, "index": 0}, moved)
+        self.db.expire_all()
+        self.assertIsNone(self.db.get(VaultCollection, 2))
+        self.assertEqual(1, self.db.get(VaultCollection, 3).parent_id)
+        self.assertEqual(1, self.db.get(VaultItem, 10).collection_id)
+
+    def test_the_lifted_spaces_take_the_folders_slot_not_the_end(self):
+        # У родителя 1: ПАПКА(0), X(1024), Y(2048). Внутри папки: B1(0), B2(1024).
+        self.add_space(1)
+        self.add_space(2, parent_id=1, position=0.0)
+        self.add_space(3, parent_id=1, position=1024.0)
+        self.add_space(4, parent_id=1, position=2048.0)
+        self.add_space(5, parent_id=2, position=0.0)
+        self.add_space(6, parent_id=2, position=1024.0)
+
+        run(dissolve_space(self.session, 2))
+        self.db.expire_all()
+
+        # B1 и B2 занимают слот папки — до X и Y, а не после них.
+        self.assertEqual([5, 6, 3, 4], [space.id for space in run(list_child_spaces(self.session, 1))])
+
+    def test_the_lifted_spaces_keep_their_own_order(self):
+        self.add_space(1)
+        self.add_space(2, parent_id=1)
+        self.add_space(3, parent_id=2, position=1024.0)
+        self.add_space(4, parent_id=2, position=0.0)
+
+        run(dissolve_space(self.session, 2))
+        self.db.expire_all()
+
+        self.assertEqual([4, 3], [space.id for space in run(list_child_spaces(self.session, 1))])
+
+    def test_a_folder_in_the_middle_keeps_the_ones_around_it_in_place(self):
+        # У родителя 1: X(0), ПАПКА(1024), Y(2048).
+        self.add_space(1)
+        self.add_space(2, parent_id=1, position=1024.0)
+        self.add_space(3, parent_id=1, position=0.0)
+        self.add_space(4, parent_id=2, position=0.0)
+        self.add_space(5, parent_id=1, position=2048.0)
+
+        moved = run(dissolve_space(self.session, 2))
+        self.db.expire_all()
+
+        self.assertEqual(1, moved["index"])
+        self.assertEqual([3, 4, 5], [space.id for space in run(list_child_spaces(self.session, 1))])
+
+    def test_an_empty_folder_just_disappears(self):
+        self.add_space(1)
+        self.add_space(2, parent_id=1)
+
+        moved = run(dissolve_space(self.session, 2))
+
+        self.assertEqual({"spaces": 0, "cards": 0, "index": 0}, moved)
+        self.db.expire_all()
+        self.assertIsNone(self.db.get(VaultCollection, 2))
+
+    def test_a_root_space_has_nothing_to_dissolve_into(self):
+        from app.modules.vault.services import VaultDissolveError
+
+        self.add_space(1)
+
+        with self.assertRaises(VaultDissolveError):
+            run(dissolve_space(self.session, 1))
+
+    def test_a_sealed_space_cannot_be_dissolved(self):
+        from app.modules.vault.services import VaultDissolveError
+
+        self.add_space(1)
+        # Sealed spaces stay at the root by construction, so this also proves the
+        # dissolve path cannot be used to smuggle one out of the tree.
+        self.add_space(2, sealed=True)
+
+        with self.assertRaises(VaultDissolveError):
+            run(dissolve_space(self.session, 2))
 
 
 if __name__ == "__main__":
