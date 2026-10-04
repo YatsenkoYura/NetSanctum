@@ -26,9 +26,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # `on<event>="..."`, the HTML attribute form. Deliberately narrow: it matches the
-# five event types the dashboard actually uses and will not trip on `once=`,
-# `only=` or a word that merely contains "on".
-HANDLER = re.compile(r'\son(click|input|change|keydown|keyup|submit|error|load)="([^"]*)"')
+# event types the dashboard actually uses and will not trip on `once=`, `only=` or
+# a word that merely contains "on".
+#
+# The leading group is an attribute *boundary*, not a space. A template can write
+# `{% if x %}oninput="fn()"` with no space before the attribute — valid, and it is
+# exactly what the first version of this script walked past, which is how four
+# handlers survived a migration that reported zero.
+BOUNDARY = r"""(?:^|[\s"'%}])"""
+HANDLER = re.compile(
+    BOUNDARY + r'(on(?:click|input|change|keydown|keyup|submit|error|load))\s*=\s*(?:"([^"]*)"|\'([^\']*)\')',
+    re.IGNORECASE,
+)
+SCRIPT_BODY = re.compile(r"<script\b[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
 SCRIPT_TAG = re.compile(r"<script(?![^>]*\bsrc=)(?![^>]*\bnonce=)[^>]*>", re.IGNORECASE)
 # The leading call in an inline handler: `fn(...)`, `if (...)`, `this.style=...`.
 CALL = re.compile(r"^\s*([A-Za-z_$][\w$.]*)\s*\(")
@@ -63,16 +73,32 @@ class Summary:
 
 
 def report(paths: list[Path]) -> Summary:
-    """Scan a set of templates and summarize what blocks the nonce."""
+    """Scan a set of templates and summarize what blocks the nonce.
+
+    Script bodies are removed before counting. A template literal like
+    `onclick="${handler}"` is a place where markup is *built*, and counting it
+    alongside real attributes means a generator with a loop in it reports five
+    handlers for one line of source — or, read the other way, hides a real one.
+    """
     summary = Summary()
     for path in paths:
-        source = path.read_text()
-        handlers = [(event, value.strip()) for event, value in HANDLER.findall(source)]
-        for event, body in handlers:
-            summary.handlers.append(Handler(template=str(path), event=event, body=body))
+        raw = path.read_text()
+        # Scripts are counted on the raw source. Counting them after the strip was
+        # a bug that reported zero nonced scripts on every file — a clean report
+        # from a scan that read nothing, which is the one failure mode here worth
+        # engineering against.
+        source = SCRIPT_BODY.sub("", raw)
+        # finditer, not findall: with this pattern the two disagree, and findall
+        # hands back an empty string where a group did not take part. The body of a
+        # single-quoted handler then reads as "" and gets counted as an unknown
+        # action instead of the call it is.
+        handlers = [match.groups() for match in HANDLER.finditer(source)]
+        for event, double, single in handlers:
+            body = (double if double is not None else single or "").strip()
+            summary.handlers.append(Handler(template=str(path), event=event[2:], body=body))
             match = CALL.match(body)
             summary.by_function[match.group(1) if match else body.split("=")[0].strip()] += 1
-        summary.script_blocks[str(path)] = len(SCRIPT_TAG.findall(source))
+        summary.script_blocks[str(path)] = len(SCRIPT_TAG.findall(raw))
     return summary
 
 
@@ -92,7 +118,17 @@ def format_report(paths: list[Path]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "templates", nargs="*", type=Path, default=[Path("app/modules/vault/templates/vault_dashboard.html")]
+        "templates",
+        nargs="*",
+        type=Path,
+        default=[
+            # The layout is in the list on purpose: a policy covers a whole page,
+            # and a page includes its layout. The first version of this script named
+            # only the dashboard template and reported it clean while thirteen
+            # handlers rode in from `base.html`.
+            Path("app/core/templates/base.html"),
+            Path("app/modules/vault/templates/vault_dashboard.html"),
+        ],
     )
     parser.add_argument(
         "--require-none",

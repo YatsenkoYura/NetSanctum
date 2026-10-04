@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.core.storage import LocalStorage
+from app.core.templates import register_globals
 from app.modules.system.storage.browse import (
     ModuleOwnedPathError,
     StoragePathError,
@@ -202,6 +203,7 @@ class StorageBrowserTemplateTests(unittest.TestCase):
             ),
             autoescape=True,
         )
+        register_globals(environment)
         environment.globals["active_modules"] = lambda: []
         environment.globals["url_for"] = lambda *a, **k: "#"
         stats = {

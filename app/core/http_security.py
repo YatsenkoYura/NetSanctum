@@ -113,15 +113,14 @@ def dashboard_csp(nonce: str) -> str:
     if not nonce:
         return DASHBOARD_CONTENT_SECURITY_POLICY
     return DASHBOARD_CONTENT_SECURITY_POLICY.replace(
-        "script-src 'self' 'unsafe-inline'",
-        f"script-src 'self' 'unsafe-inline' 'nonce-{nonce}'",
+        "script-src 'self'", f"script-src 'self' 'nonce-{nonce}'"
     )
 
 
 DASHBOARD_CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'none'",
-        "script-src 'self' 'unsafe-inline'",
+        "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob:",
         "media-src 'self' blob:",

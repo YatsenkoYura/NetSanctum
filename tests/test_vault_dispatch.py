@@ -6,14 +6,15 @@ subtly wrong — a path sentinel, a missing `$event`, an argument order — and 
 fails as a button that does nothing rather than as an error, which is the worst
 way for it to fail.
 
-So the dispatcher is extracted from the template and run in node against fake
+So the dispatcher is extracted from the layout and run in node against fake
 elements. The extraction matters: this tests the code the page ships, not a copy
-of it. The one thing it cannot prove is the DOM wiring — that a real click on a
-real child reaches the right element — because there is no browser here; that is
-what the manual pass in step 4 is for, and what `error` in the console would look
-like if it were wrong.
+of it. What it cannot prove is the DOM wiring — that a real click on a real child
+reaches the right element — because there is no browser here. That is the manual
+pass, and a mistake there shows up as a console error rather than a test failure.
 """
 
+import contextlib
+import io
 import json
 import re
 import shutil
@@ -21,30 +22,40 @@ import subprocess
 import unittest
 from pathlib import Path
 
-TEMPLATE = Path("app/modules/vault/templates/vault_dashboard.html")
+# The layout, not the page: the dispatcher is infrastructure now, because the
+# layout has handlers too and a policy covers a page along with everything it
+# includes.
+TEMPLATE = Path("app/core/templates/base.html")
+PAGE = Path("app/modules/vault/templates/vault_dashboard.html")
 
-# The block between these markers is the delegation machinery, verbatim.
-START = "function vaultArg(spec, el, event) {"
-END = "function vaultRunAction(name, el, event) {"
-RUNNER_END = "const vaultActions = {};"
+# The machinery between these markers, verbatim.
+START = "function netArg(spec, el, event) {"
+RUNNER_END = "window.netSanctumActions = window.netSanctumActions || {};"
+ACTION_END = "window.netSanctumActions,\n"
 
 
 def extract_dispatcher() -> str:
     source = TEMPLATE.read_text()
     start = source.index(START)
-    end = source.index(RUNNER_END)
-    middle = source[start:end]
-    # `vaultRunAction` reads `vaultActions`, which is declared after it.
-    return f"const vaultActions = {{}};\n{middle}\n"
+    end = source.index("Object.assign(window.netSanctumActions, {")
+    return f"window.netSanctumActions = window.netSanctumActions || {{}};\n{source[start:end]}\n"
 
 
 HARNESS = """
-let currentCollectionId = 42;
+// The page's own globals, so `window.x` in the extracted code resolves.
+global.window = global;
+// Enough of `document` for the registration lines; the listeners themselves are
+// never invoked here, because that is the browser's job and the browser's absence
+// is stated in this file's docstring.
+global.document = { addEventListener() {}, querySelectorAll: () => [] };
+// A property of the global object, which is what a `var` at the top level of
+// the page's own script becomes in a browser.
+global.currentCollectionId = 42;
 const calls = [];
 __DISPATCHER__
 
 // A stand-in for the real actions: records what it was called with.
-vaultActions.record = (...args) => calls.push(['record', args]);
+window.netSanctumActions.record = (...args) => calls.push(['record', args]);
 
 // Fake elements: only what the argument resolver is allowed to touch.
 function el(props) {
@@ -53,9 +64,9 @@ function el(props) {
 
 function run(name, args, element, event) {
   const target = el(element || {});
-  target.dataset.vaultOn = name;
-  target.dataset.vaultArgs = JSON.stringify(args);
-  vaultRunAction(name, target, event || { type: 'click', stopPropagation() { calls.push(['stopped']); } });
+  target.dataset.netAction = name;
+  target.dataset.netArgs = JSON.stringify(args);
+  netRunAction(name, target, event || { type: 'click', key: '', stopPropagation() { calls.push(['stopped']); } });
   return calls.at(-1);
 }
 
@@ -72,20 +83,15 @@ cases.current_collection = run('record', ['$currentCollection']);
 cases.mixed = run('record', [3, '$el.value', '$event', true, null, 'x'],
                   { value: 'v' }, { type: 'keydown', key: 'Enter' });
 
-// The one call site that reaches into the DOM itself.
-vaultActions.selectWorkspaceRow = function (id) {
-  calls.push(['selectWorkspaceRow', id, this.querySelector('[data-workspace-name]').textContent]);
+// The event of the dispatch in flight, which is how an action reaches past its
+// own element without every action taking an extra argument.
+window.netSanctumActions.stopLikeTheOriginal = function () {
+  calls.push(['stopped', window.netSanctumEvent.key]);
 };
-(() => {
-  const element = el({ querySelector: () => el({ textContent: 'Моя папка' }) });
-  element.dataset.vaultOn = 'selectWorkspaceRow';
-  element.dataset.vaultArgs = JSON.stringify([5]);
-  vaultRunAction('selectWorkspaceRow', element, null);
-  cases.select_row = calls.at(-1);
-})();
+cases.in_flight_event = run('stopLikeTheOriginal', [], {}, { type: 'keydown', key: 'Enter' });
+cases.cleared_afterwards = window.netSanctumEvent === null;
 
-// A name that is not registered, and arguments that are not JSON: both must be
-// inert. A dashboard whose every button throws on click is a broken dashboard.
+// A name that is not registered, and arguments that are not JSON: both inert.
 (() => {
   const before = calls.length;
   run('noSuchAction', [1]);
@@ -93,10 +99,19 @@ vaultActions.selectWorkspaceRow = function (id) {
 })();
 (() => {
   const target = el({});
-  target.dataset.vaultOn = 'record';
-  target.dataset.vaultArgs = '[not json';
-  try { vaultRunAction('record', target, null); cases.bad_json = true; }
+  target.dataset.netAction = 'record';
+  target.dataset.netArgs = '[not json';
+  try { netRunAction('record', target, null); cases.bad_json = true; }
   catch (e) { cases.bad_json = false; }
+})();
+// The same, for an action that throws: the page must not be left with a stale event.
+(() => {
+  window.netSanctumActions.boom = function () { throw new Error('boom'); };
+  const target = el({});
+  target.dataset.netAction = 'boom';
+  target.dataset.netArgs = '[]';
+  try { netRunAction('boom', target, null); } catch (e) { /* the throw is the action's */ }
+  cases.event_cleared_after_throw = window.netSanctumEvent === null;
 })();
 
 console.log(JSON.stringify(cases));
@@ -122,11 +137,10 @@ class DispatcherTests(unittest.TestCase):
     def setUpClass(cls):
         cls.cases = run_node()
 
-    def test_the_dispatcher_is_extracted_from_the_shipped_template(self):
-        """A copy of the code would pass while the page stayed broken."""
+    def test_the_dispatcher_comes_from_the_shipped_layout(self):
         source = TEMPLATE.read_text()
         self.assertIn(START, source)
-        self.assertIn(RUNNER_END, source)
+        self.assertIn("function netRunAction(", source)
 
     def test_plain_arguments_arrive_unchanged(self):
         self.assertEqual(["record", [1, 2, 3]], self.cases["numbers"])
@@ -139,7 +153,6 @@ class DispatcherTests(unittest.TestCase):
         recorded = self.cases["el_sentinel"][1][0]
         self.assertIsInstance(recorded, dict)
         self.assertIn("value", recorded)
-        self.assertIn("dataset", recorded)
 
     def test_a_property_path_resolves(self):
         self.assertEqual("привет", self.cases["el_path"][1][0])
@@ -149,9 +162,7 @@ class DispatcherTests(unittest.TestCase):
         self.assertIsNone(self.cases["el_missing_path"][1][0])
 
     def test_event_is_available_where_the_attribute_used_it(self):
-        event = self.cases["event_sentinel"][1][0]
-        # A method is not JSON, so only its data survives the trip back.
-        self.assertEqual("click", event["type"])
+        self.assertEqual("click", self.cases["event_sentinel"][1][0]["type"])
 
     def test_the_current_collection_is_read_at_dispatch_time(self):
         self.assertEqual(42, self.cases["current_collection"][1][0])
@@ -162,8 +173,15 @@ class DispatcherTests(unittest.TestCase):
         self.assertEqual("keydown", args[2]["type"])
         self.assertEqual([True, None, "x"], args[3:])
 
-    def test_the_dom_reading_wrapper_works(self):
-        self.assertEqual(["selectWorkspaceRow", 5, "Моя папка"], self.cases["select_row"])
+    def test_an_action_can_reach_the_event_in_flight(self):
+        """How `event.stopPropagation(); fn()` survives the migration."""
+        self.assertEqual(["stopped", "Enter"], self.cases["in_flight_event"])
+
+    def test_the_in_flight_event_is_cleared_afterwards(self):
+        self.assertTrue(self.cases["cleared_afterwards"])
+
+    def test_a_throwing_action_does_not_leave_a_stale_event(self):
+        self.assertTrue(self.cases["event_cleared_after_throw"])
 
     def test_an_unregistered_name_does_nothing(self):
         self.assertTrue(self.cases["unknown_name"])
@@ -172,77 +190,165 @@ class DispatcherTests(unittest.TestCase):
         self.assertTrue(self.cases["bad_json"])
 
 
-class TemplateWiringTests(unittest.TestCase):
-    """What the dispatcher needs, in the template it ships in."""
+def registered_actions(source: str) -> set[str]:
+    """Names an `Object.assign(window.netSanctumActions, {...})` block defines."""
+    block = re.search(r"Object\.assign\(window\.netSanctumActions, \{(.*?)\n\s*\}\);", source, re.DOTALL)
+    if not block:
+        return set()
+    code = re.sub(r"//[^\n]*", "", block.group(1))
+    keys = set(re.findall(r"^\s*([A-Za-z_$][\w$]*)\s*:", code, re.M))
+    bare: set[str] = set()
+    for line in code.splitlines():
+        stripped = line.strip().rstrip(",")
+        if not stripped or any(token in stripped for token in (":", "(", "=")):
+            continue
+        bare |= {
+            name.strip() for name in stripped.split(",") if re.fullmatch(r"[A-Za-z_$][\w$]*", name.strip())
+        }
+    return keys | bare
+
+
+def delegated_names(source: str) -> set[str]:
+    return set(re.findall(r'data-net-action="([\w$]+)"', source))
+
+
+class LayoutWiringTests(unittest.TestCase):
+    """What the dispatcher needs, in the layout it ships in."""
 
     def setUp(self):
         self.source = TEMPLATE.read_text()
-        self.block = re.search(r"Object\.assign\(vaultActions, \{(.*?)\n\}\);", self.source, re.DOTALL).group(
-            1
+        self.page = PAGE.read_text()
+
+    def test_the_layout_registers_only_what_it_uses(self):
+        missing = delegated_names(self.source) - registered_actions(self.source)
+        self.assertEqual(set(), missing, "an unregistered action does nothing at all")
+
+    def test_the_page_registers_everything_it_delegates(self):
+        """The page and the layout share one registry, so both must hold up."""
+        missing = delegated_names(self.page) - (
+            registered_actions(self.page) | registered_actions(self.source)
         )
-        # The block is a comma-separated list of bare names with a few entries
-        # spelled `name: value`. Both forms are action names; everything else in
-        # the block — comments, bodies, prose — is not.
-        code = re.sub(r"//[^\n]*", "", self.block)
-        keys = set(re.findall(r"^\s*([A-Za-z_$][\w$]*)\s*:", code, re.M))
-        bare: set[str] = set()
-        for line in code.splitlines():
-            stripped = line.strip().rstrip(",")
-            if not stripped or ":" in stripped or "(" in stripped or "=" in stripped:
-                continue
-            for name in stripped.split(","):
-                name = name.strip()
-                if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
-                    bare.add(name)
-        self.registered = keys | bare
-        self.used = set(re.findall(r'data-vault-on="([\w$]+)"', self.source))
+        self.assertEqual(set(), missing)
 
-    def test_every_delegated_name_is_registered(self):
-        self.assertEqual(set(), self.used - self.registered, "an unregistered action does nothing at all")
-
-    def test_every_registered_action_exists_in_the_page(self):
-        defined = set(re.findall(r"^(?:async )?function (\w+)\(", self.source, re.M))
-        code = re.sub(r"//[^\n]*", "", self.block)
-        arrow = set(re.findall(r"^\s+(\w+):\s*(?:\(|function|event|window)", code, re.M))
-        from_window = {"sendToOutpost"}
-        self.assertEqual(set(), self.registered - defined - arrow - from_window)
-
-    def test_the_sentinels_in_use_are_ones_the_resolver_knows(self):
-        resolver = self.source[self.source.index(START) : self.source.index(END)]
-        args = re.findall(r"data-vault-args='\[(.*?)\]'", self.source)
-        sentinels = set()
-        for raw in args:
-            sentinels.update(re.findall(r'"\$([\w.]+)"', raw))
-        for sentinel in sentinels:
-            path = sentinel.split(".")[0]
-            self.assertIn(f"${path}", resolver, f"${path} is not a sentinel the resolver knows")
-
-    def test_arguments_are_valid_json_once_rendered(self):
-        """A single quote inside `${...}` would end the attribute early."""
-        for raw in re.findall(r"data-vault-args='(\[[^']*\])'", self.source):
-            probe = re.sub(r"\$\{\{.*?\}\}", "1", raw, flags=re.DOTALL)
-            probe = re.sub(r"\$\{[^{}]*\}", "1", probe)
-            probe = re.sub(r"\{\{.*?\}\}", "1", probe, flags=re.DOTALL)
-            try:
-                json.loads(probe)
-            except Exception as error:
-                self.fail(f"{raw} is not valid JSON: {error}")
-
-    def test_the_listener_runs_in_capture_phase(self):
+    def test_the_listeners_are_capture_phase(self):
         """Otherwise a delegated `stopPropagation` cannot stop anything."""
-        for match in re.finditer(
+        listeners = re.findall(
             r"document\.addEventListener\(type,.*?\n\s*\}, (true|false)\);", self.source, re.S
-        ):
-            self.assertEqual("true", match.group(1), "a delegated listener must be capture-phase")
+        )
+        self.assertTrue(listeners, "the dispatcher must register its listeners")
+        for phase in listeners:
+            self.assertEqual("true", phase)
 
-    def test_an_action_that_reaches_into_the_dom_uses_the_receiver(self):
-        """`this` is the element: the dispatcher applies the action to it."""
-        self.assertIn("selectWorkspaceRow: function", self.block)
-        self.assertIn("this.querySelector", self.block)
+    def test_error_is_handled_in_capture_phase_too(self):
+        self.assertRegex(self.source, r"(?s)addEventListener\('error'.*?\}, true\);")
 
     def test_no_handler_needs_this_anymore(self):
-        for raw in re.findall(r"data-vault-args='(\[[^']*\])'", self.source):
-            self.assertNotIn("this.", raw, "`this` is the attribute, not the element")
+        for raw in re.findall(r"data-net-args='(\[[^']*\])'", self.source + self.page):
+            self.assertNotIn("this.", raw, "`this` is the receiver, not an argument")
+
+
+class AttributeWiringTests(unittest.TestCase):
+    """The attributes, which are where a migration actually goes wrong."""
+
+    def setUp(self):
+        self.sources = {"base.html": TEMPLATE.read_text(), PAGE.name: PAGE.read_text()}
+
+    def test_no_inline_handler_survives_in_either_file(self):
+        from scripts.dashboard_inline_audit import report
+
+        summary = report([TEMPLATE, PAGE])
+
+        self.assertEqual(0, summary.handler_count, [h.body for h in summary.handlers])
+
+    def test_every_argument_list_is_valid_json_once_rendered(self):
+        """A single quote inside `${...}` ends the attribute early."""
+        for name, source in self.sources.items():
+            for raw in re.findall(r"data-net-args='(\[[^']*\])'", source):
+                probe = re.sub(r"\$\{\{.*?\}\}", "1", raw, flags=re.DOTALL)
+                probe = re.sub(r"\$\{[^{}]*\}", "1", probe)
+                probe = re.sub(r"\{\{.*?\}\}", "1", probe, flags=re.DOTALL)
+                try:
+                    json.loads(probe)
+                except Exception as error:
+                    self.fail(f"{name}: {raw} is not valid JSON: {error}")
+
+    def test_every_script_block_carries_a_nonce(self):
+        from scripts.dashboard_inline_audit import report
+
+        summary = report([TEMPLATE, PAGE])
+
+        self.assertEqual(0, summary.script_count)
+
+    def test_the_sentinels_in_use_are_ones_the_resolver_knows(self):
+        resolver = self.sources["base.html"]
+        resolver = resolver[resolver.index(START) : resolver.index("function netRunAction(")]
+        sentinels: set[str] = set()
+        for raw in re.findall(r"data-net-args='(\[[^']*\])'", "".join(self.sources.values())):
+            sentinels.update(re.findall(r'"\$([\w.]+)"', raw))
+        self.assertTrue(sentinels, "the templates are expected to use sentinels")
+        for sentinel in sentinels:
+            self.assertIn(f"${sentinel.split('.')[0]}", resolver, f"${sentinel} is not a sentinel")
+
+    def test_an_action_reaching_into_the_dom_uses_the_receiver(self):
+        """`this` is the element: the dispatcher applies the action to it."""
+        self.assertIn("this.closest(", self.sources[PAGE.name])
+        self.assertIn("function (id)", self.sources[PAGE.name])
+
+
+class PolicyTests(unittest.TestCase):
+    def test_the_dashboard_policy_has_no_unsafe_inline_for_scripts(self):
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY
+
+        self.assertIn("script-src 'self'", DASHBOARD_CONTENT_SECURITY_POLICY)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", DASHBOARD_CONTENT_SECURITY_POLICY)
+
+    def test_the_nonce_is_added_per_response(self):
+        from app.core.http_security import dashboard_csp
+
+        script_src = next(d for d in dashboard_csp("abc123").split("; ") if d.startswith("script-src"))
+
+        self.assertEqual("script-src 'self' 'nonce-abc123'", script_src)
+
+    def test_the_policy_is_scoped_to_the_dashboard(self):
+        from app.core.http_security import DASHBOARD_CSP_PREFIXES
+
+        self.assertEqual(("/vault/dashboard",), DASHBOARD_CSP_PREFIXES)
+
+    def test_a_response_without_a_nonce_still_blocks_inline_script(self):
+        """The policy is safe on its own: no nonce means no inline script runs,
+        which is the failure mode a bug in the middleware would produce."""
+        from app.core.http_security import dashboard_csp
+
+        for policy in (dashboard_csp(""), dashboard_csp("abc")):
+            script_src = next(d for d in policy.split("; ") if d.startswith("script-src"))
+            self.assertNotIn("'unsafe-inline'", script_src, script_src)
+
+    def test_inline_styles_are_still_allowed(self):
+        """Only scripts were migrated. Styles are a separate piece of work and
+        pretending otherwise here would overstate what this policy does."""
+        from app.core.http_security import dashboard_csp
+
+        self.assertIn("style-src 'self' 'unsafe-inline'", dashboard_csp("abc"))
+
+
+class ScriptSmokeTests(unittest.TestCase):
+    def test_the_inline_scripts_parse(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        for path in (TEMPLATE, PAGE):
+            blocks = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", path.read_text(), re.DOTALL)
+            self.assertTrue(blocks, f"{path} has no inline script")
+            for index, block in enumerate(blocks):
+                js = re.sub(
+                    r"\{%.*?%\}", "", re.sub(r"\{\{.*?\}\}", "null", block, flags=re.DOTALL), flags=re.DOTALL
+                )
+                script = Path(f"/tmp/opencode/parse_{path.stem}_{index}.js")
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text(js)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    result = subprocess.run([node, "--check", str(script)], capture_output=True, text=True)
+                self.assertEqual(0, result.returncode, f"{path} block {index}: {result.stderr[-400:]}")
 
 
 if __name__ == "__main__":

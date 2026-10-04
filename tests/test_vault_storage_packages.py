@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
 
+from app.core.templates import register_globals
 from app.modules.system.storage.capabilities import resolve_package_resources as resolve_storage_resources
 from app.modules.system.storage.module import MODULE as STORAGE_MODULE
 from app.modules.system.storage.router import get_storage_sync_manifest, storage_dashboard
@@ -192,6 +193,7 @@ class StoragePackageTests(unittest.TestCase):
             loader=FileSystemLoader(ROOT / "app/modules/system/storage/templates"),
             autoescape=True,
         )
+        register_globals(environment)
         template = environment.get_template("storage_content.html")
         stats = {
             "is_s3": False,

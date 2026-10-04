@@ -250,13 +250,13 @@
   #vcal-modal button { min-height:44px; }
 }
 </style>
-<script src="/static/netsanctum-calendar.js?v=1" nonce="{{ csp_nonce() }}"></script>
+<script src="/static/netsanctum-calendar.js?v=1" {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}></script>
 {% endblock %}
 
 {% block content %}
 <div class="vault-shell flex font-mono bg-black text-zinc-300">
 
-  <button id="sidebar-backdrop" class="sidebar-backdrop" data-vault-on="closeSidebar" data-vault-args='[]' aria-label="Закрыть боковую панель"></button>
+  <button id="sidebar-backdrop" class="sidebar-backdrop" data-net-action="closeSidebar" data-net-args='[]' aria-label="Закрыть боковую панель"></button>
 
   <!-- ── LEFT SIDEBAR (COLLAPSIBLE) ─────────────────────────── -->
   <aside id="sidebar" class="vault-sidebar bg-zinc-950 border-r border-zinc-800 flex flex-col py-3 relative">
@@ -266,16 +266,16 @@
         <span class="w-2.5 h-2.5 bg-teal-400 inline-block"></span>
         <span class="text-xs font-black text-white uppercase tracking-wider">Vault</span>
       </div>
-      <button data-vault-on="toggleSidebar" data-vault-args='[]' class="text-zinc-500 hover:text-white text-xs px-1 py-0.5 border border-zinc-800" title="Свернуть панель">◧</button>
+      <button data-net-action="toggleSidebar" data-net-args='[]' class="text-zinc-500 hover:text-white text-xs px-1 py-0.5 border border-zinc-800" title="Свернуть панель">◧</button>
     </div>
 
     <div class="px-3 py-2 flex items-center justify-between border-b border-zinc-800">
       <span class="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Воркспейсы</span>
-      {% if not is_readonly %}<button data-vault-on="openWorkspaceModal" data-vault-args='[]' class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
+      {% if not is_readonly %}<button data-net-action="openWorkspaceModal" data-net-args='[]' class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
     </div>
 
     <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5" id="vault-workspace-list">
-      <div data-vault-on="selectWorkspace" data-vault-args='[null,"Все карточки"]' id="ws-item-all" class="ws-item active">
+      <div data-net-action="selectWorkspace" data-net-args='[null,"Все карточки"]' id="ws-item-all" class="ws-item active">
         <div class="flex items-center gap-2">
           <span class="w-1.5 h-1.5 bg-zinc-400 inline-block"></span>
           <span>Все карточки</span>
@@ -285,18 +285,22 @@
 
       <div id="vault-collections" class="contents">
       {% for c in collections %}
-      <div data-vault-on="selectWorkspaceRow" data-vault-args='[{{ c.id|int }}]' id="ws-item-{{ c.id|int }}" class="ws-item" draggable="true">
+      <div data-net-action="selectWorkspaceRow" data-net-args='[{{ c.id|int }}]' id="ws-item-{{ c.id|int }}" class="ws-item" draggable="true">
         <div class="flex items-center gap-2 truncate">
           <span class="w-1.5 h-1.5 {{ 'bg-red-500' if c.is_locked else 'bg-teal-400' }} inline-block"></span>
           <span class="truncate" data-workspace-name>{{ c.name }}</span>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           {% if c.is_encrypted %}
-          <button onclick="event.stopPropagation(); {{ 'openUnlockModal(' ~ c.id|int ~ ", this.closest('.ws-item').querySelector('[data-workspace-name]').textContent, '" ~ (c.key_fingerprint or '') ~ "')" if c.is_locked else 'lockWorkspace(' ~ c.id|int ~ ')' }}"
+          {# The unlocked and locked cases call different functions with different
+             arguments, so they are two attributes rather than one expression. The
+             alias is read from the row at click time: it is a `data-*` lookup the
+             sentinel grammar deliberately does not cover. #}
+          <button {% if c.is_locked %}data-net-action="openUnlockModalFromRow" data-net-args='[{{ c.id|int }}, "{{ c.key_fingerprint or '' }}"]'{% else %}data-net-action="lockWorkspaceFromRow" data-net-args='[{{ c.id|int }}]'{% endif %}
                   class="text-red-400 hover:text-red-300 text-xs" title="{{ 'Разблокировать' if c.is_locked else 'Заблокировать' }}">{{ '🔒' if c.is_locked else '🔓' }}</button>
           {% else %}
           <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
-          <button onclick="event.stopPropagation(); openMoveMenu(event, {{ c.id|int }})" class="text-zinc-700 hover:text-white text-xs px-1 leading-none" title="Слить в другой воркспейс…">⋯</button>
+          <button data-net-action="openMoveMenuFromRow" data-net-args='[{{ c.id|int }}]' class="text-zinc-700 hover:text-white text-xs px-1 leading-none" title="Слить в другой воркспейс…">⋯</button>
           {% endif %}
         </div>
       </div>
@@ -321,7 +325,7 @@
     <div class="vault-toolbar bg-zinc-950 border-b border-zinc-800 px-4 py-2 flex items-center justify-between gap-3">
 
       <div class="vault-toolbar-primary">
-        <button data-vault-on="toggleSidebar" data-vault-args='[]' class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
+        <button data-net-action="toggleSidebar" data-net-args='[]' class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
 
         <div class="flex items-center gap-2 text-xs">
           <span class="text-zinc-500 font-bold uppercase">Vault</span>
@@ -330,35 +334,35 @@
         </div>
 
         {% if not is_readonly %}<div class="relative ml-2" id="vault-create-wrap">
-          <button data-vault-on="togglePlusDropdown" data-vault-args='["$event"]' class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
+          <button data-net-action="togglePlusDropdown" data-net-args='["$event"]' class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
             <span>+</span> <span class="text-[10px] uppercase hidden sm:inline">Создать</span> ▾
           </button>
 
           <div id="plus-dropdown" class="plus-dropdown">
-            <button data-vault-on="instantCreate" data-vault-args='["note"]' class="plus-option"><span class="text-purple-400">■</span> + Заметка</button>
-            <button data-vault-on="openLinkModal" data-vault-args='[]' class="plus-option"><span class="text-blue-400">◆</span> + Ссылка</button>
-            <button data-vault-on="instantCreate" data-vault-args='["table"]' class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
-            <button data-vault-on="instantCreate" data-vault-args='["whiteboard"]' class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
+            <button data-net-action="instantCreate" data-net-args='["note"]' class="plus-option"><span class="text-purple-400">■</span> + Заметка</button>
+            <button data-net-action="openLinkModal" data-net-args='[]' class="plus-option"><span class="text-blue-400">◆</span> + Ссылка</button>
+            <button data-net-action="instantCreate" data-net-args='["table"]' class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
+            <button data-net-action="instantCreate" data-net-args='["whiteboard"]' class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
             {# A space inside the open space. Only offered inside one: at the top
                level this would be the same thing as the sidebar's "+ Воркспейс". #}
             {% if not is_readonly %}<button id="vault-create-folder-option" class="plus-option hidden"
-              data-vault-on="openWorkspaceModal" data-vault-args='["$currentCollection"]'><span class="text-teal-400">▣</span> + Папка</button>{% endif %}
+              data-net-action="openWorkspaceModal" data-net-args='["$currentCollection"]'><span class="text-teal-400">▣</span> + Папка</button>{% endif %}
           </div>
         </div>{% endif %}
       </div>
 
       <div class="vault-toolbar-actions">
-        {% if not is_readonly %}<button data-vault-on="sendToOutpost" data-vault-args='["/api/vault/sync-manifest"]'
+        {% if not is_readonly %}<button data-net-action="sendToOutpost" data-net-args='["/api/vault/sync-manifest"]'
                 class="outpost-only text-[11px] text-teal-400 border border-teal-500/40 px-2 py-1 uppercase font-bold hover:bg-teal-950/40">
           Сохранить на устройство
         </button>{% endif %}
-        <input type="text" id="vault-search" data-vault-on="debounceSearch" data-vault-args='[]' placeholder="Поиск..."
+        <input type="text" id="vault-search" data-net-action="debounceSearch" data-net-args='[]' placeholder="Поиск..."
                class="vault-search bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none">
 
         {% if not is_shared or share.allow_download %}<div class="relative">
-          <button data-vault-on="toggleExportMenu" data-vault-args='["$event"]' class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
+          <button data-net-action="toggleExportMenu" data-net-args='["$event"]' class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
           <div id="export-dropdown" class="hidden absolute right-0 top-7 w-28 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
-            <button data-vault-on="exportItems" data-vault-args='[]' class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
+            <button data-net-action="exportItems" data-net-args='[]' class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
             {% if not is_readonly %}<a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>{% endif %}
           </div>
         </div>{% endif %}
@@ -399,7 +403,7 @@
         <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
           <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
             <span class="text-xs font-bold text-white uppercase">Событие в «<span id="vcal-modal-space">…</span>»</span>
-            <button data-vault-on="closeVcalModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
+            <button data-net-action="closeVcalModal" data-net-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
           </div>
           <div class="p-4 space-y-3">
             <div><label class="text-[10px] text-zinc-500 uppercase font-bold">Заголовок</label>
@@ -414,8 +418,8 @@
             <label class="text-[11px] text-zinc-400 flex items-center gap-2"><input type="checkbox" id="vcal-f-remind" checked> напомнить в момент начала</label>
           </div>
           <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-            <button data-vault-on="closeVcalModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-            <button data-vault-on="submitVcalModal" data-vault-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+            <button data-net-action="closeVcalModal" data-net-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+            <button data-net-action="submitVcalModal" data-net-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
           </div>
         </div>
       </div>
@@ -426,7 +430,7 @@
         <div id="vault-child-spaces" class="hidden"></div>
         <div id="tiles-grid"></div>
         <div class="flex justify-center pt-4">
-          <button id="vault-load-more" data-vault-on="loadMoreVault" data-vault-args='[]' class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
+          <button id="vault-load-more" data-net-action="loadMoreVault" data-net-args='[]' class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
         </div>
       </div>
 
@@ -437,16 +441,16 @@
           <div class="vault-gate-title" id="gate-title">Зашифрованный воркспейс</div>
           <div class="vault-gate-sub">Внутрь — только по паролю. Содержимое не загружается, пока воркспейс заперт.</div>
           <input type="password" id="gate-passphrase-input" autocomplete="current-password" placeholder="Пароль"
-                 class="vault-gate-input" onkeydown="if(event.key==='Enter')submitGateUnlock()">
+                 class="vault-gate-input" data-net-action="submitGateUnlockOnEnter">
           <div class="vault-gate-error hidden" id="gate-error">Неверный пароль</div>
-          <button data-vault-on="submitGateUnlock" data-vault-args='[]' class="vault-gate-btn">Разблокировать</button>
+          <button data-net-action="submitGateUnlock" data-net-args='[]' class="vault-gate-btn">Разблокировать</button>
         </div>
       </div>
 
       <!-- 2. OBSIDIAN DIRECT NOTE EDITOR -->
       <div id="view-editor-container" class="hidden max-w-3xl mx-auto space-y-4 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button data-vault-on="closeEditorView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <button data-net-action="closeEditorView" data-net-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="auto-save-status">Сохранено</span>
         </div>
         <input type="hidden" id="editor-id">
@@ -454,17 +458,17 @@
         <!-- Full-size Image Preview in Editor View -->
         <div id="editor-image-container" class="hidden"></div>
 
-        <input type="text" id="editor-title" {% if is_readonly %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} placeholder="Заголовок (необязательно)..."
+        <input type="text" id="editor-title" {% if is_readonly %}readonly{% else %}data-net-action="triggerAutoSave"{% endif %} placeholder="Заголовок (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
-        <textarea id="editor-content" {% if is_readonly %}readonly{% else %}oninput="triggerAutoSave()"{% endif %} rows="14" placeholder="Пишите мысли здесь..."
+        <textarea id="editor-content" {% if is_readonly %}readonly{% else %}data-net-action="triggerAutoSave"{% endif %} rows="14" placeholder="Пишите мысли здесь..."
                   class="w-full bg-zinc-950 border border-zinc-800 p-4 text-xs text-zinc-200 focus:outline-none focus:border-teal-400 resize-y leading-relaxed font-mono"></textarea>
       </div>
 
       <!-- 4. MEDIA CARD: a picture or a video, with only a caption to edit -->
       <div id="view-media-container" class="hidden max-w-4xl mx-auto space-y-3 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button data-vault-on="closeMediaView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад</button>
+          <button data-net-action="closeMediaView" data-net-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад</button>
           <div class="flex items-center gap-3">
             <span class="text-[10px] text-teal-400 uppercase font-bold" id="media-save-status"></span>
             {% if not is_readonly %}
@@ -489,31 +493,31 @@
       <!-- 3. SPREADSHEET TABLE DOCUMENT -->
       <div id="view-sheet-container" class="hidden max-w-5xl mx-auto space-y-3 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button data-vault-on="closeSheetView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <button data-net-action="closeSheetView" data-net-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="sheet-save-status">Сохранено</span>
         </div>
         <input type="hidden" id="sheet-id">
 
-        <input type="text" id="sheet-title" {% if is_readonly %}readonly{% else %}oninput="triggerSheetAutoSave()"{% endif %} placeholder="Название таблицы (необязательно)..."
+        <input type="text" id="sheet-title" {% if is_readonly %}readonly{% else %}data-net-action="triggerSheetAutoSave"{% endif %} placeholder="Название таблицы (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         {% if not is_readonly %}<div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
-          <button data-vault-on="formatCell" data-vault-args='["bold"]' class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
-          <button data-vault-on="formatCell" data-vault-args='["italic"]' class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
-          <button data-vault-on="formatCell" data-vault-args='["strike"]' class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
+          <button data-net-action="formatCell" data-net-args='["bold"]' class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
+          <button data-net-action="formatCell" data-net-args='["italic"]' class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
+          <button data-net-action="formatCell" data-net-args='["strike"]' class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
           <span class="text-zinc-700 mx-1">|</span>
           <label class="text-[10px] text-zinc-500 font-bold uppercase">Шрифт:</label>
-          <select id="cell-font-size" data-vault-on="changeCellFontSize" data-vault-args='["$el.value"]' class="bg-zinc-950 text-white text-[10px] border border-zinc-800 px-1 py-0.5 rounded">
+          <select id="cell-font-size" data-net-action="changeCellFontSize" data-net-args='["$el.value"]' class="bg-zinc-950 text-white text-[10px] border border-zinc-800 px-1 py-0.5 rounded">
             <option value="10px">10px</option>
             <option value="11px" selected>11px</option>
             <option value="13px">13px</option>
             <option value="15px">15px</option>
           </select>
           <span class="text-zinc-700 mx-1">|</span>
-          <button data-vault-on="addSheetRow" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить пустую строку">+ Строка</button>
-          <button data-vault-on="addSheetColumn" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить новую колонку">+ Колонка</button>
-          <button data-vault-on="cleanEmptySheetRows" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-amber-950 hover:text-amber-400 border border-zinc-700 hover:border-amber-500/50 rounded transition-colors" title="Удалить все полностью пустые строки">Очистить пустые строки</button>
-          <button data-vault-on="clearSheetTable" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-red-950 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 rounded transition-colors" title="Очистить все данные из таблицы">Очистить таблицу</button>
+          <button data-net-action="addSheetRow" data-net-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить пустую строку">+ Строка</button>
+          <button data-net-action="addSheetColumn" data-net-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить новую колонку">+ Колонка</button>
+          <button data-net-action="cleanEmptySheetRows" data-net-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-amber-950 hover:text-amber-400 border border-zinc-700 hover:border-amber-500/50 rounded transition-colors" title="Удалить все полностью пустые строки">Очистить пустые строки</button>
+          <button data-net-action="clearSheetTable" data-net-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-red-950 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 rounded transition-colors" title="Очистить все данные из таблицы">Очистить таблицу</button>
         </div>{% endif %}
 
         <div class="border border-zinc-800 overflow-x-auto bg-zinc-950">
@@ -524,38 +528,38 @@
       <!-- 4. WHITEBOARD CANVAS -->
       <div id="view-whiteboard-container" class="hidden space-y-3 py-1">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button data-vault-on="closeWhiteboardView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <button data-net-action="closeWhiteboardView" data-net-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
 
           <div class="wb-toolbar flex items-center gap-2">
             <div class="flex border border-zinc-800 p-0.5 bg-black">
-              <button data-vault-on="setWbMode" data-vault-args='["select"]' id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
-              {% if not is_readonly %}<button data-vault-on="setWbMode" data-vault-args='["draw"]' id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
-              <button data-vault-on="setWbMode" data-vault-args='["line"]' id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
-              <button data-vault-on="setWbMode" data-vault-args='["erase"]' id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>{% endif %}
+              <button data-net-action="setWbMode" data-net-args='["select"]' id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
+              {% if not is_readonly %}<button data-net-action="setWbMode" data-net-args='["draw"]' id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
+              <button data-net-action="setWbMode" data-net-args='["line"]' id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
+              <button data-net-action="setWbMode" data-net-args='["erase"]' id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>{% endif %}
             </div>
 
             <div class="flex items-center border border-zinc-800 bg-zinc-950 px-1">
-              <button data-vault-on="changeBrushSize" data-vault-args='[-2]' class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">-</button>
-              <input type="number" id="wb-brush-val" value="4" min="1" max="50" data-vault-on="validateBrushSize" data-vault-args='[]'
+              <button data-net-action="changeBrushSize" data-net-args='[-2]' class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">-</button>
+              <input type="number" id="wb-brush-val" value="4" min="1" max="50" data-net-action="validateBrushSize" data-net-args='[]'
                      class="w-8 text-center bg-black text-[10px] font-bold text-teal-400 focus:outline-none">
-              <button data-vault-on="changeBrushSize" data-vault-args='[2]' class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
+              <button data-net-action="changeBrushSize" data-net-args='[2]' class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
             </div>
 
-            {% if not is_readonly %}<button data-vault-on="clearWbCanvas" data-vault-args='[]' class="tb-btn text-red-400 uppercase">Очистить все</button>
-            <button data-vault-on="addWhiteboardNode" data-vault-args='[]' class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>{% endif %}
+            {% if not is_readonly %}<button data-net-action="clearWbCanvas" data-net-args='[]' class="tb-btn text-red-400 uppercase">Очистить все</button>
+            <button data-net-action="addWhiteboardNode" data-net-args='[]' class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>{% endif %}
 
             <div class="flex items-center gap-1 border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
-              <button data-vault-on="zoomWb" data-vault-args='[-0.1]' class="font-bold hover:text-white">-</button>
+              <button data-net-action="zoomWb" data-net-args='[-0.1]' class="font-bold hover:text-white">-</button>
               <span id="wb-zoom-label" class="font-mono">100%</span>
-              <button data-vault-on="zoomWb" data-vault-args='[0.1]' class="font-bold hover:text-white">+</button>
-              <button data-vault-on="resetWbZoom" data-vault-args='[]' class="text-zinc-600 hover:text-white ml-1">↻</button>
+              <button data-net-action="zoomWb" data-net-args='[0.1]' class="font-bold hover:text-white">+</button>
+              <button data-net-action="resetWbZoom" data-net-args='[]' class="text-zinc-600 hover:text-white ml-1">↻</button>
 </div>
 
   </div>
 </div>
 
         <input type="hidden" id="wb-id">
-        <input type="text" id="wb-title" {% if is_readonly %}readonly{% else %}oninput="triggerWbAutoSave()"{% endif %} placeholder="Название доски (необязательно)..."
+        <input type="text" id="wb-title" {% if is_readonly %}readonly{% else %}data-net-action="triggerWbAutoSave"{% endif %} placeholder="Название доски (необязательно)..."
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         <div class="wb-viewport" id="wb-viewport-el">
@@ -598,16 +602,16 @@
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
     <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
       <span class="text-xs font-bold text-white uppercase">Новый воркспейс</span>
-      <button data-vault-on="closeWorkspaceModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
+      <button data-net-action="closeWorkspaceModal" data-net-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <label class="text-[10px] text-zinc-500 uppercase font-bold">Название воркспейса</label>
-      <input type="text" id="ws-name-input" placeholder="Например: Идеи по работе" onkeydown="if(event.key==='Enter') submitWorkspace()"
+      <input type="text" id="ws-name-input" placeholder="Например: Идеи по работе" data-net-action="submitWorkspaceOnEnter"
              class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
 
       <div class="pt-2 border-t border-zinc-800 space-y-3">
         <label class="flex items-center gap-2 text-[10px] text-zinc-500 uppercase font-bold cursor-pointer">
-          <input type="checkbox" id="ws-sealed-input" data-vault-on="toggleSealedFields" data-vault-args='[]' class="accent-teal-400">
+          <input type="checkbox" id="ws-sealed-input" data-net-action="toggleSealedFields" data-net-args='[]' class="accent-teal-400">
           Зашифровать воркспейс
         </label>
 
@@ -629,8 +633,8 @@
       </div>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-      <button data-vault-on="closeWorkspaceModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-      <button data-vault-on="submitWorkspace" data-vault-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+      <button data-net-action="closeWorkspaceModal" data-net-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button data-net-action="submitWorkspace" data-net-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
     </div>
   </div>
 </div>
@@ -640,7 +644,7 @@
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
     <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
       <span class="text-xs font-bold text-white uppercase">Разблокировать</span>
-      <button data-vault-on="closeUnlockModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
+      <button data-net-action="closeUnlockModal" data-net-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <p class="text-[10px] text-zinc-500 leading-relaxed">
@@ -651,13 +655,13 @@
         Сверьте с расширением перед вводом пароля.
       </p>
       <input type="password" id="unlock-passphrase-input" autocomplete="current-password" placeholder="Пароль"
-             onkeydown="if(event.key==='Enter') submitUnlock()"
+             data-net-action="submitUnlockOnEnter"
              class="w-full bg-black border border-zinc-800 focus:border-red-400 px-3 py-1.5 text-xs text-white focus:outline-none">
       <p id="unlock-error" class="hidden text-[10px] text-red-400">Неверный пароль</p>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-      <button data-vault-on="closeUnlockModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-      <button data-vault-on="submitUnlock" data-vault-args='[]' class="px-4 py-1 bg-red-500 hover:bg-red-400 text-white font-black text-xs uppercase">Открыть</button>
+      <button data-net-action="closeUnlockModal" data-net-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button data-net-action="submitUnlock" data-net-args='[]' class="px-4 py-1 bg-red-500 hover:bg-red-400 text-white font-black text-xs uppercase">Открыть</button>
     </div>
   </div>
 </div>
@@ -667,12 +671,12 @@
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-md">
     <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
       <span class="text-xs font-bold text-white uppercase">Добавить ссылку</span>
-      <button data-vault-on="closeLinkModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
+      <button data-net-action="closeLinkModal" data-net-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <div class="space-y-1">
         <label class="text-[10px] text-zinc-500 uppercase font-bold">URL Ссылка</label>
-        <input type="url" id="link-url-input" placeholder="https://..." onkeydown="if(event.key==='Enter') submitLink()"
+        <input type="url" id="link-url-input" placeholder="https://..." data-net-action="submitLinkOnEnter"
                class="w-full bg-black border border-zinc-800 focus:border-teal-400 px-3 py-1.5 text-xs text-white focus:outline-none">
       </div>
       <div class="space-y-1">
@@ -687,14 +691,14 @@
       </div>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-      <button data-vault-on="closeLinkModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-      <button data-vault-on="submitLink" data-vault-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Сохранить</button>
+      <button data-net-action="closeLinkModal" data-net-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button data-net-action="submitLink" data-net-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Сохранить</button>
     </div>
   </div>
 </div>
 {% endif %}
 
-<script nonce="{{ csp_nonce() }}">
+<script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
 // NOTE: `var`, not `const`/`let`: this dashboard is swapped into the live page
 // via htmx (navigate() in base.html), so the script re-executes in the same
 // window scope on every visit — lexical redeclarations would throw and abort
@@ -866,46 +870,6 @@ function vaultImgTag(item, url, cls) {
   }
   return `<img src="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy">`;
 }
-
-// Delegated actions, so the policy can drop 'unsafe-inline'.
-//
-// An inline onclick attribute is a CSP hole with a convenient syntax: it runs
-// script the policy never saw. So the call lives in attributes the policy cannot
-// execute — a name and a JSON argument list, read here — and this dispatcher is
-// what calls it.
-//
-// Two deliberate properties. The arguments are JSON, never evaluated, so an
-// argument can be data rather than code; and `$el` / `$el.value` / `$event`
-// stand in for `this` and `event`, which keeps every existing function's
-// signature untouched — the migration is the attribute, not the callee.
-//
-// The name is looked up in `vaultActions`, which is built from names that exist
-// in this file's scope. A typo, or a handler pasted in by a future edit that
-// nobody registered, does nothing at all rather than running something.
-function vaultArg(spec, el, event) {
-  if (spec === '$el') return el;
-  if (spec === '$event') return event;
-  // A page-level value the attribute cannot spell. It is read at dispatch time,
-  // not at render time, so a click sees the collection the user is actually in
-  // rather than the one the page was rendered in.
-  if (spec === '$currentCollection') return currentCollectionId;
-  if (typeof spec === 'string' && spec.startsWith('$el.')) {
-    return spec.slice(4).split('.').reduce((value, key) => (value == null ? value : value[key]), el);
-  }
-  return spec;
-}
-function vaultRunAction(name, el, event) {
-  const action = vaultActions[name];
-  if (!action) return;
-  let args = [];
-  try {
-    args = JSON.parse(el.dataset.vaultArgs || '[]').map(spec => vaultArg(spec, el, event));
-  } catch (e) {
-    return;
-  }
-  action.apply(el, args);
-}
-const vaultActions = {};
 
 // Blob URLs minted by the binder, by file address. Revoked on every grid
 // render: tiles are rebuilt from scratch there, and a blob that outlives its
@@ -1417,7 +1381,7 @@ function openMediaView(item) {
         ${card.is_locked ? `<div class="text-3xl">🔒</div>` : ''}
         ${posterAttr ? `<img src="${escapeAttr(posterAttr)}" class="max-h-[40vh] mx-auto opacity-60">` : ''}
         <div class="text-xs text-zinc-400 font-mono">${escapeHtml(statusLabel(status))}</div>
-        ${canRetry ? `<button data-vault-on="retryVideoDownload" data-vault-args='[${item.id}]' class="text-teal-400 hover:text-white text-xs font-mono uppercase">↻ Повторить загрузку</button>` : ''}
+        ${canRetry ? `<button data-net-action="retryVideoDownload" data-net-args='[${item.id}]' class="text-teal-400 hover:text-white text-xs font-mono uppercase">↻ Повторить загрузку</button>` : ''}
       </div>`;
   } else if (isVideo) {
     const duration = formatDuration(card.media_duration);
@@ -1483,18 +1447,18 @@ function statusLabel(status) {
 // One footer for every tile kind: pin, date, open, quick delete. Media tiles
 // sit directly on the card (no padded body wrapper), so `framed` restores the
 // horizontal rhythm document tiles get from theirs.
-function tileFooterHtml(item, itemId, clickHandler, framed) {
+function tileFooterHtml(item, itemId, openAction, framed) {
   const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString('ru-RU') : '';
   const pinned = Boolean(item.is_pinned);
   const pin = readOnlyMode
     ? `<span class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600'}">${pinned ? '★' : '☆'}</span>`
-    : `<button data-vault-on="togglePin" data-vault-args='[${itemId}]' class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600 hover:text-zinc-400'}" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '★' : '☆'}</button>`;
+    : `<button data-net-action="togglePin" data-net-args='[${itemId}]' class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600 hover:text-zinc-400'}" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '★' : '☆'}</button>`;
   // Dragging a card onto a space is a mouse gesture, and HTML5 drag does not
   // exist on a phone at all — so the same move needs a button. Without it the
   // feature is unreachable on the device it is most natural on.
   const filing = readOnlyMode || item.is_locked
     ? ''
-    : `<button onclick="event.stopPropagation(); openMoveCardMenu(event, ${itemId})" class="hover:text-teal-400 uppercase" title="Переместить в другое пространство">⇄</button>`;
+    : `<button data-net-action="openMoveCardMenuFromTile" data-net-args='[${itemId}]' class="hover:text-teal-400 uppercase" title="Переместить в другое пространство">⇄</button>`;
   return `
   <div class="flex items-center justify-between text-[10px] text-zinc-600 ${framed ? 'px-3 py-2 mt-2' : 'pt-2 mt-1'} border-t border-zinc-900">
     <div class="flex items-center gap-2">
@@ -1502,9 +1466,9 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
       <span>${escapeHtml(dateStr)}</span>
     </div>
     <div class="flex gap-2 font-bold">
-      <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
+      <button data-net-action="${openAction}" data-net-args='[${itemId}]' class="hover:text-white uppercase">Открыть</button>
       ${filing}
-      ${readOnlyMode ? '' : `<button data-vault-on="deleteItem" data-vault-args='[${itemId}]' class="hover:text-red-400 uppercase" title="Удалить">✕</button>`}
+      ${readOnlyMode ? '' : `<button data-net-action="deleteItem" data-net-args='[${itemId}]' class="hover:text-red-400 uppercase" title="Удалить">✕</button>`}
     </div>
   </div>`;
 }
@@ -1530,7 +1494,7 @@ function openMoveCardMenu(event, cardId) {
 
   const body = document.getElementById('ws-move-options');
   body.innerHTML = targets.map(target =>
-    `<button class="ws-move-opt" data-vault-on="vaultMoveCardToSpace" data-vault-args='[${cardId},${target.id}]'>${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" data-net-action="vaultMoveCardToSpace" data-net-args='[${cardId},${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   vaultMoveCardFromId = cardId;
   const menu = document.getElementById('ws-move-menu');
@@ -1549,7 +1513,7 @@ function stackGripHtml(item, itemId) {
 }
 
 /* A media tile is the picture, at most one line of caption, and the shared footer. */
-function mediaTileHtml(item, itemId, displayImg, clickHandler) {
+function mediaTileHtml(item, itemId, displayImg, openAction) {
   const isVideo = item.node_type === 'video';
   const caption = String(item.title || item.og_title || '').trim();
   const failed = String(item.media_status || '').startsWith('error:');
@@ -1574,14 +1538,14 @@ function mediaTileHtml(item, itemId, displayImg, clickHandler) {
     return `
     <div class="tile-card sm:col-span-2 lg:col-span-2 ${item.is_pinned ? 'pinned' : ''}" data-tile-id="${itemId}" draggable="true">
     <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center relative"
-         style="min-height: 120px" onclick="${clickHandler}">
+         style="min-height: 120px" data-net-action="${openAction}" data-net-args='[${itemId}]'>
       ${displayImg
         ? vaultImgTag(item, displayImg, 'w-full h-auto max-h-[420px] object-contain block mx-auto')
         : `<div class="text-[10px] text-zinc-600 font-mono px-4 py-10 text-center">${fallback}</div>`}
       ${badge}
     </div>
-    ${caption ? `<div class="px-3 pt-2 text-xs text-zinc-200 truncate cursor-pointer hover:text-teal-400" onclick="${clickHandler}">${escapeHtml(caption)}</div>` : ''}
-    ${tileFooterHtml(item, itemId, clickHandler, true)}
+    ${caption ? `<div class="px-3 pt-2 text-xs text-zinc-200 truncate cursor-pointer hover:text-teal-400" data-net-action="${openAction}" data-net-args='[${itemId}]'>${escapeHtml(caption)}</div>` : ''}
+    ${tileFooterHtml(item, itemId, openAction, true)}
     ${stackGripHtml(item, itemId)}
   </div>`;
 }
@@ -1739,7 +1703,7 @@ function renderSheetCanvas() {
     html += `<th class="sheet-header">
       <div class="flex items-center justify-between px-1">
         <input type="text" value="${escapeAttr(h)}" ${readOnlyMode ? 'readonly' : `onchange="updateHeader(${colIdx}, this.value)"`} class="cell-edit font-bold text-teal-400">
-        ${readOnlyMode ? '' : `<button data-vault-on="deleteColumn" data-vault-args='[${colIdx}]' class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
+        ${readOnlyMode ? '' : `<button data-net-action="deleteColumn" data-net-args='[${colIdx}]' class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
       </div>
     </th>`;
   });
@@ -1750,11 +1714,11 @@ function renderSheetCanvas() {
       <td class="text-center text-zinc-600 font-bold text-[9px] bg-zinc-950">
         <div class="flex items-center justify-between px-1">
           <span>${rowIdx + 1}</span>
-          ${readOnlyMode ? '' : `<button data-vault-on="deleteRow" data-vault-args='[${rowIdx}]' class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
+          ${readOnlyMode ? '' : `<button data-net-action="deleteRow" data-net-args='[${rowIdx}]' class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
         </div>
       </td>`;
     row.forEach((cell, colIdx) => {
-      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${readOnlyMode ? 'readonly' : `onfocus="activeCell=this" data-vault-on="handleCellInput" data-vault-args='[${rowIdx},${colIdx},"$el.value"]'`} class="cell-edit"></td>`;
+      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${readOnlyMode ? 'readonly' : `onfocus="activeCell=this" data-net-action="handleCellInput" data-net-args='[${rowIdx},${colIdx},"$el.value"]'`} class="cell-edit"></td>`;
     });
     html += '</tr>';
   });
@@ -1948,7 +1912,7 @@ function renderWhiteboardNodes() {
     <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" ${readOnlyMode ? '' : `onpointerdown="handleWbNodePointerDown(event, ${idx})"`}>
       <div class="flex justify-between items-center pb-1 mb-1 border-b border-zinc-800">
         <span class="text-[9px] text-zinc-500 font-bold">CARD #${idx + 1}</span>
-        ${readOnlyMode ? '' : `<button data-vault-on="deleteWbNode" data-vault-args='[${idx}]' class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
+        ${readOnlyMode ? '' : `<button data-net-action="deleteWbNode" data-net-args='[${idx}]' class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
       </div>
       <textarea ${readOnlyMode ? 'readonly' : `oninput="updateWbNodeText(${idx}, this.value)"`} class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
     </div>
@@ -2611,7 +2575,7 @@ function openMoveMenu(event, id) {
     targets.push({ id: cid, name: candidate.name });
   });
   body.innerHTML = targets.map(target =>
-    `<button class="ws-move-opt" data-vault-on="vaultMoveTo" data-vault-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" data-net-action="vaultMoveTo" data-net-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   const menu = document.getElementById('ws-move-menu');
   const anchor = event.currentTarget.getBoundingClientRect();
@@ -2689,7 +2653,7 @@ function openNestMenu(event, id) {
   }
   const body = document.getElementById('ws-move-options');
   body.innerHTML = options.map(target =>
-    `<button class="ws-move-opt" data-vault-on="vaultNestInto" data-vault-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" data-net-action="vaultNestInto" data-net-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   vaultNestFromId = id;
   const menu = document.getElementById('ws-move-menu');
@@ -3321,13 +3285,17 @@ function renderTiles(items) {
 
     let itemColSpan = displayImg || isWb ? 'sm:col-span-2 lg:col-span-2' : '';
 
-    let clickHandler = `openEditorView(window._vaultCache[${itemId}])`;
-    if (isTable) clickHandler = `openSheetView(window._vaultCache[${itemId}])`;
-    if (isWb) clickHandler = `openWhiteboardView(window._vaultCache[${itemId}])`;
-    if (isMedia) clickHandler = `openMediaView(window._vaultCache[${itemId}])`;
+    // A delegated action takes a name and arguments, so the tile builders carry
+    // the name and the item id. Building a call expression instead would put
+    // script back in an attribute the policy does not execute — which is the
+    // thing this migration exists to remove.
+    let openAction = 'openCachedEditor';
+    if (isTable) openAction = 'openCachedSheet';
+    if (isWb) openAction = 'openCachedWhiteboard';
+    if (isMedia) openAction = 'openCachedMedia';
 
     if (isMedia) {
-      return mediaTileHtml(item, itemId, displayImg, clickHandler);
+      return mediaTileHtml(item, itemId, displayImg, openAction);
     }
 
     let miniTableHtml = '';
@@ -3372,26 +3340,26 @@ function renderTiles(items) {
     return `
     <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}" draggable="true">
       ${displayImg ? `
-        <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" onclick="${clickHandler}">
+        <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" data-net-action="${openAction}" data-net-args='[${itemId}]'>
           ${vaultImgTag(item, displayImg, 'w-full h-auto max-h-[420px] object-contain block mx-auto')}
         </div>
       ` : ''}
 
       <div class="p-3 flex flex-col gap-2">
         ${hasTitle ? `
-          <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400 ${item.is_locked ? 'cursor-not-allowed hover:text-white' : ''}" onclick="${item.is_locked ? '' : clickHandler}">
+          <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400 ${item.is_locked ? 'cursor-not-allowed hover:text-white' : ''}" ${item.is_locked ? '' : `data-net-action="${openAction}" data-net-args='[${itemId}]'`}>
             ${item.is_locked ? '<span class="inline-block w-2 h-2 rounded-[1px] bg-red-500 align-middle mr-1.5" title="Зашифровано — разблокируйте Vault"></span>' : ''}
-            ${itemUrl && !item.is_locked ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" data-vault-on="stopPropagation" data-vault-args='[]'>${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
+            ${itemUrl && !item.is_locked ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" data-net-action="stopPropagation" data-net-args='[]'>${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
           </div>
         ` : (itemUrl ? `<div class="text-xs font-bold text-teal-400 truncate"><a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)} ↗</a></div>` : '')}
 
         ${item.content ? `
-          <div class="text-xs text-zinc-300 leading-relaxed bg-zinc-950/80 p-2 border border-zinc-800/80 rounded-sm cursor-pointer font-mono break-words whitespace-pre-wrap" onclick="${clickHandler}">${escapeHtml(displayText)}</div>
+          <div class="text-xs text-zinc-300 leading-relaxed bg-zinc-950/80 p-2 border border-zinc-800/80 rounded-sm cursor-pointer font-mono break-words whitespace-pre-wrap" data-net-action="${openAction}" data-net-args='[${itemId}]'>${escapeHtml(displayText)}</div>
         ` : ''}
 
         ${miniTableHtml}
 
-        ${tileFooterHtml(item, itemId, clickHandler, false)}
+        ${tileFooterHtml(item, itemId, openAction, false)}
       </div>
       ${stackGripHtml(item, itemId)}
     </div>`;
@@ -3644,13 +3612,13 @@ function handleSheetPaste(e) {
   }
 }
 
-// Every action the dashboard delegates to. Listed rather than looked up on
-// `window`: a name that is not here is a name that does not run. `sendToOutpost`
-// is the one that arrives from the layout, so it is reached through `window` —
-// where it is actually defined — instead of as a bare global.
-Object.assign(vaultActions, {
+// Every action the dashboard delegates to, registered into the shared registry
+// the layout set up. Listed rather than looked up on `window`: a name that is not
+// here is a name that does not run. `sendToOutpost` is the one that arrives from
+// the layout, so it is reached through `window` — where it is actually defined —
+// instead of as a bare global.
+Object.assign(window.netSanctumActions, {
   sendToOutpost: window.sendToOutpost,
-  stopPropagation: event => event.stopPropagation(),
   // The one call site that reached into the DOM itself. `this`, not a first
   // argument: the dispatcher calls actions with the element as the receiver,
   // which is what `this` meant in the attribute this replaced.
@@ -3664,33 +3632,123 @@ Object.assign(vaultActions, {
   deleteColumn, deleteWbNode, exportItems, formatCell, handleCellInput, instantCreate,
   loadMoreVault, openEditorView, openLinkModal, openSheetView, openWorkspaceModal,
   resetWbZoom, retryVideoDownload, selectWorkspace, setWbMode,
-  submitGateUnlock, submitLink, submitUnlock, submitVcalModal, submitWorkspace, toggleExportMenu,
+  submitGateUnlock, submitLink, submitUnlock, submitVcalModal, submitWorkspace,
+  triggerAutoSave, triggerSheetAutoSave, triggerWbAutoSave, toggleExportMenu,
   togglePin, togglePlusDropdown, toggleSealedFields, toggleSidebar, validateBrushSize,
   vaultMoveCardToSpace, vaultMoveTo, vaultNestInto, zoomWb,
+
+  // The four Enter keys. A wrapper per modal rather than a condition in the
+  // attribute: `if (event.key === 'Enter')` is exactly the kind of thing that
+  // belongs in a name instead of in markup, and there is one line to read.
+  submitGateUnlockOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitGateUnlock();
+  },
+  submitWorkspaceOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitWorkspace();
+  },
+  submitUnlockOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitUnlock();
+  },
+  submitLinkOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitLink();
+  },
+
+  // The tile openers. All four take the card out of the client-side cache, which
+  // is a property of the page rather than of the card, so it cannot be an argument
+  // in the attribute.
+  openCachedEditor: function (id) { openEditorView(window._vaultCache[id]); },
+  openCachedSheet: function (id) { openSheetView(window._vaultCache[id]); },
+  openCachedWhiteboard: function (id) { openWhiteboardView(window._vaultCache[id]); },
+  openCachedMedia: function (id) { openMediaView(window._vaultCache[id]); },
+
+  // The three that stop propagation first: the row itself opens the workspace, and
+  // a click meant for the lock button should not also switch spaces.
+  openUnlockModalFromRow: function (id, fingerprint) {
+    window.netSanctumEvent.stopPropagation();
+    openUnlockModal(id, this.closest('.ws-item').querySelector('[data-workspace-name]').textContent, fingerprint);
+  },
+  lockWorkspaceFromRow: function (id) {
+    window.netSanctumEvent.stopPropagation();
+    lockWorkspace(id);
+  },
+  openMoveMenuFromRow: function (id) {
+    window.netSanctumEvent.stopPropagation();
+    openMoveMenu(window.netSanctumEvent, id);
+  },
+  openMoveCardMenuFromTile: function (id) {
+    window.netSanctumEvent.stopPropagation();
+    openMoveCardMenu(window.netSanctumEvent, id);
+  },
 });
 
-// One listener per event type, on the document, for every delegated action.
-// `closest` finds the nearest marked ancestor, so a click on a `<span>` inside a
-// button still reaches the button — which is what an inline handler on the button
-// did too.
-// Capture phase, not bubble: an inline handler ran before the event reached an
-// ancestor that has a handler of its own, and a link that stops propagation to
-// keep its parent from opening still has to be able to. At document, in the
-// bubble phase, stopping propagation would be too late to matter.
-for (const type of ['click', 'input', 'change', 'keydown', 'submit']) {
-  document.addEventListener(type, event => {
-    const el = event.target.closest('[data-vault-on]');
-    if (el) vaultRunAction(el.dataset.vaultOn, el, event);
-  }, true);
-}
+// Every action the dashboard delegates to, registered into the shared registry
+// the layout set up. Listed rather than looked up on `window`: a name that is not
+// here is a name that does not run. `sendToOutpost` is the one that arrives from
+// the layout, so it is reached through `window` — where it is actually defined —
+// instead of as a bare global.
+Object.assign(window.netSanctumActions, {
+  sendToOutpost: window.sendToOutpost,
+  // The one call site that reached into the DOM itself. `this`, not a first
+  // argument: the dispatcher calls actions with the element as the receiver,
+  // which is what `this` meant in the attribute this replaced.
+  selectWorkspaceRow: function (id) {
+    selectWorkspace(id, this.querySelector('[data-workspace-name]').textContent);
+  },
+  addSheetColumn, addSheetRow, addWhiteboardNode, changeBrushSize, changeCellFontSize,
+  cleanEmptySheetRows, clearSheetTable, clearWbCanvas, closeEditorView, closeLinkModal,
+  closeMediaView, closeSheetView, closeSidebar, closeUnlockModal, closeVcalModal,
+  closeWhiteboardView, closeWorkspaceModal, debounceSearch, deleteItem, deleteRow,
+  deleteColumn, deleteWbNode, exportItems, formatCell, handleCellInput, instantCreate,
+  loadMoreVault, openEditorView, openLinkModal, openSheetView, openWorkspaceModal,
+  resetWbZoom, retryVideoDownload, selectWorkspace, setWbMode,
+  submitGateUnlock, submitLink, submitUnlock, submitVcalModal, submitWorkspace,
+  triggerAutoSave, triggerSheetAutoSave, triggerWbAutoSave, toggleExportMenu,
+  togglePin, togglePlusDropdown, toggleSealedFields, toggleSidebar, validateBrushSize,
+  vaultMoveCardToSpace, vaultMoveTo, vaultNestInto, zoomWb,
 
-// A broken picture hides itself. `error` does not bubble, so this listens in the
-// capture phase — it replaced `onerror="this.style.display='none'"` on every
-// image the dashboard renders, including the ones it builds later.
-document.addEventListener('error', event => {
-  const target = event.target;
-  if (target && target.tagName === 'IMG') target.style.display = 'none';
-}, true);
+  // The four Enter keys. A wrapper per modal rather than a condition in the
+  // attribute: `if (event.key === 'Enter')` is exactly the kind of thing that
+  // belongs in a name instead of in markup, and there is one line to read.
+  submitGateUnlockOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitGateUnlock();
+  },
+  submitWorkspaceOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitWorkspace();
+  },
+  submitUnlockOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitUnlock();
+  },
+  submitLinkOnEnter: function () {
+    if (window.netSanctumEvent.key === 'Enter') submitLink();
+  },
+
+  // The tile openers. All four take the card out of the client-side cache, which
+  // is a property of the page rather than of the card, so it cannot be an argument
+  // in the attribute.
+  openCachedEditor: function (id) { openEditorView(window._vaultCache[id]); },
+  openCachedSheet: function (id) { openSheetView(window._vaultCache[id]); },
+  openCachedWhiteboard: function (id) { openWhiteboardView(window._vaultCache[id]); },
+  openCachedMedia: function (id) { openMediaView(window._vaultCache[id]); },
+
+  // The three that stop propagation first: the row itself opens the workspace, and
+  // a click meant for the lock button should not also switch spaces.
+  openUnlockModalFromRow: function (id, fingerprint) {
+    window.netSanctumEvent.stopPropagation();
+    openUnlockModal(id, this.closest('.ws-item').querySelector('[data-workspace-name]').textContent, fingerprint);
+  },
+  lockWorkspaceFromRow: function (id) {
+    window.netSanctumEvent.stopPropagation();
+    lockWorkspace(id);
+  },
+  openMoveMenuFromRow: function (id) {
+    window.netSanctumEvent.stopPropagation();
+    openMoveMenu(window.netSanctumEvent, id);
+  },
+  openMoveCardMenuFromTile: function (id) {
+    window.netSanctumEvent.stopPropagation();
+    openMoveCardMenu(window.netSanctumEvent, id);
+  },
+});
 
 // Boot on every visit: htmx navigation does not re-fire DOMContentLoaded,
 // so when the document is already ready the dashboard must start immediately.
@@ -3964,7 +4022,7 @@ if (document.readyState === 'loading') {
 }
 </script>
 
-<script nonce="{{ csp_nonce() }}">
+<script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
 // ── VAULT SPACE MINI-CALENDAR ──────────────────────────────────────────────
 // Same NetSanctumCalendar core as /planner, scoped to the active workspace.
 // Full editing lives in /planner; here: month pills in cells, quick create,

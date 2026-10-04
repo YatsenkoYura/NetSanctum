@@ -268,8 +268,8 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         # The parent is read when the click happens, not when the page rendered:
         # a page rendered in one space and clicked in another would otherwise
         # create the folder in the space it was served from.
-        self.assertIn('data-vault-on="openWorkspaceModal"', TEMPLATE)
-        self.assertIn("'$currentCollection'", TEMPLATE)
+        self.assertIn('data-net-action="openWorkspaceModal"', TEMPLATE)
+        self.assertIn('"$currentCollection"', TEMPLATE)
 
     def test_the_form_sends_the_parent_it_was_opened_with(self):
         body = TEMPLATE.split("async function submitWorkspace() {", 1)[1].split("\n}", 1)[0]
@@ -366,11 +366,13 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
     def test_a_card_can_also_be_filed_without_dragging(self):
         """HTML5 drag does not exist on a phone, so the move needs a button too."""
         footer = TEMPLATE.split("function tileFooterHtml(", 1)[1].split("\nfunction openMoveCardMenu", 1)[0]
-        self.assertIn("openMoveCardMenu(event, ${itemId})", footer)
+        # A wrapper, not a call in an attribute: the move needs the event in
+        # flight to stop the tile from also opening under the click.
+        self.assertIn('data-net-action="openMoveCardMenuFromTile"', footer)
         self.assertIn("function openMoveCardMenu(", TEMPLATE)
         # The exact name matters: a menu button once called a function that did
         # not exist, four letters short of the real one.
-        self.assertIn('data-vault-on="vaultMoveCardToSpace"', TEMPLATE)
+        self.assertIn('data-net-action="vaultMoveCardToSpace"', TEMPLATE)
 
     def test_a_plain_card_may_go_into_a_sealed_space_where_it_gets_sealed(self):
         """The server seals it on the way in, needing only the target's public key."""

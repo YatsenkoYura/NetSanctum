@@ -15,6 +15,20 @@ from app.core.modules import module_registry
 _CORE_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"  # app/core/templates/
 
 
+def register_globals(environment) -> None:
+    """Give a Jinja environment the globals every application template may use.
+
+    The nonce matters most: a template renders `<script nonce="...">` only when it
+    has one, so a page whose policy demands a nonce breaks without this rather than
+    degrading — which is the correct direction for a security-relevant value.
+    """
+    from app.core.http_security import csp_nonce
+    from app.core.i18n import translate
+
+    environment.globals["_"] = translate
+    environment.globals["csp_nonce"] = csp_nonce
+
+
 def create_templates() -> Jinja2Templates:
     """
     Build a Jinja2Templates instance that searches:
@@ -31,16 +45,7 @@ def create_templates() -> Jinja2Templates:
     # Jinja2Templates accepts a single directory or we build a custom loader
     templates = Jinja2Templates(directory=[str(d) for d in all_dirs])
 
-    # Register modular localization context helper
-    from app.core.i18n import translate
-
-    templates.env.globals["_"] = translate
-
-    # The per-response CSP nonce, for a page whose policy carries one. Empty
-    # everywhere else, which is exactly what a page with no nonce expects.
-    from app.core.http_security import csp_nonce
-
-    templates.env.globals["csp_nonce"] = csp_nonce
+    register_globals(templates.env)
 
     return templates
 

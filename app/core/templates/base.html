@@ -13,7 +13,7 @@
     <!-- Google Fonts (Asynchronous fallback to prevent offline blocking) -->
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap"
-        media="print" onload="this.media='all'">
+        media="print" data-net-action="setPrintMedia">
 
     <!-- HTMX (Local for Offline/Self-Hosted usage) -->
     <script src="/static/htmx.min.js"></script>
@@ -188,7 +188,7 @@
                 {% if user %}
                 <!-- Mobile Module Dropdown (Visible only on sm/xs screens) -->
                 <div class="block md:hidden">
-                    <select onchange="if(this.value && !window.netSanctumNavigate?.(this.value)) window.location.href=this.value;"
+                    <select data-net-action="navigateSelect"
                         class="bg-zinc-950 border border-teal-500/50 text-teal-400 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 font-bold uppercase cursor-pointer max-w-[130px] truncate">
                         {% if navigation_modules %}
                         {% for mod in navigation_modules if mod.name not in ('storage', 'sharing') %}
@@ -214,7 +214,7 @@
                 <!-- Stark Dropdown Language Selector -->
                 <form method="post" action="/set-language">
                     <input type="hidden" name="next_url" value="{{ request.url.path }}">
-                    <select name="lang" onchange="this.form.requestSubmit();"
+                    <select name="lang" data-net-action="submitLanguageForm"
                         class="bg-black border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 font-mono text-xs px-2 py-1.5 rounded-none focus:outline-none focus:border-teal-400 transition-colors cursor-pointer select-none">
                         <option value="en" {% if lang=='en' or not lang %}selected{% endif %}>EN</option>
                         <option value="ru" {% if lang=='ru' %}selected{% endif %}>RU</option>
@@ -244,7 +244,7 @@
                 <div id="global-video-kind" class="font-mono text-[8px] font-bold uppercase tracking-widest text-teal-400">Video</div>
                 <div id="global-video-title" class="truncate text-[11px] font-semibold text-zinc-200">Now playing</div>
             </div>
-            <button type="button" onclick="window.persistentVideoPlayer.close()"
+            <button type="button" data-net-action="persistentPlayerClose"
                     class="flex h-8 w-8 shrink-0 items-center justify-center border border-zinc-700 text-zinc-400 hover:border-red-500 hover:text-red-400"
                     title="Close player" aria-label="Close player">&times;</button>
         </div>
@@ -256,7 +256,7 @@
         class="fixed bottom-0 left-0 right-0 sm:left-auto sm:right-6 sm:bottom-6 sm:w-80 bg-zinc-950/95 sm:bg-zinc-950/90 backdrop-blur-xl border-t sm:border border-zinc-800 transition-all duration-500 transform translate-y-full opacity-0 z-50 flex flex-col rounded-none sm:rounded-2xl shadow-2xl">
         <!-- Header / Collapse handle -->
         <div class="flex justify-between items-center px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/80 cursor-pointer sm:rounded-t-2xl hover:bg-zinc-800/50 transition-colors"
-            onclick="window.musicPlayer.toggleCollapse()">
+            data-net-action="musicToggleCollapse">
             <div class="flex items-center gap-2">
                 <div class="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></div>
                 <span id="gp-header-text" class="text-[9px] font-mono text-zinc-400 uppercase tracking-widest">Now
@@ -265,7 +265,7 @@
             <div class="flex items-center gap-2">
                 <button id="gp-collapse-btn"
                     class="text-zinc-500 hover:text-white transition-transform duration-300">▼</button>
-                <button type="button" onclick="event.stopPropagation(); window.musicPlayer.close()"
+                <button type="button" data-net-action="musicCloseAndStop"
                     class="flex h-7 w-7 items-center justify-center border border-zinc-700 text-zinc-500 hover:border-red-500 hover:text-red-400"
                     title="Close player" aria-label="Close player">&times;</button>
             </div>
@@ -286,7 +286,7 @@
                 <div class="flex items-center gap-3 text-[9px] font-mono text-zinc-500">
                     <span id="gp-time-current" class="w-8 text-right">0:00</span>
                     <div class="flex-1 h-1.5 bg-zinc-900 rounded-full cursor-pointer relative overflow-hidden group hover:h-2 transition-all"
-                        onclick="window.musicPlayer.seek(event)">
+                        data-net-action="musicSeek">
                         <div id="gp-progress"
                             class="absolute left-0 top-0 bottom-0 bg-teal-500 w-0 pointer-events-none group-hover:bg-teal-400 transition-all duration-100">
                         </div>
@@ -296,12 +296,12 @@
 
                 <!-- Buttons -->
                 <div class="flex items-center justify-between gap-2 mt-1">
-                    <button id="gp-cycle-btn" onclick="window.musicPlayer.togglePlaybackMode()"
+                    <button id="gp-cycle-btn" data-net-action="musicTogglePlaybackMode"
                         class="text-zinc-600 hover:text-white transition-colors" title="Playback Mode">
                         <!-- Icon injected by JS -->
                     </button>
                     <div class="flex items-center gap-3 justify-center flex-1">
-                        <button onclick="window.musicPlayer.seekRelative(-5)"
+                        <button data-net-action="musicSeekRelative" data-net-args='[-5]'
                             class="text-zinc-600 hover:text-white transition-colors" title="Rewind 5s">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -309,13 +309,13 @@
                                 </path>
                             </svg>
                         </button>
-                        <button onclick="window.musicPlayer.prev()"
+                        <button data-net-action="musicPrev"
                             class="text-zinc-600 hover:text-white transition-colors" title="Previous Song">
                             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M19 20L9 12l10-8v16zM5 19h2V5H5v14z"></path>
                             </svg>
                         </button>
-                        <button id="gp-play-btn" onclick="window.musicPlayer.togglePlay()"
+                        <button id="gp-play-btn" data-net-action="musicTogglePlay"
                             class="w-11 h-11 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 hover:bg-teal-50 transition-all shadow-lg">
                             <svg id="gp-icon-play" class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M8 5v14l11-7z"></path>
@@ -324,13 +324,13 @@
                                 <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path>
                             </svg>
                         </button>
-                        <button onclick="window.musicPlayer.next()"
+                        <button data-net-action="musicNext"
                             class="text-zinc-600 hover:text-white transition-colors" title="Next Song">
                             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M5 4l10 8-10 8V4zm14 1h-2v14h2V5z"></path>
                             </svg>
                         </button>
-                        <button onclick="window.musicPlayer.seekRelative(5)"
+                        <button data-net-action="musicSeekRelative" data-net-args='[5]'
                             class="text-zinc-600 hover:text-white transition-colors" title="Forward 5s">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -351,7 +351,108 @@
     <script src="/static/miku-assistant.js?v=2" defer></script>
     {% endif %}
 
-    <script>
+    <script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
+    // Delegated actions.
+    //
+    // An inline `onclick="fn()"` is a Content-Security-Policy hole with a
+    // convenient syntax: it runs script the policy never saw. So a call lives in
+    // attributes the policy cannot execute — a name in `data-net-action` and a
+    // JSON argument list in `data-net-args` — and this dispatches it.
+    //
+    // It lives in the layout rather than in a page because the layout has handlers
+    // too: the player and the two selects are on every page, and a policy that
+    // covers a page covers everything that page includes.
+    //
+    // Two deliberate properties. The arguments are data and never evaluated, so
+    // an argument can be a string a user typed rather than code. And `$el`,
+    // `$el.value` and `$event` stand in for `this` and `event`, so no existing
+    // function had to change its signature — the migration is the attribute, not
+    // the callee.
+    //
+    // The name is looked up in a registry, never on `window`: a name nobody
+    // registered does nothing at all rather than running something.
+    window.netSanctumActions = window.netSanctumActions || {};
+
+    function netArg(spec, el, event) {
+      if (spec === '$el') return el;
+      if (spec === '$event') return event;
+      // A page-level value the attribute cannot spell, read at dispatch time so a
+      // click sees the state the user is actually in rather than the state the
+      // page was rendered in.
+      if (spec === '$currentCollection') return window.currentCollectionId;
+      if (typeof spec === 'string' && spec.startsWith('$el.')) {
+        return spec.slice(4).split('.').reduce(
+          (value, key) => (value == null ? value : value[key]), el);
+      }
+      return spec;
+    }
+
+    function netRunAction(name, el, event) {
+      const action = window.netSanctumActions[name];
+      if (!action) return;
+      let args;
+      try {
+        args = JSON.parse(el.dataset.netArgs || '[]').map(spec => netArg(spec, el, event));
+      } catch (e) {
+        // Malformed arguments must not take the page down: a button that quietly
+        // does nothing is better than a dashboard that stops responding at all.
+        return;
+      }
+      // The event of the dispatch in flight, for an action that has to reach past
+      // its own element — to stop propagation, say. Not an argument, because that
+      // would change every other action's signature.
+      window.netSanctumEvent = event;
+      try {
+        action.apply(el, args);
+      } finally {
+        window.netSanctumEvent = null;
+      }
+    }
+
+    // Capture phase, not bubble: an inline handler ran before the event reached an
+    // ancestor with a handler of its own, and a link that stops propagation to keep
+    // its parent from opening still has to be able to. At document, in the bubble
+    // phase, stopping propagation would be too late to stop anything.
+    for (const type of ['click', 'input', 'change', 'keydown', 'submit', 'focus']) {
+      document.addEventListener(type, event => {
+        const el = event.target.closest('[data-net-action]');
+        if (el) netRunAction(el.dataset.netAction, el, event);
+      }, true);
+    }
+
+    // A broken picture hides itself. `error` does not bubble, so this listens in
+    // the capture phase; it replaced `onerror="this.style.display='none'"`.
+    document.addEventListener('error', event => {
+      const target = event.target;
+      if (target && target.tagName === 'IMG') target.style.display = 'none';
+    }, true);
+
+    Object.assign(window.netSanctumActions, {
+      // Registered here rather than inline because each one reaches through a
+      // `window` property that only exists on some pages.
+      stopPropagation: function () { window.netSanctumEvent.stopPropagation(); },
+      setPrintMedia: function () { this.media = 'all'; },
+      submitLanguageForm: function () { this.form.requestSubmit(); },
+      navigateSelect: function () {
+        const value = this.value;
+        if (value && !window.netSanctumNavigate?.(value)) window.location.href = value;
+      },
+      persistentPlayerClose: function () { window.persistentVideoPlayer.close(); },
+      musicToggleCollapse: function () { window.musicPlayer.toggleCollapse(); },
+      musicCloseAndStop: function () {
+        window.netSanctumEvent.stopPropagation();
+        window.musicPlayer.close();
+      },
+      musicSeek: function (event) { window.musicPlayer.seek(window.netSanctumEvent || event); },
+      musicTogglePlaybackMode: function () { window.musicPlayer.togglePlaybackMode(); },
+      musicSeekRelative: function (delta) { window.musicPlayer.seekRelative(delta); },
+      musicPrev: function () { window.musicPlayer.prev(); },
+      musicTogglePlay: function () { window.musicPlayer.togglePlay(); },
+      musicNext: function () { window.musicPlayer.next(); },
+    });
+    </script>
+
+    <script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
         // Global Music Player Logic (Preserved across HTMX navigation)
         window.musicPlayer = {
             audio: new Audio(),
