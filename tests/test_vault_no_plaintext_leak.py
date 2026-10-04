@@ -354,7 +354,7 @@ class UnlockSessionTests(LeakDetectorTestCase):
 
         with (
             patch.object(sealing, "kek_for_wrapper", lambda *a, **k: (b"\x05" * 32, b"\x06" * 16)),
-            patch.object(sealing, "_unwrap_with_kek", lambda *a: private),
+            patch.object(sealing, "unwrap_with_kek", lambda *a: private),
         ):
             return asyncio.run(sealing.unlock_collection(collection, passphrase, token, session=session))
 

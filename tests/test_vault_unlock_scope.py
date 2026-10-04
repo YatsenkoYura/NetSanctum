@@ -88,7 +88,7 @@ class PerTabUnlockTests(unittest.TestCase):
                     (b"\x03" * 32, b"\x04" * 16) if passphrase == "верный" else _wrong()
                 ),
             ),
-            patch.object(sealing, "_unwrap_with_kek", lambda *args: self.private_key),
+            patch.object(sealing, "unwrap_with_kek", lambda *args: self.private_key),
         ]
         for entered in patches:
             entered.start()

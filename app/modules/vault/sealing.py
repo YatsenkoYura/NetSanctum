@@ -44,7 +44,6 @@ from app.modules.vault.crypto import (
     SealedWrite,
     VaultUnlockError,
     WrappedKey,
-    _unwrap_with_kek,
     check_passphrase_strength,
     context_for,
     derive_file_key,
@@ -57,6 +56,7 @@ from app.modules.vault.crypto import (
     open_inbox_key,
     rewrap_inbox_key,
     seal_for_inbox,
+    unwrap_with_kek,
     verify_inbox_pub_mac,
     wrap_data_key,
 )
@@ -433,7 +433,7 @@ async def unlock_collection(
     # event loop, and the gate keeps concurrent unlocks from multiplying that.
     async with _KDF_GATE:
         kek, salt = await asyncio.to_thread(kek_for_wrapper, wrapped, passphrase)
-        private_key = _unwrap_with_kek(wrapped, kek, salt, context)
+        private_key = unwrap_with_kek(wrapped, kek, salt, context)
     await verify_collection_key(collection, kek, session)
     token = unlock_token or secrets.token_urlsafe(32)
     now = int(datetime.datetime.now(datetime.UTC).timestamp())

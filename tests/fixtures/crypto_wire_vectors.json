@@ -1,0 +1,44 @@
+{
+  "_comment": "Written by tests/fixtures/write_crypto_vectors.py from app/modules/vault/crypto.py at revision 2dadb74, before the KDF moved to app/core/crypto. Its randomness is fixed on purpose: the salts, nonces and ephemeral keys are published so the bytes can be unwrapped by the moved code and compared, rather than only round-tripped through whatever wrote them.",
+  "blind_write": {
+    "collection_id": 5,
+    "kind": "item",
+    "payload": "nsp:v1:AAECAwQFBgcICQoLM2qzO7WEu3fiIPOr34YaAuevp1GcCDpcVQacpW8MYdZSumFJmiVVpcFVzzMYZiGu",
+    "private_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "row_id": 91,
+    "wrapped_key": "nsi:v2:AoM8LqxKQ5Wfvl00X2uSFL663FpCdUPZYZHWi1iIR9pINYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQAAQIDBAUGBwgJCgvVJVA1e8pFCse_viCqVYk-F4KKoAwzAcp6PQVpJsPbW2qaNysV3MeQHUCcLX9wyek="
+  },
+  "dek_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "passphrase": "correct horse battery staple",
+  "pub_mac": {
+    "collection_id": 5,
+    "fingerprint": "a0289810032eb417",
+    "kek_hex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+    "mac": "16bd83de5bb2df9225d3ae44b6992c43b132bd57ccdee8a4e1689c5de1d99c21",
+    "public_hex": "358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254"
+  },
+  "pure_functions": {
+    "canonical_params": "eyJtX2Nvc3QiOjY1NTM2LCJwYXJhbGxlbGlzbSI6NCwidF9jb3N0IjoyfQ==",
+    "context_for_item_91": "bmV0c2FuY3R1bTp2YXVsdDppdGVtOjkx",
+    "inbox_binding_5_item_91": "bnM6dmF1bHQ6aW5ib3g6djIAAAAFAARpdGVtAAAAWzWActY2WIDRruoymt+RITg4Ue0hoo47dell0NLNFmJUNYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ="
+  },
+  "sealed_payload": {
+    "context_hex": "6e657473616e6374756d3a7661756c743a6974656d3a3931",
+    "dek_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "value": "nsp:v1:AAECAwQFBgcICQoLJiKmeryJrXrpYf7lkZ0QCKO161GRCX8TVgSAOMA4h1p63wYxtysg3XV-Ag=="
+  },
+  "wrapped_key": {
+    "aad_hex": "6e733a7661756c743a777261703a76327c6e657473616e6374756d3a7661756c743a636f6c6c656374696f6e3a357c6172676f6e3269647c7b226d5f636f7374223a36353533362c22706172616c6c656c69736d223a342c22745f636f7374223a327d7c000102030405060708090a0b0c0d0e0f",
+    "kdf": "argon2id",
+    "params": {
+      "m_cost": 65536,
+      "parallelism": 4,
+      "t_cost": 2
+    },
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "unwrap_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "wrap_version": 2,
+    "wrapped": "nsk:v1:AAECAwQFBgcICQoLjCHceuPzL5SChXxmrLl0n_W0NZxvfhtdurgh_A0LpEoPO4DTu-LeWnG3M6kbMRFp",
+    "wrong_passphrase": "not the passphrase"
+  }
+}
