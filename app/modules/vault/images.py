@@ -82,8 +82,11 @@ def store_image_bytes(
 ) -> str:
     """Encrypt an image into storage and return its logical path.
 
-    The plaintext never touches disk: the bytes go through the seekable envelope
-    from a temporary file, so a large screenshot is not held twice in memory.
+    The plaintext never touches disk. The payload is already in memory and its
+    length is known, so it goes straight into the envelope — there is no staged
+    temporary file, which matters because that would be a plaintext copy of the
+    most personal thing in Vault in a directory that is only private by
+    configuration.
 
     Roles, not one key for everything: an image of a sealed collection is
     encrypted under that collection's file key (`key`) and named at random, so
@@ -91,8 +94,8 @@ def store_image_bytes(
     plain collections, and whatever the keyless worker writes — uses the shared
     application key under the deterministic name, exactly as before.
     """
+    import io
     import secrets
-    import tempfile
 
     suffix = IMAGE_MEDIA_TYPES.get(media_type.lower())
     if suffix is None:
@@ -105,11 +108,12 @@ def store_image_bytes(
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     storage = get_storage()
-    with tempfile.NamedTemporaryFile(suffix=".enc") as staging:
-        staging.write(payload)
-        staging.flush()
-        staging.seek(0)
-        storage.save_file_encrypted_seekable(staging, str(destination.relative_to(storage_root())), key=key)
+    storage.save_file_encrypted_seekable(
+        io.BytesIO(payload),
+        str(destination.relative_to(storage_root())),
+        key=key,
+        length=len(payload),
+    )
     return f"{IMAGE_PREFIX}/{stem}.{suffix}.enc"
 
 

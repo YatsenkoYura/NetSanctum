@@ -51,6 +51,57 @@ SEEKABLE_HEADER_V2_SIZE = len(SEEKABLE_MAGIC_V2) + SEEKABLE_FILE_NONCE_SIZE + 4 
 SEEKABLE_HEADER_MAX_SIZE = max(SEEKABLE_HEADER_SIZE, SEEKABLE_HEADER_V2_SIZE)
 
 
+class _RangeReader:
+    """A readable view over one stored object, chunk by chunk.
+
+    Used to re-encrypt an object without ever holding its plaintext: the writer
+    pulls `SEEKABLE_CHUNK_SIZE` at a time and gets bytes, not a file. It hashes
+    what it hands over, so a caller can verify the copy it just made without a
+    second pass or a buffer.
+    """
+
+    def __init__(self, storage, path: str, total: int, key: bytes | None = None):
+        self._chunks = storage.read_seekable_range(path, 0, total, key=key)
+        self._buffer = bytearray()
+        self._exhausted = False
+        self._digest = hashlib.sha256()
+        self._read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        while not self._exhausted and (size < 0 or len(self._buffer) < size):
+            try:
+                self._buffer.extend(next(self._chunks))
+            except StopIteration:
+                self._exhausted = True
+        if size < 0:
+            piece = bytes(self._buffer)
+            self._buffer.clear()
+        else:
+            piece = bytes(self._buffer[:size])
+            del self._buffer[:size]
+        self._digest.update(piece)
+        self._read += len(piece)
+        return piece
+
+    @property
+    def digest(self) -> str:
+        return self._digest.hexdigest()
+
+
+def _seekable_reader(storage, path: str, total: int, key: bytes | None = None) -> _RangeReader:
+    return _RangeReader(storage, path, total, key)
+
+
+def _staging_parent() -> str | None:
+    """Where an envelope is assembled before it is handed to the backend."""
+    try:
+        from app.core.staging import staging_dir
+
+        return str(staging_dir())
+    except Exception:
+        return None
+
+
 def stream_size_sha256(stream: BinaryIO, chunk_size: int = 1024 * 1024) -> tuple[int, str]:
     """Read a stream incrementally and return its byte length and SHA-256 digest."""
     digest = hashlib.sha256()
@@ -172,7 +223,9 @@ class StorageInterface(ABC):
     # every chunk is its own AEAD with the path bound into its associated data.
     # A range then touches only the chunks it covers.
 
-    def save_file_encrypted_seekable(self, stream: BinaryIO, path: str, *, key: bytes | None = None) -> str:
+    def save_file_encrypted_seekable(
+        self, stream: BinaryIO, path: str, *, key: bytes | None = None, length: int | None = None
+    ) -> str:
         """Encrypt a stream into the chunked (v2) envelope without buffering it whole.
 
         An explicit `key` encrypts under that key instead of the application file
@@ -180,33 +233,71 @@ class StorageInterface(ABC):
         Whatever the key, only that key opens the object: an explicit key is never
         mixed with the legacy rotation the application key gets, because a wrong
         file key must fail rather than fall through to an unrelated one.
+
+        `length` is the plaintext size when the caller already knows it, which is
+        the case for anything that came from a file, from a payload it is holding
+        in memory, or from a previous envelope. That matters because the chunk
+        count is part of every chunk's associated data, so a stream of unknown
+        length has to be read once to count it — and the only place to put those
+        plaintext bytes while it does is the staging directory. Pass the length
+        and there is no intermediate file at all: the stream is sealed chunk by
+        chunk as it arrives.
         """
+        if length is not None:
+            return self._write_seekable_v2(stream, path, key, length)
+        spooled_length, spooled, workdir = self._spool_plaintext(stream)
+        try:
+            with spooled.open("rb") as source:
+                return self._write_seekable_v2(source, path, key, spooled_length)
+        finally:
+            # The directory goes too, not just the file: an empty `seekenc_*`
+            # left in staging would look like an interrupted write to whoever
+            # reads the directory next.
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def _spool_plaintext(self, stream: BinaryIO) -> tuple[int, Path, Path]:
+        """Copy a stream of unknown length into staging so that it can be counted.
+
+        Chunked, so memory stays flat whatever the size — the point of this
+        envelope is that a four-gigabyte video never lands in RAM, and its
+        plaintext should not land on a disk either. The copy goes to the staging
+        directory: `0700`, on a tmpfs where the deployment mounts one, and
+        unlinked the moment the write finishes.
+        """
+        from app.core.staging import staging_workdir
+
+        directory = staging_workdir("seekenc_")
+        path = directory / "plaintext"
+        total = 0
+        with path.open("wb") as sink:
+            while True:
+                piece = stream.read(SEEKABLE_CHUNK_SIZE)
+                if not piece:
+                    break
+                sink.write(piece)
+                total += len(piece)
+        return total, path, directory
+
+    def _write_seekable_v2(
+        self, stream: BinaryIO, path: str, key: bytes | None, plaintext_length: int
+    ) -> str:
         file_nonce = os.urandom(SEEKABLE_FILE_NONCE_SIZE)
-        # The count has to be known before the first chunk is sealed, because it
-        # is part of every chunk's associated data. The input stream is spooled
-        # to disk first — chunked, so RAM stays flat — which costs one transient
-        # copy of the plaintext next to the ciphertext the writer already holds.
-        with tempfile.TemporaryDirectory(prefix="seekenc_") as workdir:
-            spooled = Path(workdir) / "plaintext"
-            plaintext_length = 0
-            with spooled.open("wb") as sink:
-                while True:
-                    piece = stream.read(SEEKABLE_CHUNK_SIZE)
-                    if not piece:
-                        break
-                    sink.write(piece)
-                    plaintext_length += len(piece)
-            chunk_count = (plaintext_length + SEEKABLE_CHUNK_SIZE - 1) // SEEKABLE_CHUNK_SIZE
-            aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count)
-            aesgcm = AESGCM(key if key is not None else self._get_encryption_key())
+        chunk_count = (plaintext_length + SEEKABLE_CHUNK_SIZE - 1) // SEEKABLE_CHUNK_SIZE
+        aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count)
+        aesgcm = AESGCM(key if key is not None else self._get_encryption_key())
+        # The envelope being assembled here is ciphertext, so it is not the
+        # sensitive half — but it is large and temporary, and putting it beside
+        # the plaintext staging directory keeps both off a shared `/tmp`.
+        parent = _staging_parent()
+        with tempfile.TemporaryDirectory(prefix="envelope_", dir=parent) as workdir:
             temporary = Path(workdir) / "payload"
-            with spooled.open("rb") as source, temporary.open("wb") as sink:
+            with temporary.open("wb") as sink:
                 sink.write(SEEKABLE_MAGIC_V2 + file_nonce + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big"))
                 sink.write(plaintext_length.to_bytes(8, "big"))
                 sink.write(chunk_count.to_bytes(4, "big"))
                 index = 0
                 while True:
-                    chunk = source.read(SEEKABLE_CHUNK_SIZE)
+                    chunk = stream.read(SEEKABLE_CHUNK_SIZE)
                     if not chunk:
                         break
                     index_bytes = index.to_bytes(4, "big")
@@ -264,23 +355,23 @@ class StorageInterface(ABC):
         if version != 1:
             raise ValueError(f"'{path}' is not a v1 seekable object")
         total = self.get_seekable_plaintext_size(path)
-        plaintext = b"".join(self.read_seekable_range(path, 0, total, key=key))
-        if len(plaintext) != total:
-            raise ValueError(f"'{path}' decrypted short")
         target = self.upgraded_envelope_path(path)
-        with tempfile.TemporaryDirectory(prefix="envelope_") as workdir:
-            staged = Path(workdir) / "payload"
-            with staged.open("wb") as sink:
-                sink.write(plaintext)
-            with staged.open("rb") as source:
-                self.save_file_encrypted_seekable(source, target, key=key)
+        # The length is known, so the rewrite streams chunk by chunk and no
+        # plaintext copy is ever written: the old object only ever exists as a
+        # stream of decrypted chunks on their way into the new envelope.
+        source = _seekable_reader(self, path, total, key)
+        self.save_file_encrypted_seekable(source, target, key=key, length=total)
+        if source._read != total:
+            raise ValueError(f"'{path}' decrypted short")
         if self.seekable_envelope_version(target) != 2:
             raise ValueError(f"'{target}' did not come out as v2")
         check_total = self.get_seekable_plaintext_size(target)
         if check_total != total:
             raise ValueError(f"'{target}' has a different length than '{path}'")
-        restored = b"".join(self.read_seekable_range(target, 0, check_total, key=key))
-        if not secrets.compare_digest(restored, plaintext):
+        restored = _seekable_reader(self, target, check_total, key)
+        while restored.read(SEEKABLE_CHUNK_SIZE):
+            pass
+        if not secrets.compare_digest(restored.digest, source.digest):
             raise ValueError(f"'{target}' does not read back as '{path}' did")
         return target
 

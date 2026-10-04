@@ -9,13 +9,13 @@ import asyncio
 import logging
 import os
 import secrets
-import tempfile
 from enum import StrEnum
 from pathlib import Path
 
 from app.core.config import get_settings
 from app.core.database import SyncSessionLocal
 from app.core.scheduler import celery_app
+from app.core.staging import staging_workdir
 from app.core.storage import get_storage
 from app.core.ytdlp_pipeline import YtDlpErrorKind, YtDlpPipelineError, extract_info
 from app.modules.vault.models import VaultCollection, VaultItem
@@ -203,7 +203,10 @@ def download_vault_video_task(
     """
     report = _record_status(item_id, "")
     storage = get_storage()
-    workdir = Path(tempfile.mkdtemp(prefix="vault_video_"))
+    # The download lands here first, in the clear, because yt-dlp writes it as an
+    # ordinary file. Staging is the only directory configured to be private and
+    # memory-backed; the default `/tmp` is neither on most deployments.
+    workdir = staging_workdir("vault_video_")
 
     if url is None:
         from app.modules.vault.services import take_download_handoff
@@ -310,9 +313,14 @@ def download_vault_video_task(
             # rules out a single AES-GCM blob: GCM authenticates the whole
             # ciphertext, so any range would mean decrypting from byte zero.
             destination = destination.with_suffix(destination.suffix + ".enc")
+            # The size comes from the file we just wrote, so the envelope is
+            # sealed straight from the download: no second plaintext copy.
             with video_file.open("rb") as stream:
                 storage.save_file_encrypted_seekable(
-                    stream, str(destination.relative_to(_storage_root())), key=file_key
+                    stream,
+                    str(destination.relative_to(_storage_root())),
+                    key=file_key,
+                    length=size,
                 )
         else:
             with video_file.open("rb") as stream:

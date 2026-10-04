@@ -97,6 +97,21 @@ class Settings(BaseSettings):
     # /tmp before it is moved into storage, so the worker's tmpfs must be larger
     # than this or a file at the limit dies with ENOSPC instead of a clear refusal.
     VAULT_MAX_VIDEO_BYTES: int = 4 * 1024 * 1024 * 1024
+    # Where plaintext exists on its way to becoming a sealed file: a downloaded
+    # video, a spooled chunk envelope, a staged screenshot. It defaults to /tmp
+    # because that is the one location a deployment can make a tmpfs, and because
+    # the alternative — the storage root — would put plaintext next to the
+    # ciphertext it is about to become. Set it to a tmpfs mount in any deployment
+    # that is not a container: on a plain disk this directory holds the most
+    # sensitive thing on the machine, in the clear, for as long as the write takes.
+    # `startup_check` refuses to continue when the directory is not a tmpfs and
+    # STAGING_REQUIRE_TMPFS is on.
+    STAGING_DIR: str = "/tmp/netsanctum-staging"
+    STAGING_REQUIRE_TMPFS: bool = False
+    # Orphans are files a crash left behind. Anything older than this cannot
+    # belong to a write in progress, since the largest download is bounded by
+    # VAULT_MAX_VIDEO_BYTES and runs in hours at most.
+    STAGING_ORPHAN_MINUTES: int = 60
 
     # S3 settings (used when STORAGE_BACKEND=s3)
     S3_BUCKET_NAME: str = ""

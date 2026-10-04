@@ -129,6 +129,30 @@ Modules can use:
 
 The intended boundary is simple: the core owns infrastructure; modules own product behavior.
 
+### Residual risk: plaintext in the staging directory
+
+A file has to exist in the clear for a moment before it becomes an encrypted one.
+Downloads are written by `yt-dlp` as ordinary files, and chunk envelopes are
+assembled before they are sealed. That moment lives in the staging directory
+(`STAGING_DIR`, `/tmp/netsanctum-staging` by default), which the compose
+deployment mounts as a tmpfs and where `STAGING_REQUIRE_TMPFS=1` makes the
+application refuse to write if the directory is not memory-backed.
+
+Outside that deployment — a bare VM, a systemd unit, a Kubernetes pod without an
+`emptyDir` — the staging directory is an ordinary directory on an ordinary disk,
+and for the duration of a download the video exists there unencrypted. It is
+created `0700` and the spooled bytes are removed as soon as the write finishes,
+but `0700` is not encryption: anyone who can read the disk, a swap file, or a
+backup taken during the window can read it. Two things narrow it further:
+`save_file_encrypted_seekable` takes the plaintext size when the caller knows it,
+so a download or a screenshot is sealed straight from its stream with no
+intermediate copy at all, and `collect_orphans()` removes what a crash leaves
+behind.
+
+Treat this as a known residual risk rather than a solved problem: on any host
+where `/tmp` is a disk, mount a tmpfs at `STAGING_DIR` and set
+`STAGING_REQUIRE_TMPFS=1`.
+
 ## Current Modules
 
 - **AllLib** downloads and reads novels, manga, and anime from supported Lib-network sources.
