@@ -2610,7 +2610,11 @@ async function loadVaultSummary() {
     vaultCollectionsById = {};
     vaultChildIds = {};
     vaultCollections.forEach(collection => {
+      // `id` belongs in the record: the sidebar rows are built from this map
+      // alone, and a row without it comes out as `ws-item-undefined`, which makes
+      // it unclickable and undroppable.
       vaultCollectionsById[collection.id] = {
+        id: Number(collection.id),
         name: collection.name,
         is_locked: Boolean(collection.is_locked),
         is_encrypted: Boolean(collection.is_encrypted),
@@ -2675,7 +2679,10 @@ function vaultSidebarRow(collection, depth, hasChildren) {
   }
 
   const label = document.createElement('div');
-  label.className = 'flex items-center gap-2 truncate';
+  // `flex-1` matters: the row is `justify-content: space-between`, so with the
+  // twisty as a third child the label would drift to the middle of the row
+  // instead of sitting next to it.
+  label.className = 'flex items-center gap-2 truncate flex-1 min-w-0';
   const marker = document.createElement('span');
   marker.className = collection.is_encrypted
     ? (collection.is_locked ? 'w-1.5 h-1.5 bg-red-500 inline-block' : 'w-1.5 h-1.5 bg-teal-400 inline-block')

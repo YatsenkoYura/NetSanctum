@@ -125,6 +125,64 @@ class SpaceTreeContractTests(unittest.TestCase):
         self.assertIn("if (record.is_encrypted) return;", menu)
 
 
+class SidebarRunsTests(unittest.TestCase):
+    """The sidebar rows, built by the real code rather than described by it.
+
+    Three rounds of bugs came out of this file and none were visible to a text
+    contract: code pasted into the calendar's closure, rows rendered as
+    `ws-item-undefined` because the records behind them carried no id, and a third
+    flex child that pushed every label to the middle of its row. So the rows are
+    built here, by executing the template's own functions against a stub DOM.
+
+    Skipped where node is absent, which is where the authoritative run happens.
+    """
+
+    TEMPLATE_PATH = "app/modules/vault/templates/vault_dashboard.html"
+    FIXTURE = "tests/fixtures/vault_sidebar_dom.mjs"
+
+    def setUp(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is not installed in this environment")
+        self.node = node
+
+    def _build(self):
+        import json
+        import subprocess
+
+        result = subprocess.run([self.node, self.FIXTURE, self.TEMPLATE_PATH], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr[:500])
+        return json.loads(result.stdout)
+
+    def test_every_row_gets_an_id_the_drag_code_can_parse(self):
+        rows = self._build()["rows"]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertRegex(row["id"], r"^ws-item-\d+$", row["id"])
+            self.assertIsInstance(row["parsedId"], int)
+
+    def test_every_row_is_clickable_and_switches_to_its_own_space(self):
+        data = self._build()
+        clicked = [entry["id"] for entry in data["selected"] if entry["id"] is not None]
+        self.assertEqual([row["parsedId"] for row in data["rows"]], clicked)
+
+    def test_a_nested_space_is_rendered_one_level_deep(self):
+        depths = {row["parsedId"]: row["depth"] for row in self._build()["rows"]}
+        self.assertEqual("0", depths[1])
+        self.assertEqual("1", depths[4], "the space nested under 2 must render indented")
+
+    def test_only_a_space_with_children_gets_a_twisty(self):
+        rows = {row["parsedId"]: row for row in self._build()["rows"]}
+        self.assertTrue(rows[2]["hasTwisty"], "2 has a child, so it needs one")
+        self.assertFalse(rows[1]["hasTwisty"], "1 is a leaf and must not offer a fold")
+        self.assertTrue(rows[1]["hasTwistySpacer"], "a leaf still needs the indent")
+
+    def test_the_label_takes_the_free_space_so_it_stays_next_to_the_twisty(self):
+        """`space-between` with a third child centres the label instead."""
+        for row in self._build()["rows"]:
+            self.assertIn("flex-1", row["labelClasses"])
+
+
 class ScopeContractTests(unittest.TestCase):
     """A function the dashboard calls must live where the call can see it.
 
