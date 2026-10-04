@@ -23,6 +23,22 @@
 .ws-item:hover { color:#e4e4e7; background:rgba(255,255,255,.03); }
 .ws-item.active { color:#2dd4bf; border-left-color:#2dd4bf; background:rgba(45,212,191,.06); }
 .ws-item[draggable="true"] { cursor:grab; }
+/* Depth is indentation, not nesting: a drop target that is a flat row keeps the
+   drag maths simple and lets a branch be folded without rebuilding the list. */
+.ws-item .ws-twisty { width:14px; flex:none; color:#52525b; font-size:9px; line-height:1; background:none; border:0; padding:0; cursor:pointer; }
+.ws-item .ws-twisty:hover { color:#2dd4bf; }
+.ws-item .ws-twisty-spacer { width:14px; flex:none; }
+.ws-item[data-depth="1"] { padding-left:22px; }
+.ws-item[data-depth="2"] { padding-left:34px; }
+.ws-item[data-depth="3"] { padding-left:46px; }
+.ws-item[data-depth="4"] { padding-left:58px; }
+
+/* Spaces nested under the open one. */
+.space-tile { display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left; padding:10px 12px; border:1px solid #27272a; background:#09090b; cursor:pointer; transition:border-color .15s; }
+.space-tile:hover { border-color:#2dd4bf; }
+.space-tile-name { font-size:12px; font-weight:700; color:#e4e4e7; }
+.space-tile-meta { font-size:10px; color:#52525b; }
+#vault-child-spaces { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; margin-bottom:12px; }
 .ws-item[draggable="true"]:active { cursor:grabbing; }
 
 /* Tetris-Dense Masonry Grid (plain row flow: visual order always matches DOM) */
@@ -40,6 +56,23 @@
 .tile-card { border:1px solid #27272a; background:#09090b; transition:border-color .15s, transform .15s; position:relative; display:flex; flex-direction:column; overflow:hidden; height:fit-content; }
 .tile-card:hover { border-color:#3f3f46; transform:translateY(-1px); }
 .tile-card.pinned { border-color:#2dd4bf; }
+/* Dragging the tile body to reorder it: the card lifts out of the flow visually
+   and the drop line says where it will land. The grip keeps the stack gesture. */
+.tile-card.vault-dragging { opacity:.35; }
+.vault-drop-line { position:absolute; left:0; top:0; bottom:0; width:2px; background:#2dd4bf; box-shadow:0 0 6px rgba(45,212,191,.7); z-index:6; pointer-events:none; }
+.tile-card.vault-drop-before { border-color:#2dd4bf; }
+.tile-card[draggable="true"] { cursor:grab; }
+.tile-card[draggable="true"]:active { cursor:grabbing; }
+
+/* Reading strips. Invisible on purpose. On a touch pointer they are the only way
+   to page between notes, so they take taps; with a mouse they would just eat
+   clicks over the margins, so they stay inert until focused by keyboard. */
+.vault-edges { position:absolute; inset:0; z-index:20; pointer-events:none; }
+.vault-edge { position:absolute; top:0; bottom:0; width:18%; min-width:44px; background:transparent; border:0; padding:0; opacity:0; cursor:pointer; pointer-events:none; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+.vault-edge-left { left:0; }
+.vault-edge-right { right:0; }
+.vault-edges-touch .vault-edge, .vault-edge:focus { pointer-events:auto; opacity:1; }
+.vault-edge:focus-visible { outline:2px solid #2dd4bf; outline-offset:-2px; }
 
 /* Card-stack grip: bottom-center handle to drag a card onto another one. */
 .tile-grip { position:absolute; left:50%; bottom:2px; transform:translateX(-50%); z-index:5; opacity:0; cursor:grab; font-size:10px; line-height:1.6; color:#71717a; background:rgba(0,0,0,.75); border:1px solid #27272a; padding:0 9px; user-select:none; }
@@ -384,6 +417,7 @@
 
       <!-- 1. MASONRY TILES GRID -->
       <div id="view-tiles-container">
+        <div id="vault-child-spaces" class="hidden"></div>
         <div id="tiles-grid"></div>
         <div class="flex justify-center pt-4">
           <button id="vault-load-more" onclick="loadMoreVault()" class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
@@ -509,9 +543,10 @@
               <span id="wb-zoom-label" class="font-mono">100%</span>
               <button onclick="zoomWb(0.1)" class="font-bold hover:text-white">+</button>
               <button onclick="resetWbZoom()" class="text-zinc-600 hover:text-white ml-1">↻</button>
-            </div>
-          </div>
-        </div>
+</div>
+
+  </div>
+</div>
 
         <input type="hidden" id="wb-id">
         <input type="text" id="wb-title" {% if is_readonly %}readonly{% else %}oninput="triggerWbAutoSave()"{% endif %} placeholder="Название доски (необязательно)..."
@@ -534,6 +569,17 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- Previous/next strips for reading on a phone: there are no arrow keys
+         there, so the same two moves live as invisible targets down the sides.
+         Real buttons with labels, so they are announced and reachable by
+         keyboard. `hidden` until a card is open and there is somewhere to go. -->
+    <div id="vault-edge-strips" class="hidden vault-edges relative" aria-label="Переход между карточками">
+      <button type="button" data-vault-edge="-1" class="vault-edge vault-edge-left"
+              aria-label="Предыдущая карточка" title="Предыдущая карточка (←)"></button>
+      <button type="button" data-vault-edge="1" class="vault-edge vault-edge-right"
+              aria-label="Следующая карточка" title="Следующая карточка (→)"></button>
     </div>
   </div>
 </div>
@@ -662,6 +708,12 @@ window._vaultCache = {};
 // Lock state of known workspaces (id -> {name, is_locked, is_encrypted}),
 // refreshed by loadVaultSummary. Drives the locked gate, not the tiles.
 var vaultCollectionsById = {};
+// Child ids per parent (`'root'` for the top level), so the sidebar is a tree
+// without nesting the markup.
+var vaultChildIds = {};
+// Spaces the owner folded shut in the sidebar. Session-scoped on purpose: a
+// collapsed branch is a view of the tree, not a property of it.
+var vaultCollapsedSpaces = new Set();
 // The sealed workspace currently behind the gate (its tiles never load).
 var lockedGateId = null;
 
@@ -966,6 +1018,7 @@ function __vaultAttachRootDrop() {
 
   root.addEventListener('dragover', (e) => {
     if (window.vaultDragCardId) return;
+    if (vaultReorder && vaultReorder.fromId !== null) return;
     e.preventDefault(); root.classList.add('drag-over-active');
   });
   root.addEventListener('dragleave', () => { root.classList.remove('drag-over-active'); });
@@ -974,6 +1027,8 @@ function __vaultAttachRootDrop() {
     e.preventDefault();
     root.classList.remove('drag-over-active');
     if (window.vaultDragCardId) return;
+    // A card being reordered is not a file upload and not a workspace drop.
+    if (vaultReorder && vaultReorder.fromId !== null) return;
 
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
@@ -1187,6 +1242,7 @@ function openMediaView(item) {
   const card = window._vaultCache[item.id];
   if (!card) return;
   activeView = 'media';
+  syncEdgeStrips();
   document.getElementById('media-id').value = item.id;
   document.getElementById('media-title').value = card.title || '';
   document.getElementById('media-content').value = card.content || '';
@@ -1297,7 +1353,7 @@ function mediaTileHtml(item, itemId, displayImg, clickHandler) {
   }
 
     return `
-    <div class="tile-card sm:col-span-2 lg:col-span-2 ${item.is_pinned ? 'pinned' : ''}" data-tile-id="${itemId}">
+    <div class="tile-card sm:col-span-2 lg:col-span-2 ${item.is_pinned ? 'pinned' : ''}" data-tile-id="${itemId}" draggable="true">
     <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center relative"
          style="min-height: 120px" onclick="${clickHandler}">
       ${displayImg
@@ -1316,6 +1372,8 @@ function hideViews() {
     const node = document.getElementById(`view-${name}-container`);
     if (node) node.classList.add('hidden');
   });
+  // Every close funnels through here, so the reading strips go with them.
+  syncEdgeStrips();
 }
 
 async function closeMediaView() {
@@ -1357,6 +1415,7 @@ async function saveMediaCaption() {
 
 function openEditorView(item) {
   activeView = 'editor';
+  syncEdgeStrips();
   document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('editor-id').value = item.id;
   document.getElementById('editor-title').value = item.title || '';
@@ -1421,6 +1480,7 @@ async function saveCurrentEditorData() {
 
 function openSheetView(item) {
   activeView = 'sheet';
+  syncEdgeStrips();
   document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('sheet-id').value = item.id;
   document.getElementById('sheet-title').value = item.title || '';
@@ -1599,6 +1659,7 @@ async function saveCurrentSheetData() {
 // ── WHITEBOARD VIEW ────────────────────────────────────────────────────────
 function openWhiteboardView(item) {
   activeView = 'whiteboard';
+  syncEdgeStrips();
   document.getElementById('vault-empty').classList.add('hidden');
   document.getElementById('wb-id').value = item.id;
   document.getElementById('wb-title').value = item.title || '';
@@ -2110,8 +2171,9 @@ async function selectWorkspace(id, name) {
   const target = id ? document.getElementById('ws-item-' + id) : document.getElementById('ws-item-all');
   if (target) target.classList.add('active');
 
-  document.getElementById('active-ws-title').innerText = name;
-  closeSidebar();
+document.getElementById('active-ws-title').innerText = name;
+closeSidebar();
+  renderChildSpaces();
   // A sealed workspace never loads its tiles: the gate owns the viewport
   // until the passphrase is supplied.
   if (!syncLockedView()) loadWorkspace();
@@ -2307,6 +2369,7 @@ function restoreVaultRoute() {
 // menu instead of dragging onto it. Reuses the merge confirm + endpoint.
 
 var vaultMoveFromId = null;
+var vaultNestFromId = null;
 
 function openMoveMenu(event, id) {
   const src = vaultCollectionsById[id];
@@ -2335,6 +2398,103 @@ function openMoveMenu(event, id) {
 
 function closeMoveMenu() {
   document.getElementById('ws-move-menu').classList.add('hidden');
+}
+
+/* Nesting is a different gesture from merging, so it gets its own menu.
+   Merging empties one space into another and deletes it; nesting keeps both and
+   only changes where the space sits in the tree. The candidates exclude the
+   space itself and everything under it, because those moves would build a loop —
+   the server refuses them too, and offering them here would just be a trap. */
+function vaultDescendantIds(rootId) {
+  const found = new Set();
+  const walk = (id) => {
+    (vaultChildIds[id] || []).forEach(child => {
+      if (found.has(child)) return;
+      found.add(child);
+      walk(child);
+    });
+  };
+  walk(rootId);
+  return found;
+}
+
+function openNestMenu(event, id) {
+  const blocked = vaultDescendantIds(id);
+  blocked.add(Number(id));
+  const options = [{ id: null, name: '— на верхний уровень —' }];
+  Object.keys(vaultCollectionsById).forEach(key => {
+    const candidate = Number(key);
+    if (blocked.has(candidate)) return;
+    const record = vaultCollectionsById[key];
+    // Sealed spaces stay roots, so they cannot be a parent and cannot be a child.
+    if (record.is_encrypted) return;
+    options.push({ id: candidate, name: record.name });
+  });
+  if (options.length === 1) {
+    showToast('Это пространство некуда вложить', true);
+    return;
+  }
+  const body = document.getElementById('ws-move-options');
+  body.innerHTML = options.map(target =>
+    `<button class="ws-move-opt" onclick="vaultNestInto(${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+  ).join('');
+  vaultNestFromId = id;
+  const menu = document.getElementById('ws-move-menu');
+  const anchor = event.currentTarget.getBoundingClientRect();
+  menu.style.left = Math.min(window.innerWidth - 200, anchor.right + 6) + 'px';
+  menu.style.top = Math.max(8, Math.min(window.innerHeight - 160, anchor.top - 4)) + 'px';
+  menu.classList.remove('hidden');
+}
+
+async function vaultNestInto(parentId) {
+  const collectionId = vaultNestFromId;
+  vaultNestFromId = null;
+  closeMoveMenu();
+  if (collectionId === null) return;
+  const nested = await mutationJson('/api/vault/collections/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ collection_id: collectionId, parent_id: parentId })
+  }, 'Не удалось вложить пространство');
+  if (!nested) return;
+  await loadVaultSummary();
+  if (Number(parentId) === Number(currentCollectionId)) loadWorkspace();
+}
+
+/* ── SPACES INSIDE A SPACE ───────────────────────────────────────────────
+   A collection is not a warehouse any more: what hangs under it is shown as
+   tiles of its own, above the cards, and clicking one goes there. This is what
+   makes a collection a space inside a space rather than a label on a pile. */
+function renderChildSpaces() {
+  const host = document.getElementById('vault-child-spaces');
+  if (!host) return;
+  const parentKey = currentCollectionId === null ? 'root' : currentCollectionId;
+  const children = (vaultChildIds[parentKey] || [])
+    .map(id => vaultCollectionsById[id])
+    .filter(Boolean);
+  // The aggregate view has no space of its own, so showing every root space there
+  // would duplicate the sidebar instead of adding anything.
+  if (!currentCollectionId || children.length === 0) {
+    host.classList.add('hidden');
+    host.replaceChildren();
+    return;
+  }
+  host.classList.remove('hidden');
+  host.replaceChildren(...children.map(child => {
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = 'space-tile';
+    tile.dataset.spaceId = String(child.id);
+    tile.addEventListener('click', () => selectWorkspace(child.id, child.name));
+    const name = document.createElement('span');
+    name.className = 'space-tile-name';
+    name.textContent = child.name;
+    const meta = document.createElement('span');
+    meta.className = 'space-tile-meta';
+    meta.textContent = `${child.items_count} карточек`;
+    tile.append(name, meta);
+    return tile;
+  }));
 }
 
 async function vaultMoveTo(toId) {
@@ -2448,71 +2608,124 @@ async function loadVaultSummary() {
     document.getElementById('stat-score').textContent = vaultStats.avg_score;
 
     vaultCollectionsById = {};
+    vaultChildIds = {};
     vaultCollections.forEach(collection => {
       vaultCollectionsById[collection.id] = {
         name: collection.name,
         is_locked: Boolean(collection.is_locked),
         is_encrypted: Boolean(collection.is_encrypted),
         items_count: collection.items_count || 0,
+        parent_id: collection.parent_id ?? null,
+        position: collection.position,
       };
+      const parentKey = collection.parent_id ?? 'root';
+      (vaultChildIds[parentKey] || (vaultChildIds[parentKey] = [])).push(Number(collection.id));
     });
 
     const root = document.getElementById('vault-collections');
-    root.replaceChildren(...vaultCollections.map(collection => {
-      const item = document.createElement('div');
-      item.id = `ws-item-${collection.id}`;
-      item.className = collection.id === currentCollectionId ? 'ws-item active' : 'ws-item';
-      item.draggable = true;
-      item.addEventListener('click', () => selectWorkspace(collection.id, collection.name));
-
-      const label = document.createElement('div');
-      label.className = 'flex items-center gap-2 truncate';
-      const marker = document.createElement('span');
-      marker.className = collection.is_encrypted
-        ? (collection.is_locked ? 'w-1.5 h-1.5 bg-red-500 inline-block' : 'w-1.5 h-1.5 bg-teal-400 inline-block')
-        : 'w-1.5 h-1.5 bg-teal-400 inline-block';
-      const name = document.createElement('span');
-      name.className = 'truncate';
-      name.dataset.workspaceName = '';
-      name.textContent = collection.name;
-      label.append(marker, name);
-      const right = document.createElement('div');
-      right.className = 'flex items-center gap-1 shrink-0';
-      if (collection.is_encrypted) {
-        const lock = document.createElement('button');
-        lock.className = 'text-red-400 hover:text-red-300 text-xs';
-        lock.title = collection.is_locked ? 'Разблокировать' : 'Заблокировать';
-        lock.textContent = collection.is_locked ? '🔒' : '🔓';
-        lock.addEventListener('click', event => {
-          event.stopPropagation();
-          if (collection.is_locked) openUnlockModal(collection.id, collection.name);
-          else lockWorkspace(collection.id);
-        });
-        right.append(lock);
-      } else {
-        // A locked workspace shows the lock only: even the card count is
-        // information the owner chose to keep out of the sidebar.
-        const count = document.createElement('span');
-        count.className = 'text-[9px] text-zinc-600 font-bold';
-        count.textContent = collection.items_count;
-        right.append(count);
-        const move = document.createElement('button');
-        move.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
-        move.title = 'Слить в другой воркспейс…';
-        move.textContent = '⋯';
-        move.addEventListener('click', event => {
-          event.stopPropagation();
-          openMoveMenu(event, collection.id);
-        });
-        right.append(move);
-      }
-      item.append(label, right);
-      return item;
-    }));
+    root.replaceChildren(...vaultSidebarRows(null, 0));
+    renderChildSpaces();
   } catch (error) {
     console.error(error);
     if (!packageMode) showToast(error.message || 'Не удалось обновить статистику', true);
   }
+}
+
+/* Spaces nest, so the sidebar is a tree. Depth is carried by padding rather
+   than nesting the markup, so the drop targets stay a flat list. */
+function vaultSidebarRows(parentId, depth) {
+  const children = (vaultChildIds[parentId === null ? 'root' : parentId] || [])
+    .map(id => vaultCollectionsById[id])
+    .filter(Boolean);
+  const rows = [];
+  children.forEach(collection => {
+    const kids = vaultChildIds[collection.id] || [];
+    rows.push(vaultSidebarRow(collection, depth, kids.length > 0));
+    if (kids.length > 0 && !vaultCollapsedSpaces.has(collection.id)) {
+      rows.push(...vaultSidebarRows(collection.id, depth + 1));
+    }
+  });
+  return rows;
+}
+
+function vaultSidebarRow(collection, depth, hasChildren) {
+  const item = document.createElement('div');
+  item.id = `ws-item-${collection.id}`;
+  item.className = collection.id === currentCollectionId ? 'ws-item active' : 'ws-item';
+  item.dataset.depth = String(depth);
+  item.draggable = true;
+  item.addEventListener('click', () => selectWorkspace(collection.id, collection.name));
+
+  if (hasChildren) {
+    const twisty = document.createElement('button');
+    twisty.className = 'ws-twisty';
+    twisty.textContent = '▾';
+    twisty.title = 'Свернуть';
+    twisty.addEventListener('click', event => {
+      event.stopPropagation();
+      if (vaultCollapsedSpaces.has(collection.id)) vaultCollapsedSpaces.delete(collection.id);
+      else vaultCollapsedSpaces.add(collection.id);
+      document.getElementById('vault-collections').replaceChildren(...vaultSidebarRows(null, 0));
+    });
+    item.appendChild(twisty);
+  } else {
+    const spacer = document.createElement('span');
+    spacer.className = 'ws-twisty-spacer';
+    item.appendChild(spacer);
+  }
+
+  const label = document.createElement('div');
+  label.className = 'flex items-center gap-2 truncate';
+  const marker = document.createElement('span');
+  marker.className = collection.is_encrypted
+    ? (collection.is_locked ? 'w-1.5 h-1.5 bg-red-500 inline-block' : 'w-1.5 h-1.5 bg-teal-400 inline-block')
+    : 'w-1.5 h-1.5 bg-teal-400 inline-block';
+  const name = document.createElement('span');
+  name.className = 'truncate';
+  name.dataset.workspaceName = '';
+  name.textContent = collection.name;
+  label.append(marker, name);
+  const right = document.createElement('div');
+  right.className = 'flex items-center gap-1 shrink-0';
+  if (collection.is_encrypted) {
+    const lock = document.createElement('button');
+    lock.className = 'text-red-400 hover:text-red-300 text-xs';
+    lock.title = collection.is_locked ? 'Разблокировать' : 'Заблокировать';
+    lock.textContent = collection.is_locked ? '🔒' : '🔓';
+    lock.addEventListener('click', event => {
+      event.stopPropagation();
+      if (collection.is_locked) openUnlockModal(collection.id, collection.name);
+      else lockWorkspace(collection.id);
+    });
+    right.append(lock);
+  } else {
+    // A locked workspace shows the lock only: even the card count is
+    // information the owner chose to keep out of the sidebar.
+    const count = document.createElement('span');
+    count.className = 'text-[9px] text-zinc-600 font-bold';
+    count.textContent = collection.items_count;
+    right.append(count);
+    const nest = document.createElement('button');
+    nest.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+    nest.title = 'Вложить в другое пространство…';
+    nest.textContent = '⇥';
+    nest.addEventListener('click', event => {
+      event.stopPropagation();
+      openNestMenu(event, collection.id);
+    });
+    right.append(nest);
+    const move = document.createElement('button');
+    move.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+    move.title = 'Слить в другой воркспейс…';
+    move.textContent = '⋯';
+    move.addEventListener('click', event => {
+      event.stopPropagation();
+      openMoveMenu(event, collection.id);
+    });
+    right.append(move);
+  }
+  item.append(label, right);
+  return item;
 }
 
 async function loadWorkspace({append = false} = {}) {
@@ -2727,7 +2940,7 @@ function renderTiles(items) {
     const escapedUrl = escapeAttr(itemUrl);
 
     return `
-    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}">
+    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}" draggable="true">
       ${displayImg ? `
         <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" onclick="${clickHandler}">
           <img src="${escapeAttr(displayImg)}" class="w-full h-auto max-h-[420px] object-contain block mx-auto" onerror="this.style.display='none'">
@@ -2890,6 +3103,9 @@ function __vaultBindCardStacks() {
     if (tile) tile.classList.remove('drag-over-active');
   });
   grid.addEventListener('drop', function (e) {
+    // A reorder drag also ends on a tile. Stacking must keep its hands off it,
+    // or every reorder would end in a "card is not on screen" complaint.
+    if (vaultReorder && vaultReorder.fromId !== null) return;
     const tile = e.target.closest ? e.target.closest('.tile-card') : null;
     grid.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
     const toId = tile ? Number(tile.dataset.tileId) : NaN;
@@ -3001,6 +3217,9 @@ function __vaultBoot() {
   __vaultAttachRootDrop();
   __vaultBindWorkspaceDrop();
   __vaultBindCardStacks();
+  __vaultBindReorder();
+  __vaultBindReadingOrder();
+  syncEdgeStrips();
   if (!window.__vaultHashBound) {
     window.__vaultHashBound = true;
     window.addEventListener('hashchange', onVaultHashChange);
@@ -3271,7 +3490,230 @@ function submitVcalModal() {
   // No once-guard here on purpose: htmx swaps replace the panel nodes on every
   // visit, so listeners must be bound to the fresh elements each time. Detached
   // nodes (and their listeners) are garbage-collected with the old swap.
-  if (document.readyState === 'loading') {
+// ── READING ORDER: ← / → BETWEEN NOTES ───────────────────────────────────
+// The grid is ordered by the owner's own arrangement, so "the next note" has to
+// mean the next tile in that same order rather than the next id. Everything here
+// works off `currentItems`, which is the page as displayed.
+//
+// On a phone there are no arrow keys, so the same two moves are bound to
+// invisible strips down the sides. They are real buttons with labels: a touch
+// target nobody can see is still announced, focusable and keyboard reachable.
+
+function vaultReadingList() {
+  return currentItems.filter(item => !item.parent_id && !item.is_locked);
+}
+
+function vaultNeighbourOffset(itemId, step) {
+  const list = vaultReadingList();
+  const index = list.findIndex(item => Number(item.id) === Number(itemId));
+  if (index === -1 || list.length < 2) return -1;
+  const target = (index + step + list.length) % list.length;
+  return target === index ? -1 : target;
+}
+
+function vaultActiveItemId() {
+  // Every view already parks the id of the card it is showing in a hidden input,
+  // so "which note am I reading" is answered by the view itself rather than by a
+  // second piece of state that could drift away from it.
+  const containers = {
+    editor: 'view-editor-container',
+    media: 'view-media-container',
+    sheet: 'view-sheet-container',
+    whiteboard: 'view-whiteboard-container',
+  };
+  const container = document.getElementById(containers[activeView]);
+  if (!container || container.classList.contains('hidden')) return null;
+  const field = container.querySelector('input[type="hidden"]');
+  const id = field ? Number(field.value) : NaN;
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function vaultGoNeighbour(step) {
+  const from = vaultActiveItemId();
+  if (!from) return;
+  const list = vaultReadingList();
+  const target = vaultNeighbourOffset(from, step);
+  if (target === -1) return;
+  openVaultItemView(window._vaultCache[list[target].id] || list[target]);
+}
+
+function __vaultBindReadingOrder() {
+  if (window.__vaultReadingOrderBound) return;
+  window.__vaultReadingOrderBound = true;
+
+  document.addEventListener('keydown', (e) => {
+    if (readOnlyMode) return;
+    if (activeView === 'tiles') return;
+    if (e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); vaultGoNeighbour(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); vaultGoNeighbour(1); }
+    else if (e.key === 'Escape') { closeActiveView(); }
+  });
+
+  const strips = document.getElementById('vault-edge-strips');
+  if (!strips) return;
+  strips.querySelectorAll('[data-vault-edge]').forEach(button => {
+    button.addEventListener('click', () => vaultGoNeighbour(Number(button.dataset.vaultEdge)));
+  });
+}
+
+function syncEdgeStrips() {
+  const strips = document.getElementById('vault-edge-strips');
+  if (!strips) return;
+  // Only over a card being read, and only when there is somewhere to go: a strip
+  // that swallows a tap and does nothing is worse than no strip at all.
+  const reading = activeView !== 'tiles' && activeView !== 'locked';
+  const usable = reading && vaultReadingList().length > 1;
+  strips.classList.toggle('hidden', !usable);
+  strips.classList.toggle('vault-edges-touch', window.matchMedia('(pointer: coarse)').matches);
+}
+
+// ── MANUAL ORDER: DRAG A CARD WHERE IT BELONGS ────────────────────────────
+// Dragging the tile body reorders; dragging the bottom grip still builds a
+// stack. The two gestures cannot be confused because the grip is a distinct,
+// deliberately small target and it is the one that keeps its old job.
+//
+// A drop is expressed as the two neighbours it landed between, never as a
+// position number: two tabs that disagree about the order still produce the same
+// result, and the server picks the midpoint.
+
+var vaultReorder = { fromId: null, beforeId: null, afterId: null, marker: null };
+
+function vaultTopTiles() {
+  return Array.from(document.querySelectorAll('#tiles-grid > .tile-card'));
+}
+
+function vaultReorderRefusal() {
+  if (readOnlyMode) return 'В этом режиме порядок не меняется';
+  if (packageMode) return 'В офлайн-пакете порядок не меняется';
+  if (!currentCollectionId) return 'Порядок задаётся внутри пространства';
+  return null;
+}
+
+function vaultClearDropMarker() {
+  if (vaultReorder.marker) vaultReorder.marker.remove();
+  vaultReorder.marker = null;
+  vaultReorder.beforeId = null;
+  vaultReorder.afterId = null;
+  document.querySelectorAll('.vault-drop-before, .vault-drop-after')
+    .forEach(el => el.classList.remove('vault-drop-before', 'vault-drop-after'));
+}
+
+function vaultDropSlotFromPointer(e) {
+  // Which gap in the grid the pointer is over, expressed as the ids on either
+  // side of it. The dragged tile itself is left out: it is the thing moving.
+  const tiles = vaultTopTiles();
+  const list = vaultReadingList().map(item => Number(item.id));
+  let index = tiles.length;
+  for (let i = 0; i < tiles.length; i++) {
+    const rect = tiles[i].getBoundingClientRect();
+    if (e.clientY < rect.top + rect.height / 2) { index = i; break; }
+  }
+  const visible = tiles.map(tile => Number(tile.dataset.tileId))
+    .filter(id => id !== vaultReorder.fromId && list.includes(id));
+  const beforeId = index > 0 ? (visible[index - 1] ?? null) : null;
+  const afterId = visible[index] ?? null;
+  return { beforeId, afterId };
+}
+
+function vaultShowDropMarker(e) {
+  const tiles = vaultTopTiles();
+  const slot = vaultDropSlotFromPointer(e);
+  vaultReorder.beforeId = slot.beforeId;
+  vaultReorder.afterId = slot.afterId;
+  document.querySelectorAll('.vault-drop-before').forEach(el => el.classList.remove('vault-drop-before'));
+
+  const neighbour = slot.beforeId !== null
+    ? tiles.find(tile => Number(tile.dataset.tileId) === slot.beforeId)
+    : null;
+  if (neighbour) {
+    if (!vaultReorder.marker) {
+      vaultReorder.marker = document.createElement('div');
+      vaultReorder.marker.className = 'vault-drop-line';
+    }
+    if (vaultReorder.marker.parentNode !== neighbour.parentNode) neighbour.before(vaultReorder.marker);
+    neighbour.classList.add('vault-drop-before');
+  } else {
+    vaultClearDropMarker();
+  }
+}
+
+async function vaultCommitReorder() {
+  const fromId = vaultReorder.fromId;
+  const beforeId = vaultReorder.beforeId;
+  const afterId = vaultReorder.afterId;
+  vaultReorder.fromId = null;
+  vaultClearDropMarker();
+  if (fromId === null || (beforeId === null && afterId === null)) return;
+  if (beforeId === fromId || afterId === fromId) return;
+
+  const moved = await mutationJson('/api/vault/items/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: fromId, before_id: beforeId, after_id: afterId })
+  }, 'Не удалось изменить порядок карточек');
+  if (!moved) { loadWorkspace(); return; }
+  updateCachedItem(moved);
+  await loadWorkspace();
+}
+
+function __vaultBindReorder() {
+  const grid = document.getElementById('tiles-grid');
+  if (!grid || grid.dataset.vaultReorderBound) return;
+  grid.dataset.vaultReorderBound = '1';
+
+  grid.addEventListener('dragstart', (e) => {
+    // The grip belongs to the stack gesture; it must not start a reorder.
+    if (e.target.closest && e.target.closest('[data-grip]')) return;
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    if (!tile) return;
+    const refusal = vaultReorderRefusal();
+    if (refusal) {
+      e.preventDefault();
+      tile.title = refusal;
+      return;
+    }
+    if (e.target.closest && e.target.closest('a, button, input, textarea, [contenteditable="true"]')) {
+      e.preventDefault();
+      return;
+    }
+    vaultReorder.fromId = Number(tile.dataset.tileId);
+    tile.classList.add('vault-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(vaultReorder.fromId)); } catch (err) {}
+  });
+
+  grid.addEventListener('dragover', (e) => {
+    if (vaultReorder.fromId === null) return;
+    if (vaultDragCardId !== null && vaultDragCardId !== undefined) return;
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    if (!tile) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    vaultShowDropMarker(e);
+  });
+
+  grid.addEventListener('drop', (e) => {
+    if (vaultReorder.fromId === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    vaultCommitReorder();
+  });
+
+  const finish = () => {
+    if (vaultReorder.fromId === null) return;
+    vaultReorder.fromId = null;
+    vaultClearDropMarker();
+    grid.querySelectorAll('.vault-dragging').forEach(el => el.classList.remove('vault-dragging'));
+  };
+  grid.addEventListener('dragend', finish);
+  grid.addEventListener('dragleave', (e) => {
+    if (vaultReorder.fromId !== null && !grid.contains(e.relatedTarget)) vaultClearDropMarker();
+  });
+}
+
+if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bind, { once: true });
   } else {
     bind();
