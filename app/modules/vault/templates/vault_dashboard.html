@@ -3235,6 +3235,229 @@ function __vaultBoot() {
   }
 }
 
+// ── READING ORDER: ← / → BETWEEN NOTES ───────────────────────────────────
+// The grid is ordered by the owner's own arrangement, so "the next note" has to
+// mean the next tile in that same order rather than the next id. Everything here
+// works off `currentItems`, which is the page as displayed.
+//
+// On a phone there are no arrow keys, so the same two moves are bound to
+// invisible strips down the sides. They are real buttons with labels: a touch
+// target nobody can see is still announced, focusable and keyboard reachable.
+
+function vaultReadingList() {
+  return currentItems.filter(item => !item.parent_id && !item.is_locked);
+}
+
+function vaultNeighbourOffset(itemId, step) {
+  const list = vaultReadingList();
+  const index = list.findIndex(item => Number(item.id) === Number(itemId));
+  if (index === -1 || list.length < 2) return -1;
+  const target = (index + step + list.length) % list.length;
+  return target === index ? -1 : target;
+}
+
+function vaultActiveItemId() {
+  // Every view already parks the id of the card it is showing in a hidden input,
+  // so "which note am I reading" is answered by the view itself rather than by a
+  // second piece of state that could drift away from it.
+  const containers = {
+    editor: 'view-editor-container',
+    media: 'view-media-container',
+    sheet: 'view-sheet-container',
+    whiteboard: 'view-whiteboard-container',
+  };
+  const container = document.getElementById(containers[activeView]);
+  if (!container || container.classList.contains('hidden')) return null;
+  const field = container.querySelector('input[type="hidden"]');
+  const id = field ? Number(field.value) : NaN;
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function vaultGoNeighbour(step) {
+  const from = vaultActiveItemId();
+  if (!from) return;
+  const list = vaultReadingList();
+  const target = vaultNeighbourOffset(from, step);
+  if (target === -1) return;
+  openVaultItemView(window._vaultCache[list[target].id] || list[target]);
+}
+
+function __vaultBindReadingOrder() {
+  if (window.__vaultReadingOrderBound) return;
+  window.__vaultReadingOrderBound = true;
+
+  document.addEventListener('keydown', (e) => {
+    if (readOnlyMode) return;
+    if (activeView === 'tiles') return;
+    if (e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); vaultGoNeighbour(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); vaultGoNeighbour(1); }
+    else if (e.key === 'Escape') { closeActiveView(); }
+  });
+
+  const strips = document.getElementById('vault-edge-strips');
+  if (!strips) return;
+  strips.querySelectorAll('[data-vault-edge]').forEach(button => {
+    button.addEventListener('click', () => vaultGoNeighbour(Number(button.dataset.vaultEdge)));
+  });
+}
+
+function syncEdgeStrips() {
+  const strips = document.getElementById('vault-edge-strips');
+  if (!strips) return;
+  // Only over a card being read, and only when there is somewhere to go: a strip
+  // that swallows a tap and does nothing is worse than no strip at all.
+  const reading = activeView !== 'tiles' && activeView !== 'locked';
+  const usable = reading && vaultReadingList().length > 1;
+  strips.classList.toggle('hidden', !usable);
+  strips.classList.toggle('vault-edges-touch', window.matchMedia('(pointer: coarse)').matches);
+}
+
+// ── MANUAL ORDER: DRAG A CARD WHERE IT BELONGS ────────────────────────────
+// Dragging the tile body reorders; dragging the bottom grip still builds a
+// stack. The two gestures cannot be confused because the grip is a distinct,
+// deliberately small target and it is the one that keeps its old job.
+//
+// A drop is expressed as the two neighbours it landed between, never as a
+// position number: two tabs that disagree about the order still produce the same
+// result, and the server picks the midpoint.
+
+var vaultReorder = { fromId: null, beforeId: null, afterId: null, marker: null };
+
+function vaultTopTiles() {
+  return Array.from(document.querySelectorAll('#tiles-grid > .tile-card'));
+}
+
+function vaultReorderRefusal() {
+  if (readOnlyMode) return 'В этом режиме порядок не меняется';
+  if (packageMode) return 'В офлайн-пакете порядок не меняется';
+  if (!currentCollectionId) return 'Порядок задаётся внутри пространства';
+  return null;
+}
+
+function vaultClearDropMarker() {
+  if (vaultReorder.marker) vaultReorder.marker.remove();
+  vaultReorder.marker = null;
+  vaultReorder.beforeId = null;
+  vaultReorder.afterId = null;
+  document.querySelectorAll('.vault-drop-before, .vault-drop-after')
+    .forEach(el => el.classList.remove('vault-drop-before', 'vault-drop-after'));
+}
+
+function vaultDropSlotFromPointer(e) {
+  // Which gap in the grid the pointer is over, expressed as the ids on either
+  // side of it. The dragged tile itself is left out: it is the thing moving.
+  const tiles = vaultTopTiles();
+  const list = vaultReadingList().map(item => Number(item.id));
+  let index = tiles.length;
+  for (let i = 0; i < tiles.length; i++) {
+    const rect = tiles[i].getBoundingClientRect();
+    if (e.clientY < rect.top + rect.height / 2) { index = i; break; }
+  }
+  const visible = tiles.map(tile => Number(tile.dataset.tileId))
+    .filter(id => id !== vaultReorder.fromId && list.includes(id));
+  const beforeId = index > 0 ? (visible[index - 1] ?? null) : null;
+  const afterId = visible[index] ?? null;
+  return { beforeId, afterId };
+}
+
+function vaultShowDropMarker(e) {
+  const tiles = vaultTopTiles();
+  const slot = vaultDropSlotFromPointer(e);
+  vaultReorder.beforeId = slot.beforeId;
+  vaultReorder.afterId = slot.afterId;
+  document.querySelectorAll('.vault-drop-before').forEach(el => el.classList.remove('vault-drop-before'));
+
+  const neighbour = slot.beforeId !== null
+    ? tiles.find(tile => Number(tile.dataset.tileId) === slot.beforeId)
+    : null;
+  if (neighbour) {
+    if (!vaultReorder.marker) {
+      vaultReorder.marker = document.createElement('div');
+      vaultReorder.marker.className = 'vault-drop-line';
+    }
+    if (vaultReorder.marker.parentNode !== neighbour.parentNode) neighbour.before(vaultReorder.marker);
+    neighbour.classList.add('vault-drop-before');
+  } else {
+    vaultClearDropMarker();
+  }
+}
+
+async function vaultCommitReorder() {
+  const fromId = vaultReorder.fromId;
+  const beforeId = vaultReorder.beforeId;
+  const afterId = vaultReorder.afterId;
+  vaultReorder.fromId = null;
+  vaultClearDropMarker();
+  if (fromId === null || (beforeId === null && afterId === null)) return;
+  if (beforeId === fromId || afterId === fromId) return;
+
+  const moved = await mutationJson('/api/vault/items/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: fromId, before_id: beforeId, after_id: afterId })
+  }, 'Не удалось изменить порядок карточек');
+  if (!moved) { loadWorkspace(); return; }
+  updateCachedItem(moved);
+  await loadWorkspace();
+}
+
+function __vaultBindReorder() {
+  const grid = document.getElementById('tiles-grid');
+  if (!grid || grid.dataset.vaultReorderBound) return;
+  grid.dataset.vaultReorderBound = '1';
+
+  grid.addEventListener('dragstart', (e) => {
+    // The grip belongs to the stack gesture; it must not start a reorder.
+    if (e.target.closest && e.target.closest('[data-grip]')) return;
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    if (!tile) return;
+    const refusal = vaultReorderRefusal();
+    if (refusal) {
+      e.preventDefault();
+      tile.title = refusal;
+      return;
+    }
+    if (e.target.closest && e.target.closest('a, button, input, textarea, [contenteditable="true"]')) {
+      e.preventDefault();
+      return;
+    }
+    vaultReorder.fromId = Number(tile.dataset.tileId);
+    tile.classList.add('vault-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(vaultReorder.fromId)); } catch (err) {}
+  });
+
+  grid.addEventListener('dragover', (e) => {
+    if (vaultReorder.fromId === null) return;
+    if (vaultDragCardId !== null && vaultDragCardId !== undefined) return;
+    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
+    if (!tile) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    vaultShowDropMarker(e);
+  });
+
+  grid.addEventListener('drop', (e) => {
+    if (vaultReorder.fromId === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    vaultCommitReorder();
+  });
+
+  const finish = () => {
+    if (vaultReorder.fromId === null) return;
+    vaultReorder.fromId = null;
+    vaultClearDropMarker();
+    grid.querySelectorAll('.vault-dragging').forEach(el => el.classList.remove('vault-dragging'));
+  };
+  grid.addEventListener('dragend', finish);
+  grid.addEventListener('dragleave', (e) => {
+    if (vaultReorder.fromId !== null && !grid.contains(e.relatedTarget)) vaultClearDropMarker();
+  });
+}
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', __vaultBoot, { once: true });
 } else {
@@ -3490,229 +3713,6 @@ function submitVcalModal() {
   // No once-guard here on purpose: htmx swaps replace the panel nodes on every
   // visit, so listeners must be bound to the fresh elements each time. Detached
   // nodes (and their listeners) are garbage-collected with the old swap.
-// ── READING ORDER: ← / → BETWEEN NOTES ───────────────────────────────────
-// The grid is ordered by the owner's own arrangement, so "the next note" has to
-// mean the next tile in that same order rather than the next id. Everything here
-// works off `currentItems`, which is the page as displayed.
-//
-// On a phone there are no arrow keys, so the same two moves are bound to
-// invisible strips down the sides. They are real buttons with labels: a touch
-// target nobody can see is still announced, focusable and keyboard reachable.
-
-function vaultReadingList() {
-  return currentItems.filter(item => !item.parent_id && !item.is_locked);
-}
-
-function vaultNeighbourOffset(itemId, step) {
-  const list = vaultReadingList();
-  const index = list.findIndex(item => Number(item.id) === Number(itemId));
-  if (index === -1 || list.length < 2) return -1;
-  const target = (index + step + list.length) % list.length;
-  return target === index ? -1 : target;
-}
-
-function vaultActiveItemId() {
-  // Every view already parks the id of the card it is showing in a hidden input,
-  // so "which note am I reading" is answered by the view itself rather than by a
-  // second piece of state that could drift away from it.
-  const containers = {
-    editor: 'view-editor-container',
-    media: 'view-media-container',
-    sheet: 'view-sheet-container',
-    whiteboard: 'view-whiteboard-container',
-  };
-  const container = document.getElementById(containers[activeView]);
-  if (!container || container.classList.contains('hidden')) return null;
-  const field = container.querySelector('input[type="hidden"]');
-  const id = field ? Number(field.value) : NaN;
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-function vaultGoNeighbour(step) {
-  const from = vaultActiveItemId();
-  if (!from) return;
-  const list = vaultReadingList();
-  const target = vaultNeighbourOffset(from, step);
-  if (target === -1) return;
-  openVaultItemView(window._vaultCache[list[target].id] || list[target]);
-}
-
-function __vaultBindReadingOrder() {
-  if (window.__vaultReadingOrderBound) return;
-  window.__vaultReadingOrderBound = true;
-
-  document.addEventListener('keydown', (e) => {
-    if (readOnlyMode) return;
-    if (activeView === 'tiles') return;
-    if (e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]')) return;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); vaultGoNeighbour(-1); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); vaultGoNeighbour(1); }
-    else if (e.key === 'Escape') { closeActiveView(); }
-  });
-
-  const strips = document.getElementById('vault-edge-strips');
-  if (!strips) return;
-  strips.querySelectorAll('[data-vault-edge]').forEach(button => {
-    button.addEventListener('click', () => vaultGoNeighbour(Number(button.dataset.vaultEdge)));
-  });
-}
-
-function syncEdgeStrips() {
-  const strips = document.getElementById('vault-edge-strips');
-  if (!strips) return;
-  // Only over a card being read, and only when there is somewhere to go: a strip
-  // that swallows a tap and does nothing is worse than no strip at all.
-  const reading = activeView !== 'tiles' && activeView !== 'locked';
-  const usable = reading && vaultReadingList().length > 1;
-  strips.classList.toggle('hidden', !usable);
-  strips.classList.toggle('vault-edges-touch', window.matchMedia('(pointer: coarse)').matches);
-}
-
-// ── MANUAL ORDER: DRAG A CARD WHERE IT BELONGS ────────────────────────────
-// Dragging the tile body reorders; dragging the bottom grip still builds a
-// stack. The two gestures cannot be confused because the grip is a distinct,
-// deliberately small target and it is the one that keeps its old job.
-//
-// A drop is expressed as the two neighbours it landed between, never as a
-// position number: two tabs that disagree about the order still produce the same
-// result, and the server picks the midpoint.
-
-var vaultReorder = { fromId: null, beforeId: null, afterId: null, marker: null };
-
-function vaultTopTiles() {
-  return Array.from(document.querySelectorAll('#tiles-grid > .tile-card'));
-}
-
-function vaultReorderRefusal() {
-  if (readOnlyMode) return 'В этом режиме порядок не меняется';
-  if (packageMode) return 'В офлайн-пакете порядок не меняется';
-  if (!currentCollectionId) return 'Порядок задаётся внутри пространства';
-  return null;
-}
-
-function vaultClearDropMarker() {
-  if (vaultReorder.marker) vaultReorder.marker.remove();
-  vaultReorder.marker = null;
-  vaultReorder.beforeId = null;
-  vaultReorder.afterId = null;
-  document.querySelectorAll('.vault-drop-before, .vault-drop-after')
-    .forEach(el => el.classList.remove('vault-drop-before', 'vault-drop-after'));
-}
-
-function vaultDropSlotFromPointer(e) {
-  // Which gap in the grid the pointer is over, expressed as the ids on either
-  // side of it. The dragged tile itself is left out: it is the thing moving.
-  const tiles = vaultTopTiles();
-  const list = vaultReadingList().map(item => Number(item.id));
-  let index = tiles.length;
-  for (let i = 0; i < tiles.length; i++) {
-    const rect = tiles[i].getBoundingClientRect();
-    if (e.clientY < rect.top + rect.height / 2) { index = i; break; }
-  }
-  const visible = tiles.map(tile => Number(tile.dataset.tileId))
-    .filter(id => id !== vaultReorder.fromId && list.includes(id));
-  const beforeId = index > 0 ? (visible[index - 1] ?? null) : null;
-  const afterId = visible[index] ?? null;
-  return { beforeId, afterId };
-}
-
-function vaultShowDropMarker(e) {
-  const tiles = vaultTopTiles();
-  const slot = vaultDropSlotFromPointer(e);
-  vaultReorder.beforeId = slot.beforeId;
-  vaultReorder.afterId = slot.afterId;
-  document.querySelectorAll('.vault-drop-before').forEach(el => el.classList.remove('vault-drop-before'));
-
-  const neighbour = slot.beforeId !== null
-    ? tiles.find(tile => Number(tile.dataset.tileId) === slot.beforeId)
-    : null;
-  if (neighbour) {
-    if (!vaultReorder.marker) {
-      vaultReorder.marker = document.createElement('div');
-      vaultReorder.marker.className = 'vault-drop-line';
-    }
-    if (vaultReorder.marker.parentNode !== neighbour.parentNode) neighbour.before(vaultReorder.marker);
-    neighbour.classList.add('vault-drop-before');
-  } else {
-    vaultClearDropMarker();
-  }
-}
-
-async function vaultCommitReorder() {
-  const fromId = vaultReorder.fromId;
-  const beforeId = vaultReorder.beforeId;
-  const afterId = vaultReorder.afterId;
-  vaultReorder.fromId = null;
-  vaultClearDropMarker();
-  if (fromId === null || (beforeId === null && afterId === null)) return;
-  if (beforeId === fromId || afterId === fromId) return;
-
-  const moved = await mutationJson('/api/vault/items/move', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ item_id: fromId, before_id: beforeId, after_id: afterId })
-  }, 'Не удалось изменить порядок карточек');
-  if (!moved) { loadWorkspace(); return; }
-  updateCachedItem(moved);
-  await loadWorkspace();
-}
-
-function __vaultBindReorder() {
-  const grid = document.getElementById('tiles-grid');
-  if (!grid || grid.dataset.vaultReorderBound) return;
-  grid.dataset.vaultReorderBound = '1';
-
-  grid.addEventListener('dragstart', (e) => {
-    // The grip belongs to the stack gesture; it must not start a reorder.
-    if (e.target.closest && e.target.closest('[data-grip]')) return;
-    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
-    if (!tile) return;
-    const refusal = vaultReorderRefusal();
-    if (refusal) {
-      e.preventDefault();
-      tile.title = refusal;
-      return;
-    }
-    if (e.target.closest && e.target.closest('a, button, input, textarea, [contenteditable="true"]')) {
-      e.preventDefault();
-      return;
-    }
-    vaultReorder.fromId = Number(tile.dataset.tileId);
-    tile.classList.add('vault-dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', String(vaultReorder.fromId)); } catch (err) {}
-  });
-
-  grid.addEventListener('dragover', (e) => {
-    if (vaultReorder.fromId === null) return;
-    if (vaultDragCardId !== null && vaultDragCardId !== undefined) return;
-    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
-    if (!tile) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-    vaultShowDropMarker(e);
-  });
-
-  grid.addEventListener('drop', (e) => {
-    if (vaultReorder.fromId === null) return;
-    e.preventDefault();
-    e.stopPropagation();
-    vaultCommitReorder();
-  });
-
-  const finish = () => {
-    if (vaultReorder.fromId === null) return;
-    vaultReorder.fromId = null;
-    vaultClearDropMarker();
-    grid.querySelectorAll('.vault-dragging').forEach(el => el.classList.remove('vault-dragging'));
-  };
-  grid.addEventListener('dragend', finish);
-  grid.addEventListener('dragleave', (e) => {
-    if (vaultReorder.fromId !== null && !grid.contains(e.relatedTarget)) vaultClearDropMarker();
-  });
-}
-
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bind, { once: true });
   } else {

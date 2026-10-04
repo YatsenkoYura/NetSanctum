@@ -125,6 +125,66 @@ class SpaceTreeContractTests(unittest.TestCase):
         self.assertIn("if (record.is_encrypted) return;", menu)
 
 
+class ScopeContractTests(unittest.TestCase):
+    """A function the dashboard calls must live where the call can see it.
+
+    This is here because of a bug that every other test in this file happily
+    walked past: the reading-order and reorder code was pasted inside the mini
+    calendar's `(function vcalBoot() { … })()`, so every symbol it declared was
+    local to the calendar. The page threw `ReferenceError: … is not defined` from
+    `__vaultBoot`, which meant the sidebar never loaded at all — while the text
+    contracts below all passed, because text cannot see scope.
+    """
+
+    CALLER = "__vaultBoot"
+    # Declaration forms, not the names: the call site inside __vaultBoot always
+    # contains the bare name, so searching for it would find the call and pass
+    # even when the declaration is unreachable.
+    CALLED_FROM_BOOT = (
+        "function __vaultBindReorder(",
+        "function __vaultBindReadingOrder(",
+        "function syncEdgeStrips(",
+        "var vaultReorder",
+    )
+
+    def test_everything_boot_calls_is_defined_in_the_same_script_block(self):
+        blocks = script_blocks()
+        caller_blocks = [i for i, block in enumerate(blocks) if self.CALLER in block]
+        self.assertEqual(1, len(caller_blocks), f"{self.CALLER} must be declared in one block only")
+        home = blocks[caller_blocks[0]]
+
+        for declaration in self.CALLED_FROM_BOOT:
+            self.assertIn(declaration, home, f"{declaration} is not in the same block as {self.CALLER}")
+
+    def test_the_block_that_runs_boot_does_not_hide_them_in_a_closure(self):
+        """A declaration inside an IIFE is invisible to the code above it.
+
+        Counted per line and only for real IIFEs — a bare `function () {` is a
+        callback like `.then(function () {`, which closes again and hides nothing.
+        """
+        blocks = script_blocks()
+        home = blocks[next(i for i, b in enumerate(blocks) if self.CALLER in b)]
+
+        depth = 0
+        hidden = []
+        for number, line in enumerate(home.split("\n"), start=1):
+            stripped = line.strip()
+            if re.match(r"^\(function\b", stripped):
+                depth += 1
+            elif re.match(r"^\}\)\(\);$", stripped):
+                depth -= 1
+            for declaration in self.CALLED_FROM_BOOT:
+                if declaration in stripped and depth > 0:
+                    hidden.append(f"{declaration} on line {number}")
+        self.assertEqual([], hidden, "declared inside a closure: " + ", ".join(hidden))
+
+    def test_the_calendar_keeps_its_own_boots_and_stays_last(self):
+        blocks = script_blocks()
+        calendar = [i for i, b in enumerate(blocks) if "(function vcalBoot" in b]
+        caller = next(i for i, b in enumerate(blocks) if self.CALLER in b)
+        self.assertEqual([caller + 1], calendar, "the calendar block must follow the dashboard block")
+
+
 class BootContractTests(unittest.TestCase):
     def test_the_new_bindings_run_on_every_visit(self):
         """htmx navigation does not re-fire DOMContentLoaded, so boot must bind."""
