@@ -352,7 +352,10 @@ class UnlockSessionTests(LeakDetectorTestCase):
         private = bytes.fromhex("aa" * 32)
         from unittest.mock import patch
 
-        with patch.object(sealing, "unwrap_data_key", lambda *a, **k: private):
+        with (
+            patch.object(sealing, "kek_for_wrapper", lambda *a, **k: (b"\x05" * 32, b"\x06" * 16)),
+            patch.object(sealing, "_unwrap_with_kek", lambda *a: private),
+        ):
             return asyncio.run(sealing.unlock_collection(collection, passphrase, token, session=session))
 
     def test_the_stored_session_contains_no_key_material(self):

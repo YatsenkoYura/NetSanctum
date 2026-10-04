@@ -26,10 +26,11 @@ from app.modules.vault.crypto import (
     context_for,
     new_data_key,
     unwrap_data_key,
+    unwrap_data_key as unwrap_stored,
     wrap_data_key,
 )
 from app.modules.vault.models import VaultCollection
-from app.modules.vault.sealing import store_wrapper, unwrap_data_key as unwrap_stored, upgrade_wrapper
+from app.modules.vault.sealing import store_wrapper, upgrade_wrapper
 
 SCRYPT = {"kdf": LEGACY_KDF_NAME, "n": 2**8, "r": 8, "p": 1}
 ARGON = {"t_cost": 1, "m_cost": 8, "parallelism": 1}
@@ -187,11 +188,14 @@ class UnlockUpgradeTests(unittest.TestCase):
     """`unlock_collection` is where the passphrase is proved, so it upgrades."""
 
     def test_unlocking_a_legacy_vault_rewrites_its_wrapper(self):
+        from app.modules.vault.crypto import generate_inbox_keypair
         from app.modules.vault.models import VaultCollection
         from app.modules.vault.sealing import unlock_collection, wrapper_for
 
         secret = new_data_key()
+        _private, public = generate_inbox_keypair()
         row = VaultCollection(id=5, name="Приватное", is_encrypted=True)
+        row.inbox_public_key = __import__("base64").b64encode(public).decode()
         store_wrapper(row, wrap_data_key(secret, "pass", context=context_for("collection", 5), **SCRYPT))
 
         with patch("app.modules.vault.sealing.redis_client") as redis:
@@ -207,10 +211,13 @@ class UnlockUpgradeTests(unittest.TestCase):
     def test_unlocking_without_a_session_changes_nothing(self):
         """The upgrade needs somewhere to write; without a session it is skipped
         rather than half-applied."""
+        from app.modules.vault.crypto import generate_inbox_keypair
         from app.modules.vault.models import VaultCollection
         from app.modules.vault.sealing import unlock_collection
 
+        _private, public = generate_inbox_keypair()
         row = VaultCollection(id=6, name="Приватное", is_encrypted=True)
+        row.inbox_public_key = __import__("base64").b64encode(public).decode()
         store_wrapper(
             row, wrap_data_key(new_data_key(), "pass", context=context_for("collection", 6), **SCRYPT)
         )
@@ -220,3 +227,172 @@ class UnlockUpgradeTests(unittest.TestCase):
             asyncio.run(unlock_collection(row, "pass", "tok"))
 
         self.assertEqual(LEGACY_KDF_NAME, row.key_kdf)
+
+
+class UnlockRateLimitTests(unittest.TestCase):
+    """The KDF is the most expensive thing an unauthenticated caller can trigger:
+    ~350ms and 64 MiB per attempt. The throttle stands before it, not after."""
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        from app.modules.vault import sealing
+
+        self.store: dict = {}
+        store = self.store
+
+        class FakeRedis:
+            async def get(self, key):
+                return store.get(key)
+
+            async def mget(self, keys):
+                return [store.get(key) for key in keys]
+
+            async def incr(self, key):
+                store[key] = int(store.get(key) or 0) + 1
+                return store[key]
+
+            async def expire(self, key, seconds):
+                return True
+
+            async def delete(self, key):
+                store.pop(key, None)
+
+        entered = patch.object(sealing, "redis_client", FakeRedis())
+        entered.start()
+        self.addCleanup(entered.stop)
+
+    def test_five_failures_are_free_and_the_sixth_waits(self):
+        from app.modules.vault import sealing
+
+        async def run():
+            for _ in range(5):
+                await sealing.record_unlock_failure(9, "1.2.3.4")
+                self.assertEqual(0, await sealing.unlock_backoff_seconds(9, "1.2.3.4"))
+            await sealing.record_unlock_failure(9, "1.2.3.4")
+            wait = await sealing.unlock_backoff_seconds(9, "1.2.3.4")
+            self.assertGreaterEqual(wait, 1)
+
+        asyncio.run(run())
+
+    def test_a_correct_passphrase_forgives(self):
+        from app.modules.vault import sealing
+
+        async def run():
+            for _ in range(7):
+                await sealing.record_unlock_failure(9, "1.2.3.4")
+            self.assertGreater(await sealing.unlock_backoff_seconds(9, "1.2.3.4"), 0)
+            await sealing.clear_unlock_failures(9, "1.2.3.4")
+            self.assertEqual(0, await sealing.unlock_backoff_seconds(9, "1.2.3.4"))
+
+        asyncio.run(run())
+
+    def test_the_backoff_is_capped(self):
+        from app.modules.vault import sealing
+
+        async def run():
+            for _ in range(30):
+                await sealing.record_unlock_failure(9, "1.2.3.4")
+            wait = await sealing.unlock_backoff_seconds(9, "1.2.3.4")
+            self.assertLessEqual(wait, sealing.UNLOCK_MAX_BACKOFF_SECONDS)
+
+        asyncio.run(run())
+
+    def test_collections_and_ips_are_counted_separately(self):
+        """Both axes throttle on their own: rotating the collection id does not
+        reset a guessing host, and a hot collection does not let another host
+        guess for free. Only a cold pair is free."""
+        from app.modules.vault import sealing
+
+        async def run():
+            for _ in range(7):
+                await sealing.record_unlock_failure(9, "1.2.3.4")
+            self.assertGreater(await sealing.unlock_backoff_seconds(9, "1.2.3.4"), 0)
+            self.assertGreater(await sealing.unlock_backoff_seconds(10, "1.2.3.4"), 0)
+            self.assertGreater(await sealing.unlock_backoff_seconds(9, "5.6.7.8"), 0)
+            self.assertEqual(0, await sealing.unlock_backoff_seconds(10, "5.6.7.8"))
+
+        asyncio.run(run())
+
+
+class InboxKeyMacFlowTests(unittest.TestCase):
+    """The unlock refuses a swapped inbox key, and heals a missing MAC."""
+
+    def row(self, collection_id=11):
+        from app.modules.vault.crypto import context_for, new_data_key, wrap_data_key
+        from app.modules.vault.models import VaultCollection
+        from app.modules.vault.sealing import store_wrapper
+
+        secret = new_data_key()
+        row = VaultCollection(id=collection_id, name="Приватное", is_encrypted=True)
+        store_wrapper(
+            row,
+            wrap_data_key(
+                secret,
+                "pass",
+                context=context_for("collection", collection_id),
+                t_cost=1,
+                m_cost=8,
+                parallelism=1,
+            ),
+        )
+        return row, secret
+
+    def test_a_swapped_inbox_key_refuses_the_unlock(self):
+        import base64
+        from unittest.mock import AsyncMock, patch
+
+        from app.modules.vault import sealing
+        from app.modules.vault.crypto import VaultUnlockError, generate_inbox_keypair
+
+        row, _secret = self.row()
+        _private, public = generate_inbox_keypair()
+        row.inbox_public_key = base64.b64encode(public).decode()
+        row.inbox_pub_mac = "00" * 32
+
+        with patch.object(sealing, "redis_client", AsyncMock()):
+            with self.assertRaises(VaultUnlockError) as caught:
+                asyncio.run(sealing.unlock_collection(row, "pass", "tok"))
+        self.assertIn("seal", str(caught.exception))
+        self.assertNotIn("passphrase", str(caught.exception))
+
+    def test_a_missing_mac_is_computed_on_the_way_through(self):
+        import base64
+        from unittest.mock import AsyncMock, patch
+
+        from app.modules.vault import sealing
+        from app.modules.vault.crypto import generate_inbox_keypair
+
+        row, _secret = self.row()
+        _private, public = generate_inbox_keypair()
+        row.inbox_public_key = base64.b64encode(public).decode()
+        self.assertIsNone(row.inbox_pub_mac)
+
+        session = AsyncMock()
+        with patch.object(sealing, "redis_client", AsyncMock()):
+            asyncio.run(sealing.unlock_collection(row, "pass", "tok", session=session))
+
+        self.assertIsNotNone(row.inbox_pub_mac)
+        session.commit.assert_awaited()
+
+    def test_the_fingerprint_is_served_with_the_collection(self):
+        import base64
+
+        from app.modules.vault.crypto import generate_inbox_keypair, inbox_pub_fingerprint
+        from app.modules.vault.models import VaultCollection
+        from app.modules.vault.router import _serialize_collection
+
+        _private, public = generate_inbox_keypair()
+        import datetime
+
+        row = VaultCollection(
+            id=12,
+            name="Приватное",
+            is_encrypted=True,
+            public_name="П",
+            color="teal",
+            created_at=datetime.datetime(2026, 1, 1),
+            inbox_public_key=base64.b64encode(public).decode(),
+        )
+        payload = _serialize_collection(row, locked=True)
+        self.assertEqual(inbox_pub_fingerprint(public), payload["key_fingerprint"])

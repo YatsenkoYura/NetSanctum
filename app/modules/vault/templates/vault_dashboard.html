@@ -292,7 +292,7 @@
         </div>
         <div class="flex items-center gap-1 shrink-0">
           {% if c.is_encrypted %}
-          <button onclick="event.stopPropagation(); {{ 'openUnlockModal(' ~ c.id|int ~ ", this.closest(\'.ws-item\').querySelector(\'[data-workspace-name]\').textContent)" if c.is_locked else 'lockWorkspace(' ~ c.id|int ~ ')' }}"
+          <button onclick="event.stopPropagation(); {{ 'openUnlockModal(' ~ c.id|int ~ ", this.closest('.ws-item').querySelector('[data-workspace-name]').textContent, '" ~ (c.key_fingerprint or '') ~ "')" if c.is_locked else 'lockWorkspace(' ~ c.id|int ~ ')' }}"
                   class="text-red-400 hover:text-red-300 text-xs" title="{{ 'Разблокировать' if c.is_locked else 'Заблокировать' }}">{{ '🔒' if c.is_locked else '🔓' }}</button>
           {% else %}
           <span class="text-[9px] text-zinc-600 font-bold">{{ c.items_count or 0 }}</span>
@@ -646,6 +646,10 @@
       <p class="text-[10px] text-zinc-500 leading-relaxed">
         Воркспейс <b class="text-white" id="unlock-alias"></b>. Содержимое зашифровано.
       </p>
+      <p class="text-[10px] text-zinc-600 leading-relaxed">
+        Ключ: <span class="text-zinc-400 font-mono" id="unlock-fingerprint">…</span>.
+        Сверьте с расширением перед вводом пароля.
+      </p>
       <input type="password" id="unlock-passphrase-input" autocomplete="current-password" placeholder="Пароль"
              onkeydown="if(event.key==='Enter') submitUnlock()"
              class="w-full bg-black border border-zinc-800 focus:border-red-400 px-3 py-1.5 text-xs text-white focus:outline-none">
@@ -780,7 +784,7 @@ async function mutationJson(url, options, fallback) {
     // unlock dialog instead of reporting it as a generic failure.
     if (error.status === 423) {
       showToast(error.message || 'Разблокируйте воркспейс', true);
-      openUnlockModal(currentCollectionId, null);
+      openUnlockModal(currentCollectionId, null, null);
       return null;
     }
     showToast(error.message || fallback, true);
@@ -2174,9 +2178,10 @@ async function closeActiveView() {
 
 let unlockTarget = null;
 
-function openUnlockModal(collectionId, alias) {
+function openUnlockModal(collectionId, alias, fingerprint) {
   unlockTarget = collectionId;
   document.getElementById('unlock-alias').textContent = alias || 'зашифрован';
+  document.getElementById('unlock-fingerprint').textContent = fingerprint || '…';
   document.getElementById('unlock-passphrase-input').value = '';
   document.getElementById('unlock-error').classList.add('hidden');
   document.getElementById('modal-unlock').classList.remove('hidden');
@@ -2950,7 +2955,7 @@ function vaultSidebarRow(collection, depth, hasChildren) {
     lock.textContent = collection.is_locked ? '🔒' : '🔓';
     lock.addEventListener('click', event => {
       event.stopPropagation();
-      if (collection.is_locked) openUnlockModal(collection.id, collection.name);
+      if (collection.is_locked) openUnlockModal(collection.id, collection.name, collection.key_fingerprint);
       else lockWorkspace(collection.id);
     });
     right.append(lock);

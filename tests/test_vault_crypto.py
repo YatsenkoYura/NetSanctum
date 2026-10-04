@@ -132,6 +132,115 @@ class Argon2idTests(unittest.TestCase):
             unwrap_data_key(argon, "same words")
 
 
+class WrapAadTests(unittest.TestCase):
+    """The wrapper is bound to what it was sealed with, not just to the passphrase."""
+
+    def test_a_wrapper_from_before_the_versioned_aad_still_opens(self):
+        """Rows sealed before R2 bound only `context`. They must keep opening with
+        the passphrase they were created with — and the next unlock re-wraps them."""
+        import base64
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from app.modules.vault.crypto import (
+            DEK_CONTEXT,
+            WRAPPED_PREFIX,
+            WrappedKey,
+            derive_kek,
+            new_data_key,
+            unwrap_data_key,
+        )
+
+        dek = new_data_key()
+        salt = b"\x00" * 16
+        kek = derive_kek("old words", salt, kdf="argon2id", t_cost=1, m_cost=8, parallelism=1)
+        nonce = b"\x01" * 12
+        blob = nonce + AESGCM(kek).encrypt(nonce, dek, DEK_CONTEXT)
+        legacy = WrappedKey(
+            salt=base64.urlsafe_b64encode(salt).decode(),
+            wrapped=WRAPPED_PREFIX + base64.urlsafe_b64encode(blob).decode(),
+            kdf="argon2id",
+            wrap_version=1,
+            t_cost=1,
+            m_cost=8,
+            parallelism=1,
+        )
+        self.assertEqual(dek, unwrap_data_key(legacy, "old words"))
+
+    def test_renaming_the_kdf_breaks_the_wrapper(self):
+        wrapped = wrap_data_key(new_data_key(), "pass", **FAST)
+        object.__setattr__(wrapped, "kdf", LEGACY_KDF_NAME)
+        with self.assertRaises(VaultUnlockError):
+            unwrap_data_key(wrapped, "pass")
+
+    def test_changing_the_stored_cost_breaks_the_wrapper(self):
+        """The cost in the database is untrusted: accepting a lowered one would
+        derive a different key and report a wrong passphrase for a correct one."""
+        # t_cost, not m_cost: halving the memory below argon2's floor is refused
+        # by the library itself, which proves nothing about the binding.
+        wrapped = wrap_data_key(new_data_key(), "pass", **FAST)
+        object.__setattr__(wrapped, "t_cost", wrapped.t_cost + 1)
+        with self.assertRaises(VaultUnlockError):
+            unwrap_data_key(wrapped, "pass")
+
+    def test_the_canonical_params_have_one_spelling(self):
+        from app.modules.vault.crypto import canonical_params
+
+        self.assertEqual(
+            canonical_params({"m_cost": 8, "t_cost": 1}),
+            canonical_params({"t_cost": 1, "m_cost": 8}),
+        )
+
+
+class InboxKeyMacTests(unittest.TestCase):
+    """The public inbox key has no passphrase binding it — until the MAC.
+
+    A rewritten public key diverts every blind write without touching the wrapper,
+    so the owner's own unlock keeps working. Nothing to notice, unless someone
+    checks.
+    """
+
+    def mac(self, kek=None):
+        from app.modules.vault.crypto import generate_inbox_keypair, inbox_pub_mac
+
+        _private, public = generate_inbox_keypair()
+        kek = kek or b"\x02" * 32
+        return public, inbox_pub_mac(kek, public, 7)
+
+    def test_the_mac_verifies(self):
+        from app.modules.vault.crypto import verify_inbox_pub_mac
+
+        public, mac = self.mac()
+        self.assertTrue(verify_inbox_pub_mac(b"\x02" * 32, public, 7, mac))
+
+    def test_a_swapped_public_key_fails(self):
+        from app.modules.vault.crypto import generate_inbox_keypair, verify_inbox_pub_mac
+
+        _private, other = generate_inbox_keypair()
+        _public, mac = self.mac()
+        self.assertFalse(verify_inbox_pub_mac(b"\x02" * 32, other, 7, mac))
+
+    def test_a_copied_mac_fails_for_another_collection(self):
+        from app.modules.vault.crypto import verify_inbox_pub_mac
+
+        public, mac = self.mac()
+        self.assertFalse(verify_inbox_pub_mac(b"\x02" * 32, public, 8, mac))
+
+    def test_a_missing_mac_is_not_a_pass(self):
+        from app.modules.vault.crypto import verify_inbox_pub_mac
+
+        public, _mac = self.mac()
+        self.assertFalse(verify_inbox_pub_mac(b"\x02" * 32, public, 7, None))
+
+    def test_the_fingerprint_is_stable_and_short(self):
+        from app.modules.vault.crypto import inbox_pub_fingerprint
+
+        public, _mac = self.mac()
+        first, second = inbox_pub_fingerprint(public), inbox_pub_fingerprint(public)
+        self.assertEqual(first, second)
+        self.assertEqual(16, len(first))
+
+
 class SealTests(unittest.TestCase):
     def test_a_sealed_value_round_trips(self):
         dek = new_data_key()

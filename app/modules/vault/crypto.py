@@ -13,14 +13,18 @@ of every image and every video byte in the collection.
 
 import base64
 import hashlib
+import hmac
+import json
 import os
 from dataclasses import dataclass, replace
 from typing import Any
 
 import argon2
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
 WRAPPED_PREFIX = "nsk:v1:"
@@ -124,6 +128,7 @@ class WrappedKey:
     salt: str
     wrapped: str
     kdf: str = KDF_NAME
+    wrap_version: int = 1
     # Argon2id
     t_cost: int = ARGON2_T_COST
     m_cost: int = ARGON2_M_COST
@@ -142,6 +147,90 @@ class WrappedKey:
         if self.kdf == LEGACY_KDF_NAME:
             return {"n": self.n, "r": self.r, "p": self.p}
         return {"t_cost": self.t_cost, "m_cost": self.m_cost, "parallelism": self.parallelism}
+
+
+# The wrapper envelope version. v1 bound the ciphertext to `context` alone; v2
+# binds it to the KDF name, its canonical parameters and the salt as well. A wrapper
+# that silently accepted a different cost than it was sealed with would derive a
+# different key and report a wrong passphrase for a correct one.
+WRAP_VERSION = 2
+WRAP_AAD_PREFIX = b"ns:vault:wrap:v2"
+
+
+def canonical_params(params: dict[str, int]) -> bytes:
+    """The cost as bytes that cannot be spelled two ways.
+
+    `sort_keys` and compact separators fix the one representation `json.loads` must
+    produce for `json.dumps` to verify against. A dict written `{t,m}` and read as
+    `{m,t}` is the same cost and a different AAD without this.
+    """
+    return json.dumps(params, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def wrap_aad(context: bytes, *, kdf: str, params: dict[str, int], salt: bytes) -> bytes:
+    """What v2 binds the wrapped key to. `context` already carries the collection."""
+    return (
+        WRAP_AAD_PREFIX
+        + b"|"
+        + context
+        + b"|"
+        + kdf.encode("utf-8")
+        + b"|"
+        + canonical_params(params)
+        + b"|"
+        + salt
+    )
+
+
+PUB_MAC_INFO = b"ns:vault:pub-mac:v1"
+
+
+def kek_for_wrapper(wrapped: WrappedKey, passphrase: str) -> tuple[bytes, bytes]:
+    """The KEK and the salt for a wrapper, derived at its stored cost.
+
+    Reading the MAC needs the KEK without unwrapping anything, so this splits the
+    derivation out of `unwrap_data_key` rather than duplicating it.
+    """
+    salt = _unb64(wrapped.salt)
+    return derive_kek(passphrase, salt, kdf=wrapped.kdf, **wrapped.params()), salt
+
+
+def inbox_pub_mac(kek: bytes, public_key: bytes, collection_id: int) -> str:
+    """Authenticate the inbox public key under a key derived from the KEK.
+
+    The MAC key is not the KEK itself: the KEK unwraps the inbox key, the MAC key
+    only vouches for the public half. Separating them means a verifier needs no
+    unwrapping power.
+    """
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"ns:vault:pub-mac:salt:v1",
+        info=PUB_MAC_INFO,
+    )
+    mac_key = hkdf.derive(kek)
+    tag = hmac.new(mac_key, public_key + b"|" + str(collection_id).encode("utf-8"), hashlib.sha256)
+    return tag.hexdigest()
+
+
+def verify_inbox_pub_mac(kek: bytes, public_key: bytes, collection_id: int, mac: str | None) -> bool:
+    """Whether the stored public key is the one the passphrase sealed.
+
+    `compare_digest`, not `==`: the comparison itself must not leak where two tags
+    first differ. A missing MAC is not a failure here — rows from before the MAC
+    existed get theirs on the way through the unlock that reads them.
+    """
+    if not mac:
+        return False
+    expected = inbox_pub_mac(kek, public_key, collection_id)
+    return hmac.compare_digest(expected, mac)
+
+
+def inbox_pub_fingerprint(public_key: bytes) -> str:
+    """The first 16 hex of the public key's SHA-256, for checking against the
+    extension. Short enough to compare by eye, long enough that a lookalike key
+    does not happen by accident."""
+    return hashlib.sha256(public_key).hexdigest()[:16]
 
 
 def _b64(raw: bytes) -> str:
@@ -192,11 +281,12 @@ def wrap_data_key(
         raise VaultUnlockError(f"Unsupported key derivation {kdf!r}")
     # The wrapper is built first, so the cost it carries is the cost used. Deriving
     # with one set of parameters and persisting another would lock the owner out.
-    wrapper = WrappedKey(salt="", wrapped="", kdf=kdf, **cost)
+    wrapper = WrappedKey(salt="", wrapped="", kdf=kdf, wrap_version=WRAP_VERSION, **cost)
     salt = os.urandom(SALT_BYTES)
     kek = derive_kek(passphrase, salt, **wrapper.params(), kdf=wrapper.kdf)
     nonce = os.urandom(12)
-    blob = nonce + AESGCM(kek).encrypt(nonce, dek, context)
+    aad = wrap_aad(context, kdf=wrapper.kdf, params=wrapper.params(), salt=salt)
+    blob = nonce + AESGCM(kek).encrypt(nonce, dek, aad)
     return replace(wrapper, salt=_b64(salt), wrapped=WRAPPED_PREFIX + _b64(blob))
 
 
@@ -209,12 +299,23 @@ def unwrap_data_key(wrapped: WrappedKey, passphrase: str, *, context: bytes = DE
         raise VaultUnlockError(f"Unsupported key derivation {wrapped.kdf!r}")
     if not wrapped.wrapped.startswith(WRAPPED_PREFIX):
         raise VaultUnlockError("The stored key wrapper is malformed")
-    kek = derive_kek(passphrase, _unb64(wrapped.salt), kdf=wrapped.kdf, **wrapped.params())
+    kek, salt = kek_for_wrapper(wrapped, passphrase)
+    return _unwrap_with_kek(wrapped, kek, salt, context)
+
+
+def _unwrap_with_kek(wrapped: WrappedKey, kek: bytes, salt: bytes, context: bytes) -> bytes:
+    """Open a wrapper with an already-derived KEK, so one unlock derives once."""
     raw = _unb64(wrapped.wrapped.removeprefix(WRAPPED_PREFIX))
     if len(raw) <= 12:
         raise VaultUnlockError("The stored key wrapper is malformed")
+    if wrapped.wrap_version >= WRAP_VERSION:
+        aad = wrap_aad(context, kdf=wrapped.kdf, params=wrapped.params(), salt=salt)
+    else:
+        # Wrappers from before the versioned AAD bound only `context`. They open
+        # as they always did, and the next unlock re-wraps them into v2.
+        aad = context
     try:
-        dek = AESGCM(kek).decrypt(raw[:12], raw[12:], context)
+        dek = AESGCM(kek).decrypt(raw[:12], raw[12:], aad)
     except InvalidTag as exc:
         raise VaultUnlockError("Wrong passphrase for this Vault") from exc
     if len(dek) != DEK_BYTES:

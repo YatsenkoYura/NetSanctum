@@ -12,6 +12,7 @@ tile at all. Everything the owner wrote — title, body, caption, tags, links, t
 embedded picture — moves inside one AEAD blob.
 """
 
+import asyncio
 import datetime
 import hashlib
 import json
@@ -24,7 +25,7 @@ import redis.asyncio as aioredis
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.config import get_settings
 from app.modules.vault.crypto import (
@@ -36,16 +37,20 @@ from app.modules.vault.crypto import (
     SCRYPT_N,
     SCRYPT_P,
     SCRYPT_R,
+    WRAP_VERSION,
     SealedWrite,
     VaultUnlockError,
     WrappedKey,
+    _unwrap_with_kek,
     check_passphrase_strength,
     context_for,
     generate_inbox_keypair,
+    inbox_pub_mac as crypto_inbox_pub_mac,
     is_sealed,
+    kek_for_wrapper,
     open_from_inbox,
     seal_for_inbox,
-    unwrap_data_key,
+    verify_inbox_pub_mac,
     wrap_data_key,
 )
 from app.modules.vault.models import VaultCollection, VaultItem
@@ -58,6 +63,19 @@ redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_response
 # exists in the page's memory, so reloading asks for the passphrase again, and a
 # token from one tab cannot open the vault in another.
 UNLOCK_TTL_SECONDS = 15 * 60
+
+
+# How many passphrases may be stretched at once. Argon2id at the chosen cost holds
+# ~64 MiB per derivation, so this bounds both memory and CPU: without it every
+# /unlock request is 64 MiB an attacker can spend, and a handful of concurrent ones
+# is a denial of service the application invited.
+def _kdf_concurrency() -> int:
+    import os
+
+    return max(2, min(8, (os.cpu_count() or 2) * 2))
+
+
+_KDF_GATE = asyncio.Semaphore(_kdf_concurrency())
 
 # What a sealed thing is called before anyone has unlocked it.
 DEFAULT_SEALED_ALIAS = "Зашифрованный Vault"
@@ -106,6 +124,58 @@ SESSION_RECORD_VERSION = 1
 # absolute part is `issued_at` inside the record, and it is final: two hours after
 # the unlock the tab asks for the passphrase again, however active it was.
 SESSION_ABSOLUTE_TTL_SECONDS = 2 * 60 * 60
+
+# Unlock throttling. Argon2id at the chosen cost is ~350ms and 64 MiB per attempt,
+# so an unauthenticated endpoint that derives on every request is both a guessing
+# oracle and a denial of service. Failures are counted per collection and per IP;
+# past the threshold the KDF never runs and the caller gets a 429 instead.
+# Sleeping inside the endpoint would hold a worker for the same time for free, so
+# the pause is a Retry-After, not a sleep.
+UNLOCK_FAIL_PREFIX = "vault_unlock_fail"
+UNLOCK_FAIL_TTL_SECONDS = 15 * 60
+UNLOCK_FREE_ATTEMPTS = 5
+UNLOCK_MAX_BACKOFF_SECONDS = 300
+
+
+def _unlock_fail_keys(collection_id: int, client_ip: str) -> tuple[str, str]:
+    return (
+        f"{UNLOCK_FAIL_PREFIX}:coll:{collection_id}",
+        f"{UNLOCK_FAIL_PREFIX}:ip:{client_ip or 'unknown'}",
+    )
+
+
+async def unlock_backoff_seconds(collection_id: int, client_ip: str) -> int:
+    """How long this caller must wait before the KDF may run for them, if at all."""
+    keys = _unlock_fail_keys(collection_id, client_ip)
+    counts = await redis_client.mget(keys)
+    try:
+        failures = max(int(count or 0) for count in counts)
+    except (TypeError, ValueError):
+        return 0
+    if failures <= UNLOCK_FREE_ATTEMPTS:
+        return 0
+    return min(UNLOCK_MAX_BACKOFF_SECONDS, 2 ** (failures - UNLOCK_FREE_ATTEMPTS - 1))
+
+
+async def record_unlock_failure(collection_id: int, client_ip: str) -> None:
+    """Count a failed unlock on both axes, each expiring on its own."""
+    for key in _unlock_fail_keys(collection_id, client_ip):
+        try:
+            count = await redis_client.incr(key)
+            if count == 1:
+                await redis_client.expire(key, UNLOCK_FAIL_TTL_SECONDS)
+        except Exception:
+            logger.debug("could not record a vault unlock failure", exc_info=True)
+
+
+async def clear_unlock_failures(collection_id: int, client_ip: str) -> None:
+    """A correct passphrase forgives the failures before it: forgetting a password
+    is not an attack, and the counter must not punish it as one."""
+    for key in _unlock_fail_keys(collection_id, client_ip):
+        try:
+            await redis_client.delete(key)
+        except Exception:
+            logger.debug("could not clear vault unlock failures", exc_info=True)
 
 
 def _session_record_key(unlock_token: str, collection_id: int) -> bytes:
@@ -187,6 +257,7 @@ def wrapper_for(collection: VaultCollection) -> WrappedKey:
         salt=collection.key_salt or "",
         wrapped=collection.wrapped_key or "",
         kdf=kdf,
+        wrap_version=int(params.get("wrap", 1)),
         t_cost=int(params.get("t_cost", ARGON2_T_COST)),
         m_cost=int(params.get("m_cost", ARGON2_M_COST)),
         parallelism=int(params.get("parallelism", ARGON2_PARALLELISM)),
@@ -197,11 +268,16 @@ def wrapper_for(collection: VaultCollection) -> WrappedKey:
 
 
 def store_wrapper(collection: VaultCollection, wrapped: WrappedKey) -> None:
-    """Persist a wrapper and the cost parameters that go with it."""
+    """Persist a wrapper and the cost parameters that go with it.
+
+    The envelope version travels inside `key_kdf_params` rather than a new column:
+    it is a property of how the wrapper was sealed, exactly like the cost, and rows
+    written before it existed simply carry no version — which reads as v1.
+    """
     collection.key_salt = wrapped.salt
     collection.wrapped_key = wrapped.wrapped
     collection.key_kdf = wrapped.kdf
-    collection.key_kdf_params = wrapped.params()
+    collection.key_kdf_params = {**wrapped.params(), "wrap": wrapped.wrap_version}
 
 
 async def create_sealed_collection(
@@ -250,6 +326,10 @@ async def create_sealed_collection(
     )
     store_wrapper(collection, wrapped)
     collection.inbox_public_key = b64encode(public_key).decode("ascii")
+    # Bind the public key to the passphrase while the KEK is in hand. Recomputing
+    # it later needs the KEK again, which is exactly what an unlock recovers.
+    kek, _salt = kek_for_wrapper(wrapped, passphrase)
+    collection.inbox_pub_mac = crypto_inbox_pub_mac(kek, public_key, collection.id)
     # The description goes in under the public key too, so creating a sealed
     # collection never needs its own private key in memory.
     seal_collection_fields(collection, public_key)
@@ -280,11 +360,14 @@ async def unlock_collection(
     before the change keep their old cost parameters until their owner renames
     them, which is not a thing anyone does.
     """
-    private_key = unwrap_data_key(
-        wrapper_for(collection),
-        passphrase,
-        context=context_for("collection", collection.id),
-    )
+    wrapped = wrapper_for(collection)
+    context = context_for("collection", collection.id)
+    # The derivation is CPU-bound and holds tens of megabytes: it runs off the
+    # event loop, and the gate keeps concurrent unlocks from multiplying that.
+    async with _KDF_GATE:
+        kek, salt = await asyncio.to_thread(kek_for_wrapper, wrapped, passphrase)
+        private_key = _unwrap_with_kek(wrapped, kek, salt, context)
+    await verify_collection_key(collection, kek, session)
     token = unlock_token or secrets.token_urlsafe(32)
     now = int(datetime.datetime.now(datetime.UTC).timestamp())
     await redis_client.set(
@@ -298,6 +381,31 @@ async def unlock_collection(
         if collection_public_key is not None:
             await seal_collection_plaintext(session, collection, collection_public_key)
     return token
+
+
+async def verify_collection_key(collection: VaultCollection, kek: bytes, session=None) -> None:
+    """Check the inbox public key against the passphrase, or refuse the unlock.
+
+    A rewritten public key diverts every blind write without touching the wrapper,
+    so the unlock itself would still succeed — this is the one place that can catch
+    it, because it is the one place the KEK exists. A mismatch is logged as an
+    attack, not as a wrong passphrase: the passphrase just proved itself correct.
+    """
+    stored = collection.inbox_pub_mac
+    public_key = inbox_public_key(collection)
+    if public_key is None:
+        raise VaultUnlockError("This Vault has no inbox key")
+    if stored:
+        if verify_inbox_pub_mac(kek, public_key, collection.id, stored):
+            return
+        logger.warning(
+            "Vault %s inbox public key does not match its MAC: refusing unlock",
+            collection.id,
+        )
+        raise VaultUnlockError("The Vault's inbox key does not match its seal")
+    if session is not None:
+        collection.inbox_pub_mac = crypto_inbox_pub_mac(kek, public_key, collection.id)
+        await session.commit()
 
 
 async def seal_collection_plaintext(session, collection: VaultCollection, public_key: bytes) -> bool:
@@ -326,15 +434,38 @@ async def upgrade_wrapper(session, collection: VaultCollection, private_key: byt
 
     A failure here must not cost the owner their unlock — they have already proved
     the passphrase — so it is logged and the old wrapper stays put.
+
+    The write is compare-and-swap on the salt the unlock read: two tabs unlocking
+    the same vault at once both derive, both write, and the loser's commit would
+    otherwise resurrect the old cost over the winner's new one. Losing this race
+    is the correct outcome, and it is silent — the row already says what it needs.
     """
-    if (collection.key_kdf or LEGACY_KDF_NAME) == KDF_NAME:
+    params = collection.key_kdf_params or {}
+    if (collection.key_kdf or LEGACY_KDF_NAME) == KDF_NAME and int(params.get("wrap", 1)) >= WRAP_VERSION:
         return False
     try:
-        store_wrapper(
-            collection,
-            wrap_data_key(private_key, passphrase, context=context_for("collection", collection.id)),
+        wrapped = wrap_data_key(private_key, passphrase, context=context_for("collection", collection.id))
+        old_salt = collection.key_salt
+        result = await session.execute(
+            update(VaultCollection)
+            .where(VaultCollection.id == collection.id, VaultCollection.key_salt == old_salt)
+            .values(
+                key_salt=wrapped.salt,
+                wrapped_key=wrapped.wrapped,
+                key_kdf=wrapped.kdf,
+                key_kdf_params={**wrapped.params(), "wrap": wrapped.wrap_version},
+            )
         )
+        rowcount = getattr(result, "rowcount", 1)
+        if isinstance(rowcount, int) and rowcount < 1:
+            await session.rollback()
+            return False
         await session.commit()
+        # The row changed through the UPDATE, not through the object: sync it, so a
+        # caller holding the collection sees what the database now says. Only after
+        # the commit — on failure the old values must stay put.
+        store_wrapper(collection, wrapped)
+        await session.refresh(collection)
     except Exception:
         logger.exception("Could not upgrade the key wrapper for Vault %s", collection.id)
         await session.rollback()

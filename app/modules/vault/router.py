@@ -17,7 +17,7 @@ from app.core.security import get_current_bearer_user, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
 from app.modules.vault.capabilities import VAULT_PACKAGE_ID
-from app.modules.vault.crypto import VaultUnlockError, WeakPassphraseError
+from app.modules.vault.crypto import VaultUnlockError, WeakPassphraseError, inbox_pub_fingerprint
 from app.modules.vault.images import (
     LOCAL_IMAGE_PREFIXES,
     decode_data_image,
@@ -48,9 +48,11 @@ from app.modules.vault.sealing import (
     DEFAULT_SEALED_ALIAS,
     SEALED_FIELDS,
     VaultMoveError,
+    clear_unlock_failures,
     collection_for,
     create_sealed_collection,
     data_key_for,
+    inbox_public_key,
     is_sealed_collection,
     lock_collection,
     locked_collection_ids,
@@ -58,9 +60,11 @@ from app.modules.vault.sealing import (
     open_collection_payloads,
     open_item,
     open_items,
+    record_unlock_failure,
     require_inbox_public_key,
     seal_item,
     sealed_collection_ids,
+    unlock_backoff_seconds,
     unlock_collection,
     update_sealed_item,
 )
@@ -802,6 +806,10 @@ def _serialize_collection(collection, *, locked: bool, opened: dict | None = Non
     payload["is_encrypted"] = bool(collection.is_encrypted)
     payload["public_name"] = alias if collection.is_encrypted else None
     payload["is_locked"] = bool(locked)
+    public_key = inbox_public_key(collection)
+    payload["key_fingerprint"] = (
+        inbox_pub_fingerprint(public_key) if public_key is not None and collection.is_encrypted else None
+    )
     if locked:
         payload["name"] = alias
         payload["description"] = None
@@ -816,6 +824,7 @@ def _serialize_collection(collection, *, locked: bool, opened: dict | None = Non
 async def unlock_collection_route(
     coll_id: int,
     body: VaultUnlockRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
     unlock_token: str = UNLOCK_HEADER,
@@ -830,10 +839,22 @@ async def unlock_collection_route(
         raise HTTPException(status_code=404, detail="Vault not found")
     if not is_sealed_collection(collection):
         raise HTTPException(status_code=400, detail="This Vault is not sealed")
+    client_ip = request.client.host if request.client else ""
+    # Before the KDF, not after: each derivation is ~350ms and 64 MiB, so counting
+    # failures after deriving would let anyone spend the server's memory by guessing.
+    wait = await unlock_backoff_seconds(collection.id, client_ip)
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много попыток — подождите перед следующей",
+            headers={"Retry-After": str(wait)},
+        )
     try:
         token = await unlock_collection(collection, body.passphrase, unlock_token, session=db)
     except VaultUnlockError as exc:
+        await record_unlock_failure(collection.id, client_ip)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    await clear_unlock_failures(collection.id, client_ip)
     return VaultUnlockResponse(
         collection_id=collection.id,
         name=collection.name,

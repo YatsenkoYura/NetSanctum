@@ -29,6 +29,10 @@ class VaultCollection(Base):
     # Blind-write inbox. The public half is readable on purpose: it is what lets
     # the browser extension seal a capture without ever holding the passphrase.
     inbox_public_key = Column(String, nullable=True)
+    # Binds the public inbox key to the passphrase. Without it a rewritten public
+    # key silently diverts every blind write into other hands, and the owner's own
+    # unlock keeps working — there is nothing to notice.
+    inbox_pub_mac = Column(String, nullable=True)
     # A sealed collection's own metadata, in the same shape an item has. `name` is
     # not here: the sidebar shows `public_name` while the collection is locked, and a
     # locked collection has no name to show anybody.

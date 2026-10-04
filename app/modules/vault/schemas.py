@@ -131,6 +131,10 @@ class VaultCollectionResponse(BaseModel):
     is_encrypted: bool = False
     public_name: str | None = None
     is_locked: bool = False
+    # First 16 hex of SHA-256 over the inbox public key. Public by design — the key
+    # itself is public — so the owner can compare it against the extension's copy
+    # before typing the passphrase into a page that might show a swapped key.
+    key_fingerprint: str | None = None
 
     class Config:
         from_attributes = True

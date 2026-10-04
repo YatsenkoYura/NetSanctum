@@ -83,11 +83,12 @@ class PerTabUnlockTests(unittest.TestCase):
             patch.object(sealing, "redis_client", self.redis),
             patch.object(
                 sealing,
-                "unwrap_data_key",
-                lambda wrapped, passphrase, **kwargs: (
-                    self.private_key if passphrase == "верный" else _wrong()
+                "kek_for_wrapper",
+                lambda wrapped, passphrase: (
+                    (b"\x03" * 32, b"\x04" * 16) if passphrase == "верный" else _wrong()
                 ),
             ),
+            patch.object(sealing, "_unwrap_with_kek", lambda *args: self.private_key),
         ]
         for entered in patches:
             entered.start()
