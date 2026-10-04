@@ -3694,17 +3694,17 @@ Object.assign(window.netSanctumActions, {
   selectWorkspaceRow: function (id) {
     selectWorkspace(id, this.querySelector('[data-workspace-name]').textContent);
   },
-  addSheetColumn, addSheetRow, addWhiteboardNode, changeBrushSize, changeCellFontSize,
-  cleanEmptySheetRows, clearSheetTable, clearWbCanvas, closeEditorView, closeLinkModal,
-  closeMediaView, closeSheetView, closeSidebar, closeUnlockModal, closeVcalModal,
-  closeWhiteboardView, closeWorkspaceModal, debounceSearch, deleteItem, deleteRow,
-  deleteColumn, deleteWbNode, exportItems, formatCell, handleCellInput, instantCreate,
-  loadMoreVault, openEditorView, openLinkModal, openSheetView, openWorkspaceModal,
-  resetWbZoom, retryVideoDownload, selectWorkspace, setWbMode,
-  submitGateUnlock, submitLink, submitUnlock, submitVcalModal, submitWorkspace,
-  triggerAutoSave, triggerSheetAutoSave, triggerWbAutoSave, toggleExportMenu,
-  togglePin, togglePlusDropdown, toggleSealedFields, toggleSidebar, validateBrushSize,
-  vaultMoveCardToSpace, vaultMoveTo, vaultNestInto, zoomWb,
+  addSheetColumn: netLazy('addSheetColumn'), addSheetRow: netLazy('addSheetRow'), addWhiteboardNode: netLazy('addWhiteboardNode'), changeBrushSize: netLazy('changeBrushSize'), changeCellFontSize: netLazy('changeCellFontSize'),
+  cleanEmptySheetRows: netLazy('cleanEmptySheetRows'), clearSheetTable: netLazy('clearSheetTable'), clearWbCanvas: netLazy('clearWbCanvas'), closeEditorView: netLazy('closeEditorView'), closeLinkModal: netLazy('closeLinkModal'),
+  closeMediaView: netLazy('closeMediaView'), closeSheetView: netLazy('closeSheetView'), closeSidebar: netLazy('closeSidebar'), closeUnlockModal: netLazy('closeUnlockModal'), closeVcalModal: netLazy('closeVcalModal'),
+  closeWhiteboardView: netLazy('closeWhiteboardView'), closeWorkspaceModal: netLazy('closeWorkspaceModal'), debounceSearch: netLazy('debounceSearch'), deleteItem: netLazy('deleteItem'), deleteRow: netLazy('deleteRow'),
+  deleteColumn: netLazy('deleteColumn'), deleteWbNode: netLazy('deleteWbNode'), exportItems: netLazy('exportItems'), formatCell: netLazy('formatCell'), handleCellInput: netLazy('handleCellInput'), instantCreate: netLazy('instantCreate'),
+  loadMoreVault: netLazy('loadMoreVault'), openEditorView: netLazy('openEditorView'), openLinkModal: netLazy('openLinkModal'), openSheetView: netLazy('openSheetView'), openWorkspaceModal: netLazy('openWorkspaceModal'),
+  resetWbZoom: netLazy('resetWbZoom'), retryVideoDownload: netLazy('retryVideoDownload'), selectWorkspace: netLazy('selectWorkspace'), setWbMode: netLazy('setWbMode'),
+  submitGateUnlock: netLazy('submitGateUnlock'), submitLink: netLazy('submitLink'), submitUnlock: netLazy('submitUnlock'), submitVcalModal: netLazy('submitVcalModal'), submitWorkspace: netLazy('submitWorkspace'),
+  triggerAutoSave: netLazy('triggerAutoSave'), triggerSheetAutoSave: netLazy('triggerSheetAutoSave'), triggerWbAutoSave: netLazy('triggerWbAutoSave'), toggleExportMenu: netLazy('toggleExportMenu'),
+  togglePin: netLazy('togglePin'), togglePlusDropdown: netLazy('togglePlusDropdown'), toggleSealedFields: netLazy('toggleSealedFields'), toggleSidebar: netLazy('toggleSidebar'), validateBrushSize: netLazy('validateBrushSize'),
+  vaultMoveCardToSpace: netLazy('vaultMoveCardToSpace'), vaultMoveTo: netLazy('vaultMoveTo'), vaultNestInto: netLazy('vaultNestInto'), zoomWb: netLazy('zoomWb'),
 
   // The four Enter keys. A wrapper per modal rather than a condition in the
   // attribute: `if (event.key === 'Enter')` is exactly the kind of thing that

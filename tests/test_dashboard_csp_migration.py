@@ -143,6 +143,20 @@ class IncludedPartialsTests(unittest.TestCase):
                         self.assertIn("csp_nonce", line, f"{path} has an inline script with no nonce")
 
 
+def allowlist_blocks(source: str) -> list[str]:
+    """Every registry block in a template.
+
+    All of them: a template can register from more than one script block — the
+    calendar does — and a check that reads only the first one reported the page
+    clean while the second block was still holding bare references.
+    """
+    blocks = []
+    for match in re.finditer(r"Object\.assign\(window\.netSanctumActions, \{", source):
+        start = match.start()
+        blocks.append(source[start : source.index("\n});", start)])
+    return blocks
+
+
 class LazyRegistrationTests(unittest.TestCase):
     """Registration must not capture a value that does not exist yet.
 
@@ -156,8 +170,7 @@ class LazyRegistrationTests(unittest.TestCase):
         self.page = DASHBOARD.read_text()
 
     def _allowlist(self) -> str:
-        start = self.page.index("Object.assign(window.netSanctumActions, {")
-        return self.page[start : self.page.index("\n});", start)]
+        return "\n".join(allowlist_blocks(self.page))
 
     def test_no_action_is_registered_by_value(self):
         for line in self._allowlist().splitlines():
@@ -214,6 +227,59 @@ class FontPolicyTests(unittest.TestCase):
 
     def test_the_page_actually_asks_for_those_fonts(self):
         self.assertIn("fonts.googleapis.com", LAYOUT.read_text())
+
+
+class OrderingTests(unittest.TestCase):
+    """The dispatcher has to be defined before anything that uses it.
+
+    Found in a browser, twice, in two different guises: an action registered by
+    value when its function was declared in a later script block, and then the
+    dispatcher itself sitting after `{% block content %}` in the layout, so a page
+    that registered into the registry executed before the registry existed. Both
+    present as `x is not defined` at a line nobody was looking at.
+    """
+
+    def setUp(self):
+        self.layout = LAYOUT.read_text()
+
+    def _line_of(self, needle: str, *, anchored: bool = False) -> int:
+        """Where something is in the layout.
+
+        `anchored` matches the start of a line, which is what a Jinja tag needs:
+        a comment that mentions `{% block content %}` in prose is not a block, and
+        a test that cannot tell the difference reports nonsense.
+        """
+        if anchored:
+            match = re.search(rf"^[ \t]*{re.escape(needle)}", self.layout, re.M)
+            assert match, f"{needle} not found in the layout"
+            index = match.start()
+        else:
+            index = self.layout.index(needle)
+        return self.layout[:index].count("\n") + 1
+
+    def test_the_dispatcher_precedes_the_block_pages_render_into(self):
+        dispatcher = self._line_of("function netRunAction(")
+        content = self._line_of("{% block content %}", anchored=True)
+
+        self.assertLess(
+            dispatcher,
+            content,
+            "a page's scripts register actions into the registry; the registry must exist first",
+        )
+
+    def test_the_dispatcher_precedes_the_trailing_script_block(self):
+        self.assertLess(
+            self._line_of("function netRunAction("),
+            self._line_of("{% block scripts_extra %}", anchored=True),
+        )
+
+    def test_a_page_uses_the_dispatcher_only_from_inside_its_own_scripts(self):
+        """Every use has to be inside a script block, or it is markup."""
+        page = DASHBOARD.read_text()
+        outside = re.sub(r"<script[^>]*>.*?</script>", "", page, flags=re.DOTALL)
+
+        self.assertNotIn("netLazy(", outside)
+        self.assertNotIn("netSanctumActions", outside)
 
 
 class PolicyTests(unittest.TestCase):

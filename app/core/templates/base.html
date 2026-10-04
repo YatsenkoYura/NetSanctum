@@ -131,6 +131,122 @@
 </head>
 
     <body class="bg-black text-zinc-300 min-h-screen font-sans antialiased pb-24 sm:pb-6">
+    {# The dispatcher comes first, before anything a page renders. A page's own
+       scripts run inside `{% block content %}`, and they register actions into
+       this registry: infrastructure that is defined after its consumers is not
+       infrastructure, it is an ordering bug waiting to be found in a browser. #}
+    <script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
+    // Delegated actions.
+    //
+    // An inline `onclick="fn()"` is a Content-Security-Policy hole with a
+    // convenient syntax: it runs script the policy never saw. So a call lives in
+    // attributes the policy cannot execute — a name in `data-net-action` and a
+    // JSON argument list in `data-net-args` — and this dispatches it.
+    //
+    // It lives in the layout rather than in a page because the layout has handlers
+    // too: the player and the two selects are on every page, and a policy that
+    // covers a page covers everything that page includes.
+    //
+    // Two deliberate properties. The arguments are data and never evaluated, so
+    // an argument can be a string a user typed rather than code. And `$el`,
+    // `$el.value` and `$event` stand in for `this` and `event`, so no existing
+    // function had to change its signature — the migration is the attribute, not
+    // the callee.
+    //
+    // The name is looked up in a registry, never on `window`: a name nobody
+    // registered does nothing at all rather than running something.
+    window.netSanctumActions = window.netSanctumActions || {};
+
+    // Register by name, resolved when the action runs.
+    //
+    // A page's script is several blocks, and a function declared in a later one
+    // does not exist yet while an earlier block is still executing. Passing the
+    // function itself would capture `undefined` and register a button that fails
+    // on click with no error at registration to explain it. An inline attribute
+    // never had this problem: it was resolved at click time. This puts it back.
+    function netLazy(name) {
+      return function () { return window[name].apply(this, arguments); };
+    }
+
+    function netArg(spec, el, event) {
+      if (spec === '$el') return el;
+      if (spec === '$event') return event;
+      // A page-level value the attribute cannot spell, read at dispatch time so a
+      // click sees the state the user is actually in rather than the state the
+      // page was rendered in.
+      if (spec === '$currentCollection') return window.currentCollectionId;
+      if (typeof spec === 'string' && spec.startsWith('$el.')) {
+        return spec.slice(4).split('.').reduce(
+          (value, key) => (value == null ? value : value[key]), el);
+      }
+      return spec;
+    }
+
+    function netRunAction(name, el, event) {
+      const action = window.netSanctumActions[name];
+      if (!action) return;
+      let args;
+      try {
+        args = JSON.parse(el.dataset.netArgs || '[]').map(spec => netArg(spec, el, event));
+      } catch (e) {
+        // Malformed arguments must not take the page down: a button that quietly
+        // does nothing is better than a dashboard that stops responding at all.
+        return;
+      }
+      // The event of the dispatch in flight, for an action that has to reach past
+      // its own element — to stop propagation, say. Not an argument, because that
+      // would change every other action's signature.
+      window.netSanctumEvent = event;
+      try {
+        action.apply(el, args);
+      } finally {
+        window.netSanctumEvent = null;
+      }
+    }
+
+    // Capture phase, not bubble: an inline handler ran before the event reached an
+    // ancestor with a handler of its own, and a link that stops propagation to keep
+    // its parent from opening still has to be able to. At document, in the bubble
+    // phase, stopping propagation would be too late to stop anything.
+    for (const type of ['click', 'input', 'change', 'keydown', 'submit', 'focus']) {
+      document.addEventListener(type, event => {
+        const el = event.target.closest('[data-net-action]');
+        if (el) netRunAction(el.dataset.netAction, el, event);
+      }, true);
+    }
+
+    // A broken picture hides itself. `error` does not bubble, so this listens in
+    // the capture phase; it replaced `onerror="this.style.display='none'"`.
+    document.addEventListener('error', event => {
+      const target = event.target;
+      if (target && target.tagName === 'IMG') target.style.display = 'none';
+    }, true);
+
+    Object.assign(window.netSanctumActions, {
+      // Registered here rather than inline because each one reaches through a
+      // `window` property that only exists on some pages.
+      stopPropagation: function () { window.netSanctumEvent.stopPropagation(); },
+      setPrintMedia: function () { this.media = 'all'; },
+      submitLanguageForm: function () { this.form.requestSubmit(); },
+      navigateSelect: function () {
+        const value = this.value;
+        if (value && !window.netSanctumNavigate?.(value)) window.location.href = value;
+      },
+      persistentPlayerClose: function () { window.persistentVideoPlayer.close(); },
+      musicToggleCollapse: function () { window.musicPlayer.toggleCollapse(); },
+      musicCloseAndStop: function () {
+        window.netSanctumEvent.stopPropagation();
+        window.musicPlayer.close();
+      },
+      musicSeek: function (event) { window.musicPlayer.seek(window.netSanctumEvent || event); },
+      musicTogglePlaybackMode: function () { window.musicPlayer.togglePlaybackMode(); },
+      musicSeekRelative: function (delta) { window.musicPlayer.seekRelative(delta); },
+      musicPrev: function () { window.musicPlayer.prev(); },
+      musicTogglePlay: function () { window.musicPlayer.togglePlay(); },
+      musicNext: function () { window.musicPlayer.next(); },
+    });
+    </script>
+
     {% set navigation_modules = active_modules() %}
     {% set miku_enabled = navigation_modules | selectattr('name', 'equalto', 'miku') | list | length %}
 
@@ -350,118 +466,6 @@
     {% include "miku_assistant.html" %}
     <script src="/static/miku-assistant.js?v=2" defer></script>
     {% endif %}
-
-    <script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
-    // Delegated actions.
-    //
-    // An inline `onclick="fn()"` is a Content-Security-Policy hole with a
-    // convenient syntax: it runs script the policy never saw. So a call lives in
-    // attributes the policy cannot execute — a name in `data-net-action` and a
-    // JSON argument list in `data-net-args` — and this dispatches it.
-    //
-    // It lives in the layout rather than in a page because the layout has handlers
-    // too: the player and the two selects are on every page, and a policy that
-    // covers a page covers everything that page includes.
-    //
-    // Two deliberate properties. The arguments are data and never evaluated, so
-    // an argument can be a string a user typed rather than code. And `$el`,
-    // `$el.value` and `$event` stand in for `this` and `event`, so no existing
-    // function had to change its signature — the migration is the attribute, not
-    // the callee.
-    //
-    // The name is looked up in a registry, never on `window`: a name nobody
-    // registered does nothing at all rather than running something.
-    window.netSanctumActions = window.netSanctumActions || {};
-
-    // Register by name, resolved when the action runs.
-    //
-    // A page's script is several blocks, and a function declared in a later one
-    // does not exist yet while an earlier block is still executing. Passing the
-    // function itself would capture `undefined` and register a button that fails
-    // on click with no error at registration to explain it. An inline attribute
-    // never had this problem: it was resolved at click time. This puts it back.
-    function netLazy(name) {
-      return function () { return window[name].apply(this, arguments); };
-    }
-
-    function netArg(spec, el, event) {
-      if (spec === '$el') return el;
-      if (spec === '$event') return event;
-      // A page-level value the attribute cannot spell, read at dispatch time so a
-      // click sees the state the user is actually in rather than the state the
-      // page was rendered in.
-      if (spec === '$currentCollection') return window.currentCollectionId;
-      if (typeof spec === 'string' && spec.startsWith('$el.')) {
-        return spec.slice(4).split('.').reduce(
-          (value, key) => (value == null ? value : value[key]), el);
-      }
-      return spec;
-    }
-
-    function netRunAction(name, el, event) {
-      const action = window.netSanctumActions[name];
-      if (!action) return;
-      let args;
-      try {
-        args = JSON.parse(el.dataset.netArgs || '[]').map(spec => netArg(spec, el, event));
-      } catch (e) {
-        // Malformed arguments must not take the page down: a button that quietly
-        // does nothing is better than a dashboard that stops responding at all.
-        return;
-      }
-      // The event of the dispatch in flight, for an action that has to reach past
-      // its own element — to stop propagation, say. Not an argument, because that
-      // would change every other action's signature.
-      window.netSanctumEvent = event;
-      try {
-        action.apply(el, args);
-      } finally {
-        window.netSanctumEvent = null;
-      }
-    }
-
-    // Capture phase, not bubble: an inline handler ran before the event reached an
-    // ancestor with a handler of its own, and a link that stops propagation to keep
-    // its parent from opening still has to be able to. At document, in the bubble
-    // phase, stopping propagation would be too late to stop anything.
-    for (const type of ['click', 'input', 'change', 'keydown', 'submit', 'focus']) {
-      document.addEventListener(type, event => {
-        const el = event.target.closest('[data-net-action]');
-        if (el) netRunAction(el.dataset.netAction, el, event);
-      }, true);
-    }
-
-    // A broken picture hides itself. `error` does not bubble, so this listens in
-    // the capture phase; it replaced `onerror="this.style.display='none'"`.
-    document.addEventListener('error', event => {
-      const target = event.target;
-      if (target && target.tagName === 'IMG') target.style.display = 'none';
-    }, true);
-
-    Object.assign(window.netSanctumActions, {
-      // Registered here rather than inline because each one reaches through a
-      // `window` property that only exists on some pages.
-      stopPropagation: function () { window.netSanctumEvent.stopPropagation(); },
-      setPrintMedia: function () { this.media = 'all'; },
-      submitLanguageForm: function () { this.form.requestSubmit(); },
-      navigateSelect: function () {
-        const value = this.value;
-        if (value && !window.netSanctumNavigate?.(value)) window.location.href = value;
-      },
-      persistentPlayerClose: function () { window.persistentVideoPlayer.close(); },
-      musicToggleCollapse: function () { window.musicPlayer.toggleCollapse(); },
-      musicCloseAndStop: function () {
-        window.netSanctumEvent.stopPropagation();
-        window.musicPlayer.close();
-      },
-      musicSeek: function (event) { window.musicPlayer.seek(window.netSanctumEvent || event); },
-      musicTogglePlaybackMode: function () { window.musicPlayer.togglePlaybackMode(); },
-      musicSeekRelative: function (delta) { window.musicPlayer.seekRelative(delta); },
-      musicPrev: function () { window.musicPlayer.prev(); },
-      musicTogglePlay: function () { window.musicPlayer.togglePlay(); },
-      musicNext: function () { window.musicPlayer.next(); },
-    });
-    </script>
 
     <script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
         // Global Music Player Logic (Preserved across HTMX navigation)

@@ -244,15 +244,18 @@ console.log(JSON.stringify(outcome));
         )
 
     def test_the_page_resolves_everything_lazily(self):
-        """A single eager entry left in the allowlist is one broken button."""
-        block = PAGE.read_text()
-        start = block.index("Object.assign(window.netSanctumActions, {")
-        block = block[start : block.index("\n});", start)]
-        code = re.sub(r"//[^\n]*", "", block)
-        # Every entry is `name: something`. A bare `name` or `name,` is the bug.
-        bare = re.findall(r"(?:^|[{,])\s*([A-Za-z_$][\w$]*)\s*(?=[,}\n])", code, re.M)
+        """A single eager entry left in a registry block is a broken button.
 
-        self.assertEqual([], bare, "every action must be a wrapper, never a bare reference")
+        Every block, not the first: the calendar block is a second one, and it is
+        where the remaining bare references were hiding.
+        """
+        blocks = allowlist_blocks(PAGE.read_text())
+        self.assertGreaterEqual(len(blocks), 2, "the page registers from more than one script block")
+
+        for index, block in enumerate(blocks):
+            code = re.sub(r"//[^\n]*", "", block)
+            bare = re.findall(r"(?:^|[{,])\s*([A-Za-z_$][\w$]*)\s*(?=[,}\n])", code, re.M)
+            self.assertEqual([], bare, f"registry block {index} has a bare reference: {bare}")
 
 
 class DispatcherTests(unittest.TestCase):
@@ -311,6 +314,15 @@ class DispatcherTests(unittest.TestCase):
 
     def test_malformed_arguments_do_nothing_rather_than_throw(self):
         self.assertTrue(self.cases["bad_json"])
+
+
+def allowlist_blocks(source: str) -> list[str]:
+    """Every `Object.assign(window.netSanctumActions, {...})` block in a template."""
+    blocks = []
+    for match in re.finditer(r"Object\.assign\(window\.netSanctumActions, \{", source):
+        start = match.start()
+        blocks.append(source[start : source.index("\n});", start)])
+    return blocks
 
 
 def registered_actions(source: str) -> set[str]:
