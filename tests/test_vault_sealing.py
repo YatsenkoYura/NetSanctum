@@ -5,7 +5,7 @@ import datetime
 import unittest
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.modules.vault.crypto import generate_inbox_keypair
 from app.modules.vault.models import Base, VaultCollection, VaultItem
@@ -262,16 +262,23 @@ class SealedUpdateTests(unittest.TestCase):
 
 
 class _Session:
-    """Just enough session for move_sealed_item: commit and refresh."""
+    """Just enough session for move_sealed_item, over a real in-memory database.
 
-    def __init__(self):
-        self.committed = False
+    It queries for the cards inside a stack now, so a stub with `commit` and
+    `refresh` stopped being enough — the rows that move are the point of the test.
+    """
+
+    def __init__(self, db):
+        self.db = db
+
+    async def execute(self, statement, parameters=None):
+        return self.db.execute(statement, parameters or {})
 
     async def commit(self):
-        self.committed = True
+        self.db.commit()
 
     async def refresh(self, instance):
-        return None
+        self.db.refresh(instance)
 
 
 class MoveSealedItemTests(unittest.TestCase):
@@ -291,6 +298,13 @@ class MoveSealedItemTests(unittest.TestCase):
         self.item = make_item(collection_id=1)
         seal_item(self.item, self.source_public)
         self.item.collection_id = 1
+        self.engine = create_engine("sqlite://")
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, expire_on_commit=False)()
+        self.addCleanup(self.engine.dispose)
+        self.db.add_all([self.source, self.target, self.item])
+        self.db.commit()
+        self.session = _Session(self.db)
 
     def _collection(self, name, public_key, collection_id):
         from base64 import b64encode
@@ -305,7 +319,7 @@ class MoveSealedItemTests(unittest.TestCase):
         )
 
     def test_the_card_is_readable_in_the_space_it_moved_to(self):
-        asyncio.run(move_sealed_item(_Session(), self.item, self.target, self.source_private))
+        asyncio.run(move_sealed_item(self.session, self.item, self.target, self.source_private))
 
         self.assertEqual(2, self.item.collection_id)
         open_item(self.target_private, self.item)
@@ -313,27 +327,49 @@ class MoveSealedItemTests(unittest.TestCase):
         self.assertEqual("Личный текст", self.item.content)
 
     def test_the_old_space_can_no_longer_open_it(self):
-        asyncio.run(move_sealed_item(_Session(), self.item, self.target, self.source_private))
+        asyncio.run(move_sealed_item(self.session, self.item, self.target, self.source_private))
 
         with self.assertRaises(ValueError):
             open_item(self.source_private, self.item)
 
     def test_the_readable_columns_stay_blank_after_the_move(self):
-        asyncio.run(move_sealed_item(_Session(), self.item, self.target, self.source_private))
+        asyncio.run(move_sealed_item(self.session, self.item, self.target, self.source_private))
 
         self.assertTrue(self.item.sealed_payload)
         self.assertEqual("", self.item.title)
         self.assertEqual({}, self.item.canvas_data)
+
+    def test_a_sealed_stack_travels_whole(self):
+        """The cards inside the cover are sealed under the space the stack left.
+
+        Moving only the cover left them behind, still pointing at a cover in
+        another space — a stack quietly split in two, half of it readable by
+        nobody and half by the wrong key.
+        """
+        inner = make_item(collection_id=1)
+        inner.id = 8
+        inner.title = "Внутренняя карточка"
+        inner.parent_id = self.item.id
+        seal_item(inner, self.source_public)
+        self.db.add(inner)
+        self.db.commit()
+
+        asyncio.run(move_sealed_item(self.session, self.item, self.target, self.source_private))
+
+        self.assertEqual(2, inner.collection_id)
+        self.db.refresh(inner)
+        open_item(self.target_private, inner)
+        self.assertEqual("Внутренняя карточка", inner.title)
 
     def test_a_sealed_card_may_not_be_unfiled(self):
         """ "Все карточки" would leave it sealed under a key nothing outside the
         space holds. The client no longer offers the option; the server refuses it
         rather than tripping over a missing target."""
         with self.assertRaises(VaultMoveError):
-            asyncio.run(move_sealed_item(_Session(), self.item, None, self.source_private))
+            asyncio.run(move_sealed_item(self.session, self.item, None, self.source_private))
 
     def test_a_sealed_card_may_not_be_moved_into_a_plain_space(self):
         plain = VaultCollection(name="Обычное", is_encrypted=False)
 
         with self.assertRaises(VaultMoveError):
-            asyncio.run(move_sealed_item(_Session(), self.item, plain, self.source_private))
+            asyncio.run(move_sealed_item(self.session, self.item, plain, self.source_private))

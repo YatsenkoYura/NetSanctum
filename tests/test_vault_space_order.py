@@ -9,12 +9,15 @@ what a sealed space is allowed to contain, and that a drop cannot invent a loop.
 
 import asyncio
 import unittest
+from base64 import b64encode
 
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
+from app.modules.vault.crypto import generate_inbox_keypair
 from app.modules.vault.models import VaultCollection, VaultItem
+from app.modules.vault.schemas import VaultItemUpdate
 from app.modules.vault.services import (
     POSITION_MIN_GAP,
     VaultOrderError,
@@ -68,7 +71,7 @@ class OrderingTestCase(unittest.TestCase):
         self.session = AsyncSessionAdapter(self.db)
         self.addCleanup(self.engine.dispose)
 
-    def add_card(self, card_id, position, collection_id=1):
+    def add_card(self, card_id, position, collection_id=1, parent_id=None):
         self.db.add(
             VaultItem(
                 id=card_id,
@@ -77,20 +80,26 @@ class OrderingTestCase(unittest.TestCase):
                 tags=[],
                 position=position,
                 collection_id=collection_id,
+                parent_id=parent_id,
             )
         )
         self.db.commit()
 
     def add_space(self, space_id, parent_id=None, position=None, sealed=False):
-        self.db.add(
-            VaultCollection(
-                id=space_id,
-                name=f"Пространство {space_id}",
-                parent_id=parent_id,
-                position=position,
-                is_encrypted=sealed,
-            )
+        """A sealed space needs a real inbox key to accept a sealed write."""
+        row = VaultCollection(
+            id=space_id,
+            name=f"Пространство {space_id}",
+            parent_id=parent_id,
+            position=position,
+            is_encrypted=sealed,
         )
+        if sealed:
+            _private, public = generate_inbox_keypair()
+            row.inbox_public_key = b64encode(public).decode("ascii")
+            row.wrapped_key = "nsk:v1:stub"
+            row.key_salt = "c2FsdA"
+        self.db.add(row)
         self.db.commit()
 
     def ordered_ids(self, **kwargs):
@@ -521,6 +530,46 @@ class MoveCardBetweenSpacesTests(OrderingTestCase):
 
         self.assertEqual(2, self.db.get(VaultItem, 10).collection_id)
         self.assertEqual(2, self.db.get(VaultItem, 11).collection_id)
+
+    def test_a_plain_stack_filed_into_a_sealed_space_is_sealed_whole(self):
+        """Sealing only the cover left the cards inside it in the open space.
+
+        The stack became two things: a sealed cover in the locked space, and the
+        cards it holds sitting outside it, unencrypted. A stack is one thing to
+        whoever made it, so it moves as one.
+        """
+        self.add_space(1)
+        self.add_space(2, sealed=True)
+        self.add_card(10, 0.0, collection_id=1)
+        self.add_card(11, 0.0, collection_id=1, parent_id=10)
+        self.db.commit()
+
+        run(update_vault_item(self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=2)))
+
+        cover = self.db.get(VaultItem, 10)
+        inner = self.db.get(VaultItem, 11)
+        self.assertEqual(2, cover.collection_id)
+        self.assertIsNotNone(cover.sealed_payload)
+        self.assertEqual(2, inner.collection_id)
+        self.assertIsNotNone(inner.sealed_payload)
+        self.assertEqual("", inner.title)
+
+    def test_a_plain_stack_filed_onto_all_cards_takes_its_cards_along(self):
+        """Filing onto "Все карточки" sets collection_id to null.
+
+        Testing "moved to a space" with `moved_to is not None` read that as "not a
+        move at all", so the cover left and the cards stayed behind, orphaned under
+        a cover that now sat in no space.
+        """
+        self.add_space(1)
+        self.add_card(10, 0.0, collection_id=1)
+        self.add_card(11, 0.0, collection_id=1, parent_id=10)
+        self.db.commit()
+
+        run(update_vault_item(self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=None)))
+
+        self.assertIsNone(self.db.get(VaultItem, 10).collection_id)
+        self.assertIsNone(self.db.get(VaultItem, 11).collection_id)
 
     def test_a_card_without_a_stack_moves_alone(self):
         from app.modules.vault.schemas import VaultItemUpdate

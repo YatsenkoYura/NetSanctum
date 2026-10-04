@@ -344,6 +344,10 @@ async def move_sealed_item(
     Opening it with the source key and re-sealing under the target's public key is
     the only way it stays readable — which is why this needs the source Vault
     unlocked, exactly like editing a sealed card does.
+
+    A stack travels with its cover. Moving the cover alone left the cards inside it
+    sealed under the space the stack had left, and their collection still pointed
+    at a cover in the new one.
     """
     if target is None:
         # Reached by filing a sealed card onto "Все карточки". Its payload is
@@ -351,10 +355,26 @@ async def move_sealed_item(
         raise VaultMoveError("Зашифрованную карточку нельзя убрать из пространства")
     if not target.is_encrypted:
         raise VaultMoveError("Зашифрованную карточку можно перенести только в зашифрованное пространство")
-    open_item(source_private_key, item)
-    item.collection_id = target.id
-    item.updated_at = datetime.datetime.utcnow()
-    seal_item(item, require_inbox_public_key(target))
+    try:
+        key = require_inbox_public_key(target)
+    except VaultLockedError as exc:
+        # Refused here rather than raised past the endpoint: a sealed space with no
+        # inbox key is a space whose owner set it up wrong, not a crash.
+        raise VaultMoveError("Это пространство не может принять зашифрованную карточку") from exc
+    kids = list(
+        (await session.execute(select(VaultItem).where(VaultItem.parent_id == item.id))).scalars().all()
+    )
+    rows = [item, *kids]
+    # Everything is opened before anything moves. A child that cannot be opened
+    # aborts the whole move, instead of leaving ciphertext behind in a space whose
+    # key no longer has anything to do with it.
+    for row in rows:
+        if row.sealed_payload:
+            open_item(source_private_key, row)
+    for row in rows:
+        row.collection_id = target.id
+        row.updated_at = datetime.datetime.utcnow()
+        seal_item(row, key)
     await session.commit()
     await session.refresh(item)
     return item

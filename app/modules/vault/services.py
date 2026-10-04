@@ -332,26 +332,23 @@ async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: V
     update_data = update_in.model_dump(exclude_unset=True)
     moved_to = None
     sealed_target = None
-    if "collection_id" in update_data:
+    # "collection_id was in the patch" and "moved to a space" are different
+    # questions: filing onto "Все карточки" sets it to null, and that is still a
+    # rehome. Testing `moved_to is not None` left the stack behind exactly then.
+    rehomed = "collection_id" in update_data
+    if rehomed:
         moved_to = update_data["collection_id"]
         sealed_target = await _assert_can_move_card(session, item, moved_to)
     for field, val in update_data.items():
         setattr(item, field, val)
 
-    if moved_to is not None:
+    if rehomed:
         if sealed_target is not None:
             # Filing a plain card into a sealed space seals it there. Refusing was
             # the safe answer, but it made a sealed folder unusable: the one thing
             # you would put inside a locked space is something you want locked.
             # Sealing needs only the target's *public* key, so no unlock is needed.
-            try:
-                seal_item(item, require_inbox_public_key(sealed_target))
-            except VaultLockedError as exc:
-                # A sealed space with no inbox key cannot accept a sealed write.
-                # Left alone this escaped as a 500; the move is a refusal, not a
-                # crash.
-                raise VaultMoveError("Это пространство не может принять зашифрованную карточку") from exc
-            item.public_title = item.public_title or DEFAULT_ITEM_ALIAS
+            await _seal_stack_into(session, item, sealed_target)
         else:
             await _move_stack_with_cover(session, item, moved_to)
 
@@ -359,6 +356,26 @@ async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: V
     await session.commit()
     await session.refresh(item)
     return item
+
+
+async def _seal_stack_into(session: AsyncSession, cover: VaultItem, target: VaultCollection) -> None:
+    """Move a plain stack into a sealed space, sealing the cover and everything in it.
+
+    Sealing the cover alone left the cards behind in the open space: the stack
+    quietly became two, and the half that stayed out was not sealed at all. A
+    stack is one thing to its owner, so it is sealed and moved as one.
+    """
+    try:
+        key = require_inbox_public_key(target)
+    except VaultLockedError as exc:
+        # A sealed space with no inbox key cannot accept a sealed write. Left alone
+        # this escaped as a 500; a move that cannot happen is a refusal, not a crash.
+        raise VaultMoveError("Это пространство не может принять зашифрованную карточку") from exc
+    rows = [cover, *await _stack_children(session, cover)]
+    for row in rows:
+        row.collection_id = target.id
+        seal_item(row, key)
+        row.public_title = row.public_title or DEFAULT_ITEM_ALIAS
 
 
 async def _move_stack_with_cover(session: AsyncSession, cover: VaultItem, collection_id: int | None) -> int:
@@ -369,11 +386,16 @@ async def _move_stack_with_cover(session: AsyncSession, cover: VaultItem, collec
     pointing at a cover in another space. They go in the same transaction, because
     a half-moved stack is exactly the state this is meant to avoid.
     """
-    result = await session.execute(select(VaultItem).where(VaultItem.parent_id == cover.id))
-    kids = list(result.scalars().all())
+    kids = await _stack_children(session, cover)
     for kid in kids:
         kid.collection_id = collection_id
     return len(kids)
+
+
+async def _stack_children(session: AsyncSession, cover: VaultItem) -> list[VaultItem]:
+    """The cards inside a stack, in one place so every caller carries all of them."""
+    result = await session.execute(select(VaultItem).where(VaultItem.parent_id == cover.id))
+    return list(result.scalars().all())
 
 
 async def _assert_can_move_card(
