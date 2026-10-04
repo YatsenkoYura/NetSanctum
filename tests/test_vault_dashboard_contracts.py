@@ -310,6 +310,43 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         self.assertIn("vaultSidebarRow(collection, depth, false)", body)
 
 
+class DoubleSubmitTests(unittest.TestCase):
+    """One press, one request.
+
+    Two spaces 197 milliseconds apart with the same name is what a modal does
+    when its button and its Enter key both reach the same function and nothing
+    refuses the second one. The second space is sealed and holds a key, so this
+    is not a cosmetic duplicate.
+    """
+
+    def test_the_guard_exists(self):
+        self.assertIn("var submitInFlight = {};", TEMPLATE)
+        self.assertIn("if (submitInFlight[key]) return null;", TEMPLATE)
+        self.assertIn("async function submitOnce(", TEMPLATE)
+
+    def test_the_flag_is_released_even_when_the_request_fails(self):
+        """A guard that never clears is a form that works once."""
+        body = TEMPLATE.split("async function submitOnce(", 1)[1].split("\nasync function", 1)[0]
+
+        self.assertIn("finally", body)
+
+    def test_every_modal_create_goes_through_it(self):
+        for key in ("'workspace'", "'link'"):
+            self.assertIn(f"submitOnce({key}", TEMPLATE)
+
+    def test_unlock_uses_the_guard_too(self):
+        """It handles its own errors, so it cannot use `submitOnce`."""
+        body = TEMPLATE.split("async function submitUnlock()", 1)[1].split("\nasync function", 1)[0]
+
+        self.assertIn("if (submitInFlight.unlock) return;", body)
+        self.assertIn("submitInFlight.unlock = false;", body)
+
+    def test_the_buttons_are_disabled_while_a_submit_is_in_flight(self):
+        """A refusal with no feedback reads as a broken button."""
+        self.assertIn("function setSubmitButtonsDisabled(", TEMPLATE)
+        self.assertIn("button.disabled = disabled;", TEMPLATE)
+
+
 class CardOntoSpaceGestureTests(unittest.TestCase):
     """Dropping a card on a space moves it there.
 

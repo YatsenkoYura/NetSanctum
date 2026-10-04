@@ -128,7 +128,16 @@ DASHBOARD_CONTENT_SECURITY_POLICY = "; ".join(
         # telling Google which vault was opened — it needs the woff2 files, which
         # is a change of its own.
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "img-src 'self' data: blob:",
+        # `https:` and `http:` because a card's picture is often somebody else's:
+        # `og_image` on a captured page is a remote address and `safeExternalUrl`
+        # lets through exactly these two schemes. Without them the policy quietly
+        # drops every remote thumbnail in the grid. What that costs is a request to
+        # that host — the dashboard telling it which vault was opened — and what it
+        # does not cost is execution: script-src stays this origin, and an `<img>`
+        # cannot run anything. Self-hosting the pictures would remove both schemes
+        # and that leak; it needs a fetch-and-store path, which is a change of its
+        # own. Video stays strict: a vault's own files are served from here.
+        "img-src 'self' data: blob: https: http:",
         "media-src 'self' blob:",
         "font-src 'self' https://fonts.gstatic.com",
         "connect-src 'self'",

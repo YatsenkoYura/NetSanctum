@@ -282,6 +282,48 @@ class OrderingTests(unittest.TestCase):
         self.assertNotIn("netSanctumActions", outside)
 
 
+class RemoteImagePolicyTests(unittest.TestCase):
+    """A card's picture is often somebody else's, and `img-src` has to say so.
+
+    `og_image` on a captured page is a remote address and `safeExternalUrl` lets
+    through exactly `http:` and `https:`. The policy said neither, so the browser
+    dropped every remote thumbnail in the grid and the console said only that a
+    stylesheet or an image was blocked.
+    """
+
+    def test_the_image_origins_are_allowed(self):
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY
+
+        img = next(d for d in DASHBOARD_CONTENT_SECURITY_POLICY.split("; ") if d.startswith("img-src"))
+
+        self.assertIn("https:", img)
+        self.assertIn("http:", img)
+
+    def test_the_page_can_actually_render_a_remote_picture(self):
+        """Otherwise the policy allows a thing the page never does."""
+        page = DASHBOARD.read_text()
+
+        self.assertIn("function safeExternalUrl", page)
+        self.assertIn("safeImageUrl(item.og_image)", page)
+
+    def test_scripts_and_frames_stay_closed(self):
+        """Allowing remote images is a decision about images only."""
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY
+
+        self.assertIn("script-src 'self'", DASHBOARD_CONTENT_SECURITY_POLICY)
+        self.assertIn("object-src 'none'", DASHBOARD_CONTENT_SECURITY_POLICY)
+        self.assertIn("default-src 'none'", DASHBOARD_CONTENT_SECURITY_POLICY)
+
+    def test_video_stays_this_origin(self):
+        """A vault's own files are served from here, so there is no reason to
+        let a page pull video from anywhere."""
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY
+
+        media = next(d for d in DASHBOARD_CONTENT_SECURITY_POLICY.split("; ") if d.startswith("media-src"))
+
+        self.assertEqual("media-src 'self' blob:", media)
+
+
 class PolicyTests(unittest.TestCase):
     def test_scripts_get_no_unsafe_inline(self):
         self.assertIn("script-src 'self'", DASHBOARD_CONTENT_SECURITY_POLICY)

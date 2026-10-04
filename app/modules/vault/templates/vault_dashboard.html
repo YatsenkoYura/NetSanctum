@@ -1148,6 +1148,38 @@ function openWorkspaceModal(parentId) {
 }
 function closeWorkspaceModal() { document.getElementById('modal-workspace').classList.add('hidden'); }
 
+// One in-flight submit at a time, per action.
+//
+// A modal's create button is reachable twice — the button and Enter both end up
+// here — and two POSTs 200 milliseconds apart leave two spaces behind, which is
+// worse than a duplicate you can delete: the second one is sealed and holds a
+// key you have to remember. The guard is here rather than in the dispatcher
+// because only the submit actions are unsafe to repeat; opening a modal twice is
+// harmless.
+var submitInFlight = {};
+async function submitOnce(key, url, options, fallback) {
+  if (submitInFlight[key]) return null;
+  submitInFlight[key] = true;
+  setSubmitButtonsDisabled(true);
+  try {
+    return await mutationJson(url, options, fallback);
+  } finally {
+    submitInFlight[key] = false;
+    setSubmitButtonsDisabled(false);
+  }
+}
+
+// Visible feedback, not just a refusal to send: a button that does nothing when
+// pressed looks broken, and the point of the guard is that the first press
+// already worked.
+function setSubmitButtonsDisabled(disabled) {
+  document.querySelectorAll('[data-net-action^="submit"]').forEach(button => {
+    button.disabled = disabled;
+    button.classList.toggle('opacity-40', disabled);
+    button.classList.toggle('pointer-events-none', disabled);
+  });
+}
+
 async function submitWorkspace() {
   const name = document.getElementById('ws-name-input').value.trim();
   if (!name) return;
@@ -1163,7 +1195,7 @@ async function submitWorkspace() {
     const alias = document.getElementById('ws-public-name-input').value.trim();
     if (alias) payload.public_name = alias;
   }
-  const created = await mutationJson('/api/vault/collections', {
+  const created = await submitOnce('workspace', '/api/vault/collections', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
@@ -1226,7 +1258,7 @@ async function submitLink() {
   const alias = document.getElementById('link-public-title-input').value.trim();
   if (alias) payload.public_title = alias;
 
-  const created = await mutationJson('/api/vault/items', {
+  const created = await submitOnce('link', '/api/vault/items', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
@@ -2309,6 +2341,12 @@ function closeUnlockModal() { document.getElementById('modal-unlock').classList.
 async function submitUnlock() {
   const passphrase = document.getElementById('unlock-passphrase-input').value;
   if (!unlockTarget || !passphrase) return;
+  // The same double-press guard the create modals use. This one handles its own
+  // errors rather than going through `mutationJson`, so the flag is set here
+  // rather than inside `submitOnce`.
+  if (submitInFlight.unlock) return;
+  submitInFlight.unlock = true;
+  setSubmitButtonsDisabled(true);
   let result = null;
   try {
     result = await requestJson(`/api/vault/collections/${pathSegment(unlockTarget)}/unlock`, {
@@ -2325,6 +2363,9 @@ async function submitUnlock() {
     }
     showToast(error.message || 'Не удалось разблокировать', true);
     return;
+  } finally {
+    submitInFlight.unlock = false;
+    setSubmitButtonsDisabled(false);
   }
   // Held in memory only. A reload starts from empty, so the passphrase is needed
   // again on the next visit.
