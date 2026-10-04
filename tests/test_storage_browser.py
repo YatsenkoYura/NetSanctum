@@ -305,25 +305,44 @@ class ModuleNamespaceGuardTests(unittest.TestCase):
         self.assertFalse(is_module_owned("uploads/anything.enc"))
         self.assertFalse(is_module_owned(""))
 
-    def test_listing_a_module_namespace_shows_no_names(self):
+    def test_a_module_namespace_can_be_listed(self):
+        """Looking is allowed: the browser exists to answer what is on the disk.
+
+        Sizes were already on screen in a summary, and a sealed media path is a
+        random one, so a name adds little that was not already there. What a name
+        can still say is what an *unencrypted* collection holds — the price of this,
+        written down in `ModuleOwnedPathError` rather than discovered later.
+        """
         listing = list_local("vault")
 
-        self.assertEqual(1, len(listing.entries))
-        entry = listing.entries[0]
-        self.assertTrue(entry.opaque)
-        self.assertEqual("vault/", entry.name)
-        # Nothing to open, and nothing that says what is in there.
-        self.assertEqual("", entry.path)
-        self.assertEqual(2, entry.objects)
-        self.assertEqual(69, entry.size)
+        self.assertEqual(2, len(listing.entries))
+        self.assertEqual(["videos", "notes.txt"], [entry.name for entry in listing.entries])
+        self.assertFalse(any(entry.opaque for entry in listing.entries))
+        self.assertTrue(all(entry.path for entry in listing.entries))
 
-    def test_the_summary_is_not_built_into_a_download_url(self):
-        entry = list_local("vault").entries[0]
+    def test_a_listed_module_file_still_has_no_download_path_through_it(self):
+        """A name is not a way in: the row carries no path the browser will serve."""
+        for entry in list_local("vault").entries:
+            if entry.is_dir:
+                continue
+            payload = entry.as_dict(format_size=lambda size: str(size))
+            self.assertFalse(payload.get("opaque"))
+            self.assertNotEqual("", payload["path"])
 
-        payload = entry.as_dict(format_size=lambda size: str(size))
-        self.assertEqual("", payload["path"])
-        self.assertTrue(payload["opaque"])
-        self.assertEqual(2, payload["objects"])
+    def test_listing_a_nested_module_folder_works_too(self):
+        listing = list_local("vault/videos")
+
+        self.assertEqual(["clip.mp4.enc"], [entry.name for entry in listing.entries])
+
+    def test_a_sealed_media_name_says_nothing_by_itself(self):
+        """The reason listing is tolerable: a sealed path is a random one."""
+        nested = self.root / "vault" / "7" / "91"
+        nested.mkdir(parents=True, exist_ok=True)
+        (nested / "3f9ac1d2e0b4.enc").write_bytes(b"NSENC" + b"x" * 20)
+
+        entry = list_local("vault/7/91").entries[0]
+
+        self.assertEqual("3f9ac1d2e0b4.enc", entry.name)
 
     def test_reading_a_module_file_is_refused(self):
         with self.assertRaises(ModuleOwnedPathError):

@@ -41,22 +41,25 @@ class UnsupportedOnBackendError(ValueError):
 
 
 class ModuleOwnedPathError(PermissionError):
-    """The path belongs to a module's storage namespace, not to the file manager.
+    """The path belongs to a module's storage namespace, and this browser may
+    look but not take.
 
     A module namespace is where that module keeps its own bookkeeping — the Vault
-    its cards and their media, Alllib its books. Those bytes are reachable
-    through the module's own endpoints, which know what the owner is allowed to
-    see and which files a locked vault is still allowed to serve.
+    its cards and their media, Alllib its books. Those bytes are reachable through
+    the module's own endpoints, which know what the owner is allowed to see and
+    which files a locked vault is still allowed to serve.
 
-    This browser knew none of that. It listed the names, and its download path
-    decrypted anything the application file key could open — so for every file a
-    keyless worker wrote, a sealed Vault's video came out in the clear to anyone
-    who could reach this page. The names were a second, quieter leak: for a
-    sealed collection they are the only thing that says what a file is.
+    This browser knew none of that. Its download path decrypted anything the
+    application file key could open — so for every file a keyless worker wrote, a
+    sealed Vault's video came out in the clear to anyone who could reach this page.
+    That is the hole, and it stays shut: reading, renaming, deleting and uploading
+    inside a module namespace are all refused.
 
-    So: inside a module namespace the browser reports that objects exist and how
-    many bytes they take, and nothing else. No names, no paths, no bytes. It is
-    an honest answer to "is there anything there" and no answer at all to "what".
+    Listing is allowed, which is what makes this browser useful for the question it
+    is actually asked — what is taking up the disk. A name is not a secret once a
+    sealed media path is a random one, and the sizes were already on screen in a
+    summary. What a name can still say is what an *unencrypted* collection holds,
+    which is the price of this and is stated here rather than discovered later.
     """
 
 
@@ -204,52 +207,12 @@ def _looks_encrypted(head: bytes) -> bool:
     return head.startswith(ENCRYPTED_FILE_MAGIC) or StorageInterface._seekable_version(head) > 0
 
 
-def summarize_module_namespace(folder: Path, namespace: str) -> Entry:
-    """One row for a module's namespace: how much is in there, and nothing else.
-
-    Sizes only. A name would say what the file is, and for a sealed collection
-    the filename is the only remaining description of the contents — the title is
-    in the payload and the alias is deliberately uninformative. The count and the
-    total size answer the only question this browser is left allowed to answer.
-    """
-    total = 0
-    objects = 0
-    newest = 0.0
-    for child in folder.rglob("*"):
-        try:
-            stat = child.stat()
-        except OSError:
-            continue
-        if child.is_file():
-            objects += 1
-            total += stat.st_size
-            newest = max(newest, stat.st_mtime)
-    return Entry(
-        name=f"{namespace}/",
-        path="",
-        is_dir=True,
-        size=total,
-        modified=newest,
-        opaque=True,
-        objects=objects,
-    )
-
-
 def list_local(path: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Listing:
     """List one folder: directories first, then files, both alphabetical.
 
-    A module's own namespace is not listed at all. It is summarised — see
-    `summarize_module_namespace` — because those files are the module's to serve
-    and its lock to enforce, not the file manager's to hand out.
+    A module's namespace is listed like any other folder. Reading and changing
+    what is inside it is not — see `ModuleOwnedPathError`.
     """
-    if is_module_owned(path):
-        namespace = module_namespace(path)
-        assert namespace is not None
-        folder = resolve_local(path)
-        if not folder.is_dir():
-            raise StoragePathError(f"No such folder: {path}")
-        entry = summarize_module_namespace(folder, namespace)
-        return Listing(path=path, entries=[entry], total=1, truncated=False)
     target = resolve_local(path)
     if not target.exists():
         raise StoragePathError(f"No such folder: {path or '/'}")
@@ -291,12 +254,11 @@ def list_local(path: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Lis
 
 
 def list_remote(prefix: str, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> Listing:
-    """List an S3 prefix, folding the flat key space into folders."""
-    if is_module_owned(prefix):
-        raise ModuleOwnedPathError(
-            f"'{prefix}' belongs to a module and is served by that module's own endpoints"
-        )
+    """List an S3 prefix, folding the flat key space into folders.
 
+    A module's namespace is listed like any other prefix; taking what is in it is
+    refused elsewhere, for the reasons in `ModuleOwnedPathError`.
+    """
     from app.core.storage import get_storage
 
     backend = get_storage()
