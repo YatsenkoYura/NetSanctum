@@ -5,8 +5,10 @@ when the page it came from is gone, and it means Vault is not holding a record
 whose only link is another module's row.
 """
 
+import asyncio
 import logging
 import os
+import secrets
 import tempfile
 from pathlib import Path
 
@@ -74,6 +76,60 @@ def _record_status(item_id: int, status: str):
     return report
 
 
+def video_storage_name(*, sealed: bool, info: dict, url: str, ext: str) -> tuple[str, str]:
+    """The filename stem and extension for a downloaded video.
+
+    A plain card keeps a readable name, because there is nothing to hide. A sealed
+    one does not: the source id and the format both say what the file is, and the
+    name is visible to anything that can list the storage volume.
+    """
+    if sealed:
+        return secrets.token_hex(8), ""
+    return _safe_segment((info.get("id") or "") or Path(url).stem), ext
+
+
+def attach_downloaded_media(
+    item,
+    *,
+    sealed: bool,
+    media_path: str,
+    thumbnail_path: str | None,
+    size: int,
+    mime: str,
+    title: str | None,
+    info: dict,
+) -> None:
+    """Record what the download learned about the card.
+
+    The worker has no vault key, so everything it writes stays readable — which is
+    exactly why it may only write *structural* facts. This used to write the video's
+    real title into `media_title`, and `media_mime` on top of a card whose sealed
+    payload had already been written, and fill `title` back in after sealing. All
+    three put the content of a sealed card back in the clear, in the one place that
+    has no key to protect it with.
+
+    So on a sealed card the content-bearing columns are left alone: the payload
+    already holds them, and the alias is what the owner sees anyway.
+    """
+    item.media_path = media_path
+    item.media_size = size
+    # Structural columns, one per fact. See the note in `models.py`: the worker has
+    # no vault key, so anything it writes has to be readable.
+    item.media_status = "completed"
+    item.media_thumbnail_path = thumbnail_path
+    duration = info.get("duration")
+    item.media_duration = float(duration) if isinstance(duration, (int, float)) else None
+    width, height = info.get("width"), info.get("height")
+    item.media_width = int(width) if isinstance(width, (int, float)) else None
+    item.media_height = int(height) if isinstance(height, (int, float)) else None
+    if sealed:
+        return
+    item.media_mime = mime
+    item.media_title = title
+    if not item.title and title:
+        item.title = title[:1000]
+
+
 def _collection_is_sealed(session, item) -> bool:
     """Whether the item lives in a collection that must not store media in the clear."""
     collection = session.get(VaultCollection, item.collection_id) if item is not None else None
@@ -84,14 +140,31 @@ def _collection_is_sealed(session, item) -> bool:
 def download_vault_video_task(
     self,
     item_id: int,
-    url: str,
     quality: str = "720",
+    handoff: str = "",
+    url: str | None = None,
     title: str | None = None,
 ) -> str:
-    """Download a captured video into Vault storage and attach it to the item."""
+    """Download a captured video into Vault storage and attach it to the item.
+
+    The url and the title arrive through a one-shot Redis handoff rather than as
+    arguments: Celery writes its arguments into the broker, and the broker is the
+    same Redis that keeps an AOF on disk. `url` stays in the signature only so a
+    queued task from before this change still runs.
+    """
     report = _record_status(item_id, "")
     storage = get_storage()
     workdir = Path(tempfile.mkdtemp(prefix="vault_video_"))
+
+    if url is None:
+        from app.modules.vault.services import take_download_handoff
+
+        handoff_data = asyncio.run(take_download_handoff(handoff))
+        url = handoff_data.get("url")
+        title = title or handoff_data.get("title") or None
+    if not url:
+        report("error: expired")
+        return "Error: the download request expired before the worker picked it up"
 
     limit = get_settings().VAULT_MAX_VIDEO_BYTES
 
@@ -141,8 +214,17 @@ def download_vault_video_task(
             report("error: too large")
             return f"Error: The video is larger than the Vault media limit of {_human(limit)}"
 
-        stem = _safe_segment((info.get("id") or "") or Path(url).stem)
-        ext = (video_file.suffix or ".mp4").lower()[:6]
+        with SyncSessionLocal() as session:
+            parent = session.get(VaultItem, item_id)
+            sealed_for_name = bool(getattr(parent, "sealed_payload", None)) or _collection_is_sealed(
+                session, parent
+            )
+        stem, ext = video_storage_name(
+            sealed=sealed_for_name,
+            info=info,
+            url=url,
+            ext=(video_file.suffix or ".mp4").lower()[:6],
+        )
         destination = _storage_root() / STORAGE_PREFIX / f"{item_id}-{stem}{ext}"
         if not _within_root(destination, root=_storage_root()):
             report("error: refused path")
@@ -169,25 +251,22 @@ def download_vault_video_task(
             item = session.get(VaultItem, item_id)
             if item is None:
                 return "Error: the Vault item is gone"
-            item.media_path = str(destination.relative_to(_storage_root()))
-            item.media_mime = "video/mp4" if ext == ".mp4" else f"video/{ext.lstrip('.')}"
-            item.media_size = size
-            # Structural columns, one per fact. See the note in `models.py`: the
-            # worker has no vault key, so anything it writes has to be readable.
-            item.media_status = "completed"
-            item.media_title = info.get("title") or title
-            duration = info.get("duration")
-            item.media_duration = float(duration) if isinstance(duration, (int, float)) else None
-            width, height = info.get("width"), info.get("height")
-            item.media_width = int(width) if isinstance(width, (int, float)) else None
-            item.media_height = int(height) if isinstance(height, (int, float)) else None
-            item.media_thumbnail_path = thumbnail_path
-            if not item.title and info.get("title"):
-                item.title = str(info["title"])[:1000]
+            attach_downloaded_media(
+                item,
+                sealed=sealed,
+                media_path=str(destination.relative_to(_storage_root())),
+                thumbnail_path=thumbnail_path,
+                size=size,
+                mime="video/mp4" if ext == ".mp4" else f"video/{ext.lstrip('.')}",
+                title=info.get("title") or title,
+                info=info,
+            )
             session.commit()
         return f"Saved {size} bytes to Vault"
     except Exception as exc:
-        logger.warning("Vault video download failed for %s: %s", url, exc)
+        # The url is the card's content: it belongs in the sealed payload, and a log line
+        # is the one place that would hand it to anyone who can read the logs.
+        logger.warning("Vault video download failed for item %s: %s", item_id, exc)
         report(f"error: {exc}")
         return f"Error: {exc}"
     finally:

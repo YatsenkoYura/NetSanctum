@@ -1,7 +1,9 @@
 import asyncio
 import datetime
+import json
 import logging
 import re
+import secrets
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -35,6 +37,11 @@ redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_response
 
 # Tracked download progress, declared by the module manifest.
 MEDIA_PROGRESS_PREFIX = "vault_media"
+# One-shot handoff of a download's url and title to the worker.
+MEDIA_HANDOFF_PREFIX = "vault_media_handoff"
+# Long enough for a worker to pick the task up from a backlog, short enough that a
+# stranded handoff is not a plaintext copy of the card sitting around for a day.
+MEDIA_HANDOFF_TTL_SECONDS = 1800
 
 # NOTE: embedded-image helpers are owned by images.py; these aliases keep existing
 # `from app.modules.vault.services import decode_data_image` imports working.
@@ -241,16 +248,30 @@ async def queue_video_download(
     Dispatch failures are not fatal: the card is already written and simply keeps
     its "not downloaded" state, which the card renders honestly instead of
     pretending the video is there.
+
+    The url and the title go into a one-shot Redis handoff rather than into the task
+    arguments. Celery serialises its arguments into the broker, and the broker is the
+    same Redis instance that runs with AOF on — so an argument is a plaintext copy
+    of a sealed card's content sitting in a file on disk. The handoff narrows that
+    to a record the worker deletes the moment it reads it.
     """
+    handoff = secrets.token_urlsafe(18)
     try:
         from app.core.task_dispatch import dispatch_tracked_async
 
+        await redis_client.setex(
+            f"{MEDIA_HANDOFF_PREFIX}:{handoff}",
+            MEDIA_HANDOFF_TTL_SECONDS,
+            json.dumps({"url": url, "title": title or ""}),
+        )
         task = await dispatch_tracked_async(
             download_vault_video_task,
             redis_client,
             MEDIA_PROGRESS_PREFIX,
-            {"url": url, "item_id": item_id, "status": "queued", "progress": "0%"},
-            kwargs={"item_id": item_id, "url": url, "quality": quality, "title": title},
+            # No url here either: this record is read by the progress endpoint and
+            # lives in the same AOF.
+            {"item_id": item_id, "status": "queued", "progress": "0%"},
+            kwargs={"item_id": item_id, "quality": quality, "handoff": handoff},
         )
     except TypeError:
         # The task is not a task. That is a defect in this file, not an
@@ -260,8 +281,31 @@ async def queue_video_download(
         return None
     except Exception:
         logger.warning("could not queue a Vault video download for item %s", item_id, exc_info=True)
+        # Best effort: the delete itself can fail when Redis is what is down, and a
+        # stranded handoff expires on its own in MEDIA_HANDOFF_TTL_SECONDS.
+        try:
+            await redis_client.delete(f"{MEDIA_HANDOFF_PREFIX}:{handoff}")
+        except Exception:
+            logger.debug("could not drop a stranded download handoff", exc_info=True)
         return None
     return task.id
+
+
+async def take_download_handoff(handoff: str) -> dict:
+    """Read and immediately destroy the handoff for a queued download.
+
+    `GETDEL` rather than `GET` plus `DEL`: a worker that crashes between the two
+    leaves the url and the title sitting in Redis until the TTL runs out.
+    """
+    if not handoff:
+        return {}
+    raw = await redis_client.getdel(f"{MEDIA_HANDOFF_PREFIX}:{handoff}")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
 
 
 async def create_video_capture_item(
@@ -691,7 +735,10 @@ async def list_collections(session: AsyncSession) -> list[VaultCollection]:
     res = await session.execute(stmt)
     collections = []
     for collection, items_count in res.all():
-        collection.items_count = items_count
+        # How many private cards a sealed vault holds is not something it may tell
+        # the rest of the system: this function feeds the spaces contract, whose
+        # result reaches the planner and the global search index.
+        collection.items_count = 0 if collection.is_encrypted else items_count
         collections.append(collection)
     return collections
 

@@ -56,6 +56,62 @@ class VaultUnlockError(ValueError):
     """The passphrase did not unwrap this collection's key."""
 
 
+class WeakPassphraseError(ValueError):
+    """Refused at creation, not at unlock: there is no recovery for a sealed vault,
+    so a passphrase nobody could guess has to be demanded when it is chosen."""
+
+
+MIN_PASSPHRASE_LENGTH = 12
+# The shortest possible denylist: the passwords that turn an offline attack into a
+# first-try success. Checked in lowercase, with and without a trailing digit run.
+COMMON_PASSPHRASES = frozenset(
+    {
+        "password",
+        "parol",
+        "пароль",
+        "qwerty",
+        "йцукен",
+        "123456",
+        "12345678",
+        "123456789",
+        "111111",
+        "000000",
+        "iloveyou",
+        "letmein",
+        "welcome",
+        "admin",
+        "administrator",
+        "netsanctum",
+        "vault",
+        "privat",
+        "приват",
+        "private",
+        "secret",
+        "секрет",
+        "sekret",
+    }
+)
+
+
+def check_passphrase_strength(passphrase: str) -> None:
+    """Refuse a passphrase that cannot protect a vault, with the reason named.
+
+    Only length and a denylist: anything cleverer needs a dictionary the server does
+    not have, and a check that rejects a passphrase the owner already uses would
+    lock them out of their own vault. That is why this runs at creation and at
+    change, never at unlock.
+    """
+    candidate = (passphrase or "").strip()
+    if len(candidate) < MIN_PASSPHRASE_LENGTH:
+        raise WeakPassphraseError(
+            f"Пароль должен быть не короче {MIN_PASSPHRASE_LENGTH} символов — "
+            "восстановления для зашифрованного хранилища нет"
+        )
+    stripped = candidate.lower().rstrip("0123456789")
+    if candidate.lower() in COMMON_PASSPHRASES or stripped in COMMON_PASSPHRASES:
+        raise WeakPassphraseError("Этот пароль слишком частый — выберите другой")
+
+
 @dataclass(frozen=True, slots=True)
 class WrappedKey:
     """A data key wrapped under a passphrase, and the cost needed to unwrap it.

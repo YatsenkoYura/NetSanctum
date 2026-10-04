@@ -7,6 +7,7 @@ from app.contracts.search_documents_v1 import (
 )
 from app.core.module_types import IntegrationContext
 from app.modules.vault.models import VaultItem
+from app.modules.vault.services import is_readable_item
 
 
 async def search_documents(
@@ -22,7 +23,10 @@ async def search_documents(
             # columns are empty, so indexing them would only ever publish
             # "Vault item #12"; opening them to index properly would move
             # plaintext out of the vault and into a global search index.
-            VaultItem.sealed_payload.is_(None),
+            # `is_readable_item` rather than the payload check alone: it also
+            # catches a row that landed in a sealed collection before it was
+            # sealed, which the payload check would happily index.
+            is_readable_item(),
         )
         .order_by(VaultItem.updated_at.desc(), VaultItem.id.desc())
         .offset(request.offset)

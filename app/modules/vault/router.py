@@ -17,7 +17,7 @@ from app.core.security import get_current_bearer_user, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
 from app.modules.vault.capabilities import VAULT_PACKAGE_ID
-from app.modules.vault.crypto import VaultUnlockError
+from app.modules.vault.crypto import VaultUnlockError, WeakPassphraseError
 from app.modules.vault.images import (
     LOCAL_IMAGE_PREFIXES,
     decode_data_image,
@@ -55,6 +55,7 @@ from app.modules.vault.sealing import (
     lock_collection,
     locked_collection_ids,
     move_sealed_item,
+    open_collection_payloads,
     open_item,
     open_items,
     require_inbox_public_key,
@@ -124,8 +125,10 @@ async def vault_dashboard(
     # VaultCollection would put a locked vault's real name into the first HTML
     # response before any of the lock-aware JavaScript runs.
     locked = await locked_collection_ids(db, unlock_token)
+    opened = await open_collection_payloads(collections, unlock_token)
     serializable = [
-        _serialize_collection(collection, locked=collection.id in locked) for collection in collections
+        _serialize_collection(collection, locked=collection.id in locked, opened=opened)
+        for collection in collections
     ]
 
     return templates.TemplateResponse(
@@ -360,11 +363,16 @@ async def create_capture(
         "media": "Media saved to Vault",
         "video": "Video queued for archiving",
     }
+    # For a sealed collection the response must not hand the content back: sealing
+    # blanked `title`, so echoing it would send an empty name, and `image_path` was
+    # never sealed, so handing out its URL would publish the file. The alias is the
+    # only name an unauthenticated caller may see.
+    sealed = is_sealed_collection(collection)
     return VaultCaptureResponse(
         item_id=item.id,
         kind=capture_in.kind,
-        title=item.title,
-        image_url=f"/api/vault/items/{item.id}/image" if has_image(item) else None,
+        title=item.public_title if sealed else item.title,
+        image_url=None if sealed else (f"/api/vault/items/{item.id}/image" if has_image(item) else None),
         task_id=item.related_entity_id if capture_in.kind == "video" else None,
         message=messages[capture_in.kind],
     )
@@ -457,6 +465,12 @@ def _parse_byte_range(header: str, size: int) -> tuple[int, int] | None:
     return start, min(end, size - 1)
 
 
+# NOTE: the file endpoints (`/media`, `/thumbnail`, `/image`) do not check the lock.
+# That is a known hole, not an oversight anyone missed twice: `<img>` and `<video>`
+# cannot send `X-Vault-Unlock`, so a lock check here would break every unlocked tab
+# too. Lock-aware file serving arrives in P2 together with placeholders: images and
+# posters go through an authorized `fetch()` into a blob URL, and the player keeps
+# working because the file URL is only ever rendered for an unlocked card.
 def _iter_media(storage, path: str, start: int, length: int, seekable: bool):
     """Yield the requested plaintext bytes without ever holding the whole file."""
     if seekable:
@@ -731,7 +745,11 @@ async def get_collections(
     """List all collection folders."""
     colls = await list_collections(db)
     locked = await locked_collection_ids(db, unlock_token)
-    return [_serialize_collection(collection, locked=collection.id in locked) for collection in colls]
+    opened = await open_collection_payloads(colls, unlock_token)
+    return [
+        _serialize_collection(collection, locked=collection.id in locked, opened=opened)
+        for collection in colls
+    ]
 
 
 @router.post("/api/vault/collections", response_model=VaultCollectionResponse)
@@ -746,16 +764,19 @@ async def create_new_collection(
     passphrase in this same request, so making them type it twice would be noise.
     """
     if coll_in.passphrase:
-        collection = await create_sealed_collection(
-            db,
-            coll_in.name,
-            coll_in.passphrase,
-            description=coll_in.description,
-            color=coll_in.color,
-            icon=coll_in.icon,
-            public_name=coll_in.public_name or DEFAULT_SEALED_ALIAS,
-            parent_id=coll_in.parent_id,
-        )
+        try:
+            collection = await create_sealed_collection(
+                db,
+                coll_in.name,
+                coll_in.passphrase,
+                description=coll_in.description,
+                color=coll_in.color,
+                icon=coll_in.icon,
+                public_name=coll_in.public_name or DEFAULT_SEALED_ALIAS,
+                parent_id=coll_in.parent_id,
+            )
+        except WeakPassphraseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         # A plain space gets its place among its siblings inside create_collection;
         # the sealed path needs it here, because `sealing` cannot import `services`.
         await place_new_space(db, collection)
@@ -766,11 +787,14 @@ async def create_new_collection(
     return _serialize_collection(collection, locked=False)
 
 
-def _serialize_collection(collection, *, locked: bool) -> dict:
+def _serialize_collection(collection, *, locked: bool, opened: dict | None = None) -> dict:
     """Show the alias, not the name, while a sealed collection is locked.
 
     The caller decides `locked`: asking Redis once per collection would cost a
-    round-trip per row of the sidebar, when one call per request is enough.
+    round-trip per row of the sidebar, when one call per request is enough. `opened`
+    carries the collection's own metadata for the unlocked sealed ones, read back
+    from their payload in the same batch — without it a collection that was sealed
+    with its description has nothing to show for it once it is unlocked.
     """
     locked = bool(is_sealed_collection(collection) and locked)
     alias = collection.public_name or DEFAULT_SEALED_ALIAS
@@ -781,6 +805,10 @@ def _serialize_collection(collection, *, locked: bool) -> dict:
     if locked:
         payload["name"] = alias
         payload["description"] = None
+    elif opened and collection.id in opened:
+        fields = opened[collection.id]
+        if "description" in fields:
+            payload["description"] = fields["description"]
     return payload
 
 
@@ -902,7 +930,8 @@ async def get_collection_children(
     """The spaces nested inside one, in their saved order."""
     children = await list_child_spaces(db, coll_id)
     locked = await locked_collection_ids(db, unlock_token)
-    return [_serialize_collection(child, locked=child.id in locked) for child in children]
+    opened = await open_collection_payloads(children, unlock_token)
+    return [_serialize_collection(child, locked=child.id in locked, opened=opened) for child in children]
 
 
 @router.post("/api/vault/collections/merge")

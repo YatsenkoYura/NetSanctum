@@ -31,7 +31,13 @@ services:
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    # Unlock sessions and Celery payloads live here, so nothing may reach the disk:
+    # `--save ""` disables RDB snapshots (`dump.rdb` held the same plaintext the AOF
+    # did), while the AOF itself is the price of the broker surviving a restart.
+    # After deploying this, rewrite the AOF (`BGREWRITEAOF` past every old TTL) and
+    # delete `dump.rdb` — records written before the sealed session format stay
+    # readable from either file until then.
+    command: ["redis-server", "--appendonly", "yes", "--save", "", "--requirepass", "${REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
     networks:

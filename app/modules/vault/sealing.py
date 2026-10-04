@@ -21,6 +21,9 @@ from base64 import b64decode, b64encode
 from typing import Any
 
 import redis.asyncio as aioredis
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -36,6 +39,7 @@ from app.modules.vault.crypto import (
     SealedWrite,
     VaultUnlockError,
     WrappedKey,
+    check_passphrase_strength,
     context_for,
     generate_inbox_keypair,
     is_sealed,
@@ -60,6 +64,11 @@ DEFAULT_SEALED_ALIAS = "Зашифрованный Vault"
 DEFAULT_ITEM_ALIAS = "Зашифрованная запись"
 
 # Everything the owner authored. Structural columns are deliberately absent.
+# A sealed collection's own metadata. `name` is deliberately absent: the sidebar
+# shows the alias while the collection is locked, and `public_name` is already a
+# deliberate disclosure rather than a leak.
+SEALED_COLLECTION_FIELDS = ("description",)
+
 SEALED_FIELDS = (
     "title",
     "content",
@@ -81,13 +90,73 @@ class VaultLockedError(RuntimeError):
 
 
 def collection_key(collection_id: int, unlock_token: str) -> str:
-    """Where the private key sits for one tab.
+    """Where the session record sits for one tab.
 
-    The token is hashed rather than embedded: the key name is visible to anything
-    that can list Redis, and a leaked key name must not be a usable token.
+    Both halves are hashed in: the key name is visible to anything that can list
+    Redis, and neither a leaked key name nor a leaked collection id may be a
+    usable token. A fresh collection id migrates nothing — the only thing a
+    colliding reader gets is somebody else's refusal.
     """
-    digest = hashlib.sha256(unlock_token.encode("utf-8")).hexdigest()[:32]
-    return f"vault_key:{collection_id}:{digest}"
+    digest = hashlib.sha256(f"{collection_id}:{unlock_token}".encode()).hexdigest()
+    return f"vault_key:{digest}"
+
+
+SESSION_RECORD_VERSION = 1
+# The value lifetime. The sliding part is Redis TTL, refreshed on read; the
+# absolute part is `issued_at` inside the record, and it is final: two hours after
+# the unlock the tab asks for the passphrase again, however active it was.
+SESSION_ABSOLUTE_TTL_SECONDS = 2 * 60 * 60
+
+
+def _session_record_key(unlock_token: str, collection_id: int) -> bytes:
+    """The key that seals one tab's session record. The token is its only secret."""
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"ns:vault:session:salt:v1",
+        info=f"vault-session:{collection_id}:v1".encode(),
+    )
+    return hkdf.derive(unlock_token.encode("utf-8"))
+
+
+def _seal_session_record(private_key: bytes, unlock_token: str, collection_id: int, issued_at: int) -> str:
+    """Pack the inbox private key so a Redis dump cannot read it.
+
+    A dump used to contain the key in hex, in the clear. The record needs no schema
+    migration when this changes: anything that does not parse is treated as absent,
+    and the tab simply unlocks again.
+
+    The issue time is bound into the AAD, not just written next to the ciphertext:
+    it is what enforces the absolute TTL, so rewriting it must void the record
+    rather than extend the session.
+    """
+    record_key = _session_record_key(unlock_token, collection_id)
+    aad = f"{collection_id}:{issued_at}".encode()
+    nonce = secrets.token_bytes(12)
+    blob = nonce + AESGCM(record_key).encrypt(nonce, private_key, aad)
+    return json.dumps(
+        {"v": SESSION_RECORD_VERSION, "issued_at": issued_at, "wrap": blob.hex()},
+        separators=(",", ":"),
+    )
+
+
+def _open_session_record(record: str, unlock_token: str, collection_id: int) -> tuple[bytes, int] | None:
+    """The private key and its issue time, or None for anything unreadable.
+
+    Unreadable covers three cases the caller must not distinguish: a forged record,
+    a record sealed for another token, and a record written before this format
+    existed. In all three the answer is the same — unlock again.
+    """
+    try:
+        parsed = json.loads(record)
+        issued_at = int(parsed["issued_at"])
+        raw = bytes.fromhex(parsed["wrap"])
+        private_key = AESGCM(_session_record_key(unlock_token, collection_id)).decrypt(
+            raw[:12], raw[12:], f"{collection_id}:{issued_at}".encode()
+        )
+        return private_key, issued_at
+    except Exception:
+        return None
 
 
 def is_sealed_collection(collection: VaultCollection | None) -> bool:
@@ -157,6 +226,10 @@ async def create_sealed_collection(
     landed at the top level while a plain one nested — the tree looked broken for
     a reason that only showed up with a passphrase set.
     """
+    # There is no recovery for a sealed vault, so the strength check runs here,
+    # where the passphrase is chosen — never at unlock, where it would lock the
+    # owner out of a vault they already have.
+    check_passphrase_strength(passphrase)
     collection = VaultCollection(
         name=name,
         description=description,
@@ -177,6 +250,9 @@ async def create_sealed_collection(
     )
     store_wrapper(collection, wrapped)
     collection.inbox_public_key = b64encode(public_key).decode("ascii")
+    # The description goes in under the public key too, so creating a sealed
+    # collection never needs its own private key in memory.
+    seal_collection_fields(collection, public_key)
     await session.commit()
     await session.refresh(collection)
 
@@ -210,10 +286,35 @@ async def unlock_collection(
         context=context_for("collection", collection.id),
     )
     token = unlock_token or secrets.token_urlsafe(32)
-    await redis_client.set(collection_key(collection.id, token), private_key.hex(), ex=UNLOCK_TTL_SECONDS)
+    now = int(datetime.datetime.now(datetime.UTC).timestamp())
+    await redis_client.set(
+        collection_key(collection.id, token),
+        _seal_session_record(private_key, token, collection.id, now),
+        ex=UNLOCK_TTL_SECONDS,
+    )
     if session is not None:
         await upgrade_wrapper(session, collection, private_key, passphrase)
+        collection_public_key = inbox_public_key(collection)
+        if collection_public_key is not None:
+            await seal_collection_plaintext(session, collection, collection_public_key)
     return token
+
+
+async def seal_collection_plaintext(session, collection: VaultCollection, public_key: bytes) -> bool:
+    """Move a collection's plaintext metadata into its payload, in place.
+
+    Collections created before the payload existed keep their description in the
+    clear, and there is no migration that could fix it: sealing needs the key, and
+    the key only exists while the owner has typed the passphrase. So the unlock path
+    does it, where the key has just been recovered anyway.
+    """
+    if not is_sealed_collection(collection) or collection.sealed_payload:
+        return False
+    if not any(getattr(collection, field, None) for field in SEALED_COLLECTION_FIELDS):
+        return False
+    seal_collection_fields(collection, public_key)
+    await session.commit()
+    return True
 
 
 async def upgrade_wrapper(session, collection: VaultCollection, private_key: bytes, passphrase: str) -> bool:
@@ -286,13 +387,19 @@ async def data_key_for(collection: VaultCollection | None, unlock_token: str = "
     stored = await redis_client.get(collection_key(collection.id, unlock_token))
     if not stored:
         return None
+    opened = _open_session_record(stored, unlock_token, collection.id)
+    if opened is None:
+        return None
+    private_key, issued_at = opened
+    now = int(datetime.datetime.now(datetime.UTC).timestamp())
+    if now - issued_at > SESSION_ABSOLUTE_TTL_SECONDS:
+        # The sliding TTL kept refreshing, so Redis would otherwise hold this open
+        # forever. The record dies here and the tab asks for the passphrase again.
+        await redis_client.delete(collection_key(collection.id, unlock_token))
+        return None
     # Reading the key is activity: push the expiry out so a tab in use stays open.
     await redis_client.expire(collection_key(collection.id, unlock_token), UNLOCK_TTL_SECONDS)
-    try:
-        return bytes.fromhex(stored)
-    except ValueError:
-        logger.warning("Vault %s has a malformed key in the key store", collection.id)
-        return None
+    return private_key
 
 
 async def require_data_key(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:
@@ -346,6 +453,70 @@ def seal_item(item: VaultItem, public_key: bytes) -> VaultItem:
     item.wrapped_key = write.wrapped_key
     _blank_sealed_columns(item)
     return item
+
+
+def seal_collection_fields(collection: VaultCollection, public_key: bytes) -> VaultCollection:
+    """Seal a collection's own metadata under its public inbox key.
+
+    The same blind write an item gets: no passphrase, no session key, so a sealed
+    collection can be created without ever holding its own private key in memory.
+    """
+    payload = {
+        field: getattr(collection, field)
+        for field in SEALED_COLLECTION_FIELDS
+        if getattr(collection, field, None) is not None
+    }
+    if not payload:
+        return collection
+    write = seal_for_inbox(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
+        public_key,
+        context=context_for("collection", collection.id),
+    )
+    collection.sealed_payload = write.payload
+    collection.sealed_wrapped_key = write.wrapped_key
+    for field in SEALED_COLLECTION_FIELDS:
+        setattr(collection, field, "" if getattr(collection, field, None) is not None else None)
+    return collection
+
+
+def open_collection_fields(collection: VaultCollection, private_key: bytes) -> dict:
+    """Recover a sealed collection's own metadata, or nothing if it has none."""
+    if not collection.sealed_payload:
+        return {}
+    write = SealedWrite(payload=collection.sealed_payload, wrapped_key=collection.sealed_wrapped_key)
+    if not write.wrapped_key:
+        return {}
+    raw = open_from_inbox(write, private_key, context=context_for("collection", collection.id))
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+
+
+async def open_collection_payloads(collections, unlock_token: str) -> dict[int, dict]:
+    """Open every unlocked sealed collection's own metadata, in one pass.
+
+    One key lookup for the whole sidebar rather than a round trip per row, the same
+    bargain `open_items` makes for a board of cards.
+    """
+    wanted = [c for c in collections if is_sealed_collection(c) and c.sealed_payload]
+    if not wanted or not unlock_token:
+        return {}
+    keys: dict[int, bytes] = {}
+    rows = await redis_client.mget([collection_key(c.id, unlock_token) for c in wanted])
+    for collection, stored in zip(wanted, rows, strict=True):
+        if not stored:
+            continue
+        try:
+            keys[collection.id] = bytes.fromhex(stored)
+        except ValueError:
+            logger.warning("Vault %s has a malformed key in the key store", collection.id)
+    return {
+        collection.id: open_collection_fields(collection, keys[collection.id])
+        for collection in wanted
+        if collection.id in keys
+    }
 
 
 def open_item(private_key: bytes, item: VaultItem) -> VaultItem:

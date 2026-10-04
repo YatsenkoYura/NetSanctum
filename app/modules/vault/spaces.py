@@ -4,7 +4,7 @@ from app.contracts.vault_spaces_v1 import VaultSpace, VaultSpacesRequest, VaultS
 from app.core.module_types import IntegrationContext
 from app.modules.vault.models import VaultItem
 from app.modules.vault.sealing import DEFAULT_SEALED_ALIAS, is_sealed_collection
-from app.modules.vault.services import list_collections
+from app.modules.vault.services import is_readable_item, list_collections
 
 
 def _breadcrumb(
@@ -61,8 +61,10 @@ async def list_spaces(
         statement = select(VaultItem).where(
             VaultItem.is_folder.is_(True),
             # A sealed folder cannot name itself, so it has no place in a tree
-            # other modules read.
-            VaultItem.sealed_payload.is_(None),
+            # other modules read. The full predicate, not the payload check: a
+            # folder in a sealed collection is unreadable even when some write
+            # path forgot to seal the row.
+            is_readable_item(),
         )
         if not request.include_archived:
             statement = statement.where(VaultItem.is_archived.is_(False))

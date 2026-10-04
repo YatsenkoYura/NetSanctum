@@ -29,7 +29,11 @@ class VaultCollection(Base):
     # Blind-write inbox. The public half is readable on purpose: it is what lets
     # the browser extension seal a capture without ever holding the passphrase.
     inbox_public_key = Column(String, nullable=True)
-    inbox_private_key = Column(Text, nullable=True)
+    # A sealed collection's own metadata, in the same shape an item has. `name` is
+    # not here: the sidebar shows `public_name` while the collection is locked, and a
+    # locked collection has no name to show anybody.
+    sealed_payload = Column(Text, nullable=True)
+    sealed_wrapped_key = Column(Text, nullable=True)
 
     # Spaces nest. A child keeps its own key, its own cards and its own lock
     # state: nesting is a way of organising the sidebar, not a way of sharing a
