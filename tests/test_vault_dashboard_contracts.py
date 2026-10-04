@@ -11,6 +11,7 @@ wiring *is* the feature. The behaviour behind it is covered in
 """
 
 import re
+import shutil
 import unittest
 from pathlib import Path
 
@@ -132,7 +133,18 @@ class BootContractTests(unittest.TestCase):
             self.assertIn(binding, boot)
 
     def test_every_script_block_parses_as_javascript(self):
-        """A syntax error here is invisible until the page is opened by hand."""
+        """A syntax error here is invisible until the page is opened by hand.
+
+        Skipped where node is not installed: the authoritative test run happens in
+        the application image, which ships no node, and a check that fails there
+        for the sake of a tool it does not have trains people to ignore it. The
+        contracts above are plain text assertions and run everywhere; this one is
+        the parser's opinion on top.
+        """
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is not installed in this environment")
+
         import subprocess
         import tempfile
 
@@ -142,7 +154,7 @@ class BootContractTests(unittest.TestCase):
             with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
                 handle.write(cleaned)
                 path = handle.name
-            result = subprocess.run(["node", "--check", path], capture_output=True, text=True)
+            result = subprocess.run([node, "--check", path], capture_output=True, text=True)
             Path(path).unlink(missing_ok=True)
             self.assertEqual(0, result.returncode, f"block {index}: {result.stderr[:400]}")
 
