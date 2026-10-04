@@ -36,6 +36,12 @@ def create_templates() -> Jinja2Templates:
 
     templates.env.globals["_"] = translate
 
+    # The per-response CSP nonce, for a page whose policy carries one. Empty
+    # everywhere else, which is exactly what a page with no nonce expects.
+    from app.core.http_security import csp_nonce
+
+    templates.env.globals["csp_nonce"] = csp_nonce
+
     return templates
 
 

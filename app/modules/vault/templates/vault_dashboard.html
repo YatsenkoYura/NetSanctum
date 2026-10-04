@@ -250,13 +250,13 @@
   #vcal-modal button { min-height:44px; }
 }
 </style>
-<script src="/static/netsanctum-calendar.js?v=1"></script>
+<script src="/static/netsanctum-calendar.js?v=1" nonce="{{ csp_nonce() }}"></script>
 {% endblock %}
 
 {% block content %}
 <div class="vault-shell flex font-mono bg-black text-zinc-300">
 
-  <button id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeSidebar()" aria-label="Закрыть боковую панель"></button>
+  <button id="sidebar-backdrop" class="sidebar-backdrop" data-vault-on="closeSidebar" data-vault-args='[]' aria-label="Закрыть боковую панель"></button>
 
   <!-- ── LEFT SIDEBAR (COLLAPSIBLE) ─────────────────────────── -->
   <aside id="sidebar" class="vault-sidebar bg-zinc-950 border-r border-zinc-800 flex flex-col py-3 relative">
@@ -266,16 +266,16 @@
         <span class="w-2.5 h-2.5 bg-teal-400 inline-block"></span>
         <span class="text-xs font-black text-white uppercase tracking-wider">Vault</span>
       </div>
-      <button onclick="toggleSidebar()" class="text-zinc-500 hover:text-white text-xs px-1 py-0.5 border border-zinc-800" title="Свернуть панель">◧</button>
+      <button data-vault-on="toggleSidebar" data-vault-args='[]' class="text-zinc-500 hover:text-white text-xs px-1 py-0.5 border border-zinc-800" title="Свернуть панель">◧</button>
     </div>
 
     <div class="px-3 py-2 flex items-center justify-between border-b border-zinc-800">
       <span class="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Воркспейсы</span>
-      {% if not is_readonly %}<button onclick="openWorkspaceModal()" class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
+      {% if not is_readonly %}<button data-vault-on="openWorkspaceModal" data-vault-args='[]' class="text-teal-400 hover:text-teal-300 text-xs font-bold" title="Создать воркспейс">+ Воркспейс</button>{% endif %}
     </div>
 
     <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5" id="vault-workspace-list">
-      <div onclick="selectWorkspace(null, 'Все карточки')" id="ws-item-all" class="ws-item active">
+      <div data-vault-on="selectWorkspace" data-vault-args='[null,"Все карточки"]' id="ws-item-all" class="ws-item active">
         <div class="flex items-center gap-2">
           <span class="w-1.5 h-1.5 bg-zinc-400 inline-block"></span>
           <span>Все карточки</span>
@@ -285,7 +285,7 @@
 
       <div id="vault-collections" class="contents">
       {% for c in collections %}
-      <div onclick="selectWorkspace({{ c.id|int }}, this.querySelector('[data-workspace-name]').textContent)" id="ws-item-{{ c.id|int }}" class="ws-item" draggable="true">
+      <div data-vault-on="selectWorkspaceRow" data-vault-args='[{{ c.id|int }}]' id="ws-item-{{ c.id|int }}" class="ws-item" draggable="true">
         <div class="flex items-center gap-2 truncate">
           <span class="w-1.5 h-1.5 {{ 'bg-red-500' if c.is_locked else 'bg-teal-400' }} inline-block"></span>
           <span class="truncate" data-workspace-name>{{ c.name }}</span>
@@ -321,7 +321,7 @@
     <div class="vault-toolbar bg-zinc-950 border-b border-zinc-800 px-4 py-2 flex items-center justify-between gap-3">
 
       <div class="vault-toolbar-primary">
-        <button onclick="toggleSidebar()" class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
+        <button data-vault-on="toggleSidebar" data-vault-args='[]' class="text-zinc-400 hover:text-white text-xs px-1.5 py-1 border border-zinc-800" title="Боковая панель">◧</button>
 
         <div class="flex items-center gap-2 text-xs">
           <span class="text-zinc-500 font-bold uppercase">Vault</span>
@@ -330,35 +330,35 @@
         </div>
 
         {% if not is_readonly %}<div class="relative ml-2" id="vault-create-wrap">
-          <button onclick="togglePlusDropdown(event)" class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
+          <button data-vault-on="togglePlusDropdown" data-vault-args='["$event"]' class="h-7 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-teal-400 hover:text-white font-bold border border-zinc-800 flex items-center gap-1 text-xs transition-colors">
             <span>+</span> <span class="text-[10px] uppercase hidden sm:inline">Создать</span> ▾
           </button>
 
           <div id="plus-dropdown" class="plus-dropdown">
-            <button onclick="instantCreate('note')" class="plus-option"><span class="text-purple-400">■</span> + Заметка</button>
-            <button onclick="openLinkModal()" class="plus-option"><span class="text-blue-400">◆</span> + Ссылка</button>
-            <button onclick="instantCreate('table')" class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
-            <button onclick="instantCreate('whiteboard')" class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
+            <button data-vault-on="instantCreate" data-vault-args='["note"]' class="plus-option"><span class="text-purple-400">■</span> + Заметка</button>
+            <button data-vault-on="openLinkModal" data-vault-args='[]' class="plus-option"><span class="text-blue-400">◆</span> + Ссылка</button>
+            <button data-vault-on="instantCreate" data-vault-args='["table"]' class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
+            <button data-vault-on="instantCreate" data-vault-args='["whiteboard"]' class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
             {# A space inside the open space. Only offered inside one: at the top
                level this would be the same thing as the sidebar's "+ Воркспейс". #}
             {% if not is_readonly %}<button id="vault-create-folder-option" class="plus-option hidden"
-              onclick="openWorkspaceModal(currentCollectionId)"><span class="text-teal-400">▣</span> + Папка</button>{% endif %}
+              data-vault-on="openWorkspaceModal" data-vault-args='["$currentCollection"]'><span class="text-teal-400">▣</span> + Папка</button>{% endif %}
           </div>
         </div>{% endif %}
       </div>
 
       <div class="vault-toolbar-actions">
-        {% if not is_readonly %}<button onclick="sendToOutpost('/api/vault/sync-manifest')"
+        {% if not is_readonly %}<button data-vault-on="sendToOutpost" data-vault-args='["/api/vault/sync-manifest"]'
                 class="outpost-only text-[11px] text-teal-400 border border-teal-500/40 px-2 py-1 uppercase font-bold hover:bg-teal-950/40">
           Сохранить на устройство
         </button>{% endif %}
-        <input type="text" id="vault-search" oninput="debounceSearch()" placeholder="Поиск..."
+        <input type="text" id="vault-search" data-vault-on="debounceSearch" data-vault-args='[]' placeholder="Поиск..."
                class="vault-search bg-black border border-zinc-800 focus:border-teal-400 px-2.5 py-1 text-xs text-white focus:outline-none">
 
         {% if not is_shared or share.allow_download %}<div class="relative">
-          <button onclick="toggleExportMenu(event)" class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
+          <button data-vault-on="toggleExportMenu" data-vault-args='["$event"]' class="text-[11px] text-zinc-400 hover:text-white border border-zinc-800 px-2 py-1 uppercase font-bold">Экспорт ▾</button>
           <div id="export-dropdown" class="hidden absolute right-0 top-7 w-28 bg-zinc-950 border border-zinc-800 shadow-xl z-50">
-            <button onclick="exportItems()" class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
+            <button data-vault-on="exportItems" data-vault-args='[]' class="w-full text-left px-3 py-1.5 text-[10px] text-zinc-300 hover:bg-zinc-900 hover:text-teal-400">↓ JSON</button>
             {% if not is_readonly %}<a href="/api/packages/vault_all/nsp" download class="block w-full text-left px-3 py-1.5 text-[10px] text-teal-400 hover:bg-zinc-900">↓ NSP Пакет</a>{% endif %}
           </div>
         </div>{% endif %}
@@ -399,7 +399,7 @@
         <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
           <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
             <span class="text-xs font-bold text-white uppercase">Событие в «<span id="vcal-modal-space">…</span>»</span>
-            <button onclick="closeVcalModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+            <button data-vault-on="closeVcalModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
           </div>
           <div class="p-4 space-y-3">
             <div><label class="text-[10px] text-zinc-500 uppercase font-bold">Заголовок</label>
@@ -414,8 +414,8 @@
             <label class="text-[11px] text-zinc-400 flex items-center gap-2"><input type="checkbox" id="vcal-f-remind" checked> напомнить в момент начала</label>
           </div>
           <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-            <button onclick="closeVcalModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-            <button onclick="submitVcalModal()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+            <button data-vault-on="closeVcalModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+            <button data-vault-on="submitVcalModal" data-vault-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
           </div>
         </div>
       </div>
@@ -426,7 +426,7 @@
         <div id="vault-child-spaces" class="hidden"></div>
         <div id="tiles-grid"></div>
         <div class="flex justify-center pt-4">
-          <button id="vault-load-more" onclick="loadMoreVault()" class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
+          <button id="vault-load-more" data-vault-on="loadMoreVault" data-vault-args='[]' class="hidden border border-zinc-800 bg-zinc-950 px-4 py-2 text-[11px] font-bold uppercase text-zinc-400 hover:border-teal-500 hover:text-teal-400">Показать ещё</button>
         </div>
       </div>
 
@@ -439,14 +439,14 @@
           <input type="password" id="gate-passphrase-input" autocomplete="current-password" placeholder="Пароль"
                  class="vault-gate-input" onkeydown="if(event.key==='Enter')submitGateUnlock()">
           <div class="vault-gate-error hidden" id="gate-error">Неверный пароль</div>
-          <button onclick="submitGateUnlock()" class="vault-gate-btn">Разблокировать</button>
+          <button data-vault-on="submitGateUnlock" data-vault-args='[]' class="vault-gate-btn">Разблокировать</button>
         </div>
       </div>
 
       <!-- 2. OBSIDIAN DIRECT NOTE EDITOR -->
       <div id="view-editor-container" class="hidden max-w-3xl mx-auto space-y-4 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button onclick="closeEditorView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <button data-vault-on="closeEditorView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="auto-save-status">Сохранено</span>
         </div>
         <input type="hidden" id="editor-id">
@@ -464,7 +464,7 @@
       <!-- 4. MEDIA CARD: a picture or a video, with only a caption to edit -->
       <div id="view-media-container" class="hidden max-w-4xl mx-auto space-y-3 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button onclick="closeMediaView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад</button>
+          <button data-vault-on="closeMediaView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад</button>
           <div class="flex items-center gap-3">
             <span class="text-[10px] text-teal-400 uppercase font-bold" id="media-save-status"></span>
             {% if not is_readonly %}
@@ -489,7 +489,7 @@
       <!-- 3. SPREADSHEET TABLE DOCUMENT -->
       <div id="view-sheet-container" class="hidden max-w-5xl mx-auto space-y-3 py-2">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button onclick="closeSheetView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <button data-vault-on="closeSheetView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
           <span class="text-[10px] text-teal-400 uppercase font-bold" id="sheet-save-status">Сохранено</span>
         </div>
         <input type="hidden" id="sheet-id">
@@ -498,22 +498,22 @@
                class="w-full bg-black text-xl font-bold text-white border-b border-zinc-800 pb-2 focus:outline-none focus:border-teal-400">
 
         {% if not is_readonly %}<div class="cell-toolbar flex flex-wrap items-center gap-1.5 p-1.5 bg-zinc-900/80 border border-zinc-800 rounded">
-          <button onclick="formatCell('bold')" class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
-          <button onclick="formatCell('italic')" class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
-          <button onclick="formatCell('strike')" class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
+          <button data-vault-on="formatCell" data-vault-args='["bold"]' class="tb-btn font-black px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">B</button>
+          <button data-vault-on="formatCell" data-vault-args='["italic"]' class="tb-btn italic px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">I</button>
+          <button data-vault-on="formatCell" data-vault-args='["strike"]' class="tb-btn line-through px-2 py-0.5 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs rounded">S</button>
           <span class="text-zinc-700 mx-1">|</span>
           <label class="text-[10px] text-zinc-500 font-bold uppercase">Шрифт:</label>
-          <select id="cell-font-size" onchange="changeCellFontSize(this.value)" class="bg-zinc-950 text-white text-[10px] border border-zinc-800 px-1 py-0.5 rounded">
+          <select id="cell-font-size" data-vault-on="changeCellFontSize" data-vault-args='["$el.value"]' class="bg-zinc-950 text-white text-[10px] border border-zinc-800 px-1 py-0.5 rounded">
             <option value="10px">10px</option>
             <option value="11px" selected>11px</option>
             <option value="13px">13px</option>
             <option value="15px">15px</option>
           </select>
           <span class="text-zinc-700 mx-1">|</span>
-          <button onclick="addSheetRow()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить пустую строку">+ Строка</button>
-          <button onclick="addSheetColumn()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить новую колонку">+ Колонка</button>
-          <button onclick="cleanEmptySheetRows()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-amber-950 hover:text-amber-400 border border-zinc-700 hover:border-amber-500/50 rounded transition-colors" title="Удалить все полностью пустые строки">Очистить пустые строки</button>
-          <button onclick="clearSheetTable()" class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-red-950 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 rounded transition-colors" title="Очистить все данные из таблицы">Очистить таблицу</button>
+          <button data-vault-on="addSheetRow" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить пустую строку">+ Строка</button>
+          <button data-vault-on="addSheetColumn" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-teal-950 hover:text-teal-400 border border-zinc-700 hover:border-teal-500/50 rounded transition-colors" title="Добавить новую колонку">+ Колонка</button>
+          <button data-vault-on="cleanEmptySheetRows" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-amber-950 hover:text-amber-400 border border-zinc-700 hover:border-amber-500/50 rounded transition-colors" title="Удалить все полностью пустые строки">Очистить пустые строки</button>
+          <button data-vault-on="clearSheetTable" data-vault-args='[]' class="px-2 py-0.5 text-[10px] font-mono font-bold bg-zinc-800 hover:bg-red-950 hover:text-red-400 border border-zinc-700 hover:border-red-500/50 rounded transition-colors" title="Очистить все данные из таблицы">Очистить таблицу</button>
         </div>{% endif %}
 
         <div class="border border-zinc-800 overflow-x-auto bg-zinc-950">
@@ -524,31 +524,31 @@
       <!-- 4. WHITEBOARD CANVAS -->
       <div id="view-whiteboard-container" class="hidden space-y-3 py-1">
         <div class="vault-view-header flex items-center justify-between border-b border-zinc-800 pb-2">
-          <button onclick="closeWhiteboardView()" class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
+          <button data-vault-on="closeWhiteboardView" data-vault-args='[]' class="text-xs text-zinc-500 hover:text-white uppercase font-bold">← Назад в Воркспейс</button>
 
           <div class="wb-toolbar flex items-center gap-2">
             <div class="flex border border-zinc-800 p-0.5 bg-black">
-              <button onclick="setWbMode('select')" id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
-              {% if not is_readonly %}<button onclick="setWbMode('draw')" id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
-              <button onclick="setWbMode('line')" id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
-              <button onclick="setWbMode('erase')" id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>{% endif %}
+              <button data-vault-on="setWbMode" data-vault-args='["select"]' id="wb-tool-select" class="tb-btn active" title="Навигация [V / 1]">Навигация</button>
+              {% if not is_readonly %}<button data-vault-on="setWbMode" data-vault-args='["draw"]' id="wb-tool-draw" class="tb-btn" title="Кисть [B / 2]">Кисть</button>
+              <button data-vault-on="setWbMode" data-vault-args='["line"]' id="wb-tool-line" class="tb-btn" title="Линия / Стрелка [L / 3]">Линия</button>
+              <button data-vault-on="setWbMode" data-vault-args='["erase"]' id="wb-tool-erase" class="tb-btn" title="Удалить объект [E / 4]">Ластик</button>{% endif %}
             </div>
 
             <div class="flex items-center border border-zinc-800 bg-zinc-950 px-1">
-              <button onclick="changeBrushSize(-2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">-</button>
-              <input type="number" id="wb-brush-val" value="4" min="1" max="50" onchange="validateBrushSize()"
+              <button data-vault-on="changeBrushSize" data-vault-args='[-2]' class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">-</button>
+              <input type="number" id="wb-brush-val" value="4" min="1" max="50" data-vault-on="validateBrushSize" data-vault-args='[]'
                      class="w-8 text-center bg-black text-[10px] font-bold text-teal-400 focus:outline-none">
-              <button onclick="changeBrushSize(2)" class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
+              <button data-vault-on="changeBrushSize" data-vault-args='[2]' class="px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white font-bold">+</button>
             </div>
 
-            {% if not is_readonly %}<button onclick="clearWbCanvas()" class="tb-btn text-red-400 uppercase">Очистить все</button>
-            <button onclick="addWhiteboardNode()" class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>{% endif %}
+            {% if not is_readonly %}<button data-vault-on="clearWbCanvas" data-vault-args='[]' class="tb-btn text-red-400 uppercase">Очистить все</button>
+            <button data-vault-on="addWhiteboardNode" data-vault-args='[]' class="px-3 py-1 bg-teal-400 text-black font-black text-xs uppercase">+ Карточка</button>{% endif %}
 
             <div class="flex items-center gap-1 border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
-              <button onclick="zoomWb(-0.1)" class="font-bold hover:text-white">-</button>
+              <button data-vault-on="zoomWb" data-vault-args='[-0.1]' class="font-bold hover:text-white">-</button>
               <span id="wb-zoom-label" class="font-mono">100%</span>
-              <button onclick="zoomWb(0.1)" class="font-bold hover:text-white">+</button>
-              <button onclick="resetWbZoom()" class="text-zinc-600 hover:text-white ml-1">↻</button>
+              <button data-vault-on="zoomWb" data-vault-args='[0.1]' class="font-bold hover:text-white">+</button>
+              <button data-vault-on="resetWbZoom" data-vault-args='[]' class="text-zinc-600 hover:text-white ml-1">↻</button>
 </div>
 
   </div>
@@ -598,7 +598,7 @@
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
     <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
       <span class="text-xs font-bold text-white uppercase">Новый воркспейс</span>
-      <button onclick="closeWorkspaceModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+      <button data-vault-on="closeWorkspaceModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <label class="text-[10px] text-zinc-500 uppercase font-bold">Название воркспейса</label>
@@ -607,7 +607,7 @@
 
       <div class="pt-2 border-t border-zinc-800 space-y-3">
         <label class="flex items-center gap-2 text-[10px] text-zinc-500 uppercase font-bold cursor-pointer">
-          <input type="checkbox" id="ws-sealed-input" onchange="toggleSealedFields()" class="accent-teal-400">
+          <input type="checkbox" id="ws-sealed-input" data-vault-on="toggleSealedFields" data-vault-args='[]' class="accent-teal-400">
           Зашифровать воркспейс
         </label>
 
@@ -629,8 +629,8 @@
       </div>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-      <button onclick="closeWorkspaceModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-      <button onclick="submitWorkspace()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
+      <button data-vault-on="closeWorkspaceModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button data-vault-on="submitWorkspace" data-vault-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Создать</button>
     </div>
   </div>
 </div>
@@ -640,7 +640,7 @@
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
     <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
       <span class="text-xs font-bold text-white uppercase">Разблокировать</span>
-      <button onclick="closeUnlockModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+      <button data-vault-on="closeUnlockModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <p class="text-[10px] text-zinc-500 leading-relaxed">
@@ -656,8 +656,8 @@
       <p id="unlock-error" class="hidden text-[10px] text-red-400">Неверный пароль</p>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-      <button onclick="closeUnlockModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-      <button onclick="submitUnlock()" class="px-4 py-1 bg-red-500 hover:bg-red-400 text-white font-black text-xs uppercase">Открыть</button>
+      <button data-vault-on="closeUnlockModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button data-vault-on="submitUnlock" data-vault-args='[]' class="px-4 py-1 bg-red-500 hover:bg-red-400 text-white font-black text-xs uppercase">Открыть</button>
     </div>
   </div>
 </div>
@@ -667,7 +667,7 @@
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-md">
     <div class="flex justify-between items-center border-b border-zinc-800 px-4 py-3">
       <span class="text-xs font-bold text-white uppercase">Добавить ссылку</span>
-      <button onclick="closeLinkModal()" class="text-zinc-500 hover:text-white text-sm">✕</button>
+      <button data-vault-on="closeLinkModal" data-vault-args='[]' class="text-zinc-500 hover:text-white text-sm">✕</button>
     </div>
     <div class="p-4 space-y-3">
       <div class="space-y-1">
@@ -687,14 +687,14 @@
       </div>
     </div>
     <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
-      <button onclick="closeLinkModal()" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
-      <button onclick="submitLink()" class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Сохранить</button>
+      <button data-vault-on="closeLinkModal" data-vault-args='[]' class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button data-vault-on="submitLink" data-vault-args='[]' class="px-4 py-1 bg-teal-400 hover:bg-teal-300 text-black font-black text-xs uppercase">Сохранить</button>
     </div>
   </div>
 </div>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 // NOTE: `var`, not `const`/`let`: this dashboard is swapped into the live page
 // via htmx (navigate() in base.html), so the script re-executes in the same
 // window scope on every visit — lexical redeclarations would throw and abort
@@ -862,10 +862,50 @@ function isVaultFileUrl(url) {
 function vaultImgTag(item, url, cls) {
   if (!url) return '';
   if (item && item.is_sealed && isVaultFileUrl(url)) {
-    return `<img data-vault-file="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy" onerror="this.style.display='none'">`;
+    return `<img data-vault-file="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy">`;
   }
-  return `<img src="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy" onerror="this.style.display='none'">`;
+  return `<img src="${escapeAttr(url)}" alt="" class="${cls}" loading="lazy">`;
 }
+
+// Delegated actions, so the policy can drop 'unsafe-inline'.
+//
+// An inline onclick attribute is a CSP hole with a convenient syntax: it runs
+// script the policy never saw. So the call lives in attributes the policy cannot
+// execute — a name and a JSON argument list, read here — and this dispatcher is
+// what calls it.
+//
+// Two deliberate properties. The arguments are JSON, never evaluated, so an
+// argument can be data rather than code; and `$el` / `$el.value` / `$event`
+// stand in for `this` and `event`, which keeps every existing function's
+// signature untouched — the migration is the attribute, not the callee.
+//
+// The name is looked up in `vaultActions`, which is built from names that exist
+// in this file's scope. A typo, or a handler pasted in by a future edit that
+// nobody registered, does nothing at all rather than running something.
+function vaultArg(spec, el, event) {
+  if (spec === '$el') return el;
+  if (spec === '$event') return event;
+  // A page-level value the attribute cannot spell. It is read at dispatch time,
+  // not at render time, so a click sees the collection the user is actually in
+  // rather than the one the page was rendered in.
+  if (spec === '$currentCollection') return currentCollectionId;
+  if (typeof spec === 'string' && spec.startsWith('$el.')) {
+    return spec.slice(4).split('.').reduce((value, key) => (value == null ? value : value[key]), el);
+  }
+  return spec;
+}
+function vaultRunAction(name, el, event) {
+  const action = vaultActions[name];
+  if (!action) return;
+  let args = [];
+  try {
+    args = JSON.parse(el.dataset.vaultArgs || '[]').map(spec => vaultArg(spec, el, event));
+  } catch (e) {
+    return;
+  }
+  action.apply(el, args);
+}
+const vaultActions = {};
 
 // Blob URLs minted by the binder, by file address. Revoked on every grid
 // render: tiles are rebuilt from scratch there, and a blob that outlives its
@@ -1375,9 +1415,9 @@ function openMediaView(item) {
     stage.innerHTML = `
       <div class="text-center px-6 py-10 space-y-2">
         ${card.is_locked ? `<div class="text-3xl">🔒</div>` : ''}
-        ${posterAttr ? `<img src="${escapeAttr(posterAttr)}" class="max-h-[40vh] mx-auto opacity-60" onerror="this.style.display='none'">` : ''}
+        ${posterAttr ? `<img src="${escapeAttr(posterAttr)}" class="max-h-[40vh] mx-auto opacity-60">` : ''}
         <div class="text-xs text-zinc-400 font-mono">${escapeHtml(statusLabel(status))}</div>
-        ${canRetry ? `<button onclick="retryVideoDownload(${item.id})" class="text-teal-400 hover:text-white text-xs font-mono uppercase">↻ Повторить загрузку</button>` : ''}
+        ${canRetry ? `<button data-vault-on="retryVideoDownload" data-vault-args='[${item.id}]' class="text-teal-400 hover:text-white text-xs font-mono uppercase">↻ Повторить загрузку</button>` : ''}
       </div>`;
   } else if (isVideo) {
     const duration = formatDuration(card.media_duration);
@@ -1448,7 +1488,7 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
   const pinned = Boolean(item.is_pinned);
   const pin = readOnlyMode
     ? `<span class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600'}">${pinned ? '★' : '☆'}</span>`
-    : `<button onclick="togglePin(${itemId})" class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600 hover:text-zinc-400'}" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '★' : '☆'}</button>`;
+    : `<button data-vault-on="togglePin" data-vault-args='[${itemId}]' class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600 hover:text-zinc-400'}" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '★' : '☆'}</button>`;
   // Dragging a card onto a space is a mouse gesture, and HTML5 drag does not
   // exist on a phone at all — so the same move needs a button. Without it the
   // feature is unreachable on the device it is most natural on.
@@ -1464,7 +1504,7 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
     <div class="flex gap-2 font-bold">
       <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
       ${filing}
-      ${readOnlyMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase" title="Удалить">✕</button>`}
+      ${readOnlyMode ? '' : `<button data-vault-on="deleteItem" data-vault-args='[${itemId}]' class="hover:text-red-400 uppercase" title="Удалить">✕</button>`}
     </div>
   </div>`;
 }
@@ -1490,7 +1530,7 @@ function openMoveCardMenu(event, cardId) {
 
   const body = document.getElementById('ws-move-options');
   body.innerHTML = targets.map(target =>
-    `<button class="ws-move-opt" onclick="vaultMoveCardToSpace(${cardId}, ${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" data-vault-on="vaultMoveCardToSpace" data-vault-args='[${cardId},${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   vaultMoveCardFromId = cardId;
   const menu = document.getElementById('ws-move-menu');
@@ -1699,7 +1739,7 @@ function renderSheetCanvas() {
     html += `<th class="sheet-header">
       <div class="flex items-center justify-between px-1">
         <input type="text" value="${escapeAttr(h)}" ${readOnlyMode ? 'readonly' : `onchange="updateHeader(${colIdx}, this.value)"`} class="cell-edit font-bold text-teal-400">
-        ${readOnlyMode ? '' : `<button onclick="deleteColumn(${colIdx})" class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
+        ${readOnlyMode ? '' : `<button data-vault-on="deleteColumn" data-vault-args='[${colIdx}]' class="col-del-btn text-[10px]" title="Удалить колонку">✕</button>`}
       </div>
     </th>`;
   });
@@ -1710,11 +1750,11 @@ function renderSheetCanvas() {
       <td class="text-center text-zinc-600 font-bold text-[9px] bg-zinc-950">
         <div class="flex items-center justify-between px-1">
           <span>${rowIdx + 1}</span>
-          ${readOnlyMode ? '' : `<button onclick="deleteRow(${rowIdx})" class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
+          ${readOnlyMode ? '' : `<button data-vault-on="deleteRow" data-vault-args='[${rowIdx}]' class="row-del-btn text-[9px]" title="Удалить строку">✕</button>`}
         </div>
       </td>`;
     row.forEach((cell, colIdx) => {
-      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${readOnlyMode ? 'readonly' : `onfocus="activeCell=this" oninput="handleCellInput(${rowIdx}, ${colIdx}, this.value)"`} class="cell-edit"></td>`;
+      html += `<td><input type="text" value="${escapeAttr(cell || '')}" data-row="${rowIdx}" data-col="${colIdx}" ${readOnlyMode ? 'readonly' : `onfocus="activeCell=this" data-vault-on="handleCellInput" data-vault-args='[${rowIdx},${colIdx},"$el.value"]'`} class="cell-edit"></td>`;
     });
     html += '</tr>';
   });
@@ -1908,7 +1948,7 @@ function renderWhiteboardNodes() {
     <div class="wb-node" id="wb-node-${idx}" style="left:${x}px; top:${y}px;" ${readOnlyMode ? '' : `onpointerdown="handleWbNodePointerDown(event, ${idx})"`}>
       <div class="flex justify-between items-center pb-1 mb-1 border-b border-zinc-800">
         <span class="text-[9px] text-zinc-500 font-bold">CARD #${idx + 1}</span>
-        ${readOnlyMode ? '' : `<button onclick="deleteWbNode(${idx})" class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
+        ${readOnlyMode ? '' : `<button data-vault-on="deleteWbNode" data-vault-args='[${idx}]' class="text-zinc-600 hover:text-red-400 text-[10px]">✕</button>`}
       </div>
       <textarea ${readOnlyMode ? 'readonly' : `oninput="updateWbNodeText(${idx}, this.value)"`} class="w-full bg-transparent text-xs text-white resize-none border-none focus:outline-none">${escapeHtml(node.text || '')}</textarea>
     </div>
@@ -2571,7 +2611,7 @@ function openMoveMenu(event, id) {
     targets.push({ id: cid, name: candidate.name });
   });
   body.innerHTML = targets.map(target =>
-    `<button class="ws-move-opt" onclick="vaultMoveTo(${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" data-vault-on="vaultMoveTo" data-vault-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   const menu = document.getElementById('ws-move-menu');
   const anchor = event.currentTarget.getBoundingClientRect();
@@ -2649,7 +2689,7 @@ function openNestMenu(event, id) {
   }
   const body = document.getElementById('ws-move-options');
   body.innerHTML = options.map(target =>
-    `<button class="ws-move-opt" onclick="vaultNestInto(${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" data-vault-on="vaultNestInto" data-vault-args='[${target.id}]'>${escapeHtml(target.name)}</button>`
   ).join('');
   vaultNestFromId = id;
   const menu = document.getElementById('ws-move-menu');
@@ -3341,7 +3381,7 @@ function renderTiles(items) {
         ${hasTitle ? `
           <div class="text-xs font-bold text-white cursor-pointer hover:text-teal-400 ${item.is_locked ? 'cursor-not-allowed hover:text-white' : ''}" onclick="${item.is_locked ? '' : clickHandler}">
             ${item.is_locked ? '<span class="inline-block w-2 h-2 rounded-[1px] bg-red-500 align-middle mr-1.5" title="Зашифровано — разблокируйте Vault"></span>' : ''}
-            ${itemUrl && !item.is_locked ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
+            ${itemUrl && !item.is_locked ? `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" data-vault-on="stopPropagation" data-vault-args='[]'>${escapedTitle} <span class="text-teal-400">↗</span></a>` : escapedTitle}
           </div>
         ` : (itemUrl ? `<div class="text-xs font-bold text-teal-400 truncate"><a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)} ↗</a></div>` : '')}
 
@@ -3603,6 +3643,54 @@ function handleSheetPaste(e) {
     triggerSheetAutoSave();
   }
 }
+
+// Every action the dashboard delegates to. Listed rather than looked up on
+// `window`: a name that is not here is a name that does not run. `sendToOutpost`
+// is the one that arrives from the layout, so it is reached through `window` —
+// where it is actually defined — instead of as a bare global.
+Object.assign(vaultActions, {
+  sendToOutpost: window.sendToOutpost,
+  stopPropagation: event => event.stopPropagation(),
+  // The one call site that reached into the DOM itself. `this`, not a first
+  // argument: the dispatcher calls actions with the element as the receiver,
+  // which is what `this` meant in the attribute this replaced.
+  selectWorkspaceRow: function (id) {
+    selectWorkspace(id, this.querySelector('[data-workspace-name]').textContent);
+  },
+  addSheetColumn, addSheetRow, addWhiteboardNode, changeBrushSize, changeCellFontSize,
+  cleanEmptySheetRows, clearSheetTable, clearWbCanvas, closeEditorView, closeLinkModal,
+  closeMediaView, closeSheetView, closeSidebar, closeUnlockModal, closeVcalModal,
+  closeWhiteboardView, closeWorkspaceModal, debounceSearch, deleteItem, deleteRow,
+  deleteColumn, deleteWbNode, exportItems, formatCell, handleCellInput, instantCreate,
+  loadMoreVault, openEditorView, openLinkModal, openSheetView, openWorkspaceModal,
+  resetWbZoom, retryVideoDownload, selectWorkspace, setWbMode,
+  submitGateUnlock, submitLink, submitUnlock, submitVcalModal, submitWorkspace, toggleExportMenu,
+  togglePin, togglePlusDropdown, toggleSealedFields, toggleSidebar, validateBrushSize,
+  vaultMoveCardToSpace, vaultMoveTo, vaultNestInto, zoomWb,
+});
+
+// One listener per event type, on the document, for every delegated action.
+// `closest` finds the nearest marked ancestor, so a click on a `<span>` inside a
+// button still reaches the button — which is what an inline handler on the button
+// did too.
+// Capture phase, not bubble: an inline handler ran before the event reached an
+// ancestor that has a handler of its own, and a link that stops propagation to
+// keep its parent from opening still has to be able to. At document, in the
+// bubble phase, stopping propagation would be too late to matter.
+for (const type of ['click', 'input', 'change', 'keydown', 'submit']) {
+  document.addEventListener(type, event => {
+    const el = event.target.closest('[data-vault-on]');
+    if (el) vaultRunAction(el.dataset.vaultOn, el, event);
+  }, true);
+}
+
+// A broken picture hides itself. `error` does not bubble, so this listens in the
+// capture phase — it replaced `onerror="this.style.display='none'"` on every
+// image the dashboard renders, including the ones it builds later.
+document.addEventListener('error', event => {
+  const target = event.target;
+  if (target && target.tagName === 'IMG') target.style.display = 'none';
+}, true);
 
 // Boot on every visit: htmx navigation does not re-fire DOMContentLoaded,
 // so when the document is already ready the dashboard must start immediately.
@@ -3876,7 +3964,7 @@ if (document.readyState === 'loading') {
 }
 </script>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 // ── VAULT SPACE MINI-CALENDAR ──────────────────────────────────────────────
 // Same NetSanctumCalendar core as /planner, scoped to the active workspace.
 // Full editing lives in /planner; here: month pills in cells, quick create,

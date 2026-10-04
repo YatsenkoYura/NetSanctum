@@ -27,18 +27,26 @@ class AuditToolTests(unittest.TestCase):
     def setUp(self):
         self.source = DASHBOARD.read_text()
 
-    def test_it_finds_every_handler_kind_the_template_uses(self):
+    def test_it_reports_what_is_left_after_the_first_three_steps(self):
+        """Thirteen remain, and the tool must still see them.
+
+        The delegated ones are gone from this count on purpose: that is the
+        measure of progress, so a tool that stopped counting would stop being
+        useful.
+        """
         summary = report([DASHBOARD])
 
         events = {handler.event for handler in summary.handlers}
-        self.assertEqual({"click", "input", "change", "keydown", "error"}, events)
-        self.assertGreater(summary.handler_count, 0)
+        self.assertEqual({"click", "keydown"}, events)
+        self.assertEqual(13, summary.handler_count)
 
     def test_it_groups_identical_call_sites(self):
         """Nine calls to one function are one migration, not nine."""
         summary = report([DASHBOARD])
 
-        self.assertGreaterEqual(summary.by_function["closeUnlockModal"], 1)
+        # What is left are the ones built in JavaScript rather than written out,
+        # which is why they share a shape the tool can name.
+        self.assertEqual(5, summary.by_function["${clickHandler}"])
         self.assertEqual(
             summary.handler_count,
             sum(summary.by_function.values()),
@@ -52,13 +60,15 @@ class AuditToolTests(unittest.TestCase):
         self.assertNotIn("button", summary.by_function)
         self.assertNotIn("only", summary.by_function)
 
-    def test_a_script_with_a_src_is_not_an_inline_script(self):
+    def test_every_script_block_now_carries_a_nonce(self):
+        """Including the external one, so the markup reads the same throughout."""
         summary = report([DASHBOARD])
 
+        self.assertEqual(0, summary.script_count)
         self.assertEqual(
-            2,
-            summary.script_blocks[str(DASHBOARD)],
-            "two inline blocks; the third script tag loads netsanctum-calendar.js from /static",
+            3,
+            DASHBOARD.read_text().count("<script"),
+            "three script tags: two inline and netsanctum-calendar.js from /static",
         )
 
     def test_a_nonced_script_is_not_counted(self):

@@ -1,3 +1,5 @@
+import secrets
+from contextvars import ContextVar
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -89,6 +91,33 @@ def is_cross_site_request(request: Request) -> bool:
 # than it is.
 DASHBOARD_CSP_PREFIXES = ("/vault/dashboard",)
 
+# One nonce per response, minted where the header is written so the policy and the
+# markup cannot disagree. A ContextVar rather than a request-state attribute
+# because the template renders deep inside the router, and a global would be one
+# tab's nonce leaking into another's page.
+_CSP_NONCE: ContextVar[str] = ContextVar("csp_nonce", default="")
+
+
+def csp_nonce() -> str:
+    """The nonce for the response being rendered, for `<script nonce=...>`.
+
+    Empty outside a dashboard request, where the policy has no nonce to honour.
+    A template that renders it unconditionally is then no worse off than one that
+    never had it.
+    """
+    return _CSP_NONCE.get()
+
+
+def dashboard_csp(nonce: str) -> str:
+    """The dashboard policy, carrying this response's nonce when it has one."""
+    if not nonce:
+        return DASHBOARD_CONTENT_SECURITY_POLICY
+    return DASHBOARD_CONTENT_SECURITY_POLICY.replace(
+        "script-src 'self' 'unsafe-inline'",
+        f"script-src 'self' 'unsafe-inline' 'nonce-{nonce}'",
+    )
+
+
 DASHBOARD_CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'none'",
@@ -110,7 +139,16 @@ async def security_headers_middleware(request: Request, call_next):
     if is_cross_site_request(request):
         return JSONResponse({"detail": "Cross-site request rejected"}, status_code=403)
 
-    response = await call_next(request)
+    nonce = ""
+    token = None
+    if request.url.path.startswith(DASHBOARD_CSP_PREFIXES):
+        nonce = secrets.token_urlsafe(16)
+        token = _CSP_NONCE.set(nonce)
+    try:
+        response = await call_next(request)
+    finally:
+        if token is not None:
+            _CSP_NONCE.reset(token)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -129,7 +167,7 @@ async def security_headers_middleware(request: Request, call_next):
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
-        response.headers["Content-Security-Policy"] = DASHBOARD_CONTENT_SECURITY_POLICY
+        response.headers["Content-Security-Policy"] = dashboard_csp(nonce)
     if request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response

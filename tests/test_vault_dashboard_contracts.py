@@ -265,7 +265,11 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
 
     def test_the_create_menu_offers_a_folder_inside_a_space(self):
         self.assertIn('id="vault-create-folder-option"', TEMPLATE)
-        self.assertIn("openWorkspaceModal(currentCollectionId)", TEMPLATE)
+        # The parent is read when the click happens, not when the page rendered:
+        # a page rendered in one space and clicked in another would otherwise
+        # create the folder in the space it was served from.
+        self.assertIn('data-vault-on="openWorkspaceModal"', TEMPLATE)
+        self.assertIn("'$currentCollection'", TEMPLATE)
 
     def test_the_form_sends_the_parent_it_was_opened_with(self):
         body = TEMPLATE.split("async function submitWorkspace() {", 1)[1].split("\n}", 1)[0]
@@ -366,7 +370,7 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
         self.assertIn("function openMoveCardMenu(", TEMPLATE)
         # The exact name matters: a menu button once called a function that did
         # not exist, four letters short of the real one.
-        self.assertIn('onclick="vaultMoveCardToSpace(', TEMPLATE)
+        self.assertIn('data-vault-on="vaultMoveCardToSpace"', TEMPLATE)
 
     def test_a_plain_card_may_go_into_a_sealed_space_where_it_gets_sealed(self):
         """The server seals it on the way in, needing only the target's public key."""
