@@ -30,6 +30,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy import select, update
 
 from app.core.config import get_settings
+from app.core.state_store import state_redis_url
 from app.modules.vault.crypto import (
     ARGON2_M_COST,
     ARGON2_PARALLELISM,
@@ -64,7 +65,11 @@ from app.modules.vault.models import VaultCollection, VaultItem
 
 logger = logging.getLogger(__name__)
 
-redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+# Unlock sessions, throttles and media epochs live in their own Redis, one
+# without persistence: a session record is a vault's data key, and it has no
+# business surviving a restart in a file next to the broker's queue. Falls back
+# to the general Redis when nothing is configured, which is the old behaviour.
+redis_client = aioredis.Redis.from_url(state_redis_url(), decode_responses=True)
 
 # An unlock lives with a browser tab, not with the instance. The token only ever
 # exists in the page's memory, so reloading asks for the passphrase again, and a
@@ -107,7 +112,27 @@ SEALED_FIELDS = (
     "score",
     "status",
     "media_mime",
+    # How far into it the owner is, and how big it turned out to be. These were
+    # "structural" on the grounds that the grid does not read them — it reads
+    # `has_media` and the status — and that is exactly the problem: an episode
+    # counter and a duration tell a reader of the table a good deal about a
+    # sealed card without opening anything.
+    "progress_current",
+    "progress_total",
+    "rewatch_count",
+    "media_duration",
+    "media_width",
+    "media_height",
 )
+
+# Sealed fields the database will not let go of. `_blank_sealed_columns` zeroes
+# these instead of nulling them: `progress_current` and `rewatch_count` are
+# NOT NULL, and relaxing that would cost every plain card its guarantee too.
+SEALED_ZEROED_FIELDS = {"progress_current": 0, "rewatch_count": 0}
+
+# Deliberately still readable: `media_size` (a length, which says nothing about
+# the content), `position` (the grid's own ordering) and `public_title` (the
+# alias, which is the only handle a locked vault has).
 
 
 class VaultLockedError(RuntimeError):
@@ -423,7 +448,86 @@ async def unlock_collection(
         collection_public_key = inbox_public_key(collection)
         if collection_public_key is not None:
             await seal_collection_plaintext(session, collection, collection_public_key)
+        await autostart_pending_downloads(session, collection, token, private_key)
     return token
+
+
+# How many waiting cards one unlock may start, hard. A setting may lower this and
+# nothing may raise it: the point of the cap is that an unlock is bounded even
+# when a vault has a hundred waiting videos.
+PENDING_AUTOSTART_HARD_LIMIT = 3
+
+
+async def autostart_pending_downloads(
+    session, collection: VaultCollection, unlock_token: str, private_key: bytes
+) -> int:
+    """Start waiting video downloads for this vault, up to the cap. Off by default.
+
+    Only ever called from an unlock, which is why it is bounded and opt-in: the
+    unlock has the token these downloads need, and it is the one moment the owner
+    is demonstrably present. Each card's address comes out of the sealed payload,
+    which the key in hand opens, and the token goes back to the worker inside the
+    sealed handoff — never in the task arguments, which the broker keeps in a
+    Redis with an AOF on.
+
+    The opened columns are rolled back afterwards: this function reads a sealed
+    card, and a commit here would write it back in the clear.
+    """
+
+    settings = get_settings()
+    if not settings.VAULT_PENDING_AUTOSTART or not unlock_token:
+        return 0
+    limit = min(int(settings.VAULT_PENDING_AUTOSTART_LIMIT), PENDING_AUTOSTART_HARD_LIMIT)
+    if limit < 1:
+        return 0
+    try:
+        rows = list(
+            (
+                await session.execute(
+                    select(VaultItem)
+                    .where(
+                        VaultItem.collection_id == collection.id,
+                        VaultItem.media_status == "pending_unlock",
+                    )
+                    .order_by(VaultItem.id.asc())
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    except Exception:
+        logger.debug("could not list waiting downloads for Vault %s", collection.id, exc_info=True)
+        return 0
+
+    started = 0
+    for item in rows:
+        url = item.url
+        if item.sealed_payload:
+            # The address lives in the payload, so reading it is what this unlock
+            # is for. A card that cannot be opened is skipped, not guessed at.
+            try:
+                open_item(private_key, item)
+                url = item.url
+            except Exception:
+                logger.warning("could not read the address of waiting Vault item %s", item.id, exc_info=True)
+                continue
+        if not url:
+            continue
+        from app.modules.vault.services import queue_video_download
+
+        task_id = await queue_video_download(
+            session, item.id, str(url), title=item.title or None, unlock_token=unlock_token
+        )
+        if task_id:
+            started += 1
+    # Whatever was opened above is dropped rather than written back.
+    if started:
+        try:
+            await session.rollback()
+        except Exception:
+            logger.debug("could not roll back the pending-download scan", exc_info=True)
+    return started
 
 
 async def file_key_for(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:
@@ -902,7 +1006,7 @@ def inbox_public_key(collection: VaultCollection) -> bytes | None:
 
 def _blank_sealed_columns(item: VaultItem) -> None:
     for field in SEALED_FIELDS:
-        setattr(item, field, None)
+        setattr(item, field, SEALED_ZEROED_FIELDS.get(field))
     # There must be no second, readable copy of what the owner wrote. `title`,
     # `tags` and `canvas_data` are NOT NULL, so they are emptied rather than
     # nulled; an empty title is not the content, and relaxing the constraint would

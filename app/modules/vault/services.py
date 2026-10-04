@@ -11,9 +11,9 @@ import redis.asyncio as aioredis
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.modules import module_registry
 from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked, validate_remote_url
+from app.core.state_store import state_redis_url
 from app.modules.vault import images as _vault_images
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.schemas import (
@@ -33,7 +33,9 @@ from app.modules.vault.tasks import download_vault_video_task
 
 logger = logging.getLogger(__name__)
 
-redis_client = aioredis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+# The handoff holds a video's address and title for half an hour. It is session
+# state, not queue state, so it goes to the store without persistence.
+redis_client = aioredis.Redis.from_url(state_redis_url(), decode_responses=True)
 
 # Tracked download progress, declared by the module manifest.
 MEDIA_PROGRESS_PREFIX = "vault_media"
@@ -405,18 +407,33 @@ async def create_video_capture_item(
             auto_fetch_og=capture.auto_fetch_og,
         ),
     )
-    task_id = await queue_video_download(
-        session,
-        item.id,
-        str(capture.video_url),
-        quality=capture.quality,
-        title=capture.title,
-    )
+    sealed_here = False
+    if item.collection_id is not None:
+        collection_row = await session.get(VaultCollection, item.collection_id)
+        sealed_here = bool(getattr(collection_row, "is_encrypted", False))
+    task_id = None
+    if sealed_here:
+        # No download for a sealed collection: the worker would have nowhere to
+        # put the bytes except the shared application key, which is the thing the
+        # file key exists to stop. The address and the title are already inside
+        # the sealed payload, so the card is complete — it just has no video yet,
+        # and says so. The owner starts it from an unlocked tab, where the token
+        # travels with the request and the file lands under the vault's key.
+        item.media_status = "pending_unlock"
+    else:
+        task_id = await queue_video_download(
+            session,
+            item.id,
+            str(capture.video_url),
+            quality=capture.quality,
+            title=capture.title,
+        )
     # Structural column, like `media_path`: `canvas_data` is a sealed field, so a
     # write there was silently dropped for a locked collection and visible in the
     # clear before that. The task id used to sit here too — write-only, read by
     # nothing, and it expired within a day anyway.
-    item.media_status = "queued" if task_id else "not queued"
+    if not sealed_here:
+        item.media_status = "queued" if task_id else "not queued"
     await session.commit()
     return item
 

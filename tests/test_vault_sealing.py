@@ -41,6 +41,12 @@ def make_item(collection_id: int | None = 1) -> VaultItem:
         category="private",
         score=9.5,
         status="planned",
+        progress_current=7,
+        progress_total=12,
+        rewatch_count=2,
+        media_duration=1234.0,
+        media_width=1920,
+        media_height=1080,
         collection_id=collection_id,
         media_mime="video/mp4",
         is_pinned=True,
@@ -58,7 +64,10 @@ class SealItemTests(unittest.TestCase):
     def test_every_owner_field_is_blanked(self):
         for field in SEALED_FIELDS:
             value = getattr(self.item, field)
-            self.assertIn(value, (None, "", [], {}), f"{field} still holds {value!r}")
+            # Zeroed rather than nulled where the column is NOT NULL — an empty
+            # progress counter is not the content, and relaxing the constraint
+            # would cost every plain card its guarantee too.
+            self.assertIn(value, (None, "", [], {}, 0), f"{field} still holds {value!r}")
 
     def test_nothing_readable_survives_in_the_row(self):
         # The strongest statement of the promise: no column of the row, and no

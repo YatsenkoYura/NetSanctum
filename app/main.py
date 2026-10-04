@@ -150,6 +150,12 @@ async def lifespan(application: FastAPI):
         logger.info("Settings module not installed; skipping default settings seed.")
 
     try:
+        # Before anything can unlock a vault: a state store that snapshots holds
+        # data keys and download addresses on disk, and the operator should find
+        # that out at startup rather than in a dump.
+        from app.core.state_store import require_ephemeral_state_store
+
+        await require_ephemeral_state_store()
         if process_role("web") == "web":
             from app.core.encryption_migration import start_encryption_migration
 

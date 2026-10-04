@@ -91,6 +91,26 @@ def _human(size: int) -> str:
 STORAGE_PREFIX = "vault/videos"
 THUMBNAIL_PREFIX = "vault/thumbnails"
 
+# A sealed card whose video has not been downloaded yet, because nobody lent the
+# worker a vault key. It is a status and not an error: the address and the title
+# are already sealed in the payload, and the download happens when the owner
+# asks for it from an unlocked tab.
+MEDIA_PENDING_STATUS = "pending_unlock"
+
+
+def _discard_download(video_file: Path, workdir: Path) -> None:
+    """Delete a download that cannot be stored under a vault key.
+
+    The alternative — parking it under the application key — is what this whole
+    arrangement exists to stop, and a file that cannot be encrypted properly is
+    not a file worth keeping.
+    """
+    for path in (video_file, *workdir.glob("*")):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("could not discard the downloaded file %s", path, exc_info=True)
+
 
 def _format_selector(quality: str | None) -> str:
     """yt-dlp format selector for a height preference.
@@ -123,6 +143,36 @@ def _record_status(item_id: int, status: str):
             logger.debug("could not record vault media status", exc_info=True)
 
     return report
+
+
+# Where a sealed collection's media lives. The name is random and the path names
+# the row that owns it, so a leaked path says nothing about the file and one
+# card's path cannot be offered to another: the envelope binds its own path, and
+# the reader checks that the row segment agrees with the row asking.
+SEALED_MEDIA_PREFIX = "vault/{collection_id}/{item_id}"
+
+
+def sealed_media_path(collection_id: int, item_id: int, suffix: str = "mp4.enc") -> str:
+    """A fresh, unguessable path for one sealed card's media."""
+    template = SEALED_MEDIA_PREFIX.format(collection_id=collection_id, item_id=item_id)
+    return f"{template}/{secrets.token_hex(16)}.{suffix}"
+
+
+def sealed_media_owner(path: str) -> tuple[int, int] | None:
+    """The (collection, item) a sealed media path claims, or None if it claims nothing.
+
+    A legacy path — the old `vault/videos/{item_id}-{stem}.ext` layout, and
+    anything a plain collection wrote — returns None, and the reader treats that
+    as "an application-key object, served as before". That is the documented
+    residual risk for videos stored before this layout existed; they are still
+    readable, and they are still not under a vault key.
+    """
+    parts = str(path or "").split("/")
+    if len(parts) != 4 or parts[0] != "vault" or not parts[3]:
+        return None
+    if not parts[1].isdigit() or not parts[2].isdigit():
+        return None
+    return int(parts[1]), int(parts[2])
 
 
 def video_storage_name(*, sealed: bool, info: dict, url: str, ext: str) -> tuple[str, str]:
@@ -162,17 +212,25 @@ def attach_downloaded_media(
     """
     item.media_path = media_path
     item.media_size = size
-    # Structural columns, one per fact. See the note in `models.py`: the worker has
-    # no vault key, so anything it writes has to be readable.
+    # `media_size` and `media_status` stay readable by design: a length says
+    # nothing about what the file is, and the card has to show the download's
+    # state while it is sealed. The path is random and the worker is the only
+    # thing that writes it, after a download that carried a vault token.
     item.media_status = "completed"
     item.media_thumbnail_path = thumbnail_path
+    if sealed:
+        # Nothing else. Duration and dimensions are sealed fields now, and this
+        # worker has no vault key: writing them would put them back in the clear,
+        # and sealing them afterwards is not possible without the key it does not
+        # have. A sealed card's video therefore reports no duration and no
+        # dimensions until somebody edits it — the honest cost of not having a
+        # key here, and the reason a download has to borrow one.
+        return
     duration = info.get("duration")
     item.media_duration = float(duration) if isinstance(duration, (int, float)) else None
     width, height = info.get("width"), info.get("height")
     item.media_width = int(width) if isinstance(width, (int, float)) else None
     item.media_height = int(height) if isinstance(height, (int, float)) else None
-    if sealed:
-        return
     item.media_mime = mime
     item.media_title = title
     if not item.title and title:
@@ -279,54 +337,58 @@ def download_vault_video_task(
 
         with SyncSessionLocal() as session:
             parent = session.get(VaultItem, item_id)
-            sealed_for_name = bool(getattr(parent, "sealed_payload", None)) or _collection_is_sealed(
-                session, parent
-            )
-        stem, ext = video_storage_name(
-            sealed=sealed_for_name,
-            info=info,
-            url=url,
-            ext=(video_file.suffix or ".mp4").lower()[:6],
-        )
-        destination = _storage_root() / STORAGE_PREFIX / f"{item_id}-{stem}{ext}"
-        if not _within_root(destination, root=_storage_root()):
-            report(f"error: {MediaError.SOURCE}")
-            return "Error: refused storage path"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with SyncSessionLocal() as session:
-            parent = session.get(VaultItem, item_id)
             sealed = bool(getattr(parent, "sealed_payload", None)) or _collection_is_sealed(session, parent)
+            collection_id = parent.collection_id if parent is not None else None
 
+        file_key = None
         if sealed:
-            # The file key when the queueing tab lent its token through the
-            # handoff, else None — resolved once, up front, so no TTL matters
-            # after this point. Without it the application key applies, exactly
-            # as before, and the lock check on the endpoints is the protection.
+            # A sealed collection's video is encrypted under that collection's
+            # file key, which comes from a session. The queueing tab lends its
+            # token through the handoff; resolved once, up front, so no TTL
+            # matters after this point.
             from app.modules.vault.services import resolve_download_file_key
 
             file_key = resolve_download_file_key(handoff, handoff_data, item_id) if handoff_data else None
-        else:
-            file_key = None
+            if file_key is None or collection_id is None:
+                # Without a key there is nowhere to put this that is not the
+                # shared application key, and that is exactly the arrangement
+                # this closed: a sealed video readable by anyone who reaches the
+                # storage volume. The card goes back to waiting, and the bytes we
+                # just downloaded are deleted rather than parked under a weaker
+                # key than the vault promised.
+                report(MEDIA_PENDING_STATUS)
+                _discard_download(video_file, workdir)
+                return "Error: this Vault is locked; retry the download from an unlocked tab"
 
         if sealed:
             # A video in a sealed Vault has to be seekable from the player, which
             # rules out a single AES-GCM blob: GCM authenticates the whole
             # ciphertext, so any range would mean decrypting from byte zero.
-            destination = destination.with_suffix(destination.suffix + ".enc")
+            # The path is fresh and names the row that owns it.
+            relative = sealed_media_path(collection_id, item_id, "mp4.enc")
+            destination = _storage_root() / relative
             # The size comes from the file we just wrote, so the envelope is
             # sealed straight from the download: no second plaintext copy.
             with video_file.open("rb") as stream:
-                storage.save_file_encrypted_seekable(
-                    stream,
-                    str(destination.relative_to(_storage_root())),
-                    key=file_key,
-                    length=size,
-                )
+                storage.save_file_encrypted_seekable(stream, relative, key=file_key, length=size)
         else:
+            stem, ext = video_storage_name(
+                sealed=False,
+                info=info,
+                url=url,
+                ext=(video_file.suffix or ".mp4").lower()[:6],
+            )
+            relative = f"{STORAGE_PREFIX}/{item_id}-{stem}{ext}"
+            destination = _storage_root() / relative
+            if not _within_root(destination, root=_storage_root()):
+                report(f"error: {MediaError.SOURCE}")
+                return "Error: refused storage path"
             with video_file.open("rb") as stream:
-                storage.save_stream(stream, str(destination.relative_to(_storage_root())))
+                storage.save_stream(stream, relative)
 
-        thumbnail_path = _store_thumbnail(storage, info, item_id, key=file_key)
+        thumbnail_path = _store_thumbnail(
+            storage, info, item_id, key=file_key, sealed=sealed, collection_id=collection_id
+        )
 
         with SyncSessionLocal() as session:
             item = session.get(VaultItem, item_id)
@@ -335,7 +397,7 @@ def download_vault_video_task(
             attach_downloaded_media(
                 item,
                 sealed=sealed,
-                media_path=str(destination.relative_to(_storage_root())),
+                media_path=relative,
                 thumbnail_path=thumbnail_path,
                 size=size,
                 mime="video/mp4" if ext == ".mp4" else f"video/{ext.lstrip('.')}",
@@ -366,14 +428,25 @@ def download_vault_video_task(
             pass
 
 
-def _store_thumbnail(storage, info: dict, item_id: int, *, key: bytes | None = None) -> str | None:
+def _store_thumbnail(
+    storage,
+    info: dict,
+    item_id: int,
+    *,
+    key: bytes | None = None,
+    sealed: bool = False,
+    collection_id: int | None = None,
+) -> str | None:
     """Best-effort poster for the card. Its absence must not fail the download.
 
-    Under the collection's file key when the queueing tab lent one, else under
-    the application key like the video next to it. It used to be written in the
-    clear, which meant a sealed collection held an encrypted video beside a
-    readable poster.
+    A sealed collection's poster follows its video: the collection's file key,
+    and a fresh path under the row's own directory. There is no app-key fallback
+    for it — a poster beside a vault-key video, readable by anyone who reaches
+    the storage volume, is not a smaller version of the same mistake. A poster is
+    only ever written when the download had a key.
     """
+    if sealed and (key is None or collection_id is None):
+        return None
     url = info.get("thumbnail")
     if not url or not str(url).startswith("http"):
         return None
@@ -386,11 +459,16 @@ def _store_thumbnail(storage, info: dict, item_id: int, *, key: bytes | None = N
             allowed_content_prefixes=("image/",),
             https_only=False,
         )
-        suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(content_type, ".jpg")
-        destination = _storage_root() / THUMBNAIL_PREFIX / f"{item_id}{suffix}.enc"
+        suffix = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(content_type, "jpg")
+        if sealed:
+            relative = sealed_media_path(collection_id, item_id, f"{suffix}.enc")
+            destination = _storage_root() / relative
+        else:
+            relative = f"{THUMBNAIL_PREFIX}/{item_id}.{suffix}.enc"
+            destination = _storage_root() / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        storage.save_file_encrypted(content, str(destination.relative_to(_storage_root())), key=key)
-        return str(destination.relative_to(_storage_root()))
+        storage.save_file_encrypted(content, relative, key=key)
+        return relative
     except Exception:
         logger.debug("no thumbnail stored for vault item %s", item_id, exc_info=True)
         return None

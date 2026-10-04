@@ -48,6 +48,33 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Ephemeral Redis: unlock sessions, handoffs, throttles ──
+  # No RDB, no AOF, no volume. A session record is a vault's data key and a
+  # handoff holds the address of a video the owner has not finished saving;
+  # neither belongs in a file next to the broker's queue. Restarting this
+  # instance locks every vault, which is the correct failure: the keys were
+  # never meant to outlive the process.
+  redis-state:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--requirepass", "${REDIS_PASSWORD}"]
+    read_only: true
+    tmpfs:
+      - /data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # ── YouTube proof-of-origin tokens ─────────────────────
   youtube-pot:
     image: brainicism/bgutil-ytdlp-pot-provider:1.3.1-deno@sha256:bea3cfda79245700d7ad90500052b4358b1c1828fdc0961929624b83933121bc
@@ -587,6 +614,8 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
       STAGING_DIR: /tmp/netsanctum-staging
       STAGING_REQUIRE_TMPFS: "1"
+      VAULT_STATE_REDIS_URL: redis://:${REDIS_PASSWORD}@redis-state:6379/0
+      VAULT_STATE_REQUIRE_EPHEMERAL: "1"
     ports:
       - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
@@ -649,6 +678,8 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
       STAGING_DIR: /tmp/netsanctum-staging
       STAGING_REQUIRE_TMPFS: "1"
+      VAULT_STATE_REDIS_URL: redis://:${REDIS_PASSWORD}@redis-state:6379/0
+      VAULT_STATE_REQUIRE_EPHEMERAL: "1"
     volumes:
       - ./storage:/app/storage
       - encryption_key:/run/netsanctum-key:ro

@@ -112,6 +112,30 @@ class Settings(BaseSettings):
     # belong to a write in progress, since the largest download is bounded by
     # VAULT_MAX_VIDEO_BYTES and runs in hours at most.
     STAGING_ORPHAN_MINUTES: int = 60
+    # A sealed card whose video has not been downloaded — a capture from the
+    # extension, which holds no passphrase and cannot lend a worker a vault key.
+    # The download starts when the owner asks from an unlocked tab. Turning the
+    # ask into an automatic one is allowed and bounded: at most this many cards
+    # per unlock, never more, because an unlock is expected to be instant and
+    # local and a gigabyte download inside it is a surprise with a bandwidth
+    # bill. Off by default for that reason; the retry button works either way.
+    VAULT_PENDING_AUTOSTART: bool = False
+    VAULT_PENDING_AUTOSTART_LIMIT: int = 3
+    # Ephemeral state: unlock sessions, download handoffs, unlock throttles and
+    # the media epoch. All of it is worthless the moment the process restarts and
+    # some of it is a secret — a session record holds the vault's data key, a
+    # handoff holds the address of a video the owner has not finished saving.
+    # Point this at a Redis with persistence off: the broker has its own, the
+    # sessions do not belong on the same disk as the queue.
+    # Defaults to `REDIS_URL`, so a deployment that changes nothing keeps working
+    # and inherits the old arrangement; set it and the check below starts
+    # refusing an instance that would snapshot this state.
+    VAULT_STATE_REDIS_URL: str = ""
+    # Refuse to start against a persistent Redis. Off by default because a
+    # single-Redis deployment is the common one and refusing there would break
+    # every existing install on upgrade; on where it matters it is a hard stop,
+    # since the alternative is a plaintext copy of a data key in `dump.rdb`.
+    VAULT_STATE_REQUIRE_EPHEMERAL: bool = False
 
     # S3 settings (used when STORAGE_BACKEND=s3)
     S3_BUCKET_NAME: str = ""

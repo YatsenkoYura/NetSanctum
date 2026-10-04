@@ -428,6 +428,7 @@ async def get_item_media(
     item = await get_vault_item(db, item_id)
     if not item or not item.media_path:
         raise HTTPException(status_code=404, detail="Vault media not found")
+    _assert_media_path_belongs_to(item, item.media_path)
     await _require_media_access(await collection_for(db, item.collection_id), item, unlock_token, sig, exp)
     storage = get_storage()
     try:
@@ -521,6 +522,30 @@ async def _require_file_access(collection, unlock_token: str | None) -> bytes | 
     raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы открыть файл")
 
 
+def _assert_media_path_belongs_to(item, path: str) -> None:
+    """A sealed media path has to name the card that is asking for it.
+
+    The envelope already binds its own path, so a path moved between rows would
+    fail to decrypt rather than open the wrong file — this is the check that says
+    so out loud instead of returning a decryption error, and it stops a row that
+    points at somebody else's object from being served at all.
+
+    The collection segment is not compared: a card can be moved between sealed
+    spaces, and its media moves with it without being re-encrypted. The item
+    segment is the row's own id and never changes.
+    """
+    from app.modules.vault.tasks import sealed_media_owner
+
+    owner = sealed_media_owner(path)
+    if owner is None:
+        # A legacy or plain-collection object, encrypted under the application
+        # key. Served as before; documented in the README as a residual risk.
+        return
+    _collection_id, claimed_item = owner
+    if claimed_item != item.id:
+        raise HTTPException(status_code=403, detail="The stored file does not belong to this card")
+
+
 async def _require_media_access(
     collection, item, unlock_token: str | None, signature: str | None, expires: str | None
 ) -> None:
@@ -592,6 +617,7 @@ async def get_item_thumbnail(
     if not item or not item.media_thumbnail_path:
         raise HTTPException(status_code=404, detail="Vault thumbnail not found")
     path = item.media_thumbnail_path
+    _assert_media_path_belongs_to(item, path)
     file_key = await _require_file_access(await collection_for(db, item.collection_id), unlock_token)
     storage = get_storage()
     try:
@@ -830,12 +856,15 @@ async def retry_video_download(
     user=Depends(get_current_user),
     unlock_token: str = UNLOCK_HEADER,
 ):
-    """Queue the video download again, from an unlocked tab.
+    """Start the video download for a sealed card, from an unlocked tab.
 
-    The only producer of token-carrying handoffs: the extension capture has no
-    token to lend, so a sealed video queued from there stores under the
-    application key. Re-queueing while unlocked lends the tab's token through
-    the sealed handoff instead, and the worker stores under the file key.
+    The only way a sealed collection's video gets downloaded at all. A capture
+    cannot: the extension holds no passphrase, so it creates the card and stops.
+    This lends the tab's token through the sealed handoff, and the worker stores
+    the file under the collection's file key at a fresh path that names the row.
+
+    Also the answer to a download that was refused because the vault locked while
+    the card sat waiting: the retry is the same call with nothing else to do.
     """
     item = await get_vault_item(db, item_id)
     if not item:
