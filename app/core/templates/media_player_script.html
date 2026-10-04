@@ -1,4 +1,4 @@
-<script>
+<script {% if csp_nonce() %}nonce="{{ csp_nonce() }}"{% endif %}>
     (() => {
         const AUTOPLAY_PREFIX = 'netsanctum:player:autoplay:';
         const VOLUME_KEY = 'player_volume';

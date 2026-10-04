@@ -16,6 +16,7 @@ scan that read nothing.
 
 import contextlib
 import io
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -118,6 +119,101 @@ class DashboardIsCleanTests(unittest.TestCase):
                 code = main(["--require-none", str(path)])
 
         self.assertEqual(1, code)
+
+
+class IncludedPartialsTests(unittest.TestCase):
+    """A page is its own template plus whatever the layout pulls in.
+
+    `media_player_script.html` is included by the layout, so it is on the
+    dashboard whether or not the dashboard mentions it — and it was a `<script>`
+    with no nonce, which the policy blocked, which took the media player with it.
+    """
+
+    def test_every_included_template_nonces_its_inline_scripts(self):
+        layout = LAYOUT.read_text()
+        included = re.findall(r'\{% include "([^"]+)"', layout)
+        self.assertTrue(included, "the layout includes partials")
+
+        for name in included:
+            matches = list(Path("app").rglob(name))
+            self.assertTrue(matches, f"{name} is included but not in the tree")
+            for path in matches:
+                for line in path.read_text().splitlines():
+                    if re.search(r"<script(?![^>]*\bsrc=)[^>]*>", line):
+                        self.assertIn("csp_nonce", line, f"{path} has an inline script with no nonce")
+
+
+class LazyRegistrationTests(unittest.TestCase):
+    """Registration must not capture a value that does not exist yet.
+
+    A page's script is several blocks. An earlier one that lists a function
+    declared in a later one captures `undefined`, and the failure appears as a
+    button that throws on click with nothing wrong at registration to explain it.
+    An inline attribute never had this problem: it was resolved at click time.
+    """
+
+    def setUp(self):
+        self.page = DASHBOARD.read_text()
+
+    def _allowlist(self) -> str:
+        start = self.page.index("Object.assign(window.netSanctumActions, {")
+        return self.page[start : self.page.index("\n});", start)]
+
+    def test_no_action_is_registered_by_value(self):
+        for line in self._allowlist().splitlines():
+            stripped = line.strip().rstrip(",")
+            if not stripped or stripped.startswith("//") or any(c in stripped for c in ":=('\""):
+                continue
+            for name in stripped.split(","):
+                self.assertFalse(
+                    re.fullmatch(r"\s*[A-Za-z_$][\w$]*\s*", name),
+                    f"{name.strip()} is registered by value; it must be netLazy",
+                )
+
+    def test_every_named_action_goes_through_net_lazy(self):
+        block = self._allowlist()
+        named = re.findall(r"([A-Za-z_$][\w$]*): netLazy\('([A-Za-z_$][\w$]*)'\)", block)
+
+        self.assertGreater(len(named), 40)
+        for key, target in named:
+            self.assertEqual(key, target, "a lazy registration must keep the name it stands for")
+
+    def test_every_lazy_target_is_a_function_declaration_in_the_page(self):
+        """`window[name]` is only a function if it was declared as one."""
+        for _, target in re.findall(
+            r"([A-Za-z_$][\w$]*): netLazy\('([A-Za-z_$][\w$]*)'\)", self._allowlist()
+        ):
+            # re.M, not assertRegex: `^` has to be able to match a line start in
+            # a 4000-line template, and a failed assertRegex dumps the whole file
+            # into the output, which buries the one name that mattered.
+            declared = re.search(rf"^(?:async )?function {re.escape(target)}\(", self.page, re.M)
+            self.assertTrue(declared, f"netLazy('{target}') has no function declaration to resolve")
+
+    def test_the_layout_resolves_lazily_too(self):
+        self.assertIn("function netLazy(name)", LAYOUT.read_text())
+
+
+class FontPolicyTests(unittest.TestCase):
+    """The page's type comes from a host the policy has to name, or it does not
+    load at all — and a page that silently loses its type is easy to miss."""
+
+    def test_the_font_origins_are_allowed(self):
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY
+
+        self.assertIn("https://fonts.googleapis.com", DASHBOARD_CONTENT_SECURITY_POLICY)
+        self.assertIn("https://fonts.gstatic.com", DASHBOARD_CONTENT_SECURITY_POLICY)
+
+    def test_no_directive_is_declared_twice(self):
+        """A repeated directive is ignored by the browser, so the second one is
+        a comment that reads as policy."""
+        from app.core.http_security import DASHBOARD_CONTENT_SECURITY_POLICY
+
+        names = [directive.split()[0] for directive in DASHBOARD_CONTENT_SECURITY_POLICY.split("; ")]
+
+        self.assertEqual(sorted(set(names)), sorted(names), names)
+
+    def test_the_page_actually_asks_for_those_fonts(self):
+        self.assertIn("fonts.googleapis.com", LAYOUT.read_text())
 
 
 class PolicyTests(unittest.TestCase):

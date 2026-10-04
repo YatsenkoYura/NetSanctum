@@ -132,6 +132,129 @@ def run_node() -> dict:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
+class LazyResolutionTests(unittest.TestCase):
+    """A page's script is several blocks, and registration order is not run order.
+
+    This is the bug the browser found: `closeVcalModal` and `submitVcalModal` are
+    declared in the calendar block, which executes *after* the block that lists
+    them in the registry. Registering the value captured `undefined`, so those two
+    buttons failed on click with nothing wrong at registration to explain it.
+    """
+
+    # Block one: the layout's dispatcher and the page's registry, exactly as they
+    # are on the page. `closeVcalModal` is listed but not yet declared.
+    EARLY_BLOCK = """
+function netLazy(name) { return function () { return window[name].apply(this, arguments); }; }
+function netRunAction(name, el, event) {
+  const action = window.netSanctumActions[name];
+  if (!action) return;
+  let args;
+  try { args = JSON.parse(el.dataset.netArgs || '[]'); } catch (e) { return; }
+  action.apply(el, args);
+}
+window.netSanctumActions = {};
+var outcome = { resolved: 'unset', eagerRegistration: 'not attempted' };
+// The eager form, which is what the allowlist used to do. An object literal that
+// names an identifier nothing has declared does not produce `undefined` — it
+// throws, and it throws inside the `Object.assign`, so *nothing* gets registered.
+var eager = {};
+try { eager = { closeVcalModal: closeVcalModal }; }
+catch (e) { outcome.eagerRegistration = e.constructor.name; }
+// The lazy form it uses now: a name, resolved when the action runs.
+Object.assign(window.netSanctumActions, { closeVcalModal: netLazy('closeVcalModal') });
+outcome.lazyRegistration = 'ok';
+"""
+
+    # Block two: the calendar block, which runs later and declares the function.
+    # Two script blocks and not one, because a single block would hoist the
+    # declaration above the registration and the bug would not reproduce — which
+    # is the whole reason the failure survived every test that ran the code in one
+    # piece.
+    LATE_BLOCK = """
+function closeVcalModal() { return 'closed'; }
+outcome.resolved = typeof window.closeVcalModal;
+"""
+
+    # Block three: the click.
+    CLICK_BLOCK = """
+const el = { dataset: { netArgs: '[]' } };
+if (outcome.eagerRegistration === 'not attempted') {
+  try { eager.closeVcalModal(); outcome.eagerResult = 'ran'; }
+  catch (e) { outcome.eagerResult = e.constructor.name; }
+} else {
+  outcome.eagerResult = 'never registered';
+}
+try { netRunAction('closeVcalModal', el, null); outcome.lazyResult = 'ran'; }
+catch (e) { outcome.lazyResult = e.constructor.name; }
+"""
+
+    RUNNER = """
+const fs = require('node:fs');
+const vm = require('node:vm');
+global.window = global;
+global.document = { addEventListener() {}, querySelectorAll: () => [] };
+// Script scope, not module scope: a CommonJS module would not turn a top-level
+// `function` into a global, and the test would be measuring node instead of the
+// browser semantics the template depends on. Separate runs, because separate
+// script tags are what makes a declaration hoisting-free.
+for (const file of process.argv.slice(2)) {
+  vm.runInThisContext(fs.readFileSync(file, 'utf8'));
+}
+console.log(JSON.stringify(outcome));
+"""
+
+    def test_a_late_definition_is_still_reachable(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        directory = Path("/tmp/opencode")
+        directory.mkdir(parents=True, exist_ok=True)
+        blocks = []
+        for name, source in (
+            ("lazy_early.js", self.EARLY_BLOCK),
+            ("lazy_late.js", self.LATE_BLOCK),
+            ("lazy_click.js", self.CLICK_BLOCK),
+        ):
+            path = directory / name
+            path.write_text(source)
+            blocks.append(str(path))
+        runner = directory / "lazy_runner.js"
+        runner.write_text(self.RUNNER)
+
+        # The runner goes first: it is the entry point that sets up the globals
+        # the other three are evaluated against.
+        result = subprocess.run([node, str(runner), *blocks], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr[-800:])
+        outcome = json.loads(result.stdout.strip().splitlines()[-1])
+
+        self.assertEqual("function", outcome["resolved"], "a script-scope function is a global")
+        self.assertEqual("ok", outcome["lazyRegistration"], "a lazy registration cannot fail at load")
+        self.assertEqual("ran", outcome["lazyResult"], "a lazy action must survive a late definition")
+        self.assertEqual(
+            "ReferenceError",
+            outcome["eagerRegistration"],
+            "the eager form must fail here or this test is not reproducing the bug",
+        )
+        self.assertEqual("never registered", outcome["eagerResult"])
+
+    def test_the_layout_defines_the_helper_the_templates_use(self):
+        self.assertIn("function netLazy(name)", TEMPLATE.read_text())
+        self.assertIn(
+            "return function () { return window[name].apply(this, arguments); };", TEMPLATE.read_text()
+        )
+
+    def test_the_page_resolves_everything_lazily(self):
+        """A single eager entry left in the allowlist is one broken button."""
+        block = PAGE.read_text()
+        start = block.index("Object.assign(window.netSanctumActions, {")
+        block = block[start : block.index("\n});", start)]
+        code = re.sub(r"//[^\n]*", "", block)
+        # Every entry is `name: something`. A bare `name` or `name,` is the bug.
+        bare = re.findall(r"(?:^|[{,])\s*([A-Za-z_$][\w$]*)\s*(?=[,}\n])", code, re.M)
+
+        self.assertEqual([], bare, "every action must be a wrapper, never a bare reference")
+
+
 class DispatcherTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -196,7 +319,9 @@ def registered_actions(source: str) -> set[str]:
     if not block:
         return set()
     code = re.sub(r"//[^\n]*", "", block.group(1))
-    keys = set(re.findall(r"^\s*([A-Za-z_$][\w$]*)\s*:", code, re.M))
+    # Several entries share a line once the file is formatted, so a per-line
+    # pattern sees only the first of them.
+    keys = set(re.findall(r"([A-Za-z_$][\w$]*)\s*:", code))
     bare: set[str] = set()
     for line in code.splitlines():
         stripped = line.strip().rstrip(",")

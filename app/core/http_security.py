@@ -121,10 +121,16 @@ DASHBOARD_CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'none'",
         "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
+        # The type comes from Google Fonts, which is somebody else's host and so
+        # has to be named: `fonts.googleapis.com` serves the stylesheet and
+        # `fonts.gstatic.com` the woff2 files behind it. Self-hosting the two
+        # families would let both origins go, and would stop every page view
+        # telling Google which vault was opened — it needs the woff2 files, which
+        # is a change of its own.
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "img-src 'self' data: blob:",
         "media-src 'self' blob:",
-        "font-src 'self'",
+        "font-src 'self' https://fonts.gstatic.com",
         "connect-src 'self'",
         "form-action 'self'",
         "base-uri 'none'",

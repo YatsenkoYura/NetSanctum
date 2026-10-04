@@ -373,6 +373,17 @@
     // registered does nothing at all rather than running something.
     window.netSanctumActions = window.netSanctumActions || {};
 
+    // Register by name, resolved when the action runs.
+    //
+    // A page's script is several blocks, and a function declared in a later one
+    // does not exist yet while an earlier block is still executing. Passing the
+    // function itself would capture `undefined` and register a button that fails
+    // on click with no error at registration to explain it. An inline attribute
+    // never had this problem: it was resolved at click time. This puts it back.
+    function netLazy(name) {
+      return function () { return window[name].apply(this, arguments); };
+    }
+
     function netArg(spec, el, event) {
       if (spec === '$el') return el;
       if (spec === '$event') return event;
