@@ -153,6 +153,48 @@ Treat this as a known residual risk rather than a solved problem: on any host
 where `/tmp` is a disk, mount a tmpfs at `STAGING_DIR` and set
 `STAGING_REQUIRE_TMPFS=1`.
 
+### Residual risk: media sealed under the application key
+
+Vault media is encrypted with a per-collection file key derived from the
+collection's inbox key, so a file key never exists in the database and a
+collection's media cannot be read by anything holding only the shared
+application key.
+
+Files that predate that arrangement — every video and thumbnail downloaded by an
+earlier version — are still encrypted under the application key. For those the
+old property holds: anybody who reads `APP_ENCRYPTION_KEY` from the environment
+can decrypt them, without a passphrase and without a vault key. Nothing in the
+application reads that key for a sealed collection's media any more, so the
+exposure is historical rather than ongoing, but it is not zero while the files
+exist.
+
+Both file formats coexist and are distinguished by the envelope itself, not by a
+database column: the application-key envelope is version 1, the file-key envelope
+is version 2. `python -m scripts.vault_media_migrate` rewrites the old ones
+against the same collection, in place, resumable, and verifies each file's digest
+before deleting the original; run it with `--dry-run` first and keep the report.
+There is no deadline attached to it. Deleting an old file's ciphertext and
+re-downloading it is always an alternative to migrating it.
+
+### Unlock state lives in its own Redis
+
+Unlock sessions, download handoffs and unlock throttle counters are session
+state, not queue state, and they move to their own Redis instance — `VAULT_STATE_
+REDIS_URL`, `--save "" --appendonly no`, no volume. An unlock session record
+contains a vault's data key in the clear; the append-only log that makes the
+Celery queue survive a restart was keeping that key surviving one too. Restarting
+the instance locks every vault, which is the correct outcome: the session was
+never meant to outlive the process.
+
+On startup the application reads that instance's own configuration.
+`VAULT_STATE_REQUIRE_EPHEMERAL=1` turns append-only into a refusal to start; a
+non-empty `save` only warns, because snapshotting is a stock Redis default and an
+operator who has not read this paragraph should not have to learn the vocabulary
+to get past it. An unreachable server is not a persistence answer and does not
+stop the application. `VAULT_STATE_REDIS_URL` defaults to `REDIS_URL`, so a
+deployment that changes nothing keeps a single instance and this paragraph is only
+a description of what it has always been doing.
+
 ## Current Modules
 
 - **AllLib** downloads and reads novels, manga, and anime from supported Lib-network sources.

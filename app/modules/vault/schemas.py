@@ -1,4 +1,5 @@
 import datetime
+import json
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -7,6 +8,55 @@ from pydantic import BaseModel, Field, model_validator
 # Shared ceiling for an embedded picture. It lives here because the capture
 # schema needs it to bound a request body, and services imports this module.
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+# Ceilings for fields that went in unbounded on the item write paths. None of
+# these is a security boundary — the renderer escapes all of it, and the point is
+# weight, not safety: every value is serialized into the dashboard payload and,
+# for a sealed card, sealed and re-opened on each unlock, so one field with no
+# ceiling is a weight the whole collection carries.
+#
+# They are deliberately far above anything real. A limit that fires on ordinary
+# input is a bug that looks like a safety feature, so each one sits where a
+# person would have to be doing something unusual to reach it: URLs from sites
+# that stuff a session and a signature into the query, tags from platforms that
+# treat them as sentences, descriptions from feeds that emit a paragraph.
+MAX_CONTENT_CHARS = 1024 * 1024
+MAX_URL_CHARS = 8000
+MAX_OG_TITLE_CHARS = 4000
+MAX_OG_DESCRIPTION_CHARS = 8000
+# `og_image` is not a URL on the write path: the dashboard puts an inline
+# `data:image/...;base64,` picture straight into it, so it gets the encoded
+# image ceiling the capture schema already uses for its own picture field.
+MAX_OG_IMAGE_CHARS = (MAX_IMAGE_BYTES * 4 // 3) + 64
+MAX_TAGS = 200
+MAX_TAG_CHARS = 200
+MAX_CANVAS_BYTES = 8 * 1024 * 1024
+
+
+def _bounded_tags(tags: list[str]) -> list[str]:
+    """Trim, cut and count tags.
+
+    A tag is a label, not a document. Cutting rather than rejecting keeps a
+    paste from one platform — a comma-separated paragraph of them, or a stray
+    essay — from failing the whole write.
+    """
+    out: list[str] = []
+    for tag in tags[:MAX_TAGS]:
+        trimmed = " ".join(str(tag).split())[:MAX_TAG_CHARS].strip()
+        if trimmed:
+            out.append(trimmed)
+    return out
+
+
+def _bounded_canvas(canvas: dict[str, Any]) -> dict[str, Any]:
+    """Refuse a canvas blob too large to keep.
+
+    A whiteboard drawing is an inline image, so the honest ceiling is megabytes
+    rather than characters; this is a weight limit, not a format check.
+    """
+    if len(json.dumps(canvas, default=str).encode("utf-8")) > MAX_CANVAS_BYTES:
+        raise ValueError(f"canvas_data is over the {MAX_CANVAS_BYTES} byte ceiling")
+    return canvas
 
 
 class VaultCaptureCreate(BaseModel):
@@ -24,14 +74,14 @@ class VaultCaptureCreate(BaseModel):
     """
 
     kind: Literal["screenshot", "media", "video"]
-    title: str = Field(..., min_length=1, max_length=500)
+    title: str = Field(..., min_length=1, max_length=2000)
     # The alias shown while a sealed Vault is locked. The extension cannot be given
     # a passphrase, so this is the only handle the owner has on a blind write.
     public_title: str | None = Field(default=None, max_length=1000)
-    page_url: str | None = Field(default=None, max_length=4000)
+    page_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
     # Free-form provenance, shown as text and never dereferenced, so a `blob:`
     # or `data:` value is kept rather than refused.
-    source_url: str | None = Field(default=None, max_length=4000)
+    source_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
     alt_text: str | None = Field(default=None, max_length=1000)
     image: str | None = Field(
         default=None,
@@ -40,9 +90,9 @@ class VaultCaptureCreate(BaseModel):
         # checks the bytes, this only keeps an oversized body out of the router.
         max_length=(MAX_IMAGE_BYTES * 4 // 3) + 64,
     )
-    video_url: str | None = Field(default=None, max_length=4000)
+    video_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
     quality: Literal["best", "1080", "720", "480", "360"] = "720"
-    tags: list[str] = Field(default_factory=list, max_length=20)
+    tags: list[str] = Field(default_factory=list)
     collection_id: int | None = None
     parent_id: int | None = None
     auto_fetch_og: bool = True
@@ -66,6 +116,7 @@ class VaultCaptureCreate(BaseModel):
                 raise ValueError("Capture URLs must be public HTTP URLs")
             if parsed.username or parsed.password:
                 raise ValueError("Capture URLs must not contain credentials")
+        self.tags = _bounded_tags(self.tags)
         return self
 
 
@@ -150,12 +201,12 @@ class VaultCollectionMerge(BaseModel):
 class VaultItemCreate(BaseModel):
     entry_type: str = Field("bookmark", description="bookmark, rating, or thought")
     title: str | None = Field(default="", max_length=1000)
-    content: str | None = None
-    url: str | None = None
+    content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
+    url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
 
-    og_title: str | None = None
-    og_description: str | None = None
-    og_image: str | None = None
+    og_title: str | None = Field(default=None, max_length=MAX_OG_TITLE_CHARS)
+    og_description: str | None = Field(default=None, max_length=MAX_OG_DESCRIPTION_CHARS)
+    og_image: str | None = Field(default=None, max_length=MAX_OG_IMAGE_CHARS)
 
     # Required for a sealed item: the alias shown while its Vault is locked. It is
     # stored in the clear on purpose and is never the real title.
@@ -183,14 +234,20 @@ class VaultItemCreate(BaseModel):
 
     auto_fetch_og: bool = True  # If true and url provided, fetch OG metadata
 
+    @model_validator(mode="after")
+    def _fit_the_payload(self) -> "VaultItemCreate":
+        self.tags = _bounded_tags(self.tags)
+        _bounded_canvas(self.canvas_data)
+        return self
+
 
 class VaultItemUpdate(BaseModel):
     # Editable while the Vault is locked: the alias is public by design.
     public_title: str | None = Field(default=None, max_length=1000)
 
-    title: str | None = None
-    content: str | None = None
-    url: str | None = None
+    title: str | None = Field(default=None, max_length=1000)
+    content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
+    url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
     score: float | None = None
     status: str | None = None
     progress_current: int | None = None
@@ -207,6 +264,14 @@ class VaultItemUpdate(BaseModel):
     is_folder: bool | None = None
     node_type: str | None = None
     canvas_data: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _fit_the_payload(self) -> "VaultItemUpdate":
+        if self.tags is not None:
+            self.tags = _bounded_tags(self.tags)
+        if self.canvas_data is not None:
+            _bounded_canvas(self.canvas_data)
+        return self
 
 
 class VaultItemResponse(BaseModel):
