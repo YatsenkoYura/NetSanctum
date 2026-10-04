@@ -102,6 +102,13 @@ class VaultPackageTests(unittest.TestCase):
         list_items.assert_not_awaited()
 
     def test_vault_snapshot_order_has_id_tie_breaker(self):
+        """The exported snapshot must be ordered, and ordered the same way twice.
+
+        Position travels with the export, so a shared space reads the way it did
+        on the instance; the id tiebreaker is what keeps two cards with the same
+        position from swapping places between two exports.
+        """
+
         class Result:
             def scalars(self):
                 return self
@@ -121,7 +128,8 @@ class VaultPackageTests(unittest.TestCase):
         order_clause = str(db.statement).split("ORDER BY ", 1)[1]
 
         self.assertEqual(
-            "vault_items.is_pinned DESC, vault_items.created_at DESC, vault_items.id DESC",
+            "vault_items.is_pinned DESC, vault_items.position ASC NULLS LAST, "
+            "vault_items.created_at DESC, vault_items.id ASC",
             order_clause,
         )
 

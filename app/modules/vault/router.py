@@ -32,8 +32,10 @@ from app.modules.vault.schemas import (
     VaultCaptureResponse,
     VaultCollectionCreate,
     VaultCollectionMerge,
+    VaultCollectionMove,
     VaultCollectionResponse,
     VaultItemCreate,
+    VaultItemMove,
     VaultItemResponse,
     VaultItemUpdate,
     VaultLockResponse,
@@ -62,6 +64,7 @@ from app.modules.vault.sealing import (
 from app.modules.vault.services import (
     VaultCollectionNotFoundError,
     VaultMergeError,
+    VaultOrderError,
     create_captured_item,
     create_collection,
     create_vault_item,
@@ -71,10 +74,13 @@ from app.modules.vault.services import (
     get_vault_item,
     get_vault_stats,
     increment_item_progress,
+    list_child_spaces,
     list_collections,
     list_vault_items,
     list_vault_package_items,
     merge_collections,
+    reorder_card,
+    reorder_space,
     resolve_soft_entity_info,
     toggle_archive_item,
     toggle_pin_item,
@@ -144,7 +150,7 @@ async def get_items(
     node_type: str | None = Query(None),
     is_pinned: bool | None = Query(None),
     is_archived: bool = Query(False),
-    sort_by: str = Query("created_at"),
+    sort_by: str = Query("manual"),
     sort_order: str = Query("desc"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -807,6 +813,57 @@ async def vault_lock_state(
     sealed = await sealed_collection_ids(db)
     locked = await locked_collection_ids(db, unlock_token)
     return {"sealed": sorted(sealed), "locked": sorted(locked), "unlocked": sorted(sealed - locked)}
+
+
+@router.post("/api/vault/items/move", response_model=VaultItemResponse)
+async def move_item(
+    payload: VaultItemMove,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Put a card where it was dropped, between two of its neighbours.
+
+    Structural, so it works on a sealed collection too: a card's place in the
+    grid is not what the passphrase protects.
+    """
+    try:
+        item = await reorder_card(db, payload.item_id, payload.before_id, payload.after_id)
+    except VaultOrderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _serialize_full_item(item)
+
+
+@router.post("/api/vault/collections/move", response_model=VaultCollectionResponse)
+async def move_collection(
+    payload: VaultCollectionMove,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
+):
+    """Nest a space under another one, or move it among its siblings."""
+    try:
+        collection = await reorder_space(
+            db, payload.collection_id, payload.parent_id, payload.before_id, payload.after_id
+        )
+    except VaultCollectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VaultOrderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    locked = await locked_collection_ids(db, unlock_token)
+    return _serialize_collection(collection, locked=collection.id in locked)
+
+
+@router.get("/api/vault/collections/{coll_id}/children", response_model=list[VaultCollectionResponse])
+async def get_collection_children(
+    coll_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
+):
+    """The spaces nested inside one, in their saved order."""
+    children = await list_child_spaces(db, coll_id)
+    locked = await locked_collection_ids(db, unlock_token)
+    return [_serialize_collection(child, locked=child.id in locked) for child in children]
 
 
 @router.post("/api/vault/collections/merge")

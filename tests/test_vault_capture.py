@@ -26,13 +26,24 @@ PNG_DATA_URL = "data:image/png;base64," + base64.b64encode(PNG_1PX).decode()
 
 
 class ExecuteOnlySession:
-    """`create_vault_item` only needs add/commit/refresh from the adapter."""
+    """`create_vault_item` needs add/execute/flush/commit/refresh from the adapter.
+
+    `execute` and `flush` came with the manual card order: a new card is placed
+    before the current first one, which means asking the space for its lowest
+    position after the row has been written.
+    """
 
     def __init__(self, session: Session):
         self.session = session
 
     def add(self, instance):
         self.session.add(instance)
+
+    async def execute(self, statement, parameters=None):
+        return self.session.execute(statement, parameters or {})
+
+    async def flush(self):
+        self.session.flush()
 
     async def commit(self):
         self.session.commit()

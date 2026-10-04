@@ -31,6 +31,18 @@ class VaultCollection(Base):
     inbox_public_key = Column(String, nullable=True)
     inbox_private_key = Column(Text, nullable=True)
 
+    # Spaces nest. A child keeps its own key, its own cards and its own lock
+    # state: nesting is a way of organising the sidebar, not a way of sharing a
+    # key. `position` orders siblings and is fractional — inserting between two
+    # neighbours stores the midpoint rather than renumbering the whole level.
+    # A sealed collection always sits at the root: a locked parent would have to
+    # reveal its children's names to render a tree.
+    parent_id = Column(
+        Integer, ForeignKey("vault_collections.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    position = Column(Float, nullable=True)
+
+    parent = relationship("VaultCollection", remote_side=[id], backref="children")
     items = relationship("VaultItem", back_populates="collection")
 
 
@@ -85,6 +97,11 @@ class VaultItem(Base):
     # data URL, which put a screenshot into a text column at a third more space and
     # with none of the encryption the video files get.
     image_path = Column(String, nullable=True)
+    # Manual order inside the card's space. Fractional for the same reason the
+    # collections' position is: a drop between two neighbours stores the midpoint.
+    # NULL means "no opinion yet" and sorts after everything that has one, so a
+    # space that never reordered behaves exactly as it did before.
+    position = Column(Float, nullable=True, index=True)
 
     # Media tracker fields
     score = Column(Float, nullable=True)  # 1.0 - 10.0

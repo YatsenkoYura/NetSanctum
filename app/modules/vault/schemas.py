@@ -90,6 +90,28 @@ class VaultCollectionCreate(BaseModel):
     # real name.
     passphrase: str | None = Field(default=None, max_length=512)
     public_name: str | None = Field(default=None, max_length=100)
+    # Create the space inside another one. A sealed space refuses this: it has to
+    # stay a root, or a locked parent would have to reveal its children.
+    parent_id: int | None = Field(default=None, ge=1)
+
+
+class VaultCollectionMove(BaseModel):
+    """Nest a space under another one, or move it among its siblings."""
+
+    collection_id: int = Field(..., ge=1)
+    parent_id: int | None = Field(default=None, ge=1)
+    # Neighbours by id, the same way a card drop names them: the server works out
+    # the position, so two tabs disagreeing about the order cannot corrupt it.
+    before_id: int | None = Field(default=None, ge=1)
+    after_id: int | None = Field(default=None, ge=1)
+
+
+class VaultItemMove(BaseModel):
+    """Put a card where it was dropped, between two of its neighbours."""
+
+    item_id: int = Field(..., ge=1)
+    before_id: int | None = Field(default=None, ge=1)
+    after_id: int | None = Field(default=None, ge=1)
 
 
 class VaultCollectionResponse(BaseModel):
@@ -100,6 +122,10 @@ class VaultCollectionResponse(BaseModel):
     icon: str | None = None
     created_at: datetime.datetime
     items_count: int | None = 0
+    # Where the space sits in the tree. `parent_id` is null for a root space;
+    # `position` orders siblings and is what the sidebar renders.
+    parent_id: int | None = None
+    position: float | None = None
     # A sealed collection has two names as well: the alias shown while it is
     # locked, and the real one once the passphrase has been supplied.
     is_encrypted: bool = False
@@ -214,6 +240,9 @@ class VaultItemResponse(BaseModel):
     is_folder: bool = False
     node_type: str = "note"
     canvas_data: dict[str, Any] = Field(default_factory=dict)
+    # Where the card sits among its neighbours, set by a drag. Structural rather
+    # than sealed, so a locked space still lays its grid out the same way.
+    position: float | None = None
     # Lock-state flags. `is_sealed` never changes; `is_locked` is true only while
     # the collection's key is out of reach, and it is what the grid paints red.
     is_sealed: bool = False
