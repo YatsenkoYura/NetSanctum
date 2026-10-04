@@ -220,7 +220,7 @@ class FolderGestureContractTests(unittest.TestCase):
     def test_merging_is_reachable_only_through_the_menu(self):
         merge = TEMPLATE.split("async function vaultMergeInto(", 1)[1].split("\n}", 1)[0]
         self.assertIn("/api/vault/collections/merge", merge)
-        self.assertIn("confirm(", merge, "merging destroys a workspace and must ask")
+        self.assertIn("vaultConfirm(", merge, "merging destroys a workspace and must ask")
         # The only caller is the move menu; the definition itself does not count.
         callers = [
             line
@@ -239,7 +239,7 @@ class FolderGestureContractTests(unittest.TestCase):
     def test_dissolving_goes_to_its_own_endpoint_and_says_what_moves(self):
         body = TEMPLATE.split("async function dissolveSpace(", 1)[1].split("\n}", 1)[0]
         self.assertIn("/dissolve", body)
-        self.assertIn("confirm(", body)
+        self.assertIn("vaultConfirm(", body)
         self.assertIn("done.spaces", body)
         self.assertIn("done.cards", body)
 
@@ -308,6 +308,61 @@ class CreateSpaceInsideASpaceTests(unittest.TestCase):
         body = TEMPLATE.split("function vaultSidebarRows(", 1)[1].split("\nfunction ", 1)[0]
         self.assertIn("collection.is_encrypted && collection.is_locked", body)
         self.assertIn("vaultSidebarRow(collection, depth, false)", body)
+
+
+class ConfirmationDialogTests(unittest.TestCase):
+    """Destructive actions get a dialog of our own, not `confirm()`.
+
+    The native one blocks the page, cannot be styled, and returns focus to
+    whatever was pressed — so the button that opened it can be re-activated by
+    the same keypress that dismissed the dialog. On a card with a picture that
+    read as an endless loop of dialogs with a spinning page behind it, and there
+    was no way to tell a native dialog's «Отмена» from a broken button.
+    """
+
+    def test_no_native_confirm_survives(self):
+        code = "\n".join(
+            line for line in TEMPLATE.splitlines() if not line.strip().startswith(("//", "*", "<!--"))
+        )
+        self.assertNotRegex(code, r"(?<![\w.])confirm\s*\(")
+
+    def test_the_dialog_is_in_the_markup(self):
+        for marker in (
+            'id="modal-confirm"',
+            'id="confirm-message"',
+            'id="confirm-ok"',
+            'id="confirm-cancel"',
+        ):
+            self.assertIn(marker, TEMPLATE)
+
+    def test_both_buttons_say_what_they_do(self):
+        self.assertIn(">Отмена</button>", TEMPLATE)
+        self.assertIn(">Удалить</button>", TEMPLATE)
+
+    def test_the_dialog_resolves_a_promise(self):
+        """One dialog, one answer: a second call while it is open replaces the
+        resolver rather than leaving two of them."""
+        self.assertIn("function vaultConfirm(message", TEMPLATE)
+        self.assertIn("return new Promise(resolve => { vaultConfirmResolver = resolve; });", TEMPLATE)
+        self.assertIn("vaultConfirmResolver = null;", TEMPLATE)
+
+    def test_a_destructive_one_is_labelled_dangerously(self):
+        self.assertIn("confirmLabel = 'Удалить'", TEMPLATE)
+
+    def test_escape_and_the_backdrop_answer_no(self):
+        self.assertIn("event.target.id === 'modal-confirm'", TEMPLATE)
+
+    def test_the_listeners_are_bound_once(self):
+        """The buttons are in the server-rendered layout, so binding them on
+        every htmx visit would attach a second listener per visit."""
+        self.assertIn("window.__vaultConfirmBound", TEMPLATE)
+
+    def test_the_delegate_path_is_not_used_for_it(self):
+        """Its buttons carry no `data-net-action`, so the shared dispatcher cannot
+        answer them a second time."""
+        for line in TEMPLATE.splitlines():
+            if 'id="confirm-ok"' in line or 'id="confirm-cancel"' in line:
+                self.assertNotIn("data-net-action", line)
 
 
 class DoubleSubmitTests(unittest.TestCase):

@@ -639,6 +639,19 @@
   </div>
 </div>
 
+<!-- Modal: Confirm -->
+<div id="modal-confirm" class="hidden fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-4 font-mono">
+  <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
+    <div class="p-4">
+      <p id="confirm-message" class="text-xs text-zinc-200 leading-relaxed"></p>
+    </div>
+    <div class="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">
+      <button id="confirm-cancel" class="px-3 py-1 border border-zinc-800 text-zinc-400 hover:text-white text-xs uppercase">Отмена</button>
+      <button id="confirm-ok" class="px-4 py-1 bg-red-500 hover:bg-red-400 text-black font-black text-xs uppercase">Удалить</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Unlock a sealed Vault -->
 <div id="modal-unlock" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
   <div class="bg-zinc-950 border border-zinc-800 w-full max-w-sm">
@@ -1147,6 +1160,45 @@ function openWorkspaceModal(parentId) {
   document.getElementById('modal-workspace').classList.remove('hidden');
 }
 function closeWorkspaceModal() { document.getElementById('modal-workspace').classList.add('hidden'); }
+
+// A confirmation dialog of our own, in place of `confirm()`.
+//
+// The native one blocks the page, cannot be styled, and — the reason this
+// exists — returns focus to whatever was pressed, so the button that opened it
+// can be re-activated by the same key that dismissed the dialog. On a card with
+// a picture that read as an endless loop of dialogs with a spinning page behind.
+// Two buttons that do what they say is also what a destructive action deserves.
+let vaultConfirmResolver = null;
+
+function vaultConfirm(message, { confirmLabel = 'Удалить' } = {}) {
+  // Bound on first use rather than at boot: a boot-time dependency on markup
+  // that a later edit could move is a crash on every page load, not only in the
+  // one place that needed it.
+  if (!window.__vaultConfirmBound) {
+    window.__vaultConfirmBound = true;
+    vaultConfirmBind();
+  }
+  const modal = document.getElementById('modal-confirm');
+  document.getElementById('confirm-message').textContent = message;
+  document.getElementById('confirm-ok').textContent = confirmLabel;
+  modal.classList.remove('hidden');
+  return new Promise(resolve => { vaultConfirmResolver = resolve; });
+}
+
+function vaultConfirmClose(result) {
+  document.getElementById('modal-confirm').classList.add('hidden');
+  const resolve = vaultConfirmResolver;
+  vaultConfirmResolver = null;
+  if (resolve) resolve(result);
+}
+
+function vaultConfirmBind() {
+  document.getElementById('confirm-ok').addEventListener('click', () => vaultConfirmClose(true));
+  document.getElementById('confirm-cancel').addEventListener('click', () => vaultConfirmClose(false));
+  document.getElementById('modal-confirm').addEventListener('click', event => {
+    if (event.target.id === 'modal-confirm') vaultConfirmClose(false);
+  });
+}
 
 // One in-flight submit at a time, per action.
 //
@@ -1819,8 +1871,8 @@ function cleanEmptySheetRows() {
   triggerSheetAutoSave();
 }
 
-function clearSheetTable() {
-  if (!confirm('Вы уверены, что хотите очистить содержимое таблицы?')) return;
+async function clearSheetTable() {
+  if (!await vaultConfirm('Очистить всё содержимое таблицы?')) return;
   activeSheetData.rows = [new Array(activeSheetData.headers.length).fill('')];
   renderSheetCanvas();
   triggerSheetAutoSave();
@@ -2216,8 +2268,8 @@ function attachWbEventListeners() {
   };
 }
 
-function clearWbCanvas() {
-  if (confirm('Очистить весь рисунок и линии?')) {
+async function clearWbCanvas() {
+  if (await vaultConfirm('Очистить весь рисунок и линии?')) {
     activeWbStrokes = [];
     redrawAllStrokes();
     triggerWbAutoSave();
@@ -2634,7 +2686,7 @@ function closeMoveMenu() {
    this only has to say what happened and redraw. */
 async function dissolveSpace(collection) {
   const what = `${collection.items_count} карт.`;
-  if (!confirm(`Распустить папку «${collection.name}»? Всё, что внутри (${what}), поднимется на один уровень и займёт её место.`)) return;
+  if (!await vaultConfirm(`Распустить папку «${collection.name}»? Всё, что внутри (${what}), поднимется на один уровень и займёт её место.`)) return;
   const done = await mutationJson(`/api/vault/collections/${pathSegment(collection.id)}/dissolve`, {
     method: 'POST'
   }, 'Не удалось распустить папку');
@@ -2815,7 +2867,7 @@ async function vaultDropWorkspace(fromId, toId) {
   // owner had. Merging is still available, but deliberately, from the ⋯ menu.
   const src = vaultCollectionsById[fromId] || { name: 'Воркспейс', items_count: 0 };
   if (toId === null) {
-    if (!confirm(`Вынести «${src.name}» на верхний уровень? Воркспейс останется на месте, просто перестанет быть вложенным.`)) return;
+    if (!await vaultConfirm(`Вынести «${src.name}» на верхний уровень? Воркспейс останется на месте, просто перестанет быть вложенным.`)) return;
   }
   const nested = await mutationJson('/api/vault/collections/move', {
     method: 'POST',
@@ -2838,7 +2890,7 @@ async function vaultMergeInto(fromId, toId) {
   const where = toId === null
     ? ' из воркспейса (карточки станут без воркспейса)'
     : ` в «${dstName}»`;
-  if (!confirm(`Перенести ${count} карт. из «${src.name}»${where}? Пустой воркспейс будет удалён.`)) return;
+  if (!await vaultConfirm(`Перенести ${count} карт. из «${src.name}»${where}? Пустой воркспейс будет удалён.`)) return;
   const merged = await mutationJson('/api/vault/collections/merge', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3428,7 +3480,7 @@ async function togglePin(id) {
   if (updated) loadWorkspace();
 }
 async function deleteItem(id) {
-  if (!confirm('Удалить?')) return;
+  if (!await vaultConfirm('Удалить карточку? Это нельзя отменить.')) return;
   const deleted = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {method:'DELETE'}, 'Не удалось удалить карточку');
   if (deleted) { loadWorkspace(); loadVaultSummary(); }
 }
