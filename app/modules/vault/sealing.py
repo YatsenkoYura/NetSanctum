@@ -25,8 +25,16 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.modules.vault.crypto import (
+    ARGON2_M_COST,
+    ARGON2_PARALLELISM,
+    ARGON2_T_COST,
     KDF_NAME,
+    LEGACY_KDF_NAME,
+    SCRYPT_N,
+    SCRYPT_P,
+    SCRYPT_R,
     SealedWrite,
+    VaultUnlockError,
     WrappedKey,
     context_for,
     generate_inbox_keypair,
@@ -91,15 +99,40 @@ def item_is_sealed(item: VaultItem) -> bool:
 
 
 def wrapper_for(collection: VaultCollection) -> WrappedKey:
+    """Read back the wrapper, with the cost parameters it was sealed with.
+
+    An empty `key_kdf` means a row written before the column existed. Those were
+    all scrypt, so the default here is the legacy name — defaulting to the current
+    KDF would derive a different key and report a wrong passphrase for every vault
+    created before the upgrade.
+    """
     params = collection.key_kdf_params or {}
+    kdf = collection.key_kdf or LEGACY_KDF_NAME
+    if collection.wrapped_key and not collection.key_kdf and not params:
+        # Both columns arrived in one migration and are always written together, so
+        # a wrapper with neither name nor cost cannot be read by guessing: the cost
+        # is part of what makes the key. Saying "wrong passphrase" here would send
+        # the owner hunting for a typo instead of at the row.
+        raise VaultUnlockError("This Vault's key wrapper records no derivation cost and cannot be opened")
     return WrappedKey(
         salt=collection.key_salt or "",
         wrapped=collection.wrapped_key or "",
-        kdf=collection.key_kdf or KDF_NAME,
-        n=int(params.get("n", 2**15)),
-        r=int(params.get("r", 8)),
-        p=int(params.get("p", 1)),
+        kdf=kdf,
+        t_cost=int(params.get("t_cost", ARGON2_T_COST)),
+        m_cost=int(params.get("m_cost", ARGON2_M_COST)),
+        parallelism=int(params.get("parallelism", ARGON2_PARALLELISM)),
+        n=int(params.get("n", SCRYPT_N)),
+        r=int(params.get("r", SCRYPT_R)),
+        p=int(params.get("p", SCRYPT_P)),
     )
+
+
+def store_wrapper(collection: VaultCollection, wrapped: WrappedKey) -> None:
+    """Persist a wrapper and the cost parameters that go with it."""
+    collection.key_salt = wrapped.salt
+    collection.wrapped_key = wrapped.wrapped
+    collection.key_kdf = wrapped.kdf
+    collection.key_kdf_params = wrapped.params()
 
 
 async def create_sealed_collection(
@@ -142,10 +175,7 @@ async def create_sealed_collection(
         passphrase,
         context=context_for("collection", collection.id),
     )
-    collection.key_salt = wrapped.salt
-    collection.wrapped_key = wrapped.wrapped
-    collection.key_kdf = wrapped.kdf
-    collection.key_kdf_params = {"n": wrapped.n, "r": wrapped.r, "p": wrapped.p}
+    store_wrapper(collection, wrapped)
     collection.inbox_public_key = b64encode(public_key).decode("ascii")
     await session.commit()
     await session.refresh(collection)
@@ -154,13 +184,25 @@ async def create_sealed_collection(
     return collection
 
 
-async def unlock_collection(collection: VaultCollection, passphrase: str, unlock_token: str = "") -> str:
+async def unlock_collection(
+    collection: VaultCollection,
+    passphrase: str,
+    unlock_token: str = "",
+    *,
+    session=None,
+) -> str:
     """Recover the inbox private key and register it under this tab's token.
 
     The caller keeps the token; the server keeps the key. The tab's memory is the
     only place the token exists, which is what makes the unlock per-tab. A token
     supplied by the caller is reused, so one tab registers several collections
     under a single token instead of accumulating them.
+
+    Passing `session` also re-wraps the key under the current KDF. The passphrase
+    has just been proven correct by the unwrap, so this is the one moment the
+    upgrade can happen without asking for anything again — otherwise vaults sealed
+    before the change keep their old cost parameters until their owner renames
+    them, which is not a thing anyone does.
     """
     private_key = unwrap_data_key(
         wrapper_for(collection),
@@ -169,7 +211,34 @@ async def unlock_collection(collection: VaultCollection, passphrase: str, unlock
     )
     token = unlock_token or secrets.token_urlsafe(32)
     await redis_client.set(collection_key(collection.id, token), private_key.hex(), ex=UNLOCK_TTL_SECONDS)
+    if session is not None:
+        await upgrade_wrapper(session, collection, private_key, passphrase)
     return token
+
+
+async def upgrade_wrapper(session, collection: VaultCollection, private_key: bytes, passphrase: str) -> bool:
+    """Re-wrap a key under the current KDF, once the passphrase is known good.
+
+    The wrapper holds a key, not the data: re-wrapping changes how hard the
+    passphrase is to guess offline and touches nothing else, so no card is
+    re-encrypted and no image is rewritten.
+
+    A failure here must not cost the owner their unlock — they have already proved
+    the passphrase — so it is logged and the old wrapper stays put.
+    """
+    if (collection.key_kdf or LEGACY_KDF_NAME) == KDF_NAME:
+        return False
+    try:
+        store_wrapper(
+            collection,
+            wrap_data_key(private_key, passphrase, context=context_for("collection", collection.id)),
+        )
+        await session.commit()
+    except Exception:
+        logger.exception("Could not upgrade the key wrapper for Vault %s", collection.id)
+        await session.rollback()
+        return False
+    return True
 
 
 async def lock_collection(collection_id: int, unlock_token: str) -> None:

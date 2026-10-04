@@ -803,7 +803,7 @@ async def unlock_collection_route(
     if not is_sealed_collection(collection):
         raise HTTPException(status_code=400, detail="This Vault is not sealed")
     try:
-        token = await unlock_collection(collection, body.passphrase, unlock_token)
+        token = await unlock_collection(collection, body.passphrase, unlock_token, session=db)
     except VaultUnlockError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     return VaultUnlockResponse(
