@@ -180,6 +180,23 @@ class SidebarRunsTests(unittest.TestCase):
         self.assertFalse(rows[1]["hasTwisty"], "1 is a leaf and must not offer a fold")
         self.assertTrue(rows[1]["hasTwistySpacer"], "a leaf still needs the indent")
 
+    def test_a_drop_on_a_space_or_folder_tile_moves_the_card(self):
+        """The drop, run through the real handlers rather than described.
+
+        Scoped honestly: this binds the handlers itself, so it proves what a drop
+        does once bound — `test_the_folder_tiles_have_their_own_drop_binding`
+        covers that boot binds them. Both paths are here because one was silently
+        dead: dropping on a sidebar row worked, dropping on a folder tile inside
+        the space did nothing, as those tiles are siblings of #tiles-grid and the
+        reorder and stack listeners never saw them.
+        """
+        drag = self._build()["drag"]
+        self.assertEqual({"via": "space", "cardId": 10, "collectionId": 2}, drag["sidebar"])
+        self.assertTrue(drag["sidebarPrevented"], "without preventDefault the drop never fires")
+        self.assertEqual(4, drag["folderTileId"])
+        self.assertEqual({"via": "space", "cardId": 10, "collectionId": 4}, drag["folder"])
+        self.assertTrue(drag["folderPrevented"])
+
     def test_the_label_takes_the_free_space_so_it_stays_next_to_the_twisty(self):
         """`space-between` with a third child centres the label instead."""
         for row in self._build()["rows"]:
@@ -321,6 +338,28 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
         self.assertIn("if (e.target.closest && e.target.closest('[data-grip]')) return;", TEMPLATE)
         self.assertIn("/api/vault/items/move", TEMPLATE)
         self.assertIn("vaultStackDrop(fromId, toId)", TEMPLATE)
+
+    def test_the_folder_tiles_have_their_own_drop_binding(self):
+        body = TEMPLATE.split("function __vaultBindFolderDrop() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn(".space-tile", body)
+        self.assertIn("vaultMoveCardToSpace(cardId, found.id)", body)
+        boot = TEMPLATE.split("function __vaultBoot() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("__vaultBindFolderDrop()", boot)
+
+    def test_a_card_can_also_be_filed_without_dragging(self):
+        """HTML5 drag does not exist on a phone, so the move needs a button too."""
+        footer = TEMPLATE.split("function tileFooterHtml(", 1)[1].split("\nfunction openMoveCardMenu", 1)[0]
+        self.assertIn("openMoveCardMenu(event, ${itemId})", footer)
+        self.assertIn("function openMoveCardMenu(", TEMPLATE)
+        self.assertIn("vaultMoveCardTo(", TEMPLATE)
+
+    def test_a_sealed_space_is_offered_only_to_a_sealed_card(self):
+        """A sealed card may go there — it is re-sealed under that space's key."""
+        for body in (
+            TEMPLATE.split("function openMoveCardMenu(", 1)[1].split("\n}", 1)[0],
+            TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0],
+        ):
+            self.assertIn("is_encrypted && !card.is_sealed", body)
 
 
 class ScopeContractTests(unittest.TestCase):

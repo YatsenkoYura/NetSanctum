@@ -20,6 +20,7 @@ from app.modules.vault.schemas import (
     VaultItemCreate,
     VaultItemUpdate,
 )
+from app.modules.vault.sealing import VaultMoveError
 from app.modules.vault.tasks import download_vault_video_task
 
 logger = logging.getLogger(__name__)
@@ -332,10 +333,6 @@ async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: V
     await session.commit()
     await session.refresh(item)
     return item
-
-
-class VaultMoveError(ValueError):
-    """The card cannot change spaces without becoming unopenable."""
 
 
 async def _assert_can_move_card(session: AsyncSession, item: VaultItem, collection_id: int | None) -> None:

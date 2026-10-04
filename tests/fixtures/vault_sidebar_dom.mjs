@@ -48,6 +48,27 @@ function makeElement(tag = 'div') {
     append(...kids) { kids.forEach(kid => { kid.parentNode = this; this.children.push(kid); }); },
     replaceChildren(...kids) { this.children = []; this.append(...kids); },
     getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }),
+    setAttribute() {},
+    getAttribute() { return null; },
+    closest(selector) {
+      const wanted = selector.replace(/^\./, '');
+      let node = this;
+      while (node) {
+        if (node.classList.contains(wanted)) return node;
+        node = node.parentNode;
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      const wanted = selector.replace(/^\./, '');
+      const found = [];
+      const walk = (node) => node.children.forEach((kid) => {
+        if (kid.classList.contains(wanted)) found.push(kid);
+        walk(kid);
+      });
+      walk(this);
+      return found;
+    },
   };
   return element;
 }
@@ -55,6 +76,7 @@ function makeElement(tag = 'div') {
 const elements = new Map();
 globalThis.document = {
   createElement: makeElement,
+  querySelectorAll: () => [],
   getElementById(id) {
     if (!elements.has(id)) {
       const element = makeElement();
@@ -64,7 +86,7 @@ globalThis.document = {
     return elements.get(id);
   },
 };
-globalThis.window = { matchMedia: () => ({ matches: false }) };
+globalThis.window = { matchMedia: () => ({ matches: false }), _vaultCache: {} };
 
 // What the API answers: two plain spaces, one nested under another, one sealed.
 const COLLECTIONS = [
@@ -90,6 +112,9 @@ globalThis.vaultCollectionsById = {};
 globalThis.vaultChildIds = {};
 globalThis.vaultExpandedStacks = {};
 globalThis.currentItems = [];
+// The card-drag state the real handlers read. Named exactly as the template
+// names it, so the code under test picks this object up as its own.
+globalThis.vaultReorder = { fromId: null, beforeId: null, afterId: null, marker: null };
 globalThis.activeView = 'tiles';
 globalThis.lockedGateId = null;
 const selected = [];
@@ -110,23 +135,91 @@ function extract(name) {
   throw new Error(`unbalanced braces in ${name}`);
 }
 
-const NAMES = ['loadVaultSummary', 'renderChildSpaces', 'vaultSidebarRow', 'vaultSidebarRows', 'wsIdFromNode'];
+const NAMES = [
+  'loadVaultSummary', 'renderChildSpaces', 'vaultSidebarRow', 'vaultSidebarRows', 'wsIdFromNode',
+  '__vaultBindWorkspaceDrop', '__vaultBindFolderDrop', 'vaultCardDropTargetValid',
+  'vaultClearDropMarker', 'vaultDescendantIds',
+];
 const source = NAMES.map(extract).join('\n');
-const scope = { ...globalThis };
-// `new Function` bodies are not modules, so top-level await has to be wrapped.
-const exported = new Function(
-  ...Object.keys(scope),
-  `return (async () => {\n${source}\nreturn { loadVaultSummary, vaultVaults: vaultSidebarRows, wsIdFromNode, map: () => vaultCollectionsById };\n})();`,
-)(...Object.values(scope));
 
-const api = await exported;
+// `new Function` binds every parameter by value, so a test that needs a different
+// `currentCollectionId` needs its own instance. Two are built: one for the
+// aggregate/sidebar, one for inside a space where the folder tiles exist.
+function makeApi(currentCollection) {
+  const scope = { ...globalThis, currentCollectionId: currentCollection };
+  return new Function(
+    ...Object.keys(scope),
+    `return (async () => {\n${source}\nreturn {
+      loadVaultSummary, vaultVaults: vaultSidebarRows, wsIdFromNode, map: () => vaultCollectionsById,
+      __vaultBindWorkspaceDrop, __vaultBindFolderDrop, vaultCardDropTargetValid, renderChildSpaces,
+    };\n})();`,
+  )(...Object.values(scope));
+}
+
+const drag = { moves: [] };
+globalThis.vaultMoveCardToSpace = (cardId, collectionId) => {
+  drag.moves.push({ via: 'space', cardId, collectionId });
+  return Promise.resolve();
+};
+globalThis.vaultDropWorkspace = () => { drag.moves.push({ via: 'nest' }); return Promise.resolve(); };
+globalThis.showToast = () => {};
+globalThis.syncLockedView = () => false;
+globalThis.loadWorkspace = () => {};
+globalThis.refreshVaultCalendar = () => {};
+globalThis.mutationJson = async () => ({ status: 'ok' });
+globalThis.updateCachedItem = () => {};
+
+function dragEvent(target) {
+  return {
+    target, clientX: 0, clientY: 0,
+    preventDefault() { this.prevented = true; }, stopPropagation() {},
+    dataTransfer: { dropEffect: '', setData() {} },
+  };
+}
+
+const api = await makeApi(null);
 await api.loadVaultSummary();
-
 const rows = elements.get('vault-collections').children;
 rows.forEach(row => row._listeners.click[0]());
 
+// A card dragged out of the grid onto a space row in the sidebar.
+const sidebarRow = rows.find(row => api.wsIdFromNode(row) === 2);
+if (!sidebarRow) throw new Error('нет строки для цели: ' + JSON.stringify(rows.map(r => api.wsIdFromNode(r))));
+window._vaultCache[10] = { id: 10, collection_id: 1, title: 'карточка' };
+const list = document.getElementById('vault-workspace-list');
+api.__vaultBindWorkspaceDrop();
+vaultReorder.fromId = 10;
+const sidebarDrag = dragEvent(sidebarRow);
+list._listeners.dragover[0](sidebarDrag);
+list._listeners.drop[0](sidebarDrag);
+
+// The same drag onto a folder tile inside the space. This one had no handler at
+// all: the folder tiles are siblings of #tiles-grid, so neither the reorder nor
+// the stack listeners ever saw them.
+const inside = await makeApi(2);
+// Its own copy of the collection map: each instance holds its own bindings, so
+// the second one has to fetch before it knows which folders space 2 has. The
+// card lives in space 1, so filing it into a folder of space 2 is a real move.
+await inside.loadVaultSummary();
+inside.renderChildSpaces();
+const folderHost = document.getElementById('vault-child-spaces');
+inside.__vaultBindFolderDrop();
+const folderTile = folderHost.children[0];
+if (!folderTile) throw new Error('в пространстве 2 нет папок — тест бессмысленен');
+vaultReorder.fromId = 10;
+const folderDrag = dragEvent(folderTile);
+folderHost._listeners.dragover[0](folderDrag);
+folderHost._listeners.drop[0](folderDrag);
+
+await new Promise(resolve => setImmediate(resolve));
+
 console.log(JSON.stringify({
   selected,
+  drag: {
+    sidebar: drag.moves[0], sidebarPrevented: Boolean(sidebarDrag.prevented),
+    folder: drag.moves[1], folderPrevented: Boolean(folderDrag.prevented),
+    folderTileId: Number(folderTile.dataset.spaceId),
+  },
   records: Object.values(api.map()).map(record => ({ id: record.id, name: record.name, parent_id: record.parent_id })),
   rows: rows.map(row => ({
     id: row.id,

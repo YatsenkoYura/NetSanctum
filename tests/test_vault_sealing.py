@@ -12,7 +12,9 @@ from app.modules.vault.models import Base, VaultCollection, VaultItem
 from app.modules.vault.schemas import VaultItemUpdate
 from app.modules.vault.sealing import (
     SEALED_FIELDS,
+    VaultMoveError,
     item_is_sealed,
+    move_sealed_item,
     open_item,
     seal_item,
     update_sealed_item,
@@ -257,3 +259,74 @@ class SealedUpdateTests(unittest.TestCase):
                     self.public_key,
                 )
             )
+
+
+class _Session:
+    """Just enough session for move_sealed_item: commit and refresh."""
+
+    def __init__(self):
+        self.committed = False
+
+    async def commit(self):
+        self.committed = True
+
+    async def refresh(self, instance):
+        return None
+
+
+class MoveSealedItemTests(unittest.TestCase):
+    """A sealed card can move to another sealed space, and stays readable there.
+
+    The payload is sealed under the *collection's* inbox key, so simply changing
+    `collection_id` would deliver a card that nothing in the new space can open.
+    The move has to open it with the source key and re-seal under the target's —
+    which is why it needs the source Vault unlocked, like any other sealed edit.
+    """
+
+    def setUp(self):
+        self.source_private, self.source_public = generate_inbox_keypair()
+        self.target_private, self.target_public = generate_inbox_keypair()
+        self.source = self._collection("Источник", self.source_public, 1)
+        self.target = self._collection("Приёмник", self.target_public, 2)
+        self.item = make_item(collection_id=1)
+        seal_item(self.item, self.source_public)
+        self.item.collection_id = 1
+
+    def _collection(self, name, public_key, collection_id):
+        from base64 import b64encode
+
+        return VaultCollection(
+            id=collection_id,
+            name=name,
+            is_encrypted=True,
+            inbox_public_key=b64encode(public_key).decode("ascii"),
+            wrapped_key="nsk:v1:stub",
+            key_salt="c2FsdA",
+        )
+
+    def test_the_card_is_readable_in_the_space_it_moved_to(self):
+        asyncio.run(move_sealed_item(_Session(), self.item, self.target, self.source_private))
+
+        self.assertEqual(2, self.item.collection_id)
+        open_item(self.target_private, self.item)
+        self.assertEqual("Личное название", self.item.title)
+        self.assertEqual("Личный текст", self.item.content)
+
+    def test_the_old_space_can_no_longer_open_it(self):
+        asyncio.run(move_sealed_item(_Session(), self.item, self.target, self.source_private))
+
+        with self.assertRaises(ValueError):
+            open_item(self.source_private, self.item)
+
+    def test_the_readable_columns_stay_blank_after_the_move(self):
+        asyncio.run(move_sealed_item(_Session(), self.item, self.target, self.source_private))
+
+        self.assertTrue(self.item.sealed_payload)
+        self.assertEqual("", self.item.title)
+        self.assertEqual({}, self.item.canvas_data)
+
+    def test_a_sealed_card_may_not_be_moved_into_a_plain_space(self):
+        plain = VaultCollection(name="Обычное", is_encrypted=False)
+
+        with self.assertRaises(VaultMoveError):
+            asyncio.run(move_sealed_item(_Session(), self.item, plain, self.source_private))

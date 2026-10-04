@@ -1337,6 +1337,12 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
   const pin = readOnlyMode
     ? `<span class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600'}">${pinned ? '★' : '☆'}</span>`
     : `<button onclick="togglePin(${itemId})" class="text-xs ${pinned ? 'text-teal-400' : 'text-zinc-600 hover:text-zinc-400'}" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '★' : '☆'}</button>`;
+  // Dragging a card onto a space is a mouse gesture, and HTML5 drag does not
+  // exist on a phone at all — so the same move needs a button. Without it the
+  // feature is unreachable on the device it is most natural on.
+  const filing = readOnlyMode || item.is_locked
+    ? ''
+    : `<button onclick="event.stopPropagation(); openMoveCardMenu(event, ${itemId})" class="hover:text-teal-400 uppercase" title="Переместить в другое пространство">⇄</button>`;
   return `
   <div class="flex items-center justify-between text-[10px] text-zinc-600 ${framed ? 'px-3 py-2 mt-2' : 'pt-2 mt-1'} border-t border-zinc-900">
     <div class="flex items-center gap-2">
@@ -1345,9 +1351,38 @@ function tileFooterHtml(item, itemId, clickHandler, framed) {
     </div>
     <div class="flex gap-2 font-bold">
       <button onclick="${clickHandler}" class="hover:text-white uppercase">Открыть</button>
+      ${filing}
       ${readOnlyMode ? '' : `<button onclick="deleteItem(${itemId})" class="hover:text-red-400 uppercase" title="Удалить">✕</button>`}
     </div>
   </div>`;
+}
+
+// Filing a card into another space, without dragging. Reuses the move menu shell
+// so it looks and behaves like the workspace menu next to it.
+function openMoveCardMenu(event, cardId) {
+  const card = window._vaultCache[cardId];
+  if (!card) return;
+  const targets = [{ id: null, name: '— без пространства —' }];
+  Object.keys(vaultCollectionsById).forEach(key => {
+    const target = vaultCollectionsById[key];
+    if (Number(key) === Number(card.collection_id ?? null)) return;
+    // A sealed space shows no plain cards, so offering it to one would be a dead
+    // end; a sealed card can go there, re-sealed under that space's key.
+    if (target.is_encrypted && !card.is_sealed) return;
+    targets.push({ id: Number(key), name: target.name });
+  });
+  if (targets.length === 1) return showToast('Карточке некуда переноситься', true);
+
+  const body = document.getElementById('ws-move-options');
+  body.innerHTML = targets.map(target =>
+    `<button class="ws-move-opt" onclick="vaultMoveCardTo(${cardId}, ${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+  ).join('');
+  vaultMoveCardFromId = cardId;
+  const menu = document.getElementById('ws-move-menu');
+  const anchor = event.currentTarget.getBoundingClientRect();
+  menu.style.left = Math.min(window.innerWidth - 200, Math.max(8, anchor.right - 200)) + 'px';
+  menu.style.top = Math.max(8, Math.min(window.innerHeight - 160, anchor.top - 120)) + 'px';
+  menu.classList.remove('hidden');
 }
 
 // Bottom-center stack grip: grab a card here to drop it onto another one.
@@ -2650,6 +2685,46 @@ async function vaultMergeInto(fromId, toId) {
 // Three drop targets, three meanings, and they cannot be confused because they
 // are different things: a card dropped on a space moves there, a card dropped on
 // another card is reordered, and a card dropped on a card's grip joins its stack.
+/* A card dropped on a folder tile inside the space moves into that folder.
+   The folder tiles are siblings of #tiles-grid, so the reorder and stack handlers
+   never see them: this is their own drop target. */
+function __vaultBindFolderDrop() {
+  const host = document.getElementById('vault-child-spaces');
+  if (!host || host.dataset.vaultFolderDropBound) return;
+  host.dataset.vaultFolderDropBound = '1';
+  const tileFor = (event) => {
+    const tile = event.target.closest ? event.target.closest('.space-tile') : null;
+    if (!tile) return null;
+    const id = Number(tile.dataset.spaceId);
+    return Number.isInteger(id) ? { tile, id } : null;
+  };
+  host.addEventListener('dragover', (e) => {
+    if (vaultReorder.fromId === null) return;
+    const found = tileFor(e);
+    if (!found || !vaultCardDropTargetValid(found.id)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    found.tile.classList.add('drag-over-active');
+  });
+  host.addEventListener('dragleave', (e) => {
+    const found = tileFor(e);
+    if (found) found.tile.classList.remove('drag-over-active');
+  });
+  host.addEventListener('drop', (e) => {
+    const found = tileFor(e);
+    host.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
+    if (!found) return;
+    const cardId = vaultReorder.fromId;
+    // The drag is over either way; it must not leave a reorder armed.
+    vaultReorder.fromId = null;
+    vaultClearDropMarker();
+    if (cardId === null || !vaultCardDropTargetValid(found.id)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    vaultMoveCardToSpace(cardId, found.id);
+  });
+}
+
 async function vaultMoveCardToSpace(cardId, collectionId) {
   const card = window._vaultCache[cardId];
   const targetName = collectionId === null
@@ -2670,12 +2745,14 @@ async function vaultMoveCardToSpace(cardId, collectionId) {
 function vaultCardDropTargetValid(collectionId) {
   if (collectionId === undefined) return false;
   if (collectionId === null) return true;                       // "Все карточки" unfiles it
+  const card = window._vaultCache[vaultReorder.fromId] || {};
   const target = vaultCollectionsById[collectionId];
-  // A sealed space has no readable rows for a plain card, so the move would look
-  // like it worked and leave nothing to open. The server refuses it too.
-  if (!target || target.is_encrypted) return false;
-  const card = window._vaultCache[vaultReorder.fromId];
-  if (card && Number(card.collection_id) === Number(collectionId)) return false;
+  if (!target) return false;
+  // A sealed space shows no plain cards, so a plain card dropped there would look
+  // like it worked and leave nothing to open. A sealed card may go: it is
+  // re-sealed under the target's key on the way in.
+  if (target.is_encrypted && !card.is_sealed) return false;
+  if (Number(card.collection_id) === Number(collectionId)) return false;
   return true;
 }
 
@@ -3380,6 +3457,7 @@ function __vaultBoot() {
   __vaultBindWorkspaceDrop();
   __vaultBindCardStacks();
   __vaultBindReorder();
+  __vaultBindFolderDrop();
   __vaultBindReadingOrder();
   syncEdgeStrips();
   syncFolderOption();

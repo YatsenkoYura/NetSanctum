@@ -320,6 +320,35 @@ async def update_sealed_item(
     return item
 
 
+class VaultMoveError(ValueError):
+    """The card cannot change spaces without becoming unopenable."""
+
+
+async def move_sealed_item(
+    session,
+    item: VaultItem,
+    target: VaultCollection,
+    source_private_key: bytes,
+) -> VaultItem:
+    """Move a sealed card into another sealed collection, keeping it readable.
+
+    The payload is sealed under the *collection's* inbox key, so carrying the row
+    across would leave a card whose ciphertext nothing in the new space can open.
+    Opening it with the source key and re-sealing under the target's public key is
+    the only way it stays readable — which is why this needs the source Vault
+    unlocked, exactly like editing a sealed card does.
+    """
+    if not target.is_encrypted:
+        raise VaultMoveError("Зашифрованную карточку можно перенести только в зашифрованное пространство")
+    open_item(source_private_key, item)
+    item.collection_id = target.id
+    item.updated_at = datetime.datetime.utcnow()
+    seal_item(item, require_inbox_public_key(target))
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
 def require_inbox_public_key(collection: VaultCollection) -> bytes:
     key = inbox_public_key(collection)
     if key is None:

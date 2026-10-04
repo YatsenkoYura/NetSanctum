@@ -47,12 +47,14 @@ from app.modules.vault.sealing import (
     DEFAULT_ITEM_ALIAS,
     DEFAULT_SEALED_ALIAS,
     SEALED_FIELDS,
+    VaultMoveError,
     collection_for,
     create_sealed_collection,
     data_key_for,
     is_sealed_collection,
     lock_collection,
     locked_collection_ids,
+    move_sealed_item,
     open_item,
     open_items,
     require_inbox_public_key,
@@ -65,7 +67,6 @@ from app.modules.vault.services import (
     VaultCollectionNotFoundError,
     VaultDissolveError,
     VaultMergeError,
-    VaultMoveError,
     VaultOrderError,
     create_captured_item,
     create_collection,
@@ -601,6 +602,15 @@ async def update_item(
                 raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы изменить содержимое")
             updated = await update_vault_item(db, item, update_in)
             return _apply_lock_state(_serialize_full_item(updated), updated, locked=True)
+        # A move between sealed spaces re-seals under the *target's* key, or the
+        # card would arrive as ciphertext nothing in that space can open.
+        if "collection_id" in changed:
+            target = await collection_for(db, update_in.collection_id) if update_in.collection_id else None
+            try:
+                updated = await move_sealed_item(db, item, target, private_key)
+            except VaultMoveError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
         updated = await update_sealed_item(
             db, item, update_in, private_key, require_inbox_public_key(collection)
         )
