@@ -233,6 +233,49 @@ class FolderGestureContractTests(unittest.TestCase):
         self.assertIn("vaultDescendantIds(fromId)", body)
 
 
+class CreateSpaceInsideASpaceTests(unittest.TestCase):
+    """A space can be created directly inside another one.
+
+    The endpoint has taken `parent_id` since the tree landed, but the create form
+    never sent it: nesting was only possible for spaces that already existed, by
+    dragging them or picking a parent in the ⇥ menu. So there was no way to make
+    a folder where you actually were.
+    """
+
+    def test_the_create_menu_offers_a_folder_inside_a_space(self):
+        self.assertIn('id="vault-create-folder-option"', TEMPLATE)
+        self.assertIn("openWorkspaceModal(currentCollectionId)", TEMPLATE)
+
+    def test_the_form_sends_the_parent_it_was_opened_with(self):
+        body = TEMPLATE.split("async function submitWorkspace() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("payload.parent_id = parentId", body)
+        self.assertIn("vaultNewSpaceParentId", body)
+
+    def test_the_folder_option_is_hidden_at_the_top_level(self):
+        body = TEMPLATE.split("function syncFolderOption() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("currentCollectionId === null", body)
+        boot = TEMPLATE.split("function __vaultBoot() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("syncFolderOption()", boot)
+
+    def test_a_sealed_space_cannot_be_created_as_a_folder(self):
+        body = TEMPLATE.split("async function submitWorkspace() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("if (sealed && parentId !== null)", body)
+
+    def test_creating_a_space_no_longer_reloads_the_page(self):
+        """The sidebar is built in JS now; a reload also threw away where you were."""
+        body = TEMPLATE.split("async function submitWorkspace() {", 1)[1].split("\n}", 1)[0]
+        self.assertNotIn("window.location.reload()", body)
+        self.assertIn("loadVaultSummary()", body)
+
+    def test_a_sealed_space_stays_a_root_on_the_server_too(self):
+        # The rule is not only in the browser: the endpoint refuses it, so a
+        # hand-written request cannot get around it.
+        service = Path("app/modules/vault/services.py").read_text()
+        self.assertIn("Зашифрованное пространство всегда остаётся на верхнем уровне", service)
+        schema = Path("app/modules/vault/schemas.py").read_text()
+        self.assertIn("parent_id: int | None = Field(default=None, ge=1)", schema)
+
+
 class ScopeContractTests(unittest.TestCase):
     """A function the dashboard calls must live where the call can see it.
 

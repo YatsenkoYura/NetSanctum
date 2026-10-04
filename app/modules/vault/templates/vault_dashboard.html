@@ -339,6 +339,10 @@
             <button onclick="openLinkModal()" class="plus-option"><span class="text-blue-400">◆</span> + Ссылка</button>
             <button onclick="instantCreate('table')" class="plus-option"><span class="text-amber-400">▤</span> + Таблица</button>
             <button onclick="instantCreate('whiteboard')" class="plus-option"><span class="text-pink-400">▲</span> + Доска</button>
+            {# A space inside the open space. Only offered inside one: at the top
+               level this would be the same thing as the sidebar's "+ Воркспейс". #}
+            {% if not is_readonly %}<button id="vault-create-folder-option" class="plus-option hidden"
+              onclick="openWorkspaceModal(currentCollectionId)"><span class="text-teal-400">▣</span> + Папка</button>{% endif %}
           </div>
         </div>{% endif %}
       </div>
@@ -1061,7 +1065,10 @@ function toggleSealedFields() {
   document.getElementById('ws-sealed-fields').classList.toggle('hidden', !document.getElementById('ws-sealed-input').checked);
 }
 
-function openWorkspaceModal() {
+/* `parentId` is where the new space goes. The sidebar's button passes nothing and
+   gets a root space; "+ Папка" inside a space passes its id and gets a folder. */
+function openWorkspaceModal(parentId) {
+  vaultNewSpaceParentId = (parentId === undefined || parentId === null) ? null : Number(parentId);
   document.getElementById('ws-name-input').value = '';
   document.getElementById('ws-passphrase-input').value = '';
   document.getElementById('ws-public-name-input').value = '';
@@ -1076,9 +1083,15 @@ async function submitWorkspace() {
   if (!name) return;
   const sealed = document.getElementById('ws-sealed-input').checked;
   const passphrase = document.getElementById('ws-passphrase-input').value;
+  const parentId = vaultNewSpaceParentId;
   if (sealed && !passphrase) return showToast('Нужен пароль для зашифрованного воркспейса', true);
 
+  // A sealed space stays a root by construction: a locked parent would have to
+  // reveal its children in the tree.
+  if (sealed && parentId !== null) return showToast('Зашифрованный воркспейс не может быть вложен', true);
+
   const payload = { name: name };
+  if (parentId !== null) payload.parent_id = parentId;
   if (sealed) {
     payload.passphrase = passphrase;
     const alias = document.getElementById('ws-public-name-input').value.trim();
@@ -1089,7 +1102,21 @@ async function submitWorkspace() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
   }, 'Не удалось создать воркспейс');
-  if (created) { closeWorkspaceModal(); window.location.reload(); }
+  if (!created) return;
+  closeWorkspaceModal();
+  // The sidebar is built in JS, so a reload is not needed to show a new space —
+  // and reloading used to throw away where you were and which space was open.
+  await loadVaultSummary();
+  if (parentId !== null) {
+    if (Number(currentCollectionId) === parentId) {
+      selectWorkspace(parentId, workspaceDisplayName(parentId));
+      showToast(`Папка «${name}» создана внутри пространства`);
+    } else {
+      showToast(`Папка «${name}» создана`);
+    }
+  } else {
+    showToast(`Воркспейс «${name}» создан`);
+  }
 }
 
 function openLinkModal() {
@@ -2176,6 +2203,7 @@ async function selectWorkspace(id, name) {
 document.getElementById('active-ws-title').innerText = name;
 closeSidebar();
   renderChildSpaces();
+  syncFolderOption();
   // A sealed workspace never loads its tiles: the gate owns the viewport
   // until the passphrase is supplied.
   if (!syncLockedView()) loadWorkspace();
@@ -2372,6 +2400,8 @@ function restoreVaultRoute() {
 
 var vaultMoveFromId = null;
 var vaultNestFromId = null;
+// Where the next created space goes: null for a root, an id for a folder.
+var vaultNewSpaceParentId = null;
 
 function openMoveMenu(event, id) {
   const src = vaultCollectionsById[id];
@@ -3299,6 +3329,7 @@ function __vaultBoot() {
   __vaultBindReorder();
   __vaultBindReadingOrder();
   syncEdgeStrips();
+  syncFolderOption();
   if (!window.__vaultHashBound) {
     window.__vaultHashBound = true;
     window.addEventListener('hashchange', onVaultHashChange);
@@ -3379,6 +3410,15 @@ function __vaultBindReadingOrder() {
   strips.querySelectorAll('[data-vault-edge]').forEach(button => {
     button.addEventListener('click', () => vaultGoNeighbour(Number(button.dataset.vaultEdge)));
   });
+}
+
+/* "+ Папка" only means something inside a space: at the top level it would be
+   the same thing as the sidebar's "+ Воркспейс", and offering both there is how a
+   menu stops meaning anything. */
+function syncFolderOption() {
+  const option = document.getElementById('vault-create-folder-option');
+  if (!option) return;
+  option.classList.toggle('hidden', currentCollectionId === null || currentCollectionId === undefined);
 }
 
 function syncEdgeStrips() {
