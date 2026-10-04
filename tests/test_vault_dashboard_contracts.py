@@ -14,6 +14,7 @@ import re
 import shutil
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 TEMPLATE = Path("app/modules/vault/templates/vault_dashboard.html").read_text()
 
@@ -326,9 +327,12 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
             TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0],
         )
 
-    def test_a_sealed_space_is_not_offered_as_a_target(self):
+    def test_a_sealed_space_is_not_refused_as_a_target(self):
+        """It used to be refused for a plain card, which made a sealed folder
+        unusable: the move is allowed now and the card is sealed on the way in."""
         body = TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0]
-        self.assertIn("target.is_encrypted", body)
+        self.assertNotIn("target.is_encrypted", body)
+        self.assertIn("!target", body)
 
     def test_the_server_refuses_the_moves_the_sidebar_hides(self):
         service = Path("app/modules/vault/services.py").read_text()
@@ -360,15 +364,44 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
         footer = TEMPLATE.split("function tileFooterHtml(", 1)[1].split("\nfunction openMoveCardMenu", 1)[0]
         self.assertIn("openMoveCardMenu(event, ${itemId})", footer)
         self.assertIn("function openMoveCardMenu(", TEMPLATE)
-        self.assertIn("vaultMoveCardTo(", TEMPLATE)
+        # The exact name matters: a menu button once called a function that did
+        # not exist, four letters short of the real one.
+        self.assertIn('onclick="vaultMoveCardToSpace(', TEMPLATE)
 
-    def test_a_sealed_space_is_offered_only_to_a_sealed_card(self):
-        """A sealed card may go there — it is re-sealed under that space's key."""
+    def test_a_plain_card_may_go_into_a_sealed_space_where_it_gets_sealed(self):
+        """The server seals it on the way in, needing only the target's public key."""
         for body in (
             TEMPLATE.split("function openMoveCardMenu(", 1)[1].split("\n}", 1)[0],
             TEMPLATE.split("function vaultCardDropTargetValid(", 1)[1].split("\n}", 1)[0],
         ):
-            self.assertIn("is_encrypted && !card.is_sealed", body)
+            self.assertNotIn("is_encrypted && !card.is_sealed", body)
+
+    def test_a_sealed_card_is_still_kept_away_from_a_plain_space(self):
+        """Its key belongs to the space it came from, so it would arrive unopenable."""
+        self.assertIn(
+            "if (!target.is_encrypted && card.is_sealed) return;",
+            TEMPLATE.split("function openMoveCardMenu(", 1)[1].split("\n}", 1)[0],
+        )
+
+
+class InlineHandlerTests(unittest.TestCase):
+    """Every `onclick="fn(...)"` in the template must name a function that exists.
+
+    A menu button once called `vaultMoveCardTo` while the function was called
+    `vaultMoveCardToSpace`. Nothing caught it: both files parsed, and the name is
+    right up to the last four letters. Clicking it threw in the browser, which is
+    the only place it was ever going to be noticed.
+    """
+
+    # Provided by the page shell, not by this template.
+    SHELL_PROVIDED: ClassVar[set[str]] = {"sendToOutpost"}
+
+    def test_every_inline_handler_is_defined(self):
+        defined = set(re.findall(r"^function ([A-Za-z_$][\w$]*)\(", TEMPLATE, re.M))
+        defined |= set(re.findall(r"^async function ([A-Za-z_$][\w$]*)\(", TEMPLATE, re.M))
+        called = set(re.findall(r'on(?:click|change|input)="([A-Za-z_$][\w$]*)\(', TEMPLATE))
+        missing = sorted(called - defined - self.SHELL_PROVIDED)
+        self.assertEqual([], missing, f"обработчики не определены: {missing}")
 
 
 class StaleSpaceRecoveryTests(unittest.TestCase):

@@ -20,7 +20,13 @@ from app.modules.vault.schemas import (
     VaultItemCreate,
     VaultItemUpdate,
 )
-from app.modules.vault.sealing import VaultMoveError
+from app.modules.vault.sealing import (
+    DEFAULT_ITEM_ALIAS,
+    VaultLockedError,
+    VaultMoveError,
+    require_inbox_public_key,
+    seal_item,
+)
 from app.modules.vault.tasks import download_vault_video_task
 
 logger = logging.getLogger(__name__)
@@ -325,14 +331,29 @@ async def update_vault_item(session: AsyncSession, item: VaultItem, update_in: V
     """Update vault item properties."""
     update_data = update_in.model_dump(exclude_unset=True)
     moved_to = None
+    sealed_target = None
     if "collection_id" in update_data:
-        await _assert_can_move_card(session, item, update_data["collection_id"])
         moved_to = update_data["collection_id"]
+        sealed_target = await _assert_can_move_card(session, item, moved_to)
     for field, val in update_data.items():
         setattr(item, field, val)
 
     if moved_to is not None:
-        await _move_stack_with_cover(session, item, moved_to)
+        if sealed_target is not None:
+            # Filing a plain card into a sealed space seals it there. Refusing was
+            # the safe answer, but it made a sealed folder unusable: the one thing
+            # you would put inside a locked space is something you want locked.
+            # Sealing needs only the target's *public* key, so no unlock is needed.
+            try:
+                seal_item(item, require_inbox_public_key(sealed_target))
+            except VaultLockedError as exc:
+                # A sealed space with no inbox key cannot accept a sealed write.
+                # Left alone this escaped as a 500; the move is a refusal, not a
+                # crash.
+                raise VaultMoveError("Это пространство не может принять зашифрованную карточку") from exc
+            item.public_title = item.public_title or DEFAULT_ITEM_ALIAS
+        else:
+            await _move_stack_with_cover(session, item, moved_to)
 
     item.updated_at = datetime.datetime.utcnow()
     await session.commit()
@@ -355,21 +376,24 @@ async def _move_stack_with_cover(session: AsyncSession, cover: VaultItem, collec
     return len(kids)
 
 
-async def _assert_can_move_card(session: AsyncSession, item: VaultItem, collection_id: int | None) -> None:
-    """Refuse a card move that would leave it readable-looking but unopenable.
+async def _assert_can_move_card(
+    session: AsyncSession, item: VaultItem, collection_id: int | None
+) -> VaultCollection | None:
+    """Check a card move, and return the sealed target it needs sealing for.
 
-    A sealed card carries its own wrapped key, and a plain card inside a sealed
-    space is filtered out of every read path. Both are one-way mistakes: the card
-    either disappears from every list, or stays a locked tile with no way to open
-    it, because its key lookup is gone. Merging refuses the same moves for the
-    same reason; this is the same guard on the path a drag takes.
+    A sealed card carries its own wrapped key, so it cannot be carried into
+    another space and stays refused. A plain card going into a sealed space is
+    not refused but *sealed* there — the caller gets the target back to do it.
+
+    Returns the target collection when the card has to be sealed on the way in,
+    None otherwise.
     """
     if collection_id == item.collection_id:
-        return
+        return None
     if item.sealed_payload:
         raise VaultMoveError("Зашифрованную карточку нельзя перенести в другое пространство")
     if collection_id is None:
-        return
+        return None
     target = await session.get(VaultCollection, collection_id)
     # An unknown target has to be refused here. Without this the write reaches the
     # foreign key and comes back as a 500 from the database — SQLite does not
@@ -377,7 +401,8 @@ async def _assert_can_move_card(session: AsyncSession, item: VaultItem, collecti
     if target is None:
         raise VaultMoveError("Пространство не найдено")
     if target.is_encrypted:
-        raise VaultMoveError("В зашифрованное пространство можно переносить только закрытые карточки")
+        return target
+    return None
 
 
 async def delete_vault_item(session: AsyncSession, item: VaultItem) -> None:

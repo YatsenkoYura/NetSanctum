@@ -1362,16 +1362,17 @@ function openMoveCardMenu(event, cardId) {
   Object.keys(vaultCollectionsById).forEach(key => {
     const target = vaultCollectionsById[key];
     if (Number(key) === Number(card.collection_id ?? null)) return;
-    // A sealed space shows no plain cards, so offering it to one would be a dead
-    // end; a sealed card can go there, re-sealed under that space's key.
-    if (target.is_encrypted && !card.is_sealed) return;
+    // A sealed card into a plain space would arrive unopenable — its key belongs
+    // to the space it came from. A plain card into a sealed space is the opposite
+    // case and works: the server seals it there on the way in.
+    if (!target.is_encrypted && card.is_sealed) return;
     targets.push({ id: Number(key), name: target.name });
   });
   if (targets.length === 1) return showToast('Карточке некуда переноситься', true);
 
   const body = document.getElementById('ws-move-options');
   body.innerHTML = targets.map(target =>
-    `<button class="ws-move-opt" onclick="vaultMoveCardTo(${cardId}, ${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
+    `<button class="ws-move-opt" onclick="vaultMoveCardToSpace(${cardId}, ${target.id === null ? 'null' : target.id})">${escapeHtml(target.name)}</button>`
   ).join('');
   vaultMoveCardFromId = cardId;
   const menu = document.getElementById('ws-move-menu');
@@ -2755,10 +2756,9 @@ function vaultCardDropTargetValid(collectionId) {
   const card = window._vaultCache[vaultReorder.fromId] || {};
   const target = vaultCollectionsById[collectionId];
   if (!target) return false;
-  // A sealed space shows no plain cards, so a plain card dropped there would look
-  // like it worked and leave nothing to open. A sealed card may go: it is
-  // re-sealed under the target's key on the way in.
-  if (target.is_encrypted && !card.is_sealed) return false;
+  // Both kinds may go into a sealed space: a plain card is sealed there on the way
+  // in, and a sealed card is re-sealed under the target's key. Neither would
+  // arrive readable, and neither is refused.
   if (Number(card.collection_id) === Number(collectionId)) return false;
   return true;
 }

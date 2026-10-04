@@ -111,12 +111,18 @@ async def create_sealed_collection(
     color: str = "teal",
     icon: str | None = None,
     public_name: str | None = None,
+    parent_id: int | None = None,
 ) -> VaultCollection:
     """Create a collection whose contents only its passphrase can open.
 
     Two keys come out of this. The inbox private key is sealed under the
     passphrase and is what an unlock recovers; the inbox public key stays in the
     clear so a write can be sealed by a client that has never seen the passphrase.
+
+    `parent_id` is honoured here as it is for a plain space. It used to be
+    dropped on this path alone, so a sealed space created inside another one
+    landed at the top level while a plain one nested — the tree looked broken for
+    a reason that only showed up with a passphrase set.
     """
     collection = VaultCollection(
         name=name,
@@ -125,6 +131,7 @@ async def create_sealed_collection(
         icon=icon,
         is_encrypted=True,
         public_name=public_name or DEFAULT_SEALED_ALIAS,
+        parent_id=parent_id,
     )
     session.add(collection)
     await session.flush()

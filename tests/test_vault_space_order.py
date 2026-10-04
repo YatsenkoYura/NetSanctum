@@ -440,16 +440,55 @@ class MoveCardBetweenSpacesTests(OrderingTestCase):
 
         self.assertIsNone(self.db.get(VaultItem, 10).collection_id)
 
-    def test_a_plain_card_cannot_move_into_a_sealed_space(self):
+    def test_a_plain_card_moving_into_a_sealed_space_is_sealed_there(self):
+        """Not refused: sealed on the way in. Refusing made a sealed folder
+        unusable, since the point of one is to hold things you want locked."""
+        import base64
+
+        from app.modules.vault.crypto import generate_inbox_keypair
+        from app.modules.vault.schemas import VaultItemUpdate
+        from app.modules.vault.sealing import open_item
+
+        _private, public = generate_inbox_keypair()
+        self.add_space(1, position=0.0)
+        target = VaultCollection(
+            id=2,
+            name="Приватное",
+            is_encrypted=True,
+            position=1024.0,
+            inbox_public_key=base64.b64encode(public).decode("ascii"),
+            wrapped_key="nsk:v1:stub",
+            key_salt="c2FsdA",
+        )
+        self.db.add(target)
+        self.add_card(10, 0.0, collection_id=1)
+        self.db.commit()
+
+        run(update_vault_item(self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=2)))
+        self.db.expire_all()
+        moved = self.db.get(VaultItem, 10)
+
+        self.assertEqual(2, moved.collection_id)
+        self.assertTrue(moved.sealed_payload, "карточка обязана уехать запечатанной")
+        self.assertEqual("", moved.title, "читаемые колонки должны быть пусты")
+        # It opens with the key of the space it landed in.
+        open_item(_private, moved)
+        self.assertEqual("Карточка 10", moved.title)
+
+    def test_a_sealed_space_without_an_inbox_key_refuses_instead_of_crashing(self):
+        """Left alone this raised VaultLockedError past the endpoint's handler,
+        which answers 500. A move that cannot happen is a refusal."""
         from app.modules.vault.schemas import VaultItemUpdate
         from app.modules.vault.services import VaultMoveError
 
-        self.add_space(1, sealed=True)
-        self.add_card(10, 0.0, collection_id=None)
-        item = self.db.get(VaultItem, 10)
+        self.add_space(1)
+        target = VaultCollection(id=2, name="Приватное", is_encrypted=True, position=1024.0)
+        self.db.add(target)
+        self.add_card(10, 0.0, collection_id=1)
+        self.db.commit()
 
         with self.assertRaises(VaultMoveError):
-            run(update_vault_item(self.session, item, VaultItemUpdate(collection_id=1)))
+            run(update_vault_item(self.session, self.db.get(VaultItem, 10), VaultItemUpdate(collection_id=2)))
 
     def test_a_sealed_card_cannot_be_carried_into_another_space(self):
         from app.modules.vault.schemas import VaultItemUpdate

@@ -83,6 +83,7 @@ from app.modules.vault.services import (
     list_vault_items,
     list_vault_package_items,
     merge_collections,
+    place_new_space,
     reorder_card,
     reorder_space,
     resolve_soft_entity_info,
@@ -753,7 +754,13 @@ async def create_new_collection(
             color=coll_in.color,
             icon=coll_in.icon,
             public_name=coll_in.public_name or DEFAULT_SEALED_ALIAS,
+            parent_id=coll_in.parent_id,
         )
+        # A plain space gets its place among its siblings inside create_collection;
+        # the sealed path needs it here, because `sealing` cannot import `services`.
+        await place_new_space(db, collection)
+        await db.commit()
+        await db.refresh(collection)
     else:
         collection = await create_collection(db, coll_in)
     return _serialize_collection(collection, locked=False)
