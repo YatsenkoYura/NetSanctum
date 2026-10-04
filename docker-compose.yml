@@ -60,6 +60,10 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     command: ["redis-server", "--appendonly", "no", "--save", "", "--requirepass", "${REDIS_PASSWORD}"]
+    # The image's entrypoint chowns /data when it runs as root, which needs a
+    # capability this service does not grant. Naming the user skips that branch
+    # instead of granting the capability back.
+    user: "999:1000"
     read_only: true
     tmpfs:
       - /data

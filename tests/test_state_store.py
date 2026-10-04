@@ -26,6 +26,82 @@ def fake_config(appendonly: str, save: str) -> AsyncMock:
     return client
 
 
+class RedactionTests(unittest.TestCase):
+    """The connection string carries a password, so it is not a thing to print.
+
+    A single warning with the state store's credentials in it puts a live secret
+    in the log file of every deployment that ever hit it, and logs get shipped
+    somewhere they should not be.
+    """
+
+    SECRET = "redis://:nsredis-3f29a86c2d5b4e7791ca83f6d08e1b42@redis-state:6379/0"
+
+    def test_the_password_is_removed(self):
+        from app.core.state_store import redact
+
+        redacted = redact(self.SECRET)
+
+        self.assertNotIn("3f29a86c", redacted)
+        self.assertIn("redis-state:6379", redacted, "the host is the useful part and is kept")
+
+    def test_a_url_without_credentials_is_untouched(self):
+        from app.core.state_store import redact
+
+        self.assertEqual("redis://localhost:6379/0", redact("redis://localhost:6379/0"))
+
+    def test_a_url_that_will_not_parse_is_replaced_rather_than_passed_on(self):
+        """`urlsplit` is lenient about most rubbish and raises about the rest —
+        a bad port, a broken bracket. A password must not survive either path."""
+        from app.core.state_store import redact
+
+        redacted = redact("redis://:hunter2@redis-state:not-a-port/0")
+
+        self.assertNotIn("hunter2", redacted)
+
+    def test_the_report_never_carries_the_password(self):
+        from app.core.state_store import audit_state_redis
+
+        with patch("app.core.state_store._client_for", return_value=fake_config("no", "")):
+            report = asyncio.run(audit_state_redis(self.SECRET))
+
+        self.assertNotIn("3f29a86c", str(report))
+
+    def test_a_failure_log_does_not_carry_the_password(self):
+        from app.core.state_store import audit_state_redis
+
+        client = AsyncMock()
+        client.config_get = AsyncMock(side_effect=OSError("no CONFIG here"))
+        client.aclose = AsyncMock()
+        with (
+            patch("app.core.state_store._client_for", return_value=client),
+            self.assertLogs("app.core.state_store", level="WARNING") as logs,
+        ):
+            asyncio.run(audit_state_redis(self.SECRET))
+
+        self.assertNotIn("3f29a86c", "\n".join(logs.output))
+
+    def test_the_ephemeral_check_never_raises_with_the_url_in_the_message(self):
+        from app.core.state_store import require_ephemeral_state_store
+
+        settings = type(
+            "S",
+            (),
+            {
+                "VAULT_STATE_REQUIRE_EPHEMERAL": True,
+                "REDIS_URL": "redis://a",
+                "VAULT_STATE_REDIS_URL": self.SECRET,
+            },
+        )()
+        with (
+            patch("app.core.state_store._client_for", return_value=fake_config("yes", "")),
+            patch("app.core.state_store.get_settings", return_value=settings),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                asyncio.run(require_ephemeral_state_store())
+
+        self.assertNotIn("3f29a86c", str(caught.exception))
+
+
 class StateUrlTests(unittest.TestCase):
     def test_it_falls_back_to_the_general_redis(self):
         """Changing nothing has to keep working."""

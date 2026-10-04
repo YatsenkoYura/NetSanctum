@@ -20,12 +20,34 @@ here either.
 """
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 import redis.asyncio as aioredis
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def redact(url: str) -> str:
+    """A URL safe to write down. The password is in it, and a connection string
+    with the state store's credentials belongs in exactly one place."""
+    # Everything inside the guard, `.port` included: it is a property that
+    # parses lazily and raises on a bad port, which is exactly the kind of URL a
+    # misconfiguration produces.
+    try:
+        parts = urlsplit(url)
+        password = parts.password
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        user = parts.username or ""
+        scheme = parts.scheme
+    except ValueError:
+        return "<unparseable url>"
+    if not password:
+        return url
+    return urlunsplit((scheme, f"{user}:***@{host}", parts.path, parts.query, parts.fragment))
 
 
 def state_redis_url() -> str:
@@ -53,8 +75,14 @@ async def audit_state_redis(url: str | None = None) -> dict[str, object]:
     except Exception as error:
         # Managed Redis, a proxy, or a network hiccup: there is nothing to ask
         # and nothing to change from here, so say so and let the operator decide.
-        logger.warning("could not read the Redis configuration at %s: %s", target, error)
-        return {"reachable": False, "error": str(error), "appendonly": None, "save": None}
+        logger.warning("could not read the Redis configuration at %s: %s", redact(target), error)
+        return {
+            "reachable": False,
+            "error": str(error),
+            "appendonly": None,
+            "save": None,
+            "url": redact(target),
+        }
     finally:
         await client.aclose()
     appendonly = str((raw or {}).get("appendonly", "")).lower() in {"yes", "1", "true"}
@@ -63,7 +91,7 @@ async def audit_state_redis(url: str | None = None) -> dict[str, object]:
         "reachable": True,
         "appendonly": appendonly,
         "save": save,
-        "url": target,
+        "url": redact(target),
     }
 
 
