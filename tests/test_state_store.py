@@ -144,7 +144,15 @@ class StateStoreAuditTests(unittest.TestCase):
         self.assertFalse(report["reachable"])
         self.assertIsNone(report["appendonly"])
 
-    def _require(self, appendonly: str, save: str, *, must_be_ephemeral: bool, reachable: bool = True):
+    def _require(
+        self,
+        appendonly: str,
+        save: str,
+        *,
+        must_be_ephemeral: bool,
+        reachable: bool = True,
+        assume_ephemeral: bool = False,
+    ):
         client = fake_config(appendonly, save)
         if not reachable:
             client.config_get = AsyncMock(side_effect=OSError("no CONFIG here"))
@@ -153,6 +161,7 @@ class StateStoreAuditTests(unittest.TestCase):
             (),
             {
                 "VAULT_STATE_REQUIRE_EPHEMERAL": must_be_ephemeral,
+                "VAULT_STATE_ASSUME_EPHEMERAL": assume_ephemeral,
                 "REDIS_URL": "redis://a",
                 "VAULT_STATE_REDIS_URL": "",
             },
@@ -170,26 +179,60 @@ class StateStoreAuditTests(unittest.TestCase):
         self.assertIn("appendonly", str(caught.exception))
         self.assertIn("VAULT_STATE_REDIS_URL", str(caught.exception))
 
-    def test_snapshots_alone_warn_rather_than_refuse(self):
-        """Snapshotting is the milder of the two and is a Redis default.
+    def test_snapshots_are_refused_under_the_same_flag(self):
+        """An RDB snapshot is the same leak by a different route.
 
-        Refusing there would break every deployment that has not read this
-        sentence; a loud warning is the honest amount of force.
+        Refusing `appendonly yes` while merely logging `save 3600 1` made the
+        refusal look like it covered both, when the snapshot is precisely how a
+        default Redis puts an unlock session — a data key — on disk. Under the flag
+        that asks for an ephemeral store, a snapshot is a refusal too.
+        """
+        with self.assertRaises(RuntimeError) as caught:
+            self._require("no", "3600 1 300", must_be_ephemeral=True)
+
+        self.assertIn("RDB", str(caught.exception))
+        self.assertIn('--save ""', str(caught.exception))
+
+    def test_a_persistent_store_is_named_at_startup_even_with_the_flag_off(self):
+        """Off by default must not mean silent.
+
+        Without `VAULT_STATE_REDIS_URL` the state store *is* the main Redis — the
+        one with the append log — and an unlock session is a data key. Not refusing
+        is a choice; not saying so is how the choice gets forgotten.
         """
         with self.assertLogs("app.core.state_store", level="WARNING") as logs:
-            report = self._require("no", "3600 1 300", must_be_ephemeral=True)
+            report = self._require("yes", "3600 1", must_be_ephemeral=False)
 
-        self.assertFalse(report["appendonly"])
-        self.assertTrue(any("RDB" in line for line in logs.output), logs.output)
+        self.assertTrue(report["appendonly"])
+        self.assertTrue(any("VAULT_STATE_REQUIRE_EPHEMERAL" in line for line in logs.output), logs.output)
 
     def test_a_clean_instance_passes_silently(self):
         report = self._require("no", "", must_be_ephemeral=True)
 
         self.assertTrue(report["reachable"])
 
-    def test_an_unreachable_server_does_not_stop_the_application(self):
-        """A network problem is not a persistence problem."""
-        report = self._require("no", "", must_be_ephemeral=True, reachable=False)
+    def test_an_unreachable_server_stops_the_check_when_it_was_asked_for(self):
+        """Asking is not knowing, and `CONFIG GET` is often not permitted.
+
+        An ACL, a proxy or a managed instance can refuse the question. Failing open
+        there made the check a no-op on exactly the deployments that hide their
+        configuration, so it fails closed and says which flag to set.
+        """
+        with self.assertRaises(RuntimeError) as caught:
+            self._require("no", "", must_be_ephemeral=True, reachable=False)
+
+        self.assertIn("VAULT_STATE_ASSUME_EPHEMERAL", str(caught.exception))
+
+    def test_the_operator_can_accept_an_unverifiable_store_by_name(self):
+        with self.assertLogs("app.core.state_store", level="WARNING") as logs:
+            report = self._require("no", "", must_be_ephemeral=True, reachable=False, assume_ephemeral=True)
+
+        self.assertFalse(report["reachable"])
+        self.assertTrue(any("ephemeral" in line for line in logs.output), logs.output)
+
+    def test_an_unreachable_server_is_ignored_when_nobody_asked(self):
+        """Without the flag this is not the application's business."""
+        report = self._require("no", "", must_be_ephemeral=False, reachable=False)
 
         self.assertFalse(report["reachable"])
 

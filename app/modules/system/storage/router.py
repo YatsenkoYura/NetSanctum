@@ -17,7 +17,13 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.modules import module_registry
 from app.core.security import OwnerUser, get_current_user
-from app.core.storage import get_storage
+from app.core.storage import (
+    ENCRYPTED_FILE_MAGIC,
+    SEEKABLE_HEADER_MAX_SIZE,
+    SEEKABLE_MAGIC,
+    SEEKABLE_MAGIC_V2,
+    get_storage,
+)
 from app.core.templates import templates
 from app.modules.system.storage.browse import (
     DEFAULT_LIMIT,
@@ -404,6 +410,31 @@ async def api_upload(
     return {"status": "ok", "path": target_path, "size": written, "media_type": guess_media_type(name)}
 
 
+def _carries_our_envelope(path: str) -> bool:
+    """Whether a local object at `path` is one of our encrypted envelopes.
+
+    Read from the header rather than the `.enc` suffix, the same rule the rest of
+    the storage layer follows: the suffix is a naming convention, and a user is
+    free to upload a file called `archive.enc` that is not encrypted at all.
+    """
+    if not path or is_remote():
+        return False
+    try:
+        target = resolve_local(path)
+    except StoragePathError:
+        return False
+    if not target.is_file():
+        return False
+    try:
+        with target.open("rb") as handle:
+            header = handle.read(max(len(ENCRYPTED_FILE_MAGIC), SEEKABLE_HEADER_MAX_SIZE))
+    except OSError:
+        return False
+    return header.startswith(ENCRYPTED_FILE_MAGIC) or bool(
+        header.startswith(SEEKABLE_MAGIC) or header.startswith(SEEKABLE_MAGIC_V2)
+    )
+
+
 @router.post("/api/rename")
 async def api_rename(
     payload: dict,
@@ -417,6 +448,17 @@ async def api_rename(
         # Renaming a Vault's file would break the row that points at it, and the
         # browser has no way to update that row. Same rule as the download.
         raise HTTPException(status_code=403, detail="This folder belongs to a module and is managed by it")
+    if await asyncio.to_thread(_carries_our_envelope, str(payload.get("path") or "")):
+        # Every encrypted envelope binds its own path into the associated data of
+        # each chunk, which is what stops a file being moved somewhere it should not
+        # be. A rename is exactly that move: the bytes stay, the name changes, and
+        # every chunk stops verifying. The file is not renamed and the owner is told
+        # why, because the alternative is a rename that appears to succeed and leaves
+        # an unreadable file behind a fresh name.
+        raise HTTPException(
+            status_code=422,
+            detail="Encrypted objects cannot be renamed: the path is part of their authentication",
+        )
     try:
         source = normalize_folder(payload.get("path"))
         name = safe_segment(str(payload.get("name") or ""), fallback="")

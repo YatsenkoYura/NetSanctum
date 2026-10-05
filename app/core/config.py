@@ -82,6 +82,10 @@ class Settings(BaseSettings):
 
     # ── Encryption ───────────────────────────────────────
     FILE_ENCRYPTION_KEY_PATH: str = ""
+    # Extension ids allowed to send a browser-extension `Origin` to the two routes
+    # that accept one. Empty keeps the historical behaviour (any extension); a list
+    # narrows it to the extensions this deployment actually ships.
+    NETSANCTUM_EXTENSION_ORIGIN_IDS: str = ""
     LEGACY_FILE_ENCRYPTION_KEYS_PATH: str = ""
     # Legacy migration key. Production encryption uses FILE_ENCRYPTION_KEY_PATH.
     FILE_ENCRYPTION_KEY: str = "dev-file-encryption-key-change-me"
@@ -136,6 +140,9 @@ class Settings(BaseSettings):
     # every existing install on upgrade; on where it matters it is a hard stop,
     # since the alternative is a plaintext copy of a data key in `dump.rdb`.
     VAULT_STATE_REQUIRE_EPHEMERAL: bool = False
+    # Set only when the state store cannot be asked whether it persists (an ACL, a
+    # proxy, a managed instance) and the deployment accepts that without an answer.
+    VAULT_STATE_ASSUME_EPHEMERAL: bool = False
 
     # S3 settings (used when STORAGE_BACKEND=s3)
     S3_BUCKET_NAME: str = ""

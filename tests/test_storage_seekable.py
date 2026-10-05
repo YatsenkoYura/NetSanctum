@@ -8,15 +8,20 @@ has to cost a bounded number of chunks rather than the file.
 import io
 import os
 import unittest
+import unittest.mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.core.storage import (
+    ENCRYPTED_FILE_MAGIC,
     SEEKABLE_CHUNK_SIZE,
+    SEEKABLE_FILE_NONCE_SIZE,
     SEEKABLE_HEADER_V2_SIZE,
     SEEKABLE_MAGIC,
     SEEKABLE_MAGIC_V2,
     LocalStorage,
+    _s3_is_missing,
+    _S3RangeStream,
 )
 
 
@@ -316,6 +321,119 @@ class LegacyFormatTests(unittest.TestCase):
         # and so under-reports a file that was never encrypted.
         self.assertEqual(1234 - 28, self.storage.get_encrypted_plaintext_size("plain.bin"))
         self.assertEqual(1234, self.storage.get_file_size("plain.bin"))
+
+
+class ChunkSizeForwardCompatibilityTests(unittest.TestCase):
+    """The chunk size a v2 object authenticates is its own, not this build's.
+
+    The associated data used to carry `SEEKABLE_CHUNK_SIZE` — the module constant —
+    rather than the size the object was written with. Nothing exploitable came of
+    it, because the header's size steers the reads and a rewritten header still
+    fails the tag. But it made two claims false. The header's chunk size was not
+    authenticated, which is what v2 exists to do. And the next person to tune the
+    constant would have invalidated every stored object at once: its authenticator
+    would name a size it was never sealed with. These two tests are that second
+    failure, written before it happens.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.storage = LocalStorage(self._tmp.name)
+        self.payload = bytes(range(256)) * 40_000  # ~10 MB, so several chunks
+
+    def test_an_object_written_at_one_chunk_size_survives_another_build(self):
+        path = self.storage.save_file_encrypted_seekable(
+            io.BytesIO(self.payload), "vault/movie.mp4.enc", length=len(self.payload)
+        )
+        stored = (Path(self._tmp.name) / path).read_bytes()
+        offset = len(SEEKABLE_MAGIC_V2) + SEEKABLE_FILE_NONCE_SIZE
+        self.assertEqual(SEEKABLE_CHUNK_SIZE, int.from_bytes(stored[offset : offset + 4], "big"))
+
+        # A later build with a different constant. Nothing else about the reader
+        # changes, so the object must still open byte for byte.
+        with unittest.mock.patch("app.core.storage.SEEKABLE_CHUNK_SIZE", 4 * 1024 * 1024):
+            self.assertEqual(self.payload, self.storage.get_file_decrypted(path))
+
+    def test_a_forged_chunk_size_in_the_header_is_refused(self):
+        path = self.storage.save_file_encrypted_seekable(
+            io.BytesIO(self.payload), "vault/movie.mp4.enc", length=len(self.payload)
+        )
+        target = Path(self._tmp.name) / path
+        stored = bytearray(target.read_bytes())
+        offset = len(SEEKABLE_MAGIC_V2) + SEEKABLE_FILE_NONCE_SIZE
+        stored[offset : offset + 4] = (SEEKABLE_CHUNK_SIZE * 2).to_bytes(4, "big")
+        target.write_bytes(bytes(stored))
+
+        with self.assertRaises(ValueError):
+            self.storage.get_file_decrypted(path)
+
+
+class S3SeekAndErrorTests(unittest.TestCase):
+    """A remote object has to be seekable, and 'denied' is not 'absent'.
+
+    The chunked reader seeks to the chunk covering the byte it wants, so a
+    forward-only `StreamingBody` broke range reads on S3 outright. And both
+    `file_exists` and `delete_file` used to answer from `except Exception`, which
+    turns an AccessDenied into "the file is gone" — a page that claims a delete
+    that never happened.
+    """
+
+    class _Client:
+        def __init__(self, body: bytes):
+            self.body = body
+            self.ranges: list[tuple[int, int]] = []
+
+        def head_object(self, Bucket, Key):  # noqa: N803 - boto3's keyword names
+            return {"ContentLength": len(self.body)}
+
+        def get_object(self, Bucket, Key, Range=None):  # noqa: N803
+            if Range:
+                start, _, end = Range.partition("=")[2].partition("-")
+                self.ranges.append((int(start), int(end)))
+                return {"Body": io.BytesIO(self.body[int(start) : int(end) + 1])}
+            return {"Body": io.BytesIO(self.body)}
+
+    def test_the_stream_seeks_backwards_and_forwards(self):
+        payload = bytes(range(256)) * 4096
+        client = self._Client(payload)
+        stream = _S3RangeStream(client, "bucket", "vault/movie.mp4.enc")
+
+        # Mid-object, then back to the start: the chunk reader jumps, it does not
+        # walk. A forward-only pipe cannot do either of these.
+        stream.seek(1000)
+        self.assertEqual(payload[1000:1010], stream.read(10))
+        stream.seek(0)
+        self.assertEqual(payload[:10], stream.read(10))
+        stream.seek(-16, io.SEEK_END)
+        self.assertEqual(payload[-16:], stream.read(16))
+        self.assertEqual(b"", stream.read(10))
+        stream.seek(5000)
+        self.assertEqual(payload[5000:5016], stream.read(16))
+        self.assertEqual(payload[5016:5032], stream.read(16))
+
+    def test_a_missing_object_says_so_and_a_denied_one_raises(self):
+        missing = type("E", (Exception,), {"response": {"Error": {"Code": "NoSuchKey"}}})()
+        denied = type("E", (Exception,), {"response": {"Error": {"Code": "AccessDenied"}}})()
+        other = Exception("network")
+
+        self.assertTrue(_s3_is_missing(missing))
+        self.assertFalse(_s3_is_missing(denied))
+        self.assertFalse(_s3_is_missing(other))
+
+        stream = _S3RangeStream(
+            type("C", (), {"head_object": staticmethod(lambda **k: (_ for _ in ()).throw(denied))})(),
+            "b",
+            "k",
+        )
+        with self.assertRaises(Exception) as caught:
+            stream.read(1)
+        self.assertIs(caught.exception, denied)
+
+    def test_the_current_magic_is_not_mistaken_for_a_legacy_object(self):
+        """The migration's first test, and the reason it read a prefix at all."""
+        self.assertNotEqual(ENCRYPTED_FILE_MAGIC, SEEKABLE_MAGIC_V2[: len(ENCRYPTED_FILE_MAGIC)])
+        self.assertNotEqual(ENCRYPTED_FILE_MAGIC, SEEKABLE_MAGIC[: len(ENCRYPTED_FILE_MAGIC)])
 
 
 if __name__ == "__main__":

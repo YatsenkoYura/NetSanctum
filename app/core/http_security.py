@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from app.core.config import get_settings
+
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CROSS_SITE_CAPABILITY_PATHS = frozenset({"/alllib/api/save_token_external"})
 PRIVATE_CAPABILITY_PREFIXES = ("/s/", "/tabletop/join/", "/tabletop/room/")
@@ -25,6 +27,14 @@ EXTENSION_CLIENT_PATHS = frozenset(
 )
 
 
+def extension_origin_ids() -> frozenset[str]:
+    """Extension ids this deployment accepts, from `NETSANCTUM_EXTENSION_ORIGIN_IDS`."""
+    configured = (get_settings().NETSANCTUM_EXTENSION_ORIGIN_IDS or "").strip()
+    if not configured:
+        return frozenset()
+    return frozenset(part.strip() for part in configured.split(",") if part.strip())
+
+
 def _is_capability_route(path: str) -> bool:
     return (
         path in CROSS_SITE_CAPABILITY_PATHS
@@ -38,11 +48,27 @@ def _is_extension_capability_route(path: str) -> bool:
 
 
 def is_extension_origin(request: Request) -> bool:
-    """True when the caller is a packaged browser extension on a declared route."""
+    """True when the caller is a packaged browser extension on a declared route.
+
+    The scheme alone identifies "some extension", not "our extension": any
+    installed extension can put `chrome-extension://<its own id>` here. That is not
+    a way in — both declared routes authenticate on a bearer token and read no
+    cookie, so there is no ambient authority to borrow, and a non-browser client can
+    drop the header entirely — but a check that accepts every extension is not a
+    check. `NETSANCTUM_EXTENSION_ORIGIN_IDS` names the ids this deployment ships;
+    an empty list keeps the permissive behaviour for an installation that has not
+    set it, and a set list means an origin that is not on it is refused.
+    """
     if not _is_extension_capability_route(request.url.path):
         return False
     origin = request.headers.get("origin", "")
-    return urlparse(origin).scheme in EXTENSION_ORIGIN_SCHEMES
+    parsed = urlparse(origin)
+    if parsed.scheme not in EXTENSION_ORIGIN_SCHEMES:
+        return False
+    allowed = extension_origin_ids()
+    if not allowed:
+        return True
+    return parsed.netloc in allowed
 
 
 def is_cross_site_request(request: Request) -> bool:
@@ -82,13 +108,16 @@ def is_cross_site_request(request: Request) -> bool:
 #   * no eval. `script-src` allows this origin's files and the page's own inline
 #     blocks, and nothing else.
 #
-# What it does not buy yet: a nonce. Adding one would immediately void the ~80
-# inline `onclick`/`onerror` handlers the tiles are built from, and the result
-# would be a dashboard where every button silently stops working — a much worse
-# failure than no nonce, because it looks like a bug in the seal. Converting the
-# tiles to delegated listeners is the prerequisite, and until it lands the
-# honest thing is to say so here rather than ship a policy that looks stricter
-# than it is.
+# What it buys now, and this used to say otherwise. There was a time when this
+# comment explained that a nonce could not be added yet: the tiles were built from
+# ~80 inline `onclick`/`onerror` attributes, and a nonce would have voided every
+# one of them — a dashboard where each button silently stops working, which looks
+# like a bug in the seal rather than in the policy. The tiles were converted to
+# delegated `data-net-action` attributes, `scripts/dashboard_inline_audit.py`
+# fails the build if an inline handler or a non-nonced inline script reappears,
+# and the nonce is minted per response below. A nonce covers `<script>` blocks
+# only — it never covered event-handler *attributes*, which is why the conversion
+# had to come first and not be skipped later.
 DASHBOARD_CSP_PREFIXES = ("/vault/dashboard",)
 
 # One nonce per response, minted where the header is written so the policy and the
@@ -182,6 +211,12 @@ async def security_headers_middleware(request: Request, call_next):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
         response.headers["Content-Security-Policy"] = dashboard_csp(nonce)
-    if request.url.scheme == "https":
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    # Sent unconditionally, and not behind a scheme check. A browser ignores HSTS
+    # received over plain http, so sending it to a client that reached us without
+    # TLS costs nothing; gating it on `request.url.scheme` cost the header entirely
+    # whenever TLS was terminated upstream, because uvicorn then sees http and never
+    # rewrites the scheme — no `--proxy-headers`, no HSTS, silently. The header is
+    # only ever honoured over https, so there is no case where sending it wrongly
+    # commits a browser to a policy for an origin that cannot keep it.
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response

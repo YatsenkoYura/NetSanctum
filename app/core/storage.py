@@ -92,6 +92,109 @@ def _seekable_reader(storage, path: str, total: int, key: bytes | None = None) -
     return _RangeReader(storage, path, total, key)
 
 
+class _S3RangeStream(io.RawIOBase):
+    """A seekable view over one S3 object, assembled from ranged GETs.
+
+    The chunked envelope is read by seeking: the chunk covering byte N does not
+    start where the previous read ended, so a range request has to be able to jump
+    backwards as well as forwards. `StreamingBody` can do neither — it is a
+    forward-only pipe — so handing one to the chunk reader raised
+    `io.UnsupportedOperation` the first time a video was seeked. Every window here
+    costs a request, so windows are capped: a caller asking for "the rest of the
+    file" gets several bounded GETs rather than one enormous one.
+    """
+
+    WINDOW = 8 * 1024 * 1024
+
+    def __init__(self, client, bucket: str, key: str):
+        self._client = client
+        self._bucket = bucket
+        self._key = key
+        self._total: int | None = None
+        self._position = 0
+        self._buffer = b""
+        self._buffer_at = 0
+
+    def _size(self) -> int:
+        if self._total is None:
+            try:
+                self._total = int(
+                    self._client.head_object(Bucket=self._bucket, Key=self._key)["ContentLength"]
+                )
+            except Exception as error:
+                if _s3_is_missing(error):
+                    raise FileNotFoundError(f"S3 object not found: {self._key}") from error
+                raise
+        return self._total
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        total = self._size()
+        if whence == io.SEEK_SET:
+            target = offset
+        elif whence == io.SEEK_CUR:
+            target = self._position + offset
+        elif whence == io.SEEK_END:
+            target = total + offset
+        else:
+            raise ValueError(f"Unsupported whence: {whence}")
+        if target < 0:
+            raise ValueError("Negative seek position")
+        self._position = target
+        return self._position
+
+    def read(self, size: int = -1) -> bytes:
+        total = self._size()
+        if self._position >= total:
+            return b""
+        window_end = total if size is None or size < 0 else min(total, self._position + size)
+        if not (self._buffer_at <= self._position and window_end <= self._buffer_at + len(self._buffer)):
+            start = self._position
+            end = min(total, start + max(self.WINDOW, window_end - start))
+            try:
+                response = self._client.get_object(
+                    Bucket=self._bucket, Key=self._key, Range=f"bytes={start}-{end - 1}"
+                )
+            except Exception as error:
+                if _s3_is_missing(error):
+                    raise FileNotFoundError(f"S3 object not found: {self._key}") from error
+                raise
+            self._buffer = response["Body"].read()
+            self._buffer_at = start
+        offset = self._position - self._buffer_at
+        piece = self._buffer[offset : offset + (window_end - self._position)]
+        self._position += len(piece)
+        return piece
+
+    def readall(self) -> bytes:
+        return self.read(-1)
+
+
+def _s3_is_missing(error: Exception) -> bool:
+    """Whether an S3 error means the object is absent, as opposed to unreachable.
+
+    Every other failure has to surface. `file_exists` answering "no" to an
+    AccessDenied is how a permissions problem turns into a page claiming the file
+    was deleted, and `delete_file` answering False to a denied DELETE is how a
+    delete flow reports tidiness while the object stays in the bucket.
+    """
+    response = getattr(error, "response", None)
+    if not isinstance(response, dict):
+        return False
+    if str(response.get("Error", {}).get("Code", "")) in {"404", "NoSuchKey", "NotFound"}:
+        return True
+    status = (response.get("ResponseMetadata", {}) or {}).get("HTTPStatusCode")
+    return status == 404
+
+
 def _staging_parent() -> str | None:
     """Where an envelope is assembled before it is handed to the backend."""
     try:
@@ -124,6 +227,10 @@ class EncryptionMigrationResult:
     unreadable: int = 0
     pending: int = 0
     examined: int = 0
+    # Chunked objects stored under a key this migration does not hold — a sealed
+    # collection's own file key. Counted apart from `unreadable` because they are
+    # not damaged, they are simply not ours to rotate.
+    foreign: int = 0
 
 
 class StorageInterface(ABC):
@@ -283,7 +390,9 @@ class StorageInterface(ABC):
     ) -> str:
         file_nonce = os.urandom(SEEKABLE_FILE_NONCE_SIZE)
         chunk_count = (plaintext_length + SEEKABLE_CHUNK_SIZE - 1) // SEEKABLE_CHUNK_SIZE
-        aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count)
+        aad = self._seekable_v2_associated_data(
+            path, file_nonce, plaintext_length, chunk_count, SEEKABLE_CHUNK_SIZE
+        )
         aesgcm = AESGCM(key if key is not None else self._get_encryption_key())
         # The envelope being assembled here is ciphertext, so it is not the
         # sensitive half — but it is large and temporary, and putting it beside
@@ -453,7 +562,7 @@ class StorageInterface(ABC):
         expected = (plaintext_length + chunk_size - 1) // chunk_size if plaintext_length else 0
         if chunk_count != expected:
             raise ValueError(f"Invalid encrypted file '{path}': header sizes disagree.")
-        aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count)
+        aad = self._seekable_v2_associated_data(path, file_nonce, plaintext_length, chunk_count, chunk_size)
         yield from self._read_seekable_chunks(
             stream,
             SEEKABLE_HEADER_V2_SIZE,
@@ -540,14 +649,32 @@ class StorageInterface(ABC):
         return SEEKABLE_MAGIC + b"\x00" + file_nonce + path.encode("utf-8")
 
     def _seekable_v2_associated_data(
-        self, path: str, file_nonce: bytes, plaintext_length: int, chunk_count: int
+        self,
+        path: str,
+        file_nonce: bytes,
+        plaintext_length: int,
+        chunk_count: int,
+        chunk_size: int = SEEKABLE_CHUNK_SIZE,
     ) -> bytes:
+        """What every chunk of one v2 object authenticates against.
+
+        `chunk_size` is a parameter because it is a property of the object, not of
+        this build: the writer passes the size it just used, the reader passes the
+        size it read out of the header. Reading it from the constant instead would
+        bind a number that has nothing to do with the bytes on disk — the header's
+        own chunk size would go unauthenticated, and the promised guarantee ("v2
+        binds the chunk size") would be a claim about a constant. Worse, it would
+        be false the moment somebody tuned `SEEKABLE_CHUNK_SIZE`: every stored v2
+        object would stop verifying, because its authenticator would name a size it
+        was never written with. Existing objects are unaffected — their header
+        carries the same size the writer used, which is exactly what is passed here.
+        """
         return (
             SEEKABLE_MAGIC_V2
             + b"\x00"
             + file_nonce
             + path.encode("utf-8")
-            + SEEKABLE_CHUNK_SIZE.to_bytes(4, "big")
+            + int(chunk_size).to_bytes(4, "big")
             + plaintext_length.to_bytes(8, "big")
             + chunk_count.to_bytes(4, "big")
         )
@@ -680,6 +807,32 @@ class LocalStorage(StorageInterface):
     def file_exists(self, path: str) -> bool:
         return self._full_path(path).is_file()
 
+    def _classify_seekable(self, path: str, header: bytes) -> bytes | None:
+        """Whether the application key opens this chunked object, and if so which.
+
+        One byte is asked for, and it is asked through the very reader that serves
+        the object in production — so this cannot disagree with what a playback
+        would find, which a reimplementation of the nonce and associated-data
+        construction could. A chunk is its own AEAD, so one byte is enough to
+        settle the question without touching the rest of a file that may be
+        gigabytes long.
+
+        Returns None when no key here opens it, which is not the same as the file
+        being broken: see the caller.
+        """
+        version = self._seekable_version(header)
+        if version == 0:
+            return None
+        read = self._read_seekable_v2_range if version == 2 else self._read_seekable_v1_range
+        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+            try:
+                with self.get_file_stream(path) as stream:
+                    next(read(stream, header, path, 0, 1, key), None)
+                return key
+            except Exception:
+                continue
+        return None
+
     def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
         """Atomically rewrite a bounded number of legacy encrypted objects."""
         legacy_keys = self._get_legacy_encryption_keys()
@@ -690,11 +843,33 @@ class LocalStorage(StorageInterface):
         current = 0
         pending = 0
         examined = 0
+        foreign = 0
         for full_path in sorted(self._root.rglob("*.enc")):
             with full_path.open("rb") as stream:
-                prefix = stream.read(len(ENCRYPTED_FILE_MAGIC))
-                if prefix == ENCRYPTED_FILE_MAGIC:
+                prefix = stream.read(SEEKABLE_HEADER_MAX_SIZE)
+                if prefix.startswith(ENCRYPTED_FILE_MAGIC):
                     current += 1
+                    continue
+                # A chunked object is never legacy just because its magic differs:
+                # `NSENCS…` and `NSENC…` are different prefixes, so without this the
+                # whole video below was slurped into memory, handed to a decryptor
+                # built for the other envelope, failed, and was counted as a file
+                # whose key is unavailable. Every seekable object in storage would
+                # have inflated that counter, once per restart, having migrated
+                # nothing.
+                if self._seekable_version(prefix) > 0:
+                    relative = str(full_path.relative_to(self._root))
+                    verdict = self._classify_seekable(relative, prefix)
+                    if verdict is not None:
+                        current += 1
+                        continue
+                    # Not unreadable — out of scope. A sealed collection stores under a
+                    # per-collection file key, deliberately unreachable from the
+                    # application key ("a wrong file key must fail rather than fall
+                    # through to an unrelated one"), so counting its videos as files
+                    # whose key is missing would be a false alarm that grows with every
+                    # video the owner ever adds.
+                    foreign += 1
                     continue
                 stat = os.fstat(stream.fileno())
                 signature = (stat.st_size, stat.st_mtime_ns)
@@ -733,6 +908,7 @@ class LocalStorage(StorageInterface):
             len(self._unreadable_encrypted_files),
             pending,
             examined,
+            foreign,
         )
 
 
@@ -787,17 +963,21 @@ class S3Storage(StorageInterface):
 
     def get_file_stream(self, path: str) -> BinaryIO:
         try:
-            response = self._client.get_object(Bucket=self._bucket, Key=path)
-            return response["Body"]
+            return _S3RangeStream(self._client, self._bucket, path)
         except self._client.exceptions.NoSuchKey:
             raise FileNotFoundError(f"S3 object not found: {path}")
 
     def delete_file(self, path: str) -> bool:
-        try:
-            self._client.delete_object(Bucket=self._bucket, Key=path)
-            return True
-        except Exception:
+        """True when the object is gone, False when it was never there.
+
+        Not when something went wrong. S3's DELETE succeeds on a key that does not
+        exist, so the answer has to come from a HEAD first, and any failure other
+        than "absent" is raised rather than reported as a missing file.
+        """
+        if not self.file_exists(path):
             return False
+        self._client.delete_object(Bucket=self._bucket, Key=path)
+        return True
 
     def get_file_size(self, path: str) -> int:
         response = self._client.head_object(Bucket=self._bucket, Key=path)
@@ -807,8 +987,10 @@ class S3Storage(StorageInterface):
         try:
             self._client.head_object(Bucket=self._bucket, Key=path)
             return True
-        except Exception:
-            return False
+        except Exception as error:
+            if _s3_is_missing(error):
+                return False
+            raise
 
     def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
         legacy_keys = self._get_legacy_encryption_keys()
@@ -819,6 +1001,7 @@ class S3Storage(StorageInterface):
         current = 0
         pending = 0
         examined = 0
+        foreign = 0
         paginator = self._client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self._bucket):
             for item in page.get("Contents", []):
@@ -828,15 +1011,29 @@ class S3Storage(StorageInterface):
                 signature = (int(item.get("Size", 0)), str(item.get("ETag", "")))
                 if self._unreadable_encrypted_files.get(key) == signature:
                     continue
+                # The header decides, and it is eight bytes to forty. Reading the
+                # object to find that out cost a full GET per candidate — and the
+                # budget was spent *before* the answer, so with the default limit of
+                # one the first already-current object consumed the whole pass and
+                # the next pass met the same object again. The migration could not
+                # walk past the first current key in the listing, ever.
+                with self.get_file_stream(key) as stream:
+                    prefix = stream.read(SEEKABLE_HEADER_MAX_SIZE)
+                if prefix.startswith(ENCRYPTED_FILE_MAGIC):
+                    current += 1
+                    continue
+                if self._classify_seekable(key, prefix) is not None:
+                    current += 1
+                    continue
+                if self._seekable_version(prefix) > 0:
+                    foreign += 1
+                    continue
                 if limit > 0 and examined >= limit:
                     pending += 1
                     continue
                 examined += 1
                 with self.get_file_stream(key) as stream:
-                    payload = stream.read()
-                if payload.startswith(ENCRYPTED_FILE_MAGIC):
-                    current += 1
-                    continue
+                    payload = prefix + stream.read()
                 try:
                     plaintext = self._decrypt_payload(payload, key)
                 except ValueError:
@@ -854,6 +1051,7 @@ class S3Storage(StorageInterface):
             len(self._unreadable_encrypted_files),
             pending,
             examined,
+            foreign,
         )
 
 

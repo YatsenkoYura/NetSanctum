@@ -106,10 +106,41 @@ async def require_ephemeral_state_store() -> dict[str, object]:
     settings = get_settings()
     report = await audit_state_redis()
     if not settings.VAULT_STATE_REQUIRE_EPHEMERAL:
+        # Off by default, so a single-Redis deployment is untouched — but not
+        # silently. The fallback below means that without VAULT_STATE_REDIS_URL this
+        # is the *main* Redis, the one the broker writes its append log to, and
+        # unlock sessions are data keys. Saying so once at startup is the difference
+        # between a setting nobody knew about and a setting nobody has to.
+        if report.get("reachable") and (report.get("appendonly") or report.get("save")):
+            logger.warning(
+                "The vault state store keeps unlock sessions — data keys — on disk "
+                "(appendonly=%s, save=%r) because VAULT_STATE_REQUIRE_EPHEMERAL is off. Point "
+                'VAULT_STATE_REDIS_URL at an instance started with `--save "" --appendonly no` and '
+                "turn the flag on.",
+                report.get("appendonly"),
+                report.get("save"),
+            )
         return report
     if not report.get("reachable"):
-        # Unreachable is not persistence. Refusing here would turn a network
-        # problem into a refusal to start, which is a different failure.
+        # Asking is not the same as knowing. `CONFIG GET` can be denied by an ACL,
+        # blocked by a proxy, or unavailable on a managed instance, and then
+        # "unreachable" says nothing about whether the instance persists — which is
+        # the only question this flag exists to ask. Failing open turned the check
+        # into a no-op on exactly the deployments that hide their configuration.
+        # So it fails closed, and the operator who has decided they know better
+        # says so with VAULT_STATE_ASSUME_EPHEMERAL — one name, because "I could
+        # not check" and "I checked and I accept it" should not look alike.
+        if not settings.VAULT_STATE_ASSUME_EPHEMERAL:
+            raise RuntimeError(
+                "The vault state Redis could not be asked whether it persists "
+                "(CONFIG GET is unavailable: an ACL, a proxy or a managed instance). "
+                "Point VAULT_STATE_REDIS_URL at an instance this deployment can inspect, or set "
+                "VAULT_STATE_ASSUME_EPHEMERAL=true to accept it without the answer."
+            )
+        logger.warning(
+            "Assuming the vault state Redis is ephemeral because it could not be asked. "
+            "If it writes to disk, unlock sessions — and therefore data keys — are on that disk."
+        )
         return report
     if report.get("appendonly"):
         raise RuntimeError(
@@ -118,9 +149,12 @@ async def require_ephemeral_state_store() -> dict[str, object]:
             '`--save "" --appendonly no`, or unset VAULT_STATE_REQUIRE_EPHEMERAL to accept it.'
         )
     if report.get("save"):
-        logger.warning(
-            "The vault state Redis takes RDB snapshots (%r). It is not append-only, so a snapshot "
-            'can still capture a session; run it with `--save ""`.',
-            report.get("save"),
+        # An RDB snapshot is the same leak by a different route: it is not
+        # append-only, it is not not-written-to-disk. Refusing on one and merely
+        # logging the other made the refusal look like it covered both.
+        raise RuntimeError(
+            f"The vault state Redis takes RDB snapshots ({report.get('save')!r}), and a snapshot "
+            "can capture an unlock session — a data key — the same way the append log does. Run it "
+            'with `--save ""`, or unset VAULT_STATE_REQUIRE_EPHEMERAL to accept it.'
         )
     return report
