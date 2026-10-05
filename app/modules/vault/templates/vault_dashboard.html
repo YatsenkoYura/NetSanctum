@@ -1517,10 +1517,11 @@ function openMediaView(item) {
   if (isVideo && !playable) {
     const status = card.media_status || (card.is_locked ? 'locked' : 'ожидает');
     const failed = String(card.media_status || '').startsWith('error:');
-    // A failed or never-queued download can be asked again — from an unlocked
-    // tab, so the worker stores under the file key this time. While locked the
-    // attempt opens the unlock dialog instead (mutationJson maps the 423).
-    const canRetry = failed || card.media_status === 'not queued';
+    // A failed, never-queued or parked download can be asked again — from an
+    // unlocked tab, so the worker stores under the file key this time. While
+    // locked the attempt opens the unlock dialog instead (mutationJson maps
+    // the 423).
+    const canRetry = failed || card.media_status === 'not queued' || card.media_status === 'pending_unlock';
     stage.innerHTML = `
       <div class="text-center px-6 py-10 space-y-2">
         ${card.is_locked ? `<div class="text-3xl">🔒</div>` : ''}
