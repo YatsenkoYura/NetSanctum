@@ -310,8 +310,7 @@ def wrapper_for(collection: VaultCollection) -> WrappedKey:
     """Read back the wrapper, with the cost parameters it was sealed with.
 
     Argon2id is the only KDF. A row naming anything else — or no KDF at all —
-    is refused: the old scrypt standard was deleted with its data (see
-    scripts/purge_legacy_vaults.py, itself temporary), not migrated.
+    is refused: the old scrypt standard was deleted with its data, not migrated.
 
     Cost parameters are capped before anything derives from them: they come from
     the database, and a row claiming gigabytes of Argon2 memory must be refused
