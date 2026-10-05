@@ -114,6 +114,7 @@ class _S3RangeStream(io.RawIOBase):
         self._position = 0
         self._buffer = b""
         self._buffer_at = 0
+        self._etag: str | None = None
 
     def _size(self) -> int:
         if self._total is None:
@@ -160,8 +161,12 @@ class _S3RangeStream(io.RawIOBase):
             start = self._position
             end = min(total, start + max(self.WINDOW, window_end - start))
             try:
+                extra = {"IfMatch": f'"{self._etag}"'} if self._etag else {}
                 response = self._client.get_object(
-                    Bucket=self._bucket, Key=self._key, Range=f"bytes={start}-{end - 1}"
+                    Bucket=self._bucket,
+                    Key=self._key,
+                    Range=f"bytes={start}-{end - 1}",
+                    **extra,
                 )
             except Exception as error:
                 if _s3_is_missing(error):
@@ -280,7 +285,20 @@ class StorageInterface(ABC):
         )
         return ENCRYPTED_FILE_MAGIC + nonce + ciphertext
 
-    def _decrypt_payload(self, payload: bytes, path: str) -> bytes:
+    def _decrypt_payload(self, payload: bytes, path: str, *, key: bytes | None = None) -> bytes:
+        """Open a single-blob envelope, optionally under one specific key.
+
+        An explicit `key` is the whole truth: it is tried once, with no rotation
+        behind it. That is the rule the chunked envelope already follows, and it is
+        the point of a per-collection file key — a wrong key has to fail rather than
+        fall through to an unrelated one that happens to open the file.
+
+        The key used to be accepted by the callers and dropped here, so reading a
+        single-blob object under a per-collection key silently tried the application
+        key and the legacy rotation instead. Nothing hit it, because the Vault
+        writes its images and video through the chunked envelope; it was a trap for
+        the next caller rather than a live leak.
+        """
         is_current = payload.startswith(ENCRYPTED_FILE_MAGIC)
         offset = len(ENCRYPTED_FILE_MAGIC) if is_current else 0
         if len(payload) < offset + NONCE_SIZE + 16:
@@ -289,8 +307,11 @@ class StorageInterface(ABC):
         nonce = payload[offset : offset + NONCE_SIZE]
         ciphertext = payload[offset + NONCE_SIZE :]
         associated_data = self._associated_data(path) if is_current else None
+        candidates = (
+            (key,) if key is not None else (self._get_encryption_key(), *self._get_legacy_encryption_keys())
+        )
         last_error = None
-        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+        for key in candidates:
             try:
                 return AESGCM(key).decrypt(nonce, ciphertext, associated_data)
             except Exception as error:
@@ -321,7 +342,7 @@ class StorageInterface(ABC):
         finally:
             stream.close()
 
-        return io.BytesIO(self._decrypt_payload(payload, path))
+        return io.BytesIO(self._decrypt_payload(payload, path, key=key))
 
     # ── Seekable envelope ────────────────────────────────────────────────
     # AES-GCM over one blob cannot be seeked: the GHASH tag spans the whole
@@ -484,6 +505,74 @@ class StorageInterface(ABC):
             raise ValueError(f"'{target}' does not read back as '{path}' did")
         return target
 
+    def reencrypt_to_path(
+        self,
+        source_path: str,
+        target_path: str,
+        *,
+        source_key: bytes | None = None,
+        target_key: bytes | None = None,
+    ) -> dict[str, object]:
+        """Write one object at a new path, re-sealed for that path, and verify it.
+
+        A move is not a rename. Every chunk of a chunked envelope authenticates the
+        object's own path, and a single-blob envelope authenticates it as associated
+        data, so the bytes cannot simply follow the name: they have to be decrypted
+        and sealed again. This does that as a stream — a four-gigabyte video never
+        lands in memory.
+
+        Two keys, not one, and that is the whole reason this is more than a rename:
+        a move between two private modules is a move between two file keys, so the
+        source is opened under `source_key` and the target is sealed under
+        `target_key`. With one key for both, a cross-module move is impossible —
+        the only correct thing would be to fail, and the owner is left with a file
+        that cannot go anywhere. Left at one key, the operation would quietly have
+        to read under the destination's key and fail, or read under the source's and
+        write something the destination cannot open.
+
+        The copy is read back and compared before the source is touched, and the
+        source is not deleted here. Deleting is the caller's decision, once whatever
+        row pointed at the old path points at the new one — the same contract
+        `upgrade_seekable_envelope` keeps, and the reason a half-finished move leaves
+        the original in place rather than nothing at all.
+        """
+        with self.get_file_stream(source_path) as probe:
+            header = probe.read(SEEKABLE_HEADER_MAX_SIZE)
+        version = self._seekable_version(header)
+        is_blob = header.startswith(ENCRYPTED_FILE_MAGIC)
+        if version > 0:
+            total = self.get_seekable_plaintext_size(source_path)
+            source = _seekable_reader(self, source_path, total, source_key)
+            self.save_file_encrypted_seekable(source, target_path, key=target_key, length=total)
+            if source._read != total:
+                raise ValueError(f"'{source_path}' decrypted short")
+            restored_total = self.get_seekable_plaintext_size(target_path)
+            restored = _seekable_reader(self, target_path, restored_total, target_key)
+            while restored.read(SEEKABLE_CHUNK_SIZE):
+                pass
+            if not secrets.compare_digest(restored.digest, source.digest):
+                raise ValueError(f"'{target_path}' does not read back as '{source_path}' did")
+            return {"envelope": f"seekable-v{version}", "plaintext_bytes": total}
+        if is_blob:
+            with self.get_file_stream(source_path) as raw:
+                ciphertext = raw.read()
+            plaintext = self._decrypt_payload(ciphertext, source_path, key=source_key)
+            self.save_file_encrypted(plaintext, target_path, key=target_key)
+            with self.get_file_stream(target_path) as raw:
+                written = raw.read()
+            if not secrets.compare_digest(
+                self._decrypt_payload(written, target_path, key=target_key), plaintext
+            ):
+                raise ValueError(f"'{target_path}' does not read back as '{source_path}' did")
+            return {"envelope": "single-blob", "plaintext_bytes": len(plaintext)}
+        # Not encrypted: a copy, not a re-encryption. Said plainly rather than sealed
+        # under a key the object never had.
+        with self.get_file_stream(source_path) as raw:
+            self.save_stream(raw, target_path)
+        if self.get_file_size(target_path) != self.get_file_size(source_path):
+            raise ValueError(f"'{target_path}' is a different size than '{source_path}'")
+        return {"envelope": "plaintext", "plaintext_bytes": self.get_file_size(source_path)}
+
     def is_seekable_encrypted(self, path: str) -> bool:
         """Whether the stored object uses the chunked envelope, either version."""
         with self.get_file_stream(path) as stream:
@@ -501,6 +590,61 @@ class StorageInterface(ABC):
             base = len(SEEKABLE_MAGIC) + SEEKABLE_FILE_NONCE_SIZE + 4
             return int.from_bytes(header[base : base + 8], "big")
         raise ValueError(f"Invalid encrypted file '{path}': header is truncated.")
+
+    def verify_encrypted_object(self, path: str, *, key: bytes | None = None) -> dict[str, object]:
+        """Decrypt a stored object end to end to prove it is intact.
+
+        Every chunk is its own AEAD, so this is the only check that touches the
+        whole file: it re-derives each tag and a single flipped byte anywhere — in
+        the header, in a nonce, in the ciphertext, in the last short chunk — is a
+        failure rather than a silently truncated file. Nothing else in the stack
+        would notice. The migration counts a file, the player reads the range it
+        needs, and a corrupt chunk three hours into a video is found when someone
+        watches that hour.
+
+        Chunked objects are streamed, never buffered: an integrity check that
+        needed the whole file in memory could not be run against the files it exists
+        to protect. The result reports sizes, not contents, so it can be logged.
+
+        "Not one of our envelopes" is reported as `plaintext`, not as a failure.
+        A Vault row can point at a file that was never encrypted — a capture from
+        before the module encrypted its media — and calling that corruption would
+        train the reader to ignore this check, which is the one way an integrity
+        report becomes worthless.
+        """
+        with self.get_file_stream(path) as stream:
+            header = stream.read(SEEKABLE_HEADER_MAX_SIZE)
+        version = self._seekable_version(header)
+        if version == 0 and not header.startswith(ENCRYPTED_FILE_MAGIC):
+            return {
+                "envelope": "plaintext",
+                "plaintext_bytes": self.get_file_size(path),
+                "stored_bytes": self.get_file_size(path),
+            }
+        if version > 0:
+            total = self.get_seekable_plaintext_size(path)
+            digest = hashlib.sha256()
+            read = 0
+            for piece in self.read_seekable_range(path, 0, total, key=key):
+                digest.update(piece)
+                read += len(piece)
+            if read != total:
+                raise ValueError(f"Invalid encrypted file '{path}': got {read} of {total} bytes.")
+            return {
+                "envelope": f"seekable-v{version}",
+                "plaintext_bytes": read,
+                "sha256": digest.hexdigest(),
+            }
+        stored_size = self.get_file_size(path)
+        with self.get_file_stream(path) as stream:
+            ciphertext = stream.read()
+        plaintext = self._decrypt_payload(ciphertext, path, key=key)
+        return {
+            "envelope": "single-blob",
+            "plaintext_bytes": len(plaintext),
+            "stored_bytes": stored_size,
+            "sha256": hashlib.sha256(plaintext).hexdigest(),
+        }
 
     def read_seekable_range(
         self, path: str, start: int, length: int, *, key: bytes | None = None

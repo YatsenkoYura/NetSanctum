@@ -5,6 +5,7 @@ envelope here. These tests hold it to that: the range has to be correct, and it
 has to cost a bounded number of chunks rather than the file.
 """
 
+import hashlib
 import io
 import os
 import unittest
@@ -367,6 +368,252 @@ class ChunkSizeForwardCompatibilityTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             self.storage.get_file_decrypted(path)
+
+
+LEGACY_FIXTURE_PAYLOAD = b"netsanctum-legacy-aad-fixture-" + bytes(range(256)) * 800
+
+
+class LegacyWriterCompatibilityTests(unittest.TestCase):
+    """Bytes written by the old writer, opened by the current reader.
+
+    The forward-compatibility test above writes with today's code, so on its own it
+    only shows that today's code agrees with itself. This one is the test that
+    matters: the fixture was produced by the writer as it stood *before* the fix —
+    the one that put the module constant into every chunk's associated data rather
+    than the object's own chunk size. It is sealed under an explicit public test
+    key, because sealing it under the deployment key would put a secret from `.env`
+    into a committed file.
+
+    It spans two chunks, since chunk boundaries are what the associated data names.
+    """
+
+    KEY = hashlib.sha256(b"netsanctum-test-file-key").digest()
+    FIXTURE = Path(__file__).resolve().parent / "fixtures" / "seekable_v2_legacy_aad.bin"
+    # The fixture was written at this chunk size, which is deliberately not the
+    # current default: a reader that ignored the header and used its own constant
+    # would still pass against a fixture that agreed with it.
+    FIXTURE_CHUNK_SIZE = 64 * 1024
+
+    def test_the_old_writers_object_still_opens(self):
+        payload = LEGACY_FIXTURE_PAYLOAD
+        # The digest sits next to the fixture so that regenerating one without the
+        # other fails here rather than silently testing nothing.
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            (self.FIXTURE.with_suffix(".sha256")).read_text().strip(),
+            "the fixture and this test disagree about the plaintext",
+        )
+
+        stored = self.FIXTURE.read_bytes()
+        offset = len(SEEKABLE_MAGIC_V2) + SEEKABLE_FILE_NONCE_SIZE
+        self.assertEqual(self.FIXTURE_CHUNK_SIZE, int.from_bytes(stored[offset : offset + 4], "big"))
+        self.assertNotEqual(
+            SEEKABLE_CHUNK_SIZE,
+            self.FIXTURE_CHUNK_SIZE,
+            "the fixture must disagree with today's constant, or it proves nothing",
+        )
+        self.assertGreater(len(payload), self.FIXTURE_CHUNK_SIZE, "the fixture must span more than one chunk")
+
+        target = Path(self._tmp.name) / "vault" / "legacy-v2.mp4.enc"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(stored)
+        storage = LocalStorage(self._tmp.name)
+
+        self.assertEqual(payload, storage.get_file_decrypted("vault/legacy-v2.mp4.enc", key=self.KEY))
+        # And by range, which is how a player reads it: the bytes either side of the
+        # first chunk boundary have to come back in the right order.
+        edge = self.FIXTURE_CHUNK_SIZE * 2 - 10
+        middle = storage.read_seekable_range("vault/legacy-v2.mp4.enc", edge, 32, key=self.KEY)
+        self.assertEqual(payload[edge : edge + 32], b"".join(middle))
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+
+class IntegrityVerificationTests(unittest.TestCase):
+    """A check that only works when there is nothing wrong with it.
+
+    The point of walking every chunk is to fail on damage. A verifier that reports
+    a healthy file as broken gets ignored, and then the corrupt chunk three hours
+    into a video is found by somebody watching that hour.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.storage = LocalStorage(self._tmp.name)
+        self.payload = b"integrity-" + bytes(range(256)) * 9000  # ~2.3 MB, three chunks
+        self.path = self.storage.save_file_encrypted_seekable(
+            io.BytesIO(self.payload), "vault/video.mp4.enc", length=len(self.payload)
+        )
+
+    def _stored(self) -> Path:
+        return Path(self._tmp.name) / self.path
+
+    def _flip(self, offset: int) -> None:
+        raw = bytearray(self._stored().read_bytes())
+        raw[offset] ^= 0x01
+        self._stored().write_bytes(bytes(raw))
+
+    def test_a_healthy_object_verifies_and_reports_its_size(self):
+        report = self.storage.verify_encrypted_object(self.path)
+
+        self.assertEqual("seekable-v2", report["envelope"])
+        self.assertEqual(len(self.payload), report["plaintext_bytes"])
+
+    def test_damage_in_the_header_is_caught(self):
+        self._flip(20)  # inside the plaintext length
+
+        with self.assertRaises(ValueError):
+            self.storage.verify_encrypted_object(self.path)
+
+    def test_damage_in_the_first_chunk_is_caught(self):
+        self._flip(SEEKABLE_HEADER_V2_SIZE + 40)
+
+        with self.assertRaises(ValueError):
+            self.storage.verify_encrypted_object(self.path)
+
+    def test_damage_in_the_last_chunk_is_caught(self):
+        self._flip(self._stored().stat().st_size - 8)
+
+        with self.assertRaises(ValueError):
+            self.storage.verify_encrypted_object(self.path)
+
+    def test_a_truncated_object_is_caught_rather_than_read_short(self):
+        raw = self._stored().read_bytes()
+        self._stored().write_bytes(raw[: len(raw) // 2])
+
+        with self.assertRaises(ValueError):
+            self.storage.verify_encrypted_object(self.path)
+
+    def test_a_plain_file_is_reported_as_plaintext_not_as_damage(self):
+        """Two real videos in this deployment are plain MP4s.
+
+        Calling them corrupt would be crying wolf over files that play perfectly,
+        so the header decides and the answer says `plaintext`.
+        """
+        self.storage.save_file(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00" + b"x" * 512, "vault/plain.mp4")
+
+        report = self.storage.verify_encrypted_object("vault/plain.mp4")
+
+        self.assertEqual("plaintext", report["envelope"])
+
+    def test_a_single_blob_object_verifies_under_its_own_key(self):
+        """The key is used, not the application key behind it.
+
+        `get_file_decrypted(path, key=…)` used to drop the key for this envelope and
+        try the application key with the legacy rotation behind it — the one mixing
+        the chunked path is careful never to do.
+        """
+        key = hashlib.sha256(b"per-collection").digest()
+        path = self.storage.save_file_encrypted(b"single blob payload", "vault/one.jpg.enc", key=key)
+
+        report = self.storage.verify_encrypted_object(path, key=key)
+        self.assertEqual("single-blob", report["envelope"])
+        self.assertEqual(19, report["plaintext_bytes"])
+
+        with self.assertRaises(ValueError):
+            self.storage.verify_encrypted_object(path, key=b"\x00" * 32)
+
+
+class ReencryptionTests(unittest.TestCase):
+    """A move is a re-encryption, and the copy is checked before the original goes.
+
+    Every chunk authenticates the object's own path, so the bytes cannot follow the
+    name. These pin the two properties that makes safe: the target opens under its
+    own path afterwards, and a target that does not read back leaves the source
+    untouched rather than eating the file.
+    """
+
+    KEY = hashlib.sha256(b"collection-key").digest()
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.storage = LocalStorage(self._tmp.name)
+        self.payload = b"move-me-" + bytes(range(256)) * 7000
+
+    def test_a_chunked_object_opens_under_its_new_path(self):
+        source = self.storage.save_file_encrypted_seekable(
+            io.BytesIO(self.payload), "uploads/clip.mp4.enc", key=self.KEY, length=len(self.payload)
+        )
+
+        report = self.storage.reencrypt_to_path(
+            source, "vault/library/clip.mp4.enc", source_key=self.KEY, target_key=self.KEY
+        )
+
+        self.assertEqual("seekable-v2", report["envelope"])
+        self.assertEqual(
+            self.payload, self.storage.get_file_decrypted("vault/library/clip.mp4.enc", key=self.KEY)
+        )
+        # The original is untouched: deleting it is the caller's decision, once
+        # whatever pointed at the old path points at the new one.
+        self.assertEqual(self.payload, self.storage.get_file_decrypted(source, key=self.KEY))
+        # And this is why a copy is not a move — the same bytes at a third name do
+        # not open, because every chunk authenticated the name it was written under.
+        with self.storage.get_file_stream("vault/library/clip.mp4.enc") as raw:
+            self.storage.save_stream(raw, "vault/library/clip-copy.mp4.enc")
+        with self.assertRaises(ValueError):
+            self.storage.get_file_decrypted("vault/library/clip-copy.mp4.enc", key=self.KEY)
+
+    def test_the_target_can_be_sealed_under_a_different_key(self):
+        """The case the storage layer cannot decide on its own.
+
+        Moving between two private modules means moving between two file keys. The
+        bytes are re-sealed for the destination, so the result opens there and not
+        under the key it was written with.
+        """
+        other = hashlib.sha256(b"another-collection").digest()
+        source = self.storage.save_file_encrypted_seekable(
+            io.BytesIO(self.payload), "vault/library/a.mp4.enc", key=self.KEY, length=len(self.payload)
+        )
+
+        self.storage.reencrypt_to_path(
+            source, "vault/library/b.mp4.enc", source_key=self.KEY, target_key=other
+        )
+
+        self.assertEqual(self.payload, self.storage.get_file_decrypted("vault/library/b.mp4.enc", key=other))
+        with self.assertRaises(ValueError):
+            self.storage.get_file_decrypted("vault/library/b.mp4.enc", key=self.KEY)
+
+    def test_a_single_blob_object_moves_too(self):
+        source = self.storage.save_file_encrypted(b"small payload", "uploads/note.txt.enc", key=self.KEY)
+
+        report = self.storage.reencrypt_to_path(
+            source, "vault/library/note.txt.enc", source_key=self.KEY, target_key=self.KEY
+        )
+
+        self.assertEqual("single-blob", report["envelope"])
+        self.assertEqual(
+            b"small payload", self.storage.get_file_decrypted("vault/library/note.txt.enc", key=self.KEY)
+        )
+
+    def test_a_plain_file_is_copied_and_says_so(self):
+        self.storage.save_file(b"just bytes", "uploads/plain.txt")
+
+        report = self.storage.reencrypt_to_path("uploads/plain.txt", "uploads/renamed.txt")
+
+        self.assertEqual("plaintext", report["envelope"])
+        # Read raw: a plain copy is not an envelope, so the decrypting reader is the
+        # wrong tool for checking it.
+        with self.storage.get_file_stream("uploads/renamed.txt") as raw:
+            self.assertEqual(b"just bytes", raw.read())
+
+    def test_a_source_that_does_not_open_leaves_nothing_behind(self):
+        path = "vault/library/broken.mp4.enc"
+        self.storage.save_file_encrypted(b"x" * 1000, path, key=self.KEY)
+        raw = bytearray((Path(self._tmp.name) / path).read_bytes())
+        raw[-1] ^= 0x01
+        (Path(self._tmp.name) / path).write_bytes(bytes(raw))
+
+        with self.assertRaises(ValueError):
+            self.storage.reencrypt_to_path(
+                path, "vault/library/copy.mp4.enc", source_key=self.KEY, target_key=self.KEY
+            )
+
+        self.assertFalse((Path(self._tmp.name) / "vault/library/copy.mp4.enc").exists())
+        self.assertTrue((Path(self._tmp.name) / path).exists(), "the original must survive a failed move")
 
 
 class S3SeekAndErrorTests(unittest.TestCase):

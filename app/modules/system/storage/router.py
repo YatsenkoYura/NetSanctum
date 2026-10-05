@@ -448,17 +448,13 @@ async def api_rename(
         # Renaming a Vault's file would break the row that points at it, and the
         # browser has no way to update that row. Same rule as the download.
         raise HTTPException(status_code=403, detail="This folder belongs to a module and is managed by it")
-    if await asyncio.to_thread(_carries_our_envelope, str(payload.get("path") or "")):
-        # Every encrypted envelope binds its own path into the associated data of
-        # each chunk, which is what stops a file being moved somewhere it should not
-        # be. A rename is exactly that move: the bytes stay, the name changes, and
-        # every chunk stops verifying. The file is not renamed and the owner is told
-        # why, because the alternative is a rename that appears to succeed and leaves
-        # an unreadable file behind a fresh name.
-        raise HTTPException(
-            status_code=422,
-            detail="Encrypted objects cannot be renamed: the path is part of their authentication",
-        )
+    # An encrypted object cannot simply be renamed: every chunk of the chunked
+    # envelope authenticates the object's own path, and a single-blob envelope
+    # carries it as associated data, so the bytes have to be decrypted and sealed
+    # again. Refusing was honest and useless — the operation is possible, it is just
+    # a re-encryption rather than a rename, which is what happens below. Nothing is
+    # deleted until the copy has been read back and compared byte for byte.
+    encrypted = await asyncio.to_thread(_carries_our_envelope, str(payload.get("path") or ""))
     try:
         source = normalize_folder(payload.get("path"))
         name = safe_segment(str(payload.get("name") or ""), fallback="")
@@ -476,6 +472,19 @@ async def api_rename(
         raise HTTPException(status_code=404, detail="Not found")
     if destination.exists():
         raise HTTPException(status_code=409, detail="A folder or file with that name already exists")
+
+    if encrypted:
+        try:
+            # A rename inside one namespace keeps one key, so the same value is
+            # both ends. Moving between two private namespaces is not offered here:
+            # each module owns its rows, and the storage browser has no way to update
+            # them. The primitive for it is `reencrypt_to_path`, which takes the two
+            # keys separately.
+            report = await asyncio.to_thread(get_storage().reencrypt_to_path, source, destination_path)
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)[:200]) from exc
+        await asyncio.to_thread(source_path.unlink)
+        return {"status": "ok", "path": destination_path, "is_dir": False, **report}
 
     def _rename() -> None:
         source_path.rename(destination)

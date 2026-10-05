@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     # that accept one. Empty keeps the historical behaviour (any extension); a list
     # narrows it to the extensions this deployment actually ships.
     NETSANCTUM_EXTENSION_ORIGIN_IDS: str = ""
+    # Proxies whose `X-Forwarded-*` headers this deployment trusts. Empty trusts
+    # none, which is the right default for an application reachable directly: with
+    # nothing trusted, `request.url.scheme` stays what the client actually used, the
+    # origin check compares against the real Host, and no cookie Secure flag or
+    # generated absolute URL can be talked into the wrong value by a request header.
+    NETSANCTUM_TRUSTED_PROXY_IPS: str = ""
+    # `includeSubDomains` on HSTS reaches names this application does not serve.
+    NETSANCTUM_HSTS_INCLUDE_SUBDOMAINS: bool = False
     LEGACY_FILE_ENCRYPTION_KEYS_PATH: str = ""
     # Legacy migration key. Production encryption uses FILE_ENCRYPTION_KEY_PATH.
     FILE_ENCRYPTION_KEY: str = "dev-file-encryption-key-change-me"

@@ -88,8 +88,18 @@ def is_cross_site_request(request: Request) -> bool:
     if not origin:
         return False
     parsed = urlparse(origin)
-    request_host = request.headers.get("host", "").lower()
-    return parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != request_host
+    if parsed.scheme not in {"http", "https"}:
+        return True
+    # Both names the request went by, because behind a reverse proxy they differ:
+    # the browser addressed one host, the proxy forwarded another, and comparing
+    # only the Host header rejected every mutation from the browser with a 403 that
+    # looked like a CSRF block. `request.url.netloc` is only the forwarded value
+    # when the deployment named its proxies in NETSANCTUM_TRUSTED_PROXY_IPS — which
+    # is also what makes `X-Forwarded-Host` trustworthy here. Accepting either keeps
+    # a genuinely foreign Origin rejected.
+    candidates = {request.headers.get("host", "").lower(), request.url.netloc.lower()}
+    candidates.discard("")
+    return parsed.netloc.lower() not in candidates
 
 
 # The Vault dashboard holds the per-tab unlock token in the page's memory and
@@ -211,12 +221,19 @@ async def security_headers_middleware(request: Request, call_next):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
         response.headers["Content-Security-Policy"] = dashboard_csp(nonce)
-    # Sent unconditionally, and not behind a scheme check. A browser ignores HSTS
-    # received over plain http, so sending it to a client that reached us without
-    # TLS costs nothing; gating it on `request.url.scheme` cost the header entirely
-    # whenever TLS was terminated upstream, because uvicorn then sees http and never
-    # rewrites the scheme — no `--proxy-headers`, no HSTS, silently. The header is
-    # only ever honoured over https, so there is no case where sending it wrongly
-    # commits a browser to a policy for an origin that cannot keep it.
-    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    # Conditional on the scheme, which is only correct once the deployment says
+    # whether a proxy is in front. Behind a TLS-terminating proxy uvicorn sees
+    # `http` unless it is told to trust `X-Forwarded-Proto`, and then this header
+    # never went out at all — silently, because nothing failed.
+    #
+    # `includeSubDomains` is opt-in for a self-hosted deployment. It is a promise
+    # about names this application knows nothing about: on `home.example.com` it
+    # commits every sibling subdomain to HTTPS for a year, including ones serving
+    # plain http on a home server that will never get a certificate. That is a much
+    # worse failure than the header not being sent.
+    if request.url.scheme == "https":
+        policy = "max-age=31536000"
+        if get_settings().NETSANCTUM_HSTS_INCLUDE_SUBDOMAINS:
+            policy += "; includeSubDomains"
+        response.headers.setdefault("Strict-Transport-Security", policy)
     return response

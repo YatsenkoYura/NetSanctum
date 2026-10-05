@@ -660,7 +660,7 @@ services:
     command:
       - sh
       - -c
-      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips="$${NETSANCTUM_TRUSTED_PROXY_IPS:-}"
 
   # ── Celery Worker ──────────────────────────────────────
   worker:
