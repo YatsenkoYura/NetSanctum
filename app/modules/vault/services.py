@@ -261,8 +261,9 @@ async def queue_video_download(
     A download queued from an unlocked tab additionally lends the worker that
     tab's unlock token — sealed under the server key inside the same handoff,
     never in the arguments — so the video can be stored under the collection's
-    file key. A capture queued by the extension carries no token and keeps the
-    application key, access-gated like everything else the keyless worker writes.
+    file key. A capture queued by the extension carries no token, and a token
+    that expired before the worker ran, so the download waits as `pending_unlock`
+    instead of landing under the weaker application key.
     """
     handoff = secrets.token_urlsafe(18)
     try:
@@ -332,8 +333,8 @@ def resolve_download_file_key(handoff_id: str, handoff_data: dict, item_id: int)
 
     None is the normal fallback, not an error: no token (extension captures),
     an expired handoff, an expired session, a rotated server key — all mean the
-    video is stored under the application key instead, access-gated like the
-    rest of what the keyless worker writes.
+    caller parks the card as `pending_unlock` for a retry from an unlocked tab,
+    rather than storing under the weaker application key.
 
     The session is read without touching its sliding TTL: a download running
     for hours is not the owner using the tab, and must not keep the vault
@@ -362,6 +363,8 @@ def resolve_download_file_key(handoff_id: str, handoff_data: dict, item_id: int)
         # detached row outside it would go stale on exactly this path.
         private_key = asyncio.run(data_key_for(collection, token, touch=False))
         if private_key is None:
+            # No fail-open to the application key: the caller discards the
+            # download and parks the card as `pending_unlock` instead.
             logger.info("vault download %s proceeds without the file key: the vault is locked", item_id)
             return None
         return derive_file_key(private_key, collection.id)

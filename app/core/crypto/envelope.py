@@ -39,7 +39,16 @@ def is_sealed(value: str | None) -> bool:
 
 
 def context_for(kind: str, identifier: Any) -> bytes:
-    """Bind ciphertext to its row so a blob cannot be pasted somewhere else."""
+    """Bind ciphertext to its row so a blob cannot be pasted somewhere else.
+
+    One envelope holds one row's fields as a single blob, so there is nothing
+    to swap within a row — the swap this prevents is across rows. Callers that
+    seal two values of one row under one key must include the field name in
+    `kind` (e.g. "item:title"), otherwise the two blobs are interchangeable.
+    `kind` may not contain ":" precisely because the encoding joins with it.
+    """
+    if not kind or ":" in kind or "\x00" in kind:
+        raise ValueError("A seal context kind must be a non-empty string without ':'")
     return f"netsanctum:vault:{kind}:{identifier}".encode()
 
 

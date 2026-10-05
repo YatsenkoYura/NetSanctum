@@ -41,9 +41,15 @@ class MediaIterationTests(unittest.TestCase):
         def __init__(self, payload):
             self.payload = payload
 
-        def read_seekable_range(self, path, start, length):
+        def read_seekable_range(self, path, start, length, *, key=None):
             self.last = (path, start, length)
             yield self.payload[start : start + length]
+
+        def looks_encrypted(self, path):
+            return False
+
+        def get_file_decrypted(self, path, *, key=None):
+            return self.payload
 
         def get_file_stream(self, path):
             return io.BytesIO(self.payload)

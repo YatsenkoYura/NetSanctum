@@ -37,8 +37,13 @@ class VaultShareProvider:
             .outerjoin(VaultCollection, VaultCollection.id == VaultItem.collection_id)
             .where(
                 # Sharing a sealed item would mean handing the recipient its key,
-                # which is exactly what the passphrase promises never to do.
+                # which is exactly what the passphrase promises never to do. Both
+                # halves: the payload check and the collection check — a row that
+                # landed in a sealed collection unsealed (a crash between the
+                # create and the seal commits, a legacy row) is unreadable to its
+                # owner too and must not be shared either.
                 VaultItem.sealed_payload.is_(None),
+                VaultCollection.is_encrypted.is_not(True),
             )
             .order_by(VaultItem.created_at.desc())
         )
@@ -130,6 +135,13 @@ class VaultShareProvider:
         row = result.one_or_none()
         if not row:
             raise _not_found()
+        item, _collection_name = row[0], row[1]
+        # A sealed row is never shareable, even when it is in scope: its columns
+        # are blank (so detail would serve an alias), and its pre-file-key image
+        # would still open under the application key in `asset()` below.
+        collection = await db.get(VaultCollection, item.collection_id) if item.collection_id else None
+        if item.sealed_payload is not None or (collection is not None and collection.is_encrypted):
+            raise _not_found()
         return row[0], row[1]
 
     @staticmethod
@@ -151,7 +163,7 @@ class VaultShareProvider:
                 VaultCollection,
                 VaultCollection.id == VaultItem.collection_id,
             )
-            .where(VaultItem.sealed_payload.is_(None))
+            .where(VaultItem.sealed_payload.is_(None), VaultCollection.is_encrypted.is_not(True))
         )
         scope_ids = self._scope_ids(share)
         if scope_ids is not None:
@@ -260,7 +272,11 @@ class VaultShareProvider:
         }
 
     async def _stats(self, db: AsyncSession, share) -> dict:
-        stmt = select(VaultItem).where(VaultItem.sealed_payload.is_(None))
+        stmt = (
+            select(VaultItem)
+            .outerjoin(VaultCollection, VaultCollection.id == VaultItem.collection_id)
+            .where(VaultItem.sealed_payload.is_(None), VaultCollection.is_encrypted.is_not(True))
+        )
         scope_ids = self._scope_ids(share)
         if scope_ids is not None:
             if not scope_ids:
@@ -329,6 +345,7 @@ class VaultShareProvider:
         stmt = (
             select(VaultCollection, VaultItem.id)
             .join(VaultItem, VaultItem.collection_id == VaultCollection.id)
+            .where(VaultItem.sealed_payload.is_(None), VaultCollection.is_encrypted.is_not(True))
             .order_by(VaultCollection.name.asc(), VaultItem.id.asc())
         )
         scope_ids = self._scope_ids(share)

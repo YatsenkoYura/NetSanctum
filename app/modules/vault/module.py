@@ -42,7 +42,7 @@ MODULE = ModuleSpec(
     tasks="app.modules.vault.tasks",
     progress_key_patterns=("vault_media:*",),
     storage_namespaces=("vault",),
-    package_prefixes=("vault_all",),
+    package_prefixes=("vault_all", "vault_sealed"),
     package_resolver="app.modules.vault.capabilities:resolve_package_resources",
     integrations=(
         IntegrationSpec(

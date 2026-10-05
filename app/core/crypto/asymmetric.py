@@ -46,9 +46,12 @@ PUB_MAC_INFO = b"ns:vault:pub-mac:v1"
 def inbox_pub_mac(kek: bytes, public_key: bytes, collection_id: int) -> str:
     """Authenticate the inbox public key under a key derived from the KEK.
 
-    The MAC key is not the KEK itself: the KEK unwraps the inbox key, the MAC key
-    only vouches for the public half. Separating them means a verifier needs no
-    unwrapping power.
+    The MAC key is derived from the KEK via HKDF, so verifying still needs the
+    KEK — this is domain separation (unwrapping power and vouching power never
+    share bytes), not privilege separation. A verifier without the passphrase
+    cannot check this MAC; what it can do is compare the stored public key
+    against the one derived from the unlocked private key (see
+    `inbox_keypair_matches`), which needs no secret at all beyond the unlock.
     """
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
@@ -65,8 +68,9 @@ def verify_inbox_pub_mac(kek: bytes, public_key: bytes, collection_id: int, mac:
     """Whether the stored public key is the one the passphrase sealed.
 
     `compare_digest`, not `==`: the comparison itself must not leak where two tags
-    first differ. A missing MAC is not a failure here — rows from before the MAC
-    existed get theirs on the way through the unlock that reads them.
+    first differ. A missing MAC returns False; rows from before the MAC existed
+    are backfilled by the unlock path only after the private-to-public
+    correspondence check passes, never on MAC alone.
     """
     if not mac:
         return False
@@ -76,8 +80,11 @@ def verify_inbox_pub_mac(kek: bytes, public_key: bytes, collection_id: int, mac:
 
 def inbox_pub_fingerprint(public_key: bytes) -> str:
     """The first 16 hex of the public key's SHA-256, for checking against the
-    extension. Short enough to compare by eye, long enough that a lookalike key
-    does not happen by accident."""
+    extension. A display hint only — the real binding is the MAC plus the
+    private-to-public correspondence check at unlock, not these characters.
+    Short enough to compare by eye; a targeted second-preimage against 64 bits
+    still costs ~2**64 hashes, and anything that passes the eye check but not
+    the MAC is refused anyway."""
     return hashlib.sha256(public_key).hexdigest()[:16]
 
 
@@ -128,12 +135,42 @@ INBOX_HKDF_SALT = b"ns:vault:inbox:salt:v2"
 INBOX_V2_FIXED_SIZE = 1 + 32 + 32 + 12 + 32 + 16
 
 
+def inbox_keypair_matches(private_key: bytes, public_key: bytes) -> bool:
+    """Whether a stored public key is the one this private key derives.
+
+    After an unlock the private key is in hand, so the public half is
+    recomputed from it and compared — no MAC, no trust in the row. A rewritten
+    public key diverts every new blind write without touching the wrapper, so
+    this is the check that catches substitution even when the MAC was backfilled
+    or wiped.
+    """
+    import hmac as _hmac
+
+    if len(private_key) != 32 or len(public_key) != 32:
+        return False
+    try:
+        derived = (
+            X25519PrivateKey.from_private_bytes(private_key)
+            .public_key()
+            .public_bytes(Encoding.Raw, PublicFormat.Raw)
+        )
+    except Exception:
+        return False
+    return _hmac.compare_digest(derived, public_key)
+
+
 def inbox_binding(collection_id: int, kind: str, row_id: int, ephemeral: bytes, recipient: bytes) -> bytes:
     """The canonical identity of one blind write: what its key is bound to.
 
     Length-framed rather than joined with separators, so `{collection 1, row 23}`
-    and `{collection 12, row 3}` cannot produce the same bytes.
+    and `{collection 12, row 3}` cannot produce the same bytes. Ids are 4 bytes
+    because the collections table uses a 32-bit integer primary key; anything
+    outside that range is refused here rather than overflowing mid-envelope.
     """
+    collection_id = int(collection_id)
+    row_id = int(row_id)
+    if not (0 <= collection_id <= 0xFFFFFFFF) or not (0 <= row_id <= 0xFFFFFFFF):
+        raise ValueError("A blind-write identity id must fit in 4 bytes")
     kind_bytes = kind.encode("utf-8")
     return b"".join(
         (

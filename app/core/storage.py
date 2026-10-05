@@ -886,6 +886,33 @@ class StorageInterface(ABC):
         with self.get_file_stream(path) as stream:
             return stream.read()
 
+    def _classify_seekable(self, path: str, header: bytes) -> bytes | None:
+        """Whether the application key opens this chunked object, and if so which.
+
+        One byte is asked for, and it is asked through the very reader that serves
+        the object in production — so this cannot disagree with what a playback
+        would find, which a reimplementation of the nonce and associated-data
+        construction could. A chunk is its own AEAD, so one byte is enough to
+        settle the question without touching the rest of a file that may be
+        gigabytes long.
+
+        Returns None when no key here opens it, which is not the same as the file
+        being broken: see the caller. Shared by both backends — the S3 migration
+        needs it too.
+        """
+        version = self._seekable_version(header)
+        if version == 0:
+            return None
+        read = self._read_seekable_v2_range if version == 2 else self._read_seekable_v1_range
+        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
+            try:
+                with self.get_file_stream(path) as stream:
+                    next(read(stream, header, path, 0, 1, key), None)
+                return key
+            except Exception:
+                continue
+        return None
+
     def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
         return EncryptionMigrationResult()
 
@@ -951,32 +978,6 @@ class LocalStorage(StorageInterface):
     def file_exists(self, path: str) -> bool:
         return self._full_path(path).is_file()
 
-    def _classify_seekable(self, path: str, header: bytes) -> bytes | None:
-        """Whether the application key opens this chunked object, and if so which.
-
-        One byte is asked for, and it is asked through the very reader that serves
-        the object in production — so this cannot disagree with what a playback
-        would find, which a reimplementation of the nonce and associated-data
-        construction could. A chunk is its own AEAD, so one byte is enough to
-        settle the question without touching the rest of a file that may be
-        gigabytes long.
-
-        Returns None when no key here opens it, which is not the same as the file
-        being broken: see the caller.
-        """
-        version = self._seekable_version(header)
-        if version == 0:
-            return None
-        read = self._read_seekable_v2_range if version == 2 else self._read_seekable_v1_range
-        for key in (self._get_encryption_key(), *self._get_legacy_encryption_keys()):
-            try:
-                with self.get_file_stream(path) as stream:
-                    next(read(stream, header, path, 0, 1, key), None)
-                return key
-            except Exception:
-                continue
-        return None
-
     def migrate_legacy_encryption_batch(self, limit: int = 1) -> EncryptionMigrationResult:
         """Atomically rewrite a bounded number of legacy encrypted objects."""
         legacy_keys = self._get_legacy_encryption_keys()
@@ -1037,12 +1038,30 @@ class LocalStorage(StorageInterface):
                 plaintext,
             ):
                 raise RuntimeError(f"Encryption migration verification failed: {cache_key}")
+            # Re-check size+mtime before replacing: the object may have been
+            # rewritten or deleted between the read and this write, and
+            # migrating then would clobber the new bytes or resurrect the old.
+            try:
+                fresh = full_path.stat()
+            except FileNotFoundError:
+                continue
+            if (fresh.st_size, fresh.st_mtime_ns) != signature:
+                continue
             temporary = full_path.with_name(f".{full_path.name}.rotate-{secrets.token_hex(8)}")
-            with temporary.open("xb") as stream:
-                stream.write(replacement)
-                stream.flush()
-                os.fsync(stream.fileno())
-            temporary.chmod(0o600)
+            # Created 0600 atomically: opening with "xb" first would leave a
+            # 0644 window (mode & ~umask) before the chmod below.
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(replacement)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except Exception:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
             os.replace(temporary, full_path)
             self._unreadable_encrypted_files.pop(cache_key, None)
             migrated += 1
@@ -1186,7 +1205,25 @@ class S3Storage(StorageInterface):
                 replacement = self._encrypt_payload(plaintext, key)
                 if not secrets.compare_digest(self._decrypt_payload(replacement, key), plaintext):
                     raise RuntimeError(f"Encryption migration verification failed: {key}")
-                self._client.put_object(Bucket=self._bucket, Key=key, Body=replacement)
+                # Conditional write on the ETag read above: a concurrent rewrite
+                # or delete between the read and this PUT must not be clobbered
+                # or resurrected. Backends without conditional-write support
+                # raise, and the object is left for the next pass.
+                etag = str(item.get("ETag", "")).strip('"')
+                try:
+                    if etag:
+                        self._client.put_object(Bucket=self._bucket, Key=key, Body=replacement, IfMatch=etag)
+                    else:
+                        self._client.put_object(Bucket=self._bucket, Key=key, Body=replacement)
+                except Exception as error:
+                    if (
+                        _s3_is_missing(error)
+                        or "PreconditionFailed" in type(error).__name__
+                        or (getattr(error, "response", {}) or {}).get("Error", {}).get("Code")
+                        in {"PreconditionFailed", "412"}
+                    ):
+                        continue
+                    raise
                 self._unreadable_encrypted_files.pop(key, None)
                 migrated += 1
         return EncryptionMigrationResult(

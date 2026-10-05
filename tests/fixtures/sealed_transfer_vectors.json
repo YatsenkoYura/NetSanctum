@@ -1,0 +1,59 @@
+{
+  "_comment": "Golden vectors for sealed offline packages (transfer v1). Deterministic: salt, nonces and keys are published constants. Rust desktop client reads this file too \u2014 field names are the contract.",
+  "package_id": "vault_sealed",
+  "passphrase": "correct horse battery staple",
+  "wrong_passphrase": "not the passphrase",
+  "kdf_params": {
+    "m_cost": 65536,
+    "t_cost": 3,
+    "parallelism": 1
+  },
+  "salt_hex": "000102030405060708090a0b0c0d0e0f",
+  "kek_hex": "0d1a3c6523c8f06e4e0af9c515aa5b5448cfebd6838f2d52c3d8b6ef8ddc3c2e",
+  "dek_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "wrap_aad_hex": "6e733a7365616c65642d706b673a777261703a76317c7661756c745f7365616c65647c7b226d5f636f7374223a36353533362c22706172616c6c656c69736d223a312c22745f636f7374223a337d7c000102030405060708090a0b0c0d0e0f",
+  "sealing": {
+    "version": 1,
+    "kdf": {
+      "algorithm": "argon2id",
+      "m_cost": 65536,
+      "t_cost": 3,
+      "parallelism": 1
+    },
+    "salt": "AAECAwQFBgcICQoLDA0ODw==",
+    "wrapped_dek": "AAECAwQFBgcICQoLgxzxoriOsfB3b9Vn9TKiefERL5eGqe32KmpnK0kl85PxWtp4vhdL6zzoG600gsEf"
+  },
+  "items_url": "/api/vault/sealed/items?package_id=vault_sealed",
+  "items_key_hex": "c0cd53cb4ba48fa1abc739351b3122bf1aa02df2ccf4dc72ca523f1bc8b5f0f0",
+  "small": {
+    "plaintext_hex": "7b226974656d73223a5b7b226964223a392c227469746c65223a2261207365616c6564206e6f7465227d5d7d",
+    "blob_hex": "000102030405060708090a0be00ab34a24ad042772bf3dc3977787e6cf068d7d82a9e83f65575d5ed1339e4757114cc3322694faa1f16072e8511bbff50b12775f7c9b87b5571718"
+  },
+  "media_url": "/api/vault/sealed/media/9?package_id=vault_sealed",
+  "media_key_hex": "ecd628d81f3a50109d348a2bb2e732cb15057a2ddb78f0d9f449b337ac1f578f",
+  "chunked": {
+    "plaintext_formula": "(i * 7) % 256 for i in range(plaintext_len)",
+    "plaintext_len": 3158073,
+    "chunk_size": 1048576,
+    "chunk_count": 4,
+    "file_nonce_hex": "0001020304050607",
+    "header_hex": "4e535345414c010000000102030405060700100000000000000030303900000004",
+    "probes": [
+      {
+        "index": 0,
+        "stored_hex": "0f6a9f7a1936af29eac1561aa41b96785b4d48c9c987ca71364a965e391a6dec5b08e3a39d0b85126219f3b3e6213ef1ccbde5afb801d06815774b8b6f195ab6",
+        "plain_hex": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9"
+      },
+      {
+        "index": 1,
+        "stored_hex": "b429c433f1b60c9a1c6d3c6daf040f368b9ce0cdddef72e8def13440849d70dccdb569b3fa82d791e956997678b61f26c3c45d00357096a53431adc43ab6c76f",
+        "plain_hex": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9"
+      },
+      {
+        "index": 3,
+        "stored_hex": "b7bb13a4ae5566e147336b1f27b7d135c3998b55478ef358ec7af8b86f943024c03cd8e839c2633b9267f554f3a212823e8f98604ae6107525146532f9b8ef85",
+        "plain_hex": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9"
+      }
+    ]
+  }
+}

@@ -192,11 +192,10 @@ class UnlockUpgradeTests(unittest.TestCase):
         from app.modules.vault.models import VaultCollection
         from app.modules.vault.sealing import unlock_collection, wrapper_for
 
-        secret = new_data_key()
-        _private, public = generate_inbox_keypair()
+        private, public = generate_inbox_keypair()
         row = VaultCollection(id=5, name="Приватное", is_encrypted=True)
         row.inbox_public_key = __import__("base64").b64encode(public).decode()
-        store_wrapper(row, wrap_data_key(secret, "pass", context=context_for("collection", 5), **SCRYPT))
+        store_wrapper(row, wrap_data_key(private, "pass", context=context_for("collection", 5), **SCRYPT))
 
         with patch("app.modules.vault.sealing.redis_client") as redis:
             redis.set = AsyncMock()
@@ -205,7 +204,7 @@ class UnlockUpgradeTests(unittest.TestCase):
 
         self.assertEqual(KDF_NAME, row.key_kdf)
         self.assertEqual(
-            secret, unwrap_stored(wrapper_for(row), "pass", context=context_for("collection", 5))
+            private, unwrap_stored(wrapper_for(row), "pass", context=context_for("collection", 5))
         )
 
     def test_unlocking_without_a_session_changes_nothing(self):
@@ -215,12 +214,10 @@ class UnlockUpgradeTests(unittest.TestCase):
         from app.modules.vault.models import VaultCollection
         from app.modules.vault.sealing import unlock_collection
 
-        _private, public = generate_inbox_keypair()
+        private, public = generate_inbox_keypair()
         row = VaultCollection(id=6, name="Приватное", is_encrypted=True)
         row.inbox_public_key = __import__("base64").b64encode(public).decode()
-        store_wrapper(
-            row, wrap_data_key(new_data_key(), "pass", context=context_for("collection", 6), **SCRYPT)
-        )
+        store_wrapper(row, wrap_data_key(private, "pass", context=context_for("collection", 6), **SCRYPT))
 
         with patch("app.modules.vault.sealing.redis_client") as redis:
             redis.set = AsyncMock()
@@ -385,16 +382,19 @@ class InboxKeyMacFlowTests(unittest.TestCase):
     """The unlock refuses a swapped inbox key, and heals a missing MAC."""
 
     def row(self, collection_id=11):
-        from app.modules.vault.crypto import context_for, new_data_key, wrap_data_key
+        import base64
+
+        from app.modules.vault.crypto import context_for, generate_inbox_keypair, wrap_data_key
         from app.modules.vault.models import VaultCollection
         from app.modules.vault.sealing import store_wrapper
 
-        secret = new_data_key()
+        private, public = generate_inbox_keypair()
         row = VaultCollection(id=collection_id, name="Приватное", is_encrypted=True)
+        row.inbox_public_key = base64.b64encode(public).decode()
         store_wrapper(
             row,
             wrap_data_key(
-                secret,
+                private,
                 "pass",
                 context=context_for("collection", collection_id),
                 t_cost=1,
@@ -402,7 +402,7 @@ class InboxKeyMacFlowTests(unittest.TestCase):
                 parallelism=1,
             ),
         )
-        return row, secret
+        return row, private
 
     def test_a_swapped_inbox_key_refuses_the_unlock(self):
         import base64
@@ -423,16 +423,14 @@ class InboxKeyMacFlowTests(unittest.TestCase):
         self.assertNotIn("passphrase", str(caught.exception))
 
     def test_a_missing_mac_is_computed_on_the_way_through(self):
-        import base64
         from unittest.mock import AsyncMock, patch
 
         from app.modules.vault import sealing
-        from app.modules.vault.crypto import generate_inbox_keypair
 
         row, _secret = self.row()
-        _private, public = generate_inbox_keypair()
-        row.inbox_public_key = base64.b64encode(public).decode()
-        self.assertIsNone(row.inbox_pub_mac)
+        # Keep the public key the wrapper was sealed for; only the MAC is old.
+        self.assertIsNotNone(row.inbox_public_key)
+        row.inbox_pub_mac = None
 
         session = AsyncMock()
         with patch.object(sealing, "redis_client", AsyncMock()):

@@ -63,6 +63,7 @@ from app.modules.vault.sealing import (
     file_key_for,
     file_key_for_write,
     inbox_public_key,
+    increment_sealed_progress,
     is_sealed_collection,
     lock_collection,
     locked_collection_ids,
@@ -442,7 +443,13 @@ async def get_item_media(
     if not item or not item.media_path:
         raise HTTPException(status_code=404, detail="Vault media not found")
     _assert_media_path_belongs_to(item, item.media_path)
-    await _require_media_access(await collection_for(db, item.collection_id), item, unlock_token, sig, exp)
+    collection = await collection_for(db, item.collection_id)
+    await _require_media_access(collection, item, unlock_token, sig, exp)
+    # The file key travels separately from the access check: sealed videos are
+    # stored under the collection's file key, and the range reader below must
+    # open them under exactly that key — never falling through to the
+    # application keys.
+    file_key = await file_key_for(collection, unlock_token) if is_sealed_collection(collection) else None
     storage = get_storage()
     try:
         size = item.media_size or storage.get_file_size(item.media_path)
@@ -461,7 +468,7 @@ async def get_item_media(
                 headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"},
             )
         start, end = span
-        body = _iter_media(storage, item.media_path, start, end - start + 1, seekable)
+        body = _iter_media(storage, item.media_path, start, end - start + 1, seekable, key=file_key)
         return StreamingResponse(
             body,
             status_code=206,
@@ -483,7 +490,7 @@ async def get_item_media(
     }
     headers = {key: value for key, value in headers.items() if value}
     return StreamingResponse(
-        _iter_media(storage, item.media_path, 0, size, seekable),
+        _iter_media(storage, item.media_path, 0, size, seekable, key=file_key),
         media_type=media_type,
         headers=headers,
     )
@@ -602,20 +609,23 @@ async def attach_media_url(serialized: dict, item, *, locked: bool) -> dict:
     return serialized
 
 
-def _iter_media(storage, path: str, start: int, length: int, seekable: bool):
-    """Yield the requested plaintext bytes without ever holding the whole file."""
+def _iter_media(storage, path: str, start: int, length: int, seekable: bool, *, key: bytes | None = None):
+    """Yield the requested plaintext bytes without ever holding the whole file.
+
+    Chunked objects decrypt only the covered chunks under `key`. Anything else
+    is either a single-blob envelope — decrypted whole (videos are always
+    chunked, so this is the small-file path) — or a legacy plaintext object
+    served as stored.
+    """
     if seekable:
-        yield from storage.read_seekable_range(path, start, length)
+        yield from storage.read_seekable_range(path, start, length, key=key)
         return
-    with storage.get_file_stream(path) as stream:
-        stream.seek(start)
-        remaining = length
-        while remaining > 0:
-            block = stream.read(min(remaining, 1024 * 1024))
-            if not block:
-                break
-            remaining -= len(block)
-            yield block
+    if storage.looks_encrypted(path):
+        plaintext = storage.get_file_decrypted(path, key=key)
+    else:
+        with storage.get_file_stream(path) as stream:
+            plaintext = stream.read()
+    yield plaintext[start : start + length]
 
 
 @router.get("/api/vault/items/{item_id}/thumbnail", include_in_schema=False)
@@ -809,11 +819,21 @@ async def delete_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
-    """Delete a vault item."""
+    """Delete a vault item.
+
+    Destroying a sealed card needs the vault unlocked, like destroying the
+    space does: the lock is the only confirmation the owner holds the
+    passphrase, and a session cookie alone must not be enough to wipe a vault.
+    Pin/archive stay structural and unlocked; deletion is irreversible.
+    """
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
+    collection = await collection_for(db, item.collection_id)
+    if is_sealed_collection(collection) and await data_key_for(collection, unlock_token) is None:
+        raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы удалить карточку")
     await delete_vault_item(db, item)
     return {"status": "ok", "message": "Item deleted"}
 
@@ -824,7 +844,7 @@ async def toggle_pin(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Toggle pin status of a vault item."""
+    """Toggle pin status of a vault item. Structural, so no unlock is needed."""
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
@@ -838,7 +858,7 @@ async def toggle_archive(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Toggle archive status of a vault item."""
+    """Toggle archive status of a vault item. Structural, so no unlock is needed."""
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
@@ -852,11 +872,27 @@ async def increment_progress(
     step: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
-    """Quick increment episode/chapter progress."""
+    """Quick increment episode/chapter progress.
+
+    Progress is a sealed field, so a locked card refuses (423) and an unlocked
+    one increments inside its payload and re-seals — writing the zeroed column
+    directly would be lost on the next unlock.
+    """
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
+    collection = await collection_for(db, item.collection_id)
+    if is_sealed_collection(collection):
+        private_key = await data_key_for(collection, unlock_token)
+        if private_key is None:
+            raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы изменить прогресс")
+        updated = await increment_sealed_progress(
+            db, item, private_key, require_inbox_public_key(collection), step=step
+        )
+        payload = _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
+        return await attach_media_url(payload, updated, locked=False)
     updated = await increment_item_progress(db, item, step=step)
     return updated
 
@@ -930,12 +966,29 @@ async def get_random_item(
     entry_type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
 ):
-    """Get a random item from Vault for rediscovery."""
+    """Get a random item from Vault for rediscovery.
+
+    Masked like the list endpoint: a sealed card served here is an alias with
+    no bytes and no player URL, never its content.
+    """
     items = await list_vault_items(session=db, entry_type=entry_type, is_archived=False, limit=500)
     if not items:
         return None
-    return random.choice(items)
+    item = random.choice(items)
+    collection = await collection_for(db, item.collection_id)
+    locked = False
+    if is_sealed_collection(collection):
+        private_key = await data_key_for(collection, unlock_token)
+        if private_key is None:
+            locked = True
+        else:
+            open_item(private_key, item)
+    serialized = VaultItemResponse.model_validate(item).model_dump()
+    _apply_media_state(serialized, item)
+    payload = _apply_lock_state(serialized, item, locked=locked)
+    return await attach_media_url(payload, item, locked=locked)
 
 
 @router.get("/api/vault/stats", response_model=VaultStatsResponse)
@@ -1112,15 +1165,22 @@ async def move_item(
     """Put a card where it was dropped, between two of its neighbours.
 
     Structural, so it works on a sealed collection too: a card's place in the
-    grid is not what the passphrase protects.
+    grid is not what the passphrase protects. An unlocked sealed card is opened
+    first, so the response carries its content rather than its blanked columns.
     """
     try:
         item = await reorder_card(db, payload.item_id, payload.before_id, payload.after_id)
     except VaultOrderError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    serialized = _serialize_full_item(item)
     collection = await collection_for(db, item.collection_id)
-    locked = is_sealed_collection(collection) and await data_key_for(collection, unlock_token) is None
+    locked = False
+    if is_sealed_collection(collection):
+        private_key = await data_key_for(collection, unlock_token)
+        if private_key is None:
+            locked = True
+        else:
+            open_item(private_key, item)
+    serialized = _apply_lock_state(_serialize_full_item(item), item, locked=locked)
     return await attach_media_url(serialized, item, locked=locked)
 
 
@@ -1246,6 +1306,156 @@ async def get_entity_meta(
     """Soft integration endpoint to resolve metadata from external modules."""
     meta = await resolve_soft_entity_info(db, entity_type, entity_id)
     return meta or {}
+
+
+# ── Sealed offline package ──────────────────────────────────
+# One package per sealed collection, generated on demand from an unlocked tab
+# and never stored. See `app/modules/vault/sealed_package.py` and
+# `docs/sealed-offline-packages.md` for the format and the guarantees.
+
+
+@router.get("/api/vault/sealed/manifest")
+async def get_sealed_sync_manifest(
+    collection_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
+):
+    """Offline manifest for one sealed collection, ciphertext only.
+
+    Needs the vault unlocked (the snapshot is built from opened cards), and a
+    stored package wrapper (written by the last unlock — a collection never
+    unlocked since the sealed columns landed answers 409, never a guess).
+    Sealed resources carry no size or hash: fresh nonces per generation make
+    them dynamic, so the client downloads them on every refresh.
+    """
+    from app.core.packages_router import make_hybrid_manifest, make_package_manifest
+    from app.modules.vault.sealed_package import (
+        require_sealed_collection,
+        sealed_items_url,
+        sealed_package_resources,
+        sealed_package_title,
+    )
+    from app.modules.vault.sealing import sealed_package_id, sealed_package_sealing
+
+    try:
+        collection = await require_sealed_collection(db, collection_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Sealed Vault not found") from exc
+    if await data_key_for(collection, unlock_token) is None:
+        raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы выгрузить пакет")
+    sealing = sealed_package_sealing(collection)
+    if sealing is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Разблокируйте Vault ещё раз, чтобы подготовить зашифрованный пакет",
+        )
+    package_id = sealed_package_id(collection.id)
+    manifest = make_package_manifest(
+        module_id="vault",
+        package_id=package_id,
+        package_title=sealed_package_title(collection),
+        root_url=sealed_items_url(collection.id, package_id),
+        resources=await sealed_package_resources(db, collection),
+    )
+    manifest["sealing"] = sealing
+    manifest = make_hybrid_manifest(package_id, manifest)
+    manifest["sealing"] = sealing
+    return manifest
+
+
+@router.get("/api/vault/sealed/{collection_id}/items", include_in_schema=False)
+async def get_sealed_items(
+    collection_id: int,
+    package_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
+):
+    """One collection's cards as a sealed JSON snapshot, generated per request."""
+    from app.modules.vault.sealed_package import (
+        build_sealed_items_plaintext,
+        require_sealed_collection,
+        seal_items_snapshot,
+    )
+    from app.modules.vault.sealing import package_dek_for, sealed_package_id
+
+    if package_id != sealed_package_id(collection_id):
+        raise HTTPException(status_code=400, detail="Invalid sealed package ID")
+    try:
+        collection = await require_sealed_collection(db, collection_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Sealed Vault not found") from exc
+    private_key = await data_key_for(collection, unlock_token)
+    if private_key is None:
+        raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы выгрузить пакет")
+    try:
+        plaintext = await build_sealed_items_plaintext(db, collection, private_key)
+        blob = seal_items_snapshot(
+            package_dek_for(private_key, collection.id), package_id, collection.id, plaintext
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        # Opened cards were restored in memory; the rollback guarantees none of
+        # that is ever flushed over sealed columns.
+        await db.rollback()
+    return Response(
+        content=blob,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/api/vault/sealed/media/{item_id}", include_in_schema=False)
+async def get_sealed_media(
+    item_id: int,
+    package_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    unlock_token: str = UNLOCK_HEADER,
+):
+    """One card's media re-sealed under its resource key, streamed chunk by chunk.
+
+    Decrypts under the file key and seals under the resource key in transit —
+    the plaintext exists only in the chunks flowing through this response.
+    """
+    from app.modules.vault.sealed_package import iter_sealed_media
+    from app.modules.vault.sealing import derive_file_key, package_dek_for, sealed_package_id
+
+    item = await get_vault_item(db, item_id)
+    if not item or item.collection_id is None:
+        raise HTTPException(status_code=404, detail="Vault media not found")
+    if package_id != sealed_package_id(item.collection_id):
+        raise HTTPException(status_code=400, detail="Invalid sealed package ID")
+    collection = await collection_for(db, item.collection_id)
+    if not is_sealed_collection(collection) or collection is None:
+        raise HTTPException(status_code=404, detail="Vault media not found")
+    private_key = await data_key_for(collection, unlock_token)
+    if private_key is None:
+        raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы выгрузить пакет")
+    if not (item.media_path or item.image_path):
+        raise HTTPException(status_code=404, detail="Vault media not found")
+    try:
+        body = iter_sealed_media(
+            package_dek_for(private_key, collection.id),
+            package_id,
+            item,
+            derive_file_key(private_key, collection.id),
+        )
+        first = next(body)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail="Vault media file is missing") from exc
+
+    def _stream():
+        yield first
+        yield from body
+
+    return StreamingResponse(
+        _stream(),
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 # ── NSP Sync Manifest ─────────────────────────────────────

@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     LEGACY_FILE_ENCRYPTION_KEYS_PATH: str = ""
     # Legacy migration key. Production encryption uses FILE_ENCRYPTION_KEY_PATH.
     FILE_ENCRYPTION_KEY: str = "dev-file-encryption-key-change-me"
+    # Whether persisted ciphertext sealed under a historical key may still open.
+    # The normal read path and the migration both use it; set to False once the
+    # migration reports pending=0 and unreadable=0 to make rotation deterministic.
+    ENCRYPTION_ALLOW_LEGACY_KEYS: bool = True
     ENCRYPTION_MIGRATION_BATCH_SIZE: int = 1
     ENCRYPTION_MIGRATION_INTERVAL_SECONDS: float = 5.0
     ENCRYPTION_MIGRATION_IDLE_SECONDS: float = 300.0
@@ -196,5 +200,16 @@ def validate_runtime_security(settings: Settings | None = None) -> None:
             errors.append(
                 "AGENT_INTERNAL_KEY must contain at least 32 characters when the runtime is enabled"
             )
+    if settings.VAULT_STATE_REQUIRE_EPHEMERAL:
+        state_url = (settings.VAULT_STATE_REDIS_URL or "").strip()
+        if not state_url:
+            errors.append(
+                "VAULT_STATE_REDIS_URL must be set when VAULT_STATE_REQUIRE_EPHEMERAL is on "
+                "(otherwise unlock sessions fall back to the persistent broker Redis)"
+            )
+        elif state_url == settings.REDIS_URL or state_url == settings.CELERY_BROKER_URL:
+            errors.append("VAULT_STATE_REDIS_URL must not point at the broker Redis")
+    if not settings.PUBLIC_BASE_URL.strip():
+        errors.append("PUBLIC_BASE_URL must be set in production")
     if errors:
         raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))

@@ -13,4 +13,7 @@ def encode_b64(raw: bytes) -> str:
 
 
 def decode_b64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value.encode("ascii"))
+    try:
+        return base64.urlsafe_b64decode(value.encode("ascii"))
+    except Exception as error:
+        raise ValueError(f"Invalid base64url value: {error}") from error

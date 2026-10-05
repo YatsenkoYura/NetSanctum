@@ -141,8 +141,8 @@ class VaultCollectionCreate(BaseModel):
     # real name.
     passphrase: str | None = Field(default=None, max_length=512)
     public_name: str | None = Field(default=None, max_length=100)
-    # Create the space inside another one. A sealed space refuses this: it has to
-    # stay a root, or a locked parent would have to reveal its children.
+    # Create the space inside another one. Nesting a sealed space is allowed;
+    # the sidebar keeps a locked sealed branch folded so its children stay hidden.
     parent_id: int | None = Field(default=None, ge=1)
 
 

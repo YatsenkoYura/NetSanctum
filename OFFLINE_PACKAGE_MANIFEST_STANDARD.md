@@ -476,6 +476,7 @@ unchanged resources again.
 | Video Archive | Strict `video_<id>` and `video_playlist_<id>` | Persisted for new, uploaded, and optimized video | Full video/playlist snapshots | Legacy video without identity is downloaded until optimization/backfill records it |
 | AllLib | Strict `<media_type>_<id>` | Persisted for anime; EPUB/CBZ use immutable hashed artifacts | Deterministic chapter order and complete media snapshot | Old export artifacts are retained for in-flight manifests and require later retention cleanup |
 | Vault | Strict `vault_all` | No standalone binary resources | One complete deterministic item snapshot; remote previews are excluded | Dynamic NSP is downloaded on each refresh |
+| Vault (sealed) | Strict `vault_sealed_<collection_id>`, one package per sealed collection, passphrase is the collection passphrase | Transfer-v1 envelopes (ChaCha20-Poly1305/HKDF/Argon2id); package DEK derived, passphrase-wrapped copy stored | Generated on demand from an unlocked tab, never stored; no sizes/hashes (fresh nonces) so sealed resources download on every refresh; no posters or previews | See `docs/sealed-offline-packages.md`; desktop client support required |
 | Storage | Strict `storage_manager` | No standalone binary resources | Read-only storage snapshot with a real package resolver | Dynamic NSP is downloaded on each refresh |
 
 The native client performs full-snapshot replacement, pre-download CAS reuse, transactional reference

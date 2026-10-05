@@ -22,7 +22,14 @@ router = APIRouter(prefix="/api/packages", tags=["packages"])
 
 PACKAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-RESOURCE_TYPES = {"binary", "container", "css", "html", "image", "js", "json", "text"}
+RESOURCE_TYPES = {"binary", "container", "css", "html", "image", "js", "json", "sealed", "text"}
+# Packed into the NSP container by the hybrid projection and the NSP builder.
+# `binary` stays standalone (hashed, ranged); `sealed` stays standalone too — a
+# sealed resource packed beside plaintext would still decrypt, but the rule that
+# sealed bytes never sit inside a shared plaintext container is worth more than
+# the saved request.
+PACKABLE_RESOURCE_TYPES = {"container", "css", "html", "image", "js", "json", "text"}
+STANDALONE_RESOURCE_TYPES = {"binary", "sealed"}
 
 
 class PackageResourceError(RuntimeError):
@@ -136,7 +143,7 @@ async def build_nsp_file(
     resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict
 ) -> tempfile.SpooledTemporaryFile[bytes]:
     """Build a complete container in bounded temporary storage before it is served."""
-    packable_resources = [res for res in resources if res.get("type") != "binary"]
+    packable_resources = [res for res in resources if res.get("type") in PACKABLE_RESOURCE_TYPES]
     package_file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
     index = {}
     offset = 0
@@ -240,8 +247,16 @@ def make_hybrid_manifest(pkg_id: str, original_manifest: dict) -> dict:
         raise ValueError(f"Invalid package ID: {pkg_id!r}")
     original_resources = original_manifest.get("resources", [])
 
-    # Keep only binary files as standalone resources
-    standalone_resources = [res for res in original_resources if res.get("type") == "binary"]
+    # Binary and sealed files stay standalone resources; sealed ones additionally
+    # never enter the plaintext container (see PACKABLE_RESOURCE_TYPES).
+    standalone_resources = [res for res in original_resources if res.get("type") in STANDALONE_RESOURCE_TYPES]
+    packable = [res for res in original_resources if res.get("type") in PACKABLE_RESOURCE_TYPES]
+    if not packable:
+        # Nothing to pack (e.g. a sealed-only package): a container with an empty
+        # index would only force a useless download every refresh.
+        new_manifest = original_manifest.copy()
+        new_manifest["resources"] = standalone_resources
+        return new_manifest
 
     # Add the NSP container resource
     container_url = f"/api/packages/{pkg_id}/nsp"

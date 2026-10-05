@@ -47,12 +47,14 @@ class CoreIsIndependentTests(unittest.TestCase):
             "argon2",
             "cryptography",
             "base64",
+            "collections",
             "hashlib",
             "hmac",
             "json",
             "os",
             "dataclasses",
             "typing",
+            "unicodedata",
         }
 
         for path in sorted(CORE_CRYPTO.glob("*.py")):

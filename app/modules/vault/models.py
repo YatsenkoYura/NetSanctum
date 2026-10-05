@@ -33,6 +33,18 @@ class VaultCollection(Base):
     # key silently diverts every blind write into other hands, and the owner's own
     # unlock keeps working — there is nothing to notice.
     inbox_pub_mac = Column(String, nullable=True)
+    # The sealed offline package wrapper: the per-collection package DEK wrapped
+    # under the passphrase KEK (transfer v1). Public by design — like the vault
+    # wrapper itself, it needs the passphrase to be useful. Refreshed on every
+    # unlock that finds it missing and on every rekey (the DEK follows the inbox
+    # private key, so a rekey retires it); the manifest serves whatever is stored,
+    # and a missing wrapper is "unlock once first", never a guess. The KDF cost
+    # travels beside the bytes for the same reason it does on the vault wrapper:
+    # describing stored bytes with current parameters would lock out every wrap
+    # written before a cost raise.
+    sealed_pkg_salt = Column(String, nullable=True)
+    sealed_pkg_wrapped = Column(String, nullable=True)
+    sealed_pkg_kdf = Column(JSON, nullable=True)
     # A sealed collection's own metadata, in the same shape an item has. `name` is
     # not here: the sidebar shows `public_name` while the collection is locked, and a
     # locked collection has no name to show anybody.

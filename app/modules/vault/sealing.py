@@ -33,13 +33,19 @@ from app.core.config import get_settings
 from app.core.state_store import state_redis_url
 from app.modules.vault.crypto import (
     ARGON2_M_COST,
+    ARGON2_M_COST_MAX,
     ARGON2_PARALLELISM,
+    ARGON2_PARALLELISM_MAX,
     ARGON2_T_COST,
+    ARGON2_T_COST_MAX,
     KDF_NAME,
     LEGACY_KDF_NAME,
     SCRYPT_N,
+    SCRYPT_N_MAX,
     SCRYPT_P,
+    SCRYPT_P_MAX,
     SCRYPT_R,
+    SCRYPT_R_MAX,
     WRAP_VERSION,
     SealedWrite,
     VaultUnlockError,
@@ -47,7 +53,9 @@ from app.modules.vault.crypto import (
     check_passphrase_strength,
     context_for,
     derive_file_key,
+    derive_subkey,
     generate_inbox_keypair,
+    inbox_keypair_matches,
     inbox_pub_fingerprint,
     inbox_pub_mac as crypto_inbox_pub_mac,
     is_sealed,
@@ -56,9 +64,12 @@ from app.modules.vault.crypto import (
     open_inbox_key,
     rewrap_inbox_key,
     seal_for_inbox,
+    transfer_kdf_params,
+    unwrap_data_key,
     unwrap_with_kek,
     verify_inbox_pub_mac,
     wrap_data_key,
+    wrap_package_dek,
 )
 from app.modules.vault.images import media_type_for, store_image_bytes
 from app.modules.vault.models import VaultCollection, VaultItem
@@ -309,6 +320,10 @@ def wrapper_for(collection: VaultCollection) -> WrappedKey:
     all scrypt, so the default here is the legacy name — defaulting to the current
     KDF would derive a different key and report a wrong passphrase for every vault
     created before the upgrade.
+
+    Cost parameters are capped before anything derives from them: they come from
+    the database, and a row claiming gigabytes of Argon2 memory must be refused
+    before the KDF allocates, not after.
     """
     params = collection.key_kdf_params or {}
     kdf = collection.key_kdf or LEGACY_KDF_NAME
@@ -318,17 +333,39 @@ def wrapper_for(collection: VaultCollection) -> WrappedKey:
         # is part of what makes the key. Saying "wrong passphrase" here would send
         # the owner hunting for a typo instead of at the row.
         raise VaultUnlockError("This Vault's key wrapper records no derivation cost and cannot be opened")
+    try:
+        t_cost = int(params.get("t_cost", ARGON2_T_COST))
+        m_cost = int(params.get("m_cost", ARGON2_M_COST))
+        parallelism = int(params.get("parallelism", ARGON2_PARALLELISM))
+        n = int(params.get("n", SCRYPT_N))
+        r = int(params.get("r", SCRYPT_R))
+        p = int(params.get("p", SCRYPT_P))
+        wrap_version = int(params.get("wrap", 1))
+    except (TypeError, ValueError) as error:
+        raise VaultUnlockError("This Vault's key wrapper records an unreadable cost") from error
+    if kdf == LEGACY_KDF_NAME:
+        if not (2**8 <= n <= SCRYPT_N_MAX) or n & (n - 1) or not (1 <= r <= SCRYPT_R_MAX):
+            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
+        if not (1 <= p <= SCRYPT_P_MAX):
+            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
+    elif kdf == KDF_NAME:
+        if not (8 <= m_cost <= ARGON2_M_COST_MAX):
+            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
+        if not (1 <= t_cost <= ARGON2_T_COST_MAX) or not (1 <= parallelism <= ARGON2_PARALLELISM_MAX):
+            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
+    else:
+        raise VaultUnlockError(f"Unsupported key derivation {kdf!r}")
     return WrappedKey(
         salt=collection.key_salt or "",
         wrapped=collection.wrapped_key or "",
         kdf=kdf,
-        wrap_version=int(params.get("wrap", 1)),
-        t_cost=int(params.get("t_cost", ARGON2_T_COST)),
-        m_cost=int(params.get("m_cost", ARGON2_M_COST)),
-        parallelism=int(params.get("parallelism", ARGON2_PARALLELISM)),
-        n=int(params.get("n", SCRYPT_N)),
-        r=int(params.get("r", SCRYPT_R)),
-        p=int(params.get("p", SCRYPT_P)),
+        wrap_version=wrap_version,
+        t_cost=t_cost,
+        m_cost=m_cost,
+        parallelism=parallelism,
+        n=n,
+        r=r,
+        p=p,
     )
 
 
@@ -395,6 +432,9 @@ async def create_sealed_collection(
     # it later needs the KEK again, which is exactly what an unlock recovers.
     kek, _salt = kek_for_wrapper(wrapped, passphrase)
     collection.inbox_pub_mac = crypto_inbox_pub_mac(kek, public_key, collection.id)
+    # The sealed offline package wrapper is stored from the start: the passphrase
+    # is here now, and a manifest served later must not need it again.
+    refresh_package_wrap(collection, private_key, passphrase)
     # No file-key wrapping here: the file key is derived from the private key,
     # so there is nothing to store and no backfill for older rows.
     # The description goes in under the public key too, so creating a sealed
@@ -434,6 +474,17 @@ async def unlock_collection(
     async with _KDF_GATE:
         kek, salt = await asyncio.to_thread(kek_for_wrapper, wrapped, passphrase)
         private_key = unwrap_with_kek(wrapped, kek, salt, context)
+    # The passphrase just proved itself, so a public key that does not derive
+    # from this private key is substitution, not a typo: refuse as an attack.
+    stored_public = inbox_public_key(collection)
+    if stored_public is None:
+        raise VaultUnlockError("This Vault has no inbox key")
+    if not inbox_keypair_matches(private_key, stored_public):
+        logger.warning(
+            "Vault %s inbox public key does not derive from its private key: refusing unlock",
+            collection.id,
+        )
+        raise VaultUnlockError("The Vault's inbox key does not match its seal")
     await verify_collection_key(collection, kek, session)
     token = unlock_token or secrets.token_urlsafe(32)
     now = int(datetime.datetime.now(datetime.UTC).timestamp())
@@ -444,6 +495,21 @@ async def unlock_collection(
     )
     if session is not None:
         await upgrade_wrapper(session, collection, private_key, passphrase)
+        try:
+            # Rows from before the sealed-package columns fill their wrapper here,
+            # where the passphrase is in hand. A failure only logs: the unlock
+            # already succeeded, and the manifest will ask for one more unlock.
+            if not collection.sealed_pkg_salt or not collection.sealed_pkg_wrapped:
+                refresh_package_wrap(collection, private_key, passphrase)
+                await session.commit()
+        except Exception:
+            logger.warning(
+                "Vault %s sealed package wrapper could not be stored", collection.id, exc_info=True
+            )
+            try:
+                await session.rollback()
+            except Exception:
+                pass
         await heal_collection_images(session, collection, derive_file_key(private_key, collection.id))
         collection_public_key = inbox_public_key(collection)
         if collection_public_key is not None:
@@ -829,25 +895,35 @@ def verify_space_passphrase(collection: VaultCollection, passphrase: str) -> Non
 
     Not "is a passphrase present" and not "does the wrapper exist" — the whole
     point is that destroying a sealed space is irreversible, so the proof has to
-    be the one the unlock makes: derive the KEK at the stored cost and check it
-    against the sealed public key. A passphrase that is merely accepted would make
-    the prompt a speed bump rather than a guard.
+    be the one the unlock makes: unwrap the private key at the stored cost, check
+    the stored public key derives from it, and check the MAC. A passphrase that
+    is merely accepted would make the prompt a speed bump rather than a guard.
+    Runs on a worker thread by its callers: the derivation blocks and holds tens
+    of megabytes.
     """
-    kek, _salt = kek_for_wrapper(wrapper_for(collection), passphrase)
+    wrapped = wrapper_for(collection)
+    private_key = unwrap_data_key(wrapped, passphrase, context=context_for("collection", collection.id))
     public_key = inbox_public_key(collection)
     if public_key is None:
         raise VaultUnlockError("This Vault has no inbox key")
+    if not inbox_keypair_matches(private_key, public_key):
+        logger.warning("Vault %s inbox public key does not derive from its private key", collection.id)
+        raise VaultUnlockError("The Vault's inbox key does not match its seal")
+    kek, _salt = kek_for_wrapper(wrapped, passphrase)
     if not verify_inbox_pub_mac(kek, public_key, collection.id, collection.inbox_pub_mac):
         raise VaultUnlockError("Wrong passphrase for this Vault")
 
 
 async def verify_collection_key(collection: VaultCollection, kek: bytes, session=None) -> None:
-    """Check the inbox public key against the passphrase, or refuse the unlock.
+    """Check the inbox public key's MAC against the passphrase, or refuse.
 
-    A rewritten public key diverts every blind write without touching the wrapper,
-    so the unlock itself would still succeed — this is the one place that can catch
-    it, because it is the one place the KEK exists. A mismatch is logged as an
-    attack, not as a wrong passphrase: the passphrase just proved itself correct.
+    The private-to-public correspondence is checked by the caller, which holds
+    the freshly unwrapped private key; this checks the MAC second. A rewritten
+    public key diverts every blind write without touching the wrapper, so both
+    checks must pass — a mismatch is logged as an attack, not as a wrong
+    passphrase, because the passphrase just proved itself correct. A missing MAC
+    on an old row is backfilled only here, only after the correspondence check
+    already passed in `unlock_collection`.
     """
     stored = collection.inbox_pub_mac
     public_key = inbox_public_key(collection)
@@ -929,6 +1005,76 @@ async def upgrade_wrapper(session, collection: VaultCollection, private_key: byt
         await session.rollback()
         return False
     return True
+
+
+# ── Sealed offline package ───────────────────────────────────────────
+# One sealed package per sealed collection: `vault_sealed_<id>`, opened with the
+# collection's own passphrase on the desktop client. The package DEK is derived
+# from the inbox private key — never stored, never transmitted — while the
+# passphrase-wrapped copy below is what the manifest serves. It is public the
+# same way the vault wrapper is public: useless without the passphrase.
+#
+# The wrap is written where the passphrase is in hand: creation, unlock (when
+# missing) and rekey (the DEK follows the private key, so a rekey retires it).
+# The manifest never wraps on demand — serving it needs only the unlock token,
+# and the token proves a session, not the passphrase.
+
+SEALED_PACKAGE_PREFIX = "vault_sealed"
+PACKAGE_DEK_INFO = b"ns:sealed-pkg:dek:v1"
+
+
+def sealed_package_id(collection_id: int) -> str:
+    """The offline package id for one sealed collection."""
+    return f"{SEALED_PACKAGE_PREFIX}_{int(collection_id)}"
+
+
+def package_dek_for(private_key: bytes, collection_id: int) -> bytes:
+    """The collection's package DEK. Deterministic, 32 bytes, unique per collection."""
+    if len(private_key) != 32:
+        raise ValueError("A data key must be 32 bytes")
+    return derive_subkey(
+        private_key,
+        salt=f"ns:sealed-pkg:{int(collection_id)}".encode(),
+        info=PACKAGE_DEK_INFO,
+        length=32,
+    )
+
+
+def refresh_package_wrap(collection: VaultCollection, private_key: bytes, passphrase: str) -> dict:
+    """Wrap the package DEK under the passphrase and store the fragment.
+
+    The caller commits: creation and rekey fold this into their own commit,
+    unlock commits separately. Returns the manifest `sealing` fragment.
+    """
+    dek = package_dek_for(private_key, collection.id)
+    fragment = wrap_package_dek(dek, passphrase, sealed_package_id(collection.id))
+    collection.sealed_pkg_salt = fragment["salt"]
+    collection.sealed_pkg_wrapped = fragment["wrapped_dek"]
+    collection.sealed_pkg_kdf = fragment["kdf"]
+    sealing = sealed_package_sealing(collection)
+    assert sealing is not None  # all three columns were just stored above
+    return sealing
+
+
+def sealed_package_sealing(collection: VaultCollection) -> dict | None:
+    """The manifest `sealing` object, or None when no unlock has stored one yet."""
+    if not is_sealed_collection(collection):
+        return None
+    if not collection.sealed_pkg_salt or not collection.sealed_pkg_wrapped:
+        return None
+    kdf = dict(collection.sealed_pkg_kdf or {})
+    if kdf.get("algorithm", "argon2id") != "argon2id":
+        return None
+    return {
+        "version": 1,
+        "kdf": {
+            "algorithm": "argon2id",
+            **transfer_kdf_params(),
+            **{k: kdf[k] for k in ("m_cost", "t_cost", "parallelism") if k in kdf},
+        },
+        "salt": collection.sealed_pkg_salt,
+        "wrapped_dek": collection.sealed_pkg_wrapped,
+    }
 
 
 async def lock_collection(collection_id: int, unlock_token: str) -> None:
@@ -1107,7 +1253,10 @@ async def open_collection_payloads(collections, unlock_token: str) -> dict[int, 
     """Open every unlocked sealed collection's own metadata, in one pass.
 
     One key lookup for the whole sidebar rather than a round trip per row, the same
-    bargain `open_items` makes for a board of cards.
+    bargain `open_items` makes for a board of cards. Session records are sealed
+    under the tab token (see `_seal_session_record`), so each is opened with the
+    token — a hex decode here would only ever fit the pre-seal format and treat
+    every current session as malformed.
     """
     wanted = [c for c in collections if is_sealed_collection(c) and c.sealed_payload]
     if not wanted or not unlock_token:
@@ -1117,10 +1266,10 @@ async def open_collection_payloads(collections, unlock_token: str) -> dict[int, 
     for collection, stored in zip(wanted, rows, strict=True):
         if not stored:
             continue
-        try:
-            keys[collection.id] = bytes.fromhex(stored)
-        except ValueError:
-            logger.warning("Vault %s has a malformed key in the key store", collection.id)
+        opened = _open_session_record(stored, unlock_token, collection.id)
+        if opened is None:
+            continue
+        keys[collection.id] = opened[0]
     return {
         collection.id: open_collection_fields(collection, keys[collection.id])
         for collection in wanted
@@ -1198,6 +1347,34 @@ async def update_sealed_item(
                         get_storage().delete_file(old_path)
                     except Exception:
                         logger.debug("stale Vault image %s could not be removed", old_path, exc_info=True)
+    seal_item(item, public_key)
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+async def increment_sealed_progress(
+    session,
+    item: VaultItem,
+    private_key: bytes,
+    public_key: bytes,
+    step: int = 1,
+) -> VaultItem:
+    """Advance a sealed card's episode counter inside its payload.
+
+    Progress is a sealed field: the column on disk is zeroed and the real value
+    lives in the envelope. Writing the column directly (what the plain path
+    does) would be overwritten by the next unlock, so this opens the item,
+    increments in memory with the same status transitions, and re-seals in one
+    commit.
+    """
+    open_item(private_key, item)
+    item.progress_current = (item.progress_current or 0) + step
+    if item.progress_total and item.progress_current >= item.progress_total:
+        item.status = "completed"
+    elif item.status in (None, "planned"):
+        item.status = "watching"
+    item.updated_at = datetime.datetime.now(datetime.UTC)
     seal_item(item, public_key)
     await session.commit()
     await session.refresh(item)
@@ -1309,6 +1486,10 @@ async def rekey_collection(
     collection.inbox_public_key = b64encode(new_public).decode("ascii")
     collection.inbox_pub_mac = crypto_inbox_pub_mac(kek, new_public, collection.id)
     store_wrapper(collection, wrapped)
+    # The package DEK follows the inbox private key, so a rekey retires it: the
+    # old wrapped copy would open nothing already re-encrypted. Same passphrase,
+    # new DEK, stored in the same commit as everything else rekeyed.
+    refresh_package_wrap(collection, new_private, passphrase)
     await session.commit()
     await session.refresh(collection)
 

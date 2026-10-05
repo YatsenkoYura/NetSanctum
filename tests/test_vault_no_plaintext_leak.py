@@ -347,14 +347,18 @@ class UnlockSessionTests(LeakDetectorTestCase):
         self.addCleanup(entered.stop)
 
     def unlock(self, collection, passphrase="верный", token="tab-1", session=None):
+        from unittest.mock import AsyncMock, patch
+
         from app.modules.vault import sealing
 
         private = bytes.fromhex("aa" * 32)
-        from unittest.mock import patch
-
         with (
             patch.object(sealing, "kek_for_wrapper", lambda *a, **k: (b"\x05" * 32, b"\x06" * 16)),
             patch.object(sealing, "unwrap_with_kek", lambda *a: private),
+            # The KEK derivation is stubbed, so the keypair binding is stubbed
+            # too: these tests exercise the session record, not the inbox MAC.
+            patch.object(sealing, "inbox_keypair_matches", lambda *a: True),
+            patch.object(sealing, "verify_collection_key", AsyncMock()),
         ):
             return asyncio.run(sealing.unlock_collection(collection, passphrase, token, session=session))
 

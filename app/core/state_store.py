@@ -1,22 +1,24 @@
 """The Redis that holds unlock sessions, and the refusal to snapshot it.
 
-An unlock session holds a vault's data key. A download handoff holds the address
-of a video the owner has not finished saving, and the unlock throttle holds the
-record of who has been guessing at a passphrase. All three live in Redis, and the
-broker lives there too — which means the same `appendfsync` that makes the queue
-survive a restart also makes a data key survive one.
+An unlock session holds a vault's data key sealed under the tab's token (see
+`app.modules.vault.sealing._seal_session_record`): Redis alone cannot open it,
+and the token lives only in the page's memory. A download handoff holds the
+address of a video the owner has not finished saving, and the unlock throttle
+holds the record of who has been guessing at a passphrase. All three live in
+Redis, and the broker lives there too — which means the same `appendfsync` that
+makes the queue survive a restart would also keep sealed sessions around.
 
 This module is the separation: its own connection, its own instance, its own
 `--save "" --appendonly no`. It also checks that the instance it was given really
 has persistence off, because a setting that says "ephemeral" while the deployment
 snapshots anyway is worse than no setting — it is a claim that is not true.
 
-The checks are strictest where they can be. `appendonly yes` is a refusal. A
-non-empty `save` is a warning, not a stop: snapshotting is the less harmful of
-the two, it is what a default Redis does, and an operator who wants it should not
-have to learn the vocabulary to turn it off. Managed Redis that does not expose
-`CONFIG GET` is trusted, since there is no way to ask and no way to fix it from
-here either.
+When `VAULT_STATE_REQUIRE_EPHEMERAL` is on, both persistence signals refuse:
+`appendonly yes` and a non-empty `save` each raise. Managed Redis that does not
+expose `CONFIG GET` fails closed unless the deployment explicitly accepts it
+with `VAULT_STATE_ASSUME_EPHEMERAL` — and that escape hatch covers only
+"could not be asked" (ACL, proxy, managed instance), never a refused
+connection or a bad password.
 """
 
 import logging
@@ -57,7 +59,24 @@ def state_redis_url() -> str:
 
 
 def _client_for(url: str) -> aioredis.Redis:
-    return aioredis.Redis.from_url(url, decode_responses=True)
+    return aioredis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=3, socket_timeout=3)
+
+
+def _classify_redis_error(error: Exception) -> str:
+    """Connection/auth failures are never excused; only "could not be asked" is."""
+    try:
+        from redis.exceptions import AuthenticationError, ConnectionError as RedisConnectionError
+
+        if isinstance(error, RedisConnectionError):
+            return "connection"
+        if isinstance(error, AuthenticationError):
+            return "auth"
+    except ImportError:
+        pass
+    name = type(error).__name__
+    if "auth" in name.lower() or "connection" in str(error).lower():
+        return "connection"
+    return "unknown"
 
 
 async def audit_state_redis(url: str | None = None) -> dict[str, object]:
@@ -74,10 +93,13 @@ async def audit_state_redis(url: str | None = None) -> dict[str, object]:
         saves = await client.config_get("save")
     except Exception as error:
         # Managed Redis, a proxy, or a network hiccup: there is nothing to ask
-        # and nothing to change from here, so say so and let the operator decide.
+        # and nothing to change from here, so say what kind of failure it was
+        # and let the caller decide. Connection/auth failures are reported as
+        # such so the strict path can always refuse them.
         logger.warning("could not read the Redis configuration at %s: %s", redact(target), error)
         return {
             "reachable": False,
+            "reason": _classify_redis_error(error),
             "error": str(error),
             "appendonly": None,
             "save": None,
@@ -125,11 +147,15 @@ async def require_ephemeral_state_store() -> dict[str, object]:
         # Asking is not the same as knowing. `CONFIG GET` can be denied by an ACL,
         # blocked by a proxy, or unavailable on a managed instance, and then
         # "unreachable" says nothing about whether the instance persists — which is
-        # the only question this flag exists to ask. Failing open turned the check
-        # into a no-op on exactly the deployments that hide their configuration.
-        # So it fails closed, and the operator who has decided they know better
-        # says so with VAULT_STATE_ASSUME_EPHEMERAL — one name, because "I could
-        # not check" and "I checked and I accept it" should not look alike.
+        # the only question this flag exists to ask. "No route to host" and "wrong
+        # password" say something else entirely, and are always fatal: assuming an
+        # instance ephemeral when it cannot even be reached confuses "Redis is
+        # down" with "Redis is safe".
+        if report.get("reason") in {"connection", "auth"}:
+            raise RuntimeError(
+                "The vault state Redis is unreachable or refused authentication "
+                f"({report.get('error')}). Fix VAULT_STATE_REDIS_URL rather than assuming it."
+            )
         if not settings.VAULT_STATE_ASSUME_EPHEMERAL:
             raise RuntimeError(
                 "The vault state Redis could not be asked whether it persists "

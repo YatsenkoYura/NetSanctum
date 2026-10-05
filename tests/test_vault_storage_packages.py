@@ -60,11 +60,16 @@ def vault_item(item_id: int, og_image: str | None):
 
 class VaultPackageTests(unittest.TestCase):
     def test_vault_provider_accepts_only_the_complete_vault_id(self):
-        self.assertEqual(("vault_all",), VAULT_MODULE.package_prefixes)
+        self.assertEqual(("vault_all", "vault_sealed"), VAULT_MODULE.package_prefixes)
         with self.assertRaises(ValueError):
             run(resolve_vault_resources("vault_all_backup", object()))
         with self.assertRaises(ValueError):
             run(resolve_vault_resources("vault_", object()))
+        # A sealed prefix without a collection is not a package either.
+        with self.assertRaises(ValueError):
+            run(resolve_vault_resources("vault_sealed", object()))
+        with self.assertRaises(ValueError):
+            run(resolve_vault_resources("vault_sealed_x", object()))
 
     def test_vault_manifest_and_resolver_share_one_complete_snapshot_resource_set(self):
         manifest = run(get_vault_sync_manifest(db=object(), user=None, hybrid=False))

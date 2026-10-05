@@ -41,8 +41,23 @@ def legacy_encryption_keys(
     *,
     purpose: str = "files",
 ) -> tuple[bytes, ...]:
-    """Return historical keys accepted only while rotating persisted ciphertext."""
+    """Historical keys accepted only while rotating persisted ciphertext.
+
+    The normal read path tries these after the primary key, and the migration
+    rewrites whatever they open. That fallback is what keeps files readable
+    until the migration runs — and it is also why publicly known development
+    values must never be fallback candidates in production: anyone able to
+    plant a file sealed under a published dev key would otherwise produce
+    ciphertext this deployment accepts as its own. In production the dev
+    placeholders below are excluded, and setting ENCRYPTION_ALLOW_LEGACY_KEYS
+    to False disables the fallback entirely once the migration reports
+    pending=0 and unreadable=0.
+    """
     settings = settings or get_settings()
+    if not settings.ENCRYPTION_ALLOW_LEGACY_KEYS:
+        return ()
+    is_production = settings.NETSANCTUM_ENVIRONMENT.lower() == "production"
+    dev_placeholders = {"dev-file-encryption-key-change-me", "dev-api-key-change-me"}
     root = _root_encryption_key(settings)
     primary = primary_encryption_key(settings, purpose=purpose)
     candidates = (
@@ -51,6 +66,11 @@ def legacy_encryption_keys(
         "dev-file-encryption-key-change-me",
         "dev-api-key-change-me",
     )
+    if is_production:
+        # The hard-coded dev strings are published; the configured values may
+        # still equal them when an operator forgot to rotate (validate_runtime_security
+        # refuses that in production), so filter both.
+        candidates = tuple(value for value in candidates if value not in dev_placeholders)
     legacy_file_values: tuple[str, ...] = ()
     legacy_path = settings.LEGACY_FILE_ENCRYPTION_KEYS_PATH.strip() if purpose == "files" else ""
     if legacy_path:

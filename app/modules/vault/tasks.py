@@ -365,6 +365,8 @@ def download_vault_video_task(
             # rules out a single AES-GCM blob: GCM authenticates the whole
             # ciphertext, so any range would mean decrypting from byte zero.
             # The path is fresh and names the row that owns it.
+            ext = (video_file.suffix or ".mp4").lower()[:6]
+            assert collection_id is not None  # refused as pending above when missing
             relative = sealed_media_path(collection_id, item_id, "mp4.enc")
             destination = _storage_root() / relative
             # The size comes from the file we just wrote, so the envelope is
