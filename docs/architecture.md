@@ -20,6 +20,177 @@ catalog. Ten of them are in `default_modules`; `auth`, `settings`, and `sharing`
 
 ---
 
+## 0. One page: the whole system
+
+Everything else in this file is a zoom-in of this diagram. Read the arrows:
+
+| Arrow | Meaning |
+| --- | --- |
+| solid, labelled `a.b.v1` | a real integration call. The label is the integration ID and the arrow points **from the consumer to the provider**. |
+| dotted | not an integration: framework dispatch, policy, cleanup, or storage |
+| plain | runtime wiring: a request, a message, a query |
+
+```mermaid
+flowchart TB
+
+    subgraph SURF["What the owner touches"]
+        direction LR
+        BR["Browser<br/>Jinja + HTMX pages,<br/>one owner session"]
+        EXT["Browser extension<br/>bearer token, never a cookie"]
+        SHPUB["Public share link<br/>read-only, password and expiry"]
+    end
+
+    subgraph CONT["Containers - one image, different process role, different networks"]
+        direction TB
+        subgraph ONESVC["always on"]
+            direction LR
+            WEB["web<br/>serves pages, mounts every active<br/>module router, hosts the control plane"]
+            WRK["worker<br/>Celery: downloads, conversion,<br/>index refresh, reminder sweeps"]
+        end
+        subgraph ONESHOT["one-shot, must exit 0"]
+            direction LR
+            SINIT["storage-init<br/>creates the encryption key once,<br/>fixes storage ownership"]
+            MIG["migrate<br/>upgrades each installed module<br/>own Alembic history"]
+        end
+        subgraph SIDE["isolated sidecars - no database, no keys"]
+            direction LR
+            AR["agent-runtime<br/>executes the LLM cascade.<br/>Proposes only."]
+            BRW["browser-runtime<br/>Chromium + Xvfb<br/>Playwright sessions"]
+            BPR["browser-proxy<br/>only allowlisted hosts<br/>may leave the host"]
+            POT["youtube-pot<br/>mints proof-of-origin tokens"]
+            LLM["miku-llm, stt, tts<br/>optional local models"]
+        end
+    end
+
+    subgraph CODE["Application code"]
+        direction TB
+        subgraph CORE["app/core - infrastructure, zero product knowledge"]
+            direction LR
+            REG["ModuleRegistry<br/>discovery, activation,<br/>models, routers, hooks"]
+            INTEG["Integration registry<br/>validate schema, effect,<br/>consumer scope, then invoke"]
+            SHR["Share framework<br/>link auth, expiry, route matching,<br/>deny-by-default writes"]
+            BRPOL["Browser policy<br/>start URL, host allowlist,<br/>idle timeout, snapshot rules"]
+            PKG["Offline package builder<br/>collects module resources<br/>into a sealed NSP"]
+            DATA["Sessions, storage, AES-GCM<br/>envelopes, staging tmpfs,<br/>ephemeral state store"]
+        end
+        subgraph MODS["app/modules - product behavior, each removable on its own"]
+            direction TB
+            subgraph SRC["reaches outside"]
+                YT["youtube<br/>browse and search YouTube,<br/>isolated account login"]
+            end
+            subgraph LIB["local libraries"]
+                direction LR
+                VA["video_archiver<br/>videos, subtitles,<br/>metadata, comments"]
+                MU["music<br/>audio archive, playlists,<br/>local player"]
+                AL["alllib<br/>novels, manga, anime<br/>from Lib-network sources"]
+                VLT["vault<br/>notes, bookmarks,<br/>collections, sealed media"]
+            end
+            subgraph DERIVED["derived"]
+                SEARCH["search<br/>private index built from every<br/>module, one ranked query"]
+            end
+            subgraph ACTS["what the owner does with it"]
+                direction LR
+                PLR["planner<br/>dated tasks and events,<br/>reminder sweep"]
+                TT["tabletop_games<br/>token-scoped live rooms,<br/>Redis WebSockets"]
+                CC["computercraft<br/>NetSanctumOS client:<br/>viewers and speaker"]
+                MIKU["miku - opt-in<br/>assistant. Proposes a tool call,<br/>NetSanctum decides."]
+            end
+            subgraph OPS["platform services - required, cannot be disabled"]
+                direction LR
+                AUTH["auth<br/>owner token, Redis sessions"]
+                SET["settings<br/>typed and secret values,<br/>the control plane lives here"]
+                STOR["storage<br/>usage, module-aware cleanup"]
+            end
+        end
+    end
+
+    subgraph STATE["State"]
+        direction LR
+        PG[("PostgreSQL<br/>one independent history<br/>per module")]
+        REDIS[("Redis<br/>broker, results, sessions,<br/>WebSocket fan-out, logs")]
+        RST[("redis-state<br/>ephemeral. Vault keys<br/>never reach disk.")]
+        VOL[("storage/ volume<br/>sealed and plain objects,<br/>tmpfs staging in front")]
+        KEYV[("encryption_key volume<br/>lose it and the data<br/>is unrecoverable")]
+    end
+
+    BR --> WEB
+    EXT --> WEB
+    SHPUB --> WEB
+
+    WEB --> CORE
+    WEB --> MODS
+    WRK --> MODS
+    SINIT -.->|"key and permissions exist<br/>before anything starts"| WEB
+    MIG --> PG
+
+    WEB -->|"asks for a turn"| AR
+    AR --> LLM
+    BRPOL -->|"Playwright"| BRW
+    BRW -->|"only through"| BPR
+    VA -.->|"proof-of-origin"| POT
+    YT -.->|"proof-of-origin"| POT
+
+    BRPOL -.->|"policy youtube.account"| YT
+
+    SHR -.->|"dispatch to declared providers:<br/>vault, music, video_archiver,<br/>alllib, tabletop_games"| MODS
+    PKG -.->|"asks each module for resources<br/>via package_resolver"| MODS
+
+    VA -->|"video.source.catalog.v1"| YT
+    YT -->|"media.video.archive.v1"| VA
+    VA -->|"media.audio.import.v1"| MU
+    VA -->|"media.audio.playlist.import.v1"| MU
+
+    VA -->|"search.documents.v1"| SEARCH
+    MU -->|"search.documents.v1"| SEARCH
+    AL -->|"search.documents.v1"| SEARCH
+    VLT -->|"search.documents.v1"| SEARCH
+    PLR -->|"search.documents.v1"| SEARCH
+
+    MIKU -->|"search.global.v1"| SEARCH
+    MIKU -->|"vault.capture.v1"| VLT
+    MIKU -->|"media.video.archive.v1"| VA
+    MIKU -.->|"library.viewer.v1 and<br/>video.source.catalog.v1<br/>server-side only"| YT
+
+    PLR -->|"vault.spaces.v1"| VLT
+
+    CC -->|"library.viewer.v1"| MU
+    CC -->|"library.viewer.v1"| VA
+    CC -->|"library.viewer.v1"| AL
+
+    MODS -.->|"through core, never directly"| DATA
+    DATA --> PG
+    DATA --> REDIS
+    DATA --> RST
+    DATA --> VOL
+    DATA --> KEYV
+
+    AUTH -.->|"session: id"| REDIS
+    SET -.->|"module state, tasks, logs"| REDIS
+    STOR -.->|"recalculate and clean"| VOL
+    TT -.->|"live rooms"| REDIS
+```
+
+### The five things this picture is really saying
+
+1. **Only `web` and `worker` touch your data.** Every sidecar is deliberately blind: the agent
+   runtime holds no database, Redis, storage mount, encryption key, or owner credential. The
+   browser runtime is the same, plus a seccomp profile and a single-host egress proxy.
+2. **Modules never import each other.** The eight labelled `a.b.v1` arrows are the entire
+   cross-module surface. Remove `music` and `video_archiver` still builds, still migrates, and
+   only loses its music import button.
+3. **Search is the hub, not the assistant.** Five modules publish `search.documents.v1` snapshots;
+   `search` ranks them; `miku` is pointed at `search.global.v1` and deliberately denied the
+   per-module `library.viewer.v1` APIs so discovery cannot bypass the shared ranking path.
+4. **Two independent switches decide what runs.** `NETSANCTUM_MODULES` is baked into the image at
+   build time; `ENABLED_MODULES` can only narrow it at runtime. A disabled module is not mounted
+   but is still migrated, so its data stays compatible.
+5. **Plaintext has a window, and the window is enforced.** `STAGING_DIR` is a tmpfs and
+   `STAGING_REQUIRE_TMPFS=1` refuses to start rather than write a downloaded video to a disk.
+   Vault unlock keys live in a separate Redis with AOF disabled; `VAULT_STATE_REQUIRE_EPHEMERAL=1`
+   turns a snapshot configuration into a refusal to boot.
+
+---
+
 ## 1. Module map (the whole system in one picture)
 
 The trust rule the whole codebase is built around: **core owns infrastructure, modules own
