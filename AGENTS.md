@@ -5,7 +5,8 @@
 - This is a Python 3.12 modular monolith. `app/main.py` is the web entrypoint; Celery starts from `app.core.scheduler:celery_app`.
 - Core infrastructure belongs in `app/core/`. Product behavior belongs in `app/modules/<id>/`; cross-module behavior must use the typed contracts/integration registry, not imports from another module's internals.
 - Module discovery imports `app.modules.<package>.module:MODULE`; there is no central router list. `auth`, `settings`, and `sharing` are always required.
-- Image installation and runtime activation are separate: `NETSANCTUM_MODULES` selects build dependencies and the installed-module marker, while `ENABLED_MODULES` may only disable installed optional modules. Installed disabled modules are still migrated.
+- System modules (`settings`, `storage`, `sharing`, ...) live one level deeper under `app/modules/system/` but keep flat module ids; the `system` container itself holds no `MODULE` and is skipped, not failed.
+- Image installation and runtime activation are separate: `NETSANCTUM_MODULES` selects build dependencies and the installed-module marker, while `ENABLED_MODULES` may only disable installed optional modules. A non-empty `ENABLED_MODULES` env value overrides the dashboard-persisted `enabled-modules.json`. Installed disabled modules are still migrated.
 
 ## Verification
 
@@ -18,7 +19,7 @@
 ## Coupled Changes
 
 - After changing a bundled module's manifest, dependency extra, or system packages, run `uv lock` when dependencies changed, then `uv run python scripts/module_build.py catalog` and `uv run python scripts/module_build.py check`. `module-build.json` is generated and committed.
-- Template or Python-generated Tailwind class changes require `npm ci && npm run build:css`; commit the resulting `static/tailwind.css`. Tailwind scans `.html` and `.py` under `app/` plus `static/browser-runtime.js` and `static/miku-assistant.js`.
+- Template or Python-generated Tailwind class changes require `npm ci && npm run build:css`; commit the resulting `static/tailwind.css`. Tailwind scans `.html` and `.py` under `app/` plus `static/browser-runtime.js`, `static/miku-assistant.js`, and `static/miku-dashboard.js`.
 - Database-backed modules own independent Alembic histories under their package. Use `uv run python -m app.core.migrations revision <module> -m "..."`, then `upgrade <module>` and `check <module>`; do not use the root Alembic CLI for new module migrations.
 - A migration manifest's `tables` must exactly match that module's current model tables. Move removed table names to `historical_tables`; table ownership is permanent and cannot be reassigned to another module.
 
