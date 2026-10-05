@@ -87,8 +87,8 @@ class LeakDetectorTestCase(unittest.TestCase):
             inbox_public_key=public.hex(),
             wrapped_key="nsk:v1:stub",
             key_salt="c2FsdA",
-            key_kdf="scrypt",
-            key_kdf_params={"n": 256, "r": 8, "p": 1},
+            key_kdf="argon2id",
+            key_kdf_params={"t_cost": 1, "m_cost": 8, "parallelism": 1},
         )
         self.db.add(row)
         self.db.commit()

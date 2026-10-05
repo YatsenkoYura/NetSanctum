@@ -39,13 +39,6 @@ from app.modules.vault.crypto import (
     ARGON2_T_COST,
     ARGON2_T_COST_MAX,
     KDF_NAME,
-    LEGACY_KDF_NAME,
-    SCRYPT_N,
-    SCRYPT_N_MAX,
-    SCRYPT_P,
-    SCRYPT_P_MAX,
-    SCRYPT_R,
-    SCRYPT_R_MAX,
     WRAP_VERSION,
     SealedWrite,
     VaultUnlockError,
@@ -316,45 +309,29 @@ def item_is_sealed(item: VaultItem) -> bool:
 def wrapper_for(collection: VaultCollection) -> WrappedKey:
     """Read back the wrapper, with the cost parameters it was sealed with.
 
-    An empty `key_kdf` means a row written before the column existed. Those were
-    all scrypt, so the default here is the legacy name — defaulting to the current
-    KDF would derive a different key and report a wrong passphrase for every vault
-    created before the upgrade.
+    Argon2id is the only KDF. A row naming anything else — or no KDF at all —
+    is refused: the old scrypt standard was deleted with its data (see
+    scripts/purge_legacy_vaults.py, itself temporary), not migrated.
 
     Cost parameters are capped before anything derives from them: they come from
     the database, and a row claiming gigabytes of Argon2 memory must be refused
     before the KDF allocates, not after.
     """
     params = collection.key_kdf_params or {}
-    kdf = collection.key_kdf or LEGACY_KDF_NAME
-    if collection.wrapped_key and not collection.key_kdf and not params:
-        # Both columns arrived in one migration and are always written together, so
-        # a wrapper with neither name nor cost cannot be read by guessing: the cost
-        # is part of what makes the key. Saying "wrong passphrase" here would send
-        # the owner hunting for a typo instead of at the row.
-        raise VaultUnlockError("This Vault's key wrapper records no derivation cost and cannot be opened")
+    kdf = collection.key_kdf or ""
+    if kdf != KDF_NAME:
+        raise VaultUnlockError(f"Unsupported key derivation {kdf!r}")
     try:
         t_cost = int(params.get("t_cost", ARGON2_T_COST))
         m_cost = int(params.get("m_cost", ARGON2_M_COST))
         parallelism = int(params.get("parallelism", ARGON2_PARALLELISM))
-        n = int(params.get("n", SCRYPT_N))
-        r = int(params.get("r", SCRYPT_R))
-        p = int(params.get("p", SCRYPT_P))
         wrap_version = int(params.get("wrap", 1))
     except (TypeError, ValueError) as error:
         raise VaultUnlockError("This Vault's key wrapper records an unreadable cost") from error
-    if kdf == LEGACY_KDF_NAME:
-        if not (2**8 <= n <= SCRYPT_N_MAX) or n & (n - 1) or not (1 <= r <= SCRYPT_R_MAX):
-            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
-        if not (1 <= p <= SCRYPT_P_MAX):
-            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
-    elif kdf == KDF_NAME:
-        if not (8 <= m_cost <= ARGON2_M_COST_MAX):
-            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
-        if not (1 <= t_cost <= ARGON2_T_COST_MAX) or not (1 <= parallelism <= ARGON2_PARALLELISM_MAX):
-            raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
-    else:
-        raise VaultUnlockError(f"Unsupported key derivation {kdf!r}")
+    if not (8 <= m_cost <= ARGON2_M_COST_MAX):
+        raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
+    if not (1 <= t_cost <= ARGON2_T_COST_MAX) or not (1 <= parallelism <= ARGON2_PARALLELISM_MAX):
+        raise VaultUnlockError("This Vault's key wrapper records an unsafe cost")
     return WrappedKey(
         salt=collection.key_salt or "",
         wrapped=collection.wrapped_key or "",
@@ -363,9 +340,6 @@ def wrapper_for(collection: VaultCollection) -> WrappedKey:
         t_cost=t_cost,
         m_cost=m_cost,
         parallelism=parallelism,
-        n=n,
-        r=r,
-        p=p,
     )
 
 
@@ -975,7 +949,7 @@ async def upgrade_wrapper(session, collection: VaultCollection, private_key: byt
     is the correct outcome, and it is silent — the row already says what it needs.
     """
     params = collection.key_kdf_params or {}
-    if (collection.key_kdf or LEGACY_KDF_NAME) == KDF_NAME and int(params.get("wrap", 1)) >= WRAP_VERSION:
+    if collection.key_kdf == KDF_NAME and int(params.get("wrap", 1)) >= WRAP_VERSION:
         return False
     try:
         wrapped = wrap_data_key(private_key, passphrase, context=context_for("collection", collection.id))

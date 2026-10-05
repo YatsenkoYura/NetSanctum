@@ -24,7 +24,6 @@ from app.core.database import Base
 from app.core.storage import LocalStorage
 from app.modules.vault import sealing
 from app.modules.vault.crypto import (
-    LEGACY_KDF_NAME,
     context_for,
     derive_file_key,
     generate_inbox_keypair,
@@ -44,7 +43,7 @@ from app.modules.vault.sealing import (
     verify_file_url_signature,
 )
 
-SCRYPT = {"kdf": LEGACY_KDF_NAME, "n": 2**8, "r": 8, "p": 1}
+FAST = {"t_cost": 1, "m_cost": 8, "parallelism": 1}
 
 
 class AsyncSessionAdapter:
@@ -112,7 +111,7 @@ def make_sealed_row(db, collection_id=5, passphrase="правильная лош
     row = VaultCollection(id=collection_id, name="Приватное", is_encrypted=True, public_name="Н")
     row.inbox_public_key = base64.b64encode(public).decode()
     store_wrapper(
-        row, wrap_data_key(private, passphrase, context=context_for("collection", collection_id), **SCRYPT)
+        row, wrap_data_key(private, passphrase, context=context_for("collection", collection_id), **FAST)
     )
     db.add(row)
     db.commit()

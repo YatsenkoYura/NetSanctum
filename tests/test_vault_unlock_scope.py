@@ -61,7 +61,14 @@ class PerTabUnlockTests(unittest.TestCase):
         self.session = sessionmaker(bind=engine)()
         self.private_key, self.public_key = generate_inbox_keypair()
         self.collection = VaultCollection(
-            name="Скрытое", is_encrypted=True, public_name="Проект Б", color="teal"
+            name="Скрытое",
+            is_encrypted=True,
+            public_name="Проект Б",
+            color="teal",
+            wrapped_key="nsk:v1:stub",
+            key_salt="c2FsdA",
+            key_kdf="argon2id",
+            key_kdf_params={"t_cost": 1, "m_cost": 8, "parallelism": 1, "wrap": 2},
         )
         self.collection.inbox_public_key = base64.b64encode(self.public_key).decode()
         self.session.add(self.collection)

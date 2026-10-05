@@ -30,7 +30,6 @@ from app.modules.vault.crypto import (
 )
 from app.modules.vault.models import VaultCollection, VaultItem
 from app.modules.vault.sealing import (
-    LEGACY_KDF_NAME,
     VaultRekeyError,
     context_for,
     file_key_for,
@@ -43,7 +42,7 @@ from app.modules.vault.sealing import (
 )
 
 PASSPHRASE = "правильная лошадь, скрепка"
-SCRYPT = {"kdf": LEGACY_KDF_NAME, "n": 2**8, "r": 8, "p": 1}
+FAST = {"t_cost": 1, "m_cost": 8, "parallelism": 1}
 
 
 class FakeRedis:
@@ -120,7 +119,7 @@ class RekeyTests(unittest.TestCase):
         row.inbox_public_key = base64.b64encode(public).decode()
         store_wrapper(
             row,
-            wrap_data_key(private, PASSPHRASE, context=context_for("collection", collection_id), **SCRYPT),
+            wrap_data_key(private, PASSPHRASE, context=context_for("collection", collection_id), **FAST),
         )
         self.session.add(row)
         self.session.commit()

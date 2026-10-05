@@ -6,11 +6,10 @@ Argon2id, and only the wrapper is persisted. Changing the passphrase re-wraps on
 small blob instead of every byte of the collection.
 
 Argon2id runs at RFC 9106's second recommended option — 64 MiB, three passes,
-four lanes. An unlock happens once per tab and then lives in Redis for the
-session, so the cost is paid rarely; an offline guessing attack pays it per
-attempt, forever. The old scrypt parameters are kept in the reader, not the
-writer: a passphrase that opens a vault today must open it after every upgrade,
-or the upgrade is data loss.
+four lanes. An unlock happens once per tab and then lives in Redis for the session,
+so the cost is paid rarely; an offline guessing attack pays it per attempt, forever.
+There is exactly one KDF. Wrappers naming anything else are refused, not migrated:
+the old scrypt standard was deleted with its data rather than carried forward.
 
 No pepper, deliberately. The `vault_collections` row carries the wrapper, its
 salt and its cost and nothing else, so a stolen database is an offline guessing
@@ -23,7 +22,6 @@ decides what makes a passphrase acceptable — that is a product judgement and
 stays with the module that asks.
 """
 
-import hashlib
 import json
 import os
 from dataclasses import dataclass, replace
@@ -40,19 +38,13 @@ class UnlockError(ValueError):
 
 
 WRAPPED_PREFIX = "nsk:v1:"
-
 KDF_NAME = "argon2id"
-# What a wrapper written before this change says about itself. It stays readable
-# for good: a passphrase that opens a vault today must open it after every
-# upgrade, or the upgrade is data loss.
-LEGACY_KDF_NAME = "scrypt"
-SUPPORTED_KDFS = frozenset({KDF_NAME, LEGACY_KDF_NAME})
+
 
 # Argon2id cost: RFC 9106's second recommended option (64 MiB, three passes, four
 # lanes). An unlock happens once per tab and then lives in Redis for the session,
 # so the few hundred milliseconds it costs are paid rarely, while an offline
-# guessing attack pays them per attempt, forever. The old scrypt parameters cost
-# about 100ms — cheap enough that a GPU turned a dictionary into an afternoon.
+# guessing attack pays them per attempt, forever.
 ARGON2_M_COST = 64 * 1024
 ARGON2_T_COST = 3
 ARGON2_PARALLELISM = 4
@@ -66,14 +58,6 @@ ARGON2_PARALLELISM = 4
 ARGON2_M_COST_MAX = 512 * 1024
 ARGON2_T_COST_MAX = 10
 ARGON2_PARALLELISM_MAX = 16
-SCRYPT_N_MAX = 2**20
-SCRYPT_R_MAX = 32
-SCRYPT_P_MAX = 8
-
-# scrypt parameters, kept only to read wrappers that were written with them.
-SCRYPT_N = 2**15
-SCRYPT_R = 8
-SCRYPT_P = 1
 SALT_BYTES = 16
 DEK_BYTES = 32
 # The fallback associated-data context. Callers that know which collection the
@@ -99,19 +83,9 @@ class WrappedKey:
     t_cost: int = ARGON2_T_COST
     m_cost: int = ARGON2_M_COST
     parallelism: int = ARGON2_PARALLELISM
-    # scrypt, for wrappers written before Argon2id
-    n: int = SCRYPT_N
-    r: int = SCRYPT_R
-    p: int = SCRYPT_P
 
     def params(self) -> dict[str, int]:
-        """The cost parameters worth persisting for this KDF.
-
-        Only the ones its own KDF reads. Storing scrypt's n/r/p next to an Argon2id
-        wrapper would suggest they had a say in how it was sealed.
-        """
-        if self.kdf == LEGACY_KDF_NAME:
-            return {"n": self.n, "r": self.r, "p": self.p}
+        """The cost parameters worth persisting for this KDF."""
         return {"t_cost": self.t_cost, "m_cost": self.m_cost, "parallelism": self.parallelism}
 
 
@@ -170,42 +144,28 @@ def _passphrase_bytes(passphrase: str) -> bytes:
 
 def _check_kdf_cost(kdf: str, cost: dict[str, int]) -> None:
     """Refuse absurd cost parameters before deriving, without allocating."""
-    if kdf == LEGACY_KDF_NAME:
-        n = cost.get("n", SCRYPT_N)
-        r = cost.get("r", SCRYPT_R)
-        p = cost.get("p", SCRYPT_P)
-        # Floor is the test cost (2**8), not the production cost (2**15): the
-        # fixtures prove old vaults keep opening, and they must stay cheap.
-        if not (2**8 <= n <= SCRYPT_N_MAX) or n & (n - 1):
-            raise UnlockError("Unsupported key derivation cost")
-        if not (1 <= r <= SCRYPT_R_MAX) or not (1 <= p <= SCRYPT_P_MAX):
-            raise UnlockError("Unsupported key derivation cost")
-        return
-    if kdf == KDF_NAME:
-        m = cost.get("m_cost", ARGON2_M_COST)
-        t = cost.get("t_cost", ARGON2_T_COST)
-        par = cost.get("parallelism", ARGON2_PARALLELISM)
-        if not (8 <= m <= ARGON2_M_COST_MAX):
-            raise UnlockError("Unsupported key derivation cost")
-        if not (1 <= t <= ARGON2_T_COST_MAX):
-            raise UnlockError("Unsupported key derivation cost")
-        if not (1 <= par <= ARGON2_PARALLELISM_MAX):
-            raise UnlockError("Unsupported key derivation cost")
-        return
+    if kdf != KDF_NAME:
+        raise UnlockError(f"Unsupported key derivation {kdf!r}")
+    m = cost.get("m_cost", ARGON2_M_COST)
+    t = cost.get("t_cost", ARGON2_T_COST)
+    par = cost.get("parallelism", ARGON2_PARALLELISM)
+    if not (8 <= m <= ARGON2_M_COST_MAX):
+        raise UnlockError("Unsupported key derivation cost")
+    if not (1 <= t <= ARGON2_T_COST_MAX):
+        raise UnlockError("Unsupported key derivation cost")
+    if not (1 <= par <= ARGON2_PARALLELISM_MAX):
+        raise UnlockError("Unsupported key derivation cost")
 
 
-def _normalize_alias(passphrase: str) -> str:
-    import unicodedata
-
-    return unicodedata.normalize("NFC", passphrase)
-
-
-def _derive_with_raw(raw: bytes, salt: bytes, *, kdf: str, cost: dict[str, int]) -> bytes:
-    if kdf == LEGACY_KDF_NAME:
-        n, r, p = cost.get("n", SCRYPT_N), cost.get("r", SCRYPT_R), cost.get("p", SCRYPT_P)
-        return hashlib.scrypt(raw, salt=salt, n=n, r=r, p=p, dklen=DEK_BYTES, maxmem=132 * n * r * 2)
+def derive_kek(passphrase: str, salt: bytes, *, kdf: str = KDF_NAME, **cost: int) -> bytes:
+    """Stretch the passphrase into a key-encryption key, at the cost the wrapper names."""
+    if not passphrase:
+        raise UnlockError("A passphrase is required")
+    if kdf != KDF_NAME:
+        raise UnlockError(f"Unsupported key derivation {kdf!r}")
+    _check_kdf_cost(kdf, cost)
     return argon2.low_level.hash_secret_raw(
-        raw,
+        _passphrase_bytes(passphrase),
         salt,
         time_cost=cost.get("t_cost", ARGON2_T_COST),
         memory_cost=cost.get("m_cost", ARGON2_M_COST),
@@ -213,40 +173,6 @@ def _derive_with_raw(raw: bytes, salt: bytes, *, kdf: str, cost: dict[str, int])
         hash_len=DEK_BYTES,
         type=argon2.low_level.Type.ID,
     )
-
-
-def derive_kek_raw(passphrase: str, salt: bytes, *, kdf: str = KDF_NAME, **cost: int) -> bytes:
-    """Derive without NFC normalization: fallback for pre-normalization wrappers."""
-    if not passphrase:
-        raise UnlockError("A passphrase is required")
-    if kdf not in SUPPORTED_KDFS:
-        raise UnlockError(f"Unsupported key derivation {kdf!r}")
-    _check_kdf_cost(kdf, cost)
-    return _derive_with_raw(passphrase.encode("utf-8"), salt, kdf=kdf, cost=cost)
-
-
-def derive_kek(passphrase: str, salt: bytes, *, kdf: str = KDF_NAME, **cost: int) -> bytes:
-    """Stretch the passphrase into a key-encryption key, at the cost the wrapper names."""
-    if not passphrase:
-        raise UnlockError("A passphrase is required")
-    if kdf not in SUPPORTED_KDFS:
-        raise UnlockError(f"Unsupported key derivation {kdf!r}")
-    _check_kdf_cost(kdf, cost)
-    raw = _passphrase_bytes(passphrase)
-    if kdf == LEGACY_KDF_NAME:
-        n, r, p = cost.get("n", SCRYPT_N), cost.get("r", SCRYPT_R), cost.get("p", SCRYPT_P)
-        return hashlib.scrypt(raw, salt=salt, n=n, r=r, p=p, dklen=DEK_BYTES, maxmem=132 * n * r * 2)
-    if kdf == KDF_NAME:
-        return argon2.low_level.hash_secret_raw(
-            raw,
-            salt,
-            time_cost=cost.get("t_cost", ARGON2_T_COST),
-            memory_cost=cost.get("m_cost", ARGON2_M_COST),
-            parallelism=cost.get("parallelism", ARGON2_PARALLELISM),
-            hash_len=DEK_BYTES,
-            type=argon2.low_level.Type.ID,
-        )
-    raise UnlockError(f"Unsupported key derivation {kdf!r}")
 
 
 def new_data_key() -> bytes:
@@ -258,23 +184,15 @@ def wrap_data_key(
     passphrase: str,
     *,
     context: bytes = DEK_CONTEXT,
-    kdf: str = KDF_NAME,
     **cost: int,
 ) -> WrappedKey:
-    """Wrap a data key under a passphrase and return only what is safe to persist.
-
-    New wrappers always use Argon2id. `kdf="scrypt"` still writes because the
-    test fixtures need legacy-shaped wrappers to prove old vaults keep opening;
-    production code never passes it.
-    """
+    """Wrap a data key under a passphrase and return only what is safe to persist."""
     if len(dek) != DEK_BYTES:
         raise ValueError("A data key must be 32 bytes")
-    if kdf not in SUPPORTED_KDFS:
-        raise UnlockError(f"Unsupported key derivation {kdf!r}")
-    _check_kdf_cost(kdf, cost)
+    _check_kdf_cost(KDF_NAME, cost)
     # The wrapper is built first, so the cost it carries is the cost used. Deriving
     # with one set of parameters and persisting another would lock the owner out.
-    wrapper = WrappedKey(salt="", wrapped="", kdf=kdf, wrap_version=WRAP_VERSION, **cost)
+    wrapper = WrappedKey(salt="", wrapped="", kdf=KDF_NAME, wrap_version=WRAP_VERSION, **cost)
     salt = os.urandom(SALT_BYTES)
     kek = derive_kek(passphrase, salt, **wrapper.params(), kdf=wrapper.kdf)
     nonce = os.urandom(12)
@@ -284,26 +202,13 @@ def wrap_data_key(
 
 
 def unwrap_data_key(wrapped: WrappedKey, passphrase: str, *, context: bytes = DEK_CONTEXT) -> bytes:
-    """Recover the DEK. Raises UnlockError for any wrong passphrase."""
-    # An unknown KDF is refused rather than assumed: guessing here would derive the
-    # wrong key and report a wrong passphrase, which sends the owner looking for a
-    # typo instead of at the upgrade that changed the derivation.
-    if wrapped.kdf not in SUPPORTED_KDFS:
+    """Recover the DEK. Raises UnlockError for any wrong passphrase or foreign wrapper."""
+    if wrapped.kdf != KDF_NAME:
         raise UnlockError(f"Unsupported key derivation {wrapped.kdf!r}")
     if not wrapped.wrapped.startswith(WRAPPED_PREFIX):
         raise UnlockError("The stored key wrapper is malformed")
-    try:
-        kek, salt = kek_for_wrapper(wrapped, passphrase)
-        return unwrap_with_kek(wrapped, kek, salt, context)
-    except UnlockError:
-        # Wrappers written before NFC normalization used the raw bytes. New wraps
-        # are always normalized, so only pre-v2 wrappers get a second attempt
-        # with the un-normalized spelling — paid only when the first fails.
-        if wrapped.wrap_version >= WRAP_VERSION or passphrase == _normalize_alias(passphrase):
-            raise
-        salt = decode_b64(wrapped.salt)
-        kek = derive_kek_raw(passphrase, salt, kdf=wrapped.kdf, **wrapped.params())
-        return unwrap_with_kek(wrapped, kek, salt, context)
+    kek, salt = kek_for_wrapper(wrapped, passphrase)
+    return unwrap_with_kek(wrapped, kek, salt, context)
 
 
 def unwrap_with_kek(wrapped: WrappedKey, kek: bytes, salt: bytes, context: bytes) -> bytes:
@@ -321,15 +226,13 @@ def unwrap_with_kek(wrapped: WrappedKey, kek: bytes, salt: bytes, context: bytes
     except ValueError as error:
         raise UnlockError("The stored key wrapper is malformed") from error
     # Exactly nonce (12) + DEK (32) + tag (16): anything else is truncation or
-    # concatenation, never a wrapper.
+    # concatenation, never a wrapper. Pre-v2 wrappers bound only `context` and
+    # are refused outright: the old standard was deleted with its data.
     if len(raw) != 12 + DEK_BYTES + 16:
         raise UnlockError("The stored key wrapper is malformed")
-    if wrapped.wrap_version >= WRAP_VERSION:
-        aad = wrap_aad(context, kdf=wrapped.kdf, params=wrapped.params(), salt=salt)
-    else:
-        # Wrappers from before the versioned AAD bound only `context`. They open
-        # as they always did, and the next unlock re-wraps them into v2.
-        aad = context
+    if wrapped.wrap_version < WRAP_VERSION:
+        raise UnlockError("The stored key wrapper uses a retired format")
+    aad = wrap_aad(context, kdf=wrapped.kdf, params=wrapped.params(), salt=salt)
     try:
         dek = AESGCM(kek).decrypt(raw[:12], raw[12:], aad)
     except InvalidTag as exc:

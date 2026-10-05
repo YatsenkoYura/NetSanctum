@@ -5,7 +5,6 @@ import unittest
 
 from app.modules.vault.crypto import (
     KDF_NAME,
-    LEGACY_KDF_NAME,
     PAYLOAD_PREFIX,
     WRAPPED_PREFIX,
     VaultUnlockError,
@@ -20,8 +19,6 @@ from app.modules.vault.crypto import (
 # Cheap KDF parameters: the real cost is validated separately, these keep the
 # suite fast without changing the code path.
 FAST = {"t_cost": 1, "m_cost": 8, "parallelism": 1}
-# What a wrapper sealed before the Argon2id switch looks like.
-SCRYPT_FAST = {"kdf": LEGACY_KDF_NAME, "n": 2**8, "r": 8, "p": 1}
 
 
 class DataKeyTests(unittest.TestCase):
@@ -80,11 +77,7 @@ class DataKeyTests(unittest.TestCase):
 
 
 class Argon2idTests(unittest.TestCase):
-    """The derivation moved to Argon2id; what must not move is the passphrase.
-
-    A vault sealed under scrypt has to keep opening with the same words after the
-    change, or the change is data loss with a confusing error attached.
-    """
+    """Argon2id is the one and only KDF. Anything else is refused, not migrated."""
 
     def test_a_new_wrapper_says_argon2id(self):
         wrapped = wrap_data_key(new_data_key(), "pass", **FAST)
@@ -95,21 +88,13 @@ class Argon2idTests(unittest.TestCase):
         self.assertEqual(
             {"t_cost": 1, "m_cost": 8, "parallelism": 1},
             wrapped.params(),
-            "scrypt's n/r/p must not travel with an Argon2id wrapper: they would "
-            "read as if they had a say in how it was sealed",
         )
 
-    def test_a_legacy_scrypt_wrapper_still_opens(self):
-        dek = new_data_key()
-        wrapped = wrap_data_key(dek, "old passphrase", **SCRYPT_FAST)
-        self.assertEqual(LEGACY_KDF_NAME, wrapped.kdf)
-        self.assertEqual({"n": 2**8, "r": 8, "p": 1}, wrapped.params())
-        self.assertEqual(dek, unwrap_data_key(wrapped, "old passphrase"))
-
-    def test_a_legacy_wrapper_still_rejects_a_wrong_passphrase(self):
-        wrapped = wrap_data_key(new_data_key(), "old passphrase", **SCRYPT_FAST)
+    def test_a_retired_scrypt_wrapper_is_refused(self):
+        wrapped = wrap_data_key(new_data_key(), "old passphrase", **FAST)
+        object.__setattr__(wrapped, "kdf", "scrypt")
         with self.assertRaises(VaultUnlockError):
-            unwrap_data_key(wrapped, "not it")
+            unwrap_data_key(wrapped, "old passphrase")
 
     def test_the_default_cost_is_the_one_we_chose(self):
         """Not a performance test: it pins the parameters a vault is sealed at.
@@ -122,22 +107,13 @@ class Argon2idTests(unittest.TestCase):
         self.assertEqual(3, wrapped.t_cost)
         self.assertEqual(4, wrapped.parallelism)
 
-    def test_the_two_kdfs_do_not_derive_the_same_key(self):
-        """Otherwise a wrapper could be relabelled and appear to open."""
-        dek = new_data_key()
-        argon = wrap_data_key(dek, "same words", **FAST)
-        scrypt = wrap_data_key(dek, "same words", **SCRYPT_FAST)
-        object.__setattr__(argon, "wrapped", scrypt.wrapped)
-        with self.assertRaises(VaultUnlockError):
-            unwrap_data_key(argon, "same words")
-
 
 class WrapAadTests(unittest.TestCase):
     """The wrapper is bound to what it was sealed with, not just to the passphrase."""
 
-    def test_a_wrapper_from_before_the_versioned_aad_still_opens(self):
-        """Rows sealed before R2 bound only `context`. They must keep opening with
-        the passphrase they were created with — and the next unlock re-wraps them."""
+    def test_a_wrapper_from_before_the_versioned_aad_is_refused(self):
+        """Rows sealed before the versioned AAD bound only `context`. The old
+        standard was deleted with its data, so they are refused, not opened."""
         import base64
 
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -165,11 +141,12 @@ class WrapAadTests(unittest.TestCase):
             m_cost=8,
             parallelism=1,
         )
-        self.assertEqual(dek, unwrap_data_key(legacy, "old words"))
+        with self.assertRaises(VaultUnlockError):
+            unwrap_data_key(legacy, "old words")
 
     def test_renaming_the_kdf_breaks_the_wrapper(self):
         wrapped = wrap_data_key(new_data_key(), "pass", **FAST)
-        object.__setattr__(wrapped, "kdf", LEGACY_KDF_NAME)
+        object.__setattr__(wrapped, "kdf", "scrypt")
         with self.assertRaises(VaultUnlockError):
             unwrap_data_key(wrapped, "pass")
 
