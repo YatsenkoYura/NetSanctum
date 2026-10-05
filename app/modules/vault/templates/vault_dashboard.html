@@ -1649,7 +1649,11 @@ function openMoveCardMenu(event, cardId, element) {
     if (!target.is_encrypted && card.is_sealed) return;
     targets.push({ id: Number(key), name: target.name });
   });
-  if (targets.length === 1) return showToast('Карточке некуда переноситься', true);
+  // The "no space" placeholder is not a real target: a plain card with only it
+  // still has nowhere to go, and a sealed card never gets it at all — so a
+  // single real target (sealed into sealed) must open the menu, not the toast.
+  const hasRealTarget = targets.some(target => target.id !== null);
+  if (!hasRealTarget) return showToast('Карточке некуда переноситься', true);
 
   const body = document.getElementById('ws-move-options');
   body.innerHTML = targets.map(target =>
