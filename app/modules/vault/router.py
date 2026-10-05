@@ -3,7 +3,7 @@ import random
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -104,6 +104,7 @@ from app.modules.vault.services import (
     list_vault_package_items,
     merge_collections,
     place_new_space,
+    queue_finalize_blind_media,
     queue_video_download,
     reorder_card,
     reorder_space,
@@ -442,6 +443,11 @@ async def get_item_media(
     item = await get_vault_item(db, item_id)
     if not item or not item.media_path:
         raise HTTPException(status_code=404, detail="Vault media not found")
+    if getattr(item, "media_key_wrap", None):
+        # Blind, not locked — but equally unplayable: the bytes are under the
+        # download's own item key until the finalize on the next unlock re-seals
+        # them. 423 like a locked file, so the card shows one gate, not two.
+        raise HTTPException(status_code=423, detail="Видео ещё шифруется — откройте Vault, чтобы завершить")
     _assert_media_path_belongs_to(item, item.media_path)
     collection = await collection_for(db, item.collection_id)
     await _require_media_access(collection, item, unlock_token, sig, exp)
@@ -603,6 +609,12 @@ async def attach_media_url(serialized: dict, item, *, locked: bool) -> dict:
     serialized["media_url"] = None
     if locked or not getattr(item, "sealed_payload", None) or not getattr(item, "media_path", None):
         return serialized
+    if getattr(item, "media_key_wrap", None):
+        # A blind file is stored but under its own item key, not the
+        # collection's — so no signed URL until the finalize re-seals it. The
+        # player would get a 423 on the first range anyway; refusing the URL
+        # says so up front, in one place.
+        return serialized
     epoch = await media_epoch(getattr(item, "collection_id", None))
     expires, signature = sign_file_url(item.collection_id, item.id, "media", item.media_path, epoch)
     serialized["media_url"] = f"/api/vault/items/{item.id}/media?exp={expires}&sig={signature}"
@@ -639,6 +651,8 @@ async def get_item_thumbnail(
     item = await get_vault_item(db, item_id)
     if not item or not item.media_thumbnail_path:
         raise HTTPException(status_code=404, detail="Vault thumbnail not found")
+    if getattr(item, "media_key_wrap", None):
+        raise HTTPException(status_code=423, detail="Видео ещё шифруется — откройте Vault, чтобы завершить")
     path = item.media_thumbnail_path
     _assert_media_path_belongs_to(item, path)
     file_key = await _require_file_access(await collection_for(db, item.collection_id), unlock_token)
@@ -920,6 +934,22 @@ async def retry_video_download(
         raise HTTPException(status_code=404, detail="Vault item not found")
     if item.node_type != "video":
         raise HTTPException(status_code=422, detail="Только видеозапись можно поставить на загрузку")
+    if getattr(item, "media_key_wrap", None):
+        # The bytes are already home — only the re-seal under the collection's
+        # file key is missing — so there is nothing to download. The finalize
+        # still needs this tab's token, hence the 423 while locked rather than
+        # a silent queue that could never open the wrap.
+        collection = await collection_for(db, item.collection_id)
+        if (
+            collection is None
+            or not is_sealed_collection(collection)
+            or await data_key_for(collection, unlock_token) is None
+        ):
+            raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы завершить шифрование")
+        task_id = await queue_finalize_blind_media(collection.id, unlock_token)
+        if task_id is None:
+            raise HTTPException(status_code=503, detail="Не удалось поставить финализацию в очередь")
+        return {"status": "ok", "task_id": task_id}
     collection = await collection_for(db, item.collection_id)
     worker_token = None
     url, title = item.url, item.title
@@ -1119,6 +1149,18 @@ async def unlock_collection_route(
         await record_unlock_failure(collection.id, client_ip)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     await clear_unlock_failures(collection.id, client_ip)
+    # Blind media waits for exactly this moment: files the worker stored under
+    # their own item keys — wrapped on each row — are re-sealed under the
+    # collection's file key by a worker holding this tab's token. Queued only
+    # when there is anything to do, and fire-and-forget: a finalize that never
+    # runs leaves the rows blind for the next unlock, never half-stored.
+    blind = await db.scalar(
+        select(func.count())
+        .select_from(VaultItem)
+        .where(VaultItem.collection_id == collection.id, VaultItem.media_key_wrap.is_not(None))
+    )
+    if blind:
+        await queue_finalize_blind_media(collection.id, token)
     return VaultUnlockResponse(
         collection_id=collection.id,
         name=collection.name,
@@ -1436,6 +1478,8 @@ async def get_sealed_media(
         raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы выгрузить пакет")
     if not (item.media_path or item.image_path):
         raise HTTPException(status_code=404, detail="Vault media not found")
+    if getattr(item, "media_key_wrap", None):
+        raise HTTPException(status_code=423, detail="Видео ещё шифруется — откройте Vault, чтобы завершить")
     try:
         body = iter_sealed_media(
             package_dek_for(private_key, collection.id),

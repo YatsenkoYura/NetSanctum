@@ -86,6 +86,13 @@ async def sealed_package_resources(session, collection: VaultCollection) -> list
     for item in rows:
         if not (item.image_path or item.media_path):
             continue
+        if item.media_path and item.media_key_wrap:
+            # Blind, not finalized: the bytes are under the download's own item
+            # key, so neither the file key here nor the package DEK can open
+            # them. The card travels in the snapshot with `has_media` false and
+            # rejoins the package after the next unlock finalizes it — shipping
+            # a resource nobody can open would be worse than shipping none.
+            continue
         mime = item.media_mime or "video/mp4"
         if item.image_path and not item.media_path:
             mime = media_type_for(item.image_path)
@@ -111,7 +118,9 @@ def open_snapshot_item(private_key: bytes, item: VaultItem) -> dict:
             "size": opened.media_size,
             "status": opened.media_status,
             "has_image": bool(opened.image_path),
-            "has_media": bool(opened.media_path),
+            # A blind video is stored but unopenable until the finalize: report
+            # no media rather than a resource the manifest deliberately omits.
+            "has_media": bool(opened.media_path) and not opened.media_key_wrap,
         }
     return {
         "id": opened.id,
@@ -153,6 +162,8 @@ def iter_sealed_media(dek: bytes, package_id: str, item: VaultItem, file_key: by
     it has one, else its image. Posters are never served sealed — a sealed
     package has no previews.
     """
+    if getattr(item, "media_key_wrap", None):
+        raise ValueError("The card's media is blind until the finalize re-seals it")
     storage = get_storage()
     path = item.media_path or item.image_path
     if not path:

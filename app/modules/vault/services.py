@@ -44,6 +44,12 @@ MEDIA_HANDOFF_PREFIX = "vault_media_handoff"
 # Long enough for a worker to pick the task up from a backlog, short enough that a
 # stranded handoff is not a plaintext copy of the card sitting around for a day.
 MEDIA_HANDOFF_TTL_SECONDS = 1800
+# One-shot handoff of an unlock token to the blind-media finalize worker. Carries
+# no url and no title — only the sealed token box — so it gets its own prefix
+# rather than sharing the download handoff's shape.
+FINALIZE_HANDOFF_PREFIX = "vault_finalize_handoff"
+# Tracked finalize progress, per collection.
+FINALIZE_PROGRESS_PREFIX = "vault_finalize"
 
 # NOTE: embedded-image helpers are owned by images.py; these aliases keep existing
 # `from app.modules.vault.services import decode_data_image` imports working.
@@ -322,6 +328,64 @@ async def take_download_handoff(handoff: str) -> dict:
         return {}
 
 
+async def queue_finalize_blind_media(collection_id: int, unlock_token: str) -> str | None:
+    """Run the blind-media finalize for a collection the owner just unlocked.
+
+    The unlocking tab lends its token through a one-shot handoff — sealed under
+    the server key, never in the task arguments — so the worker can open each
+    blind wrap and re-seal the file under the collection's file key. Fire and
+    forget: a finalize that never runs leaves the rows blind, and the next
+    unlock queues another one. Returns the task id, or None when there is no
+    worker to take it.
+    """
+    handoff = secrets.token_urlsafe(18)
+    try:
+        from app.core.task_dispatch import dispatch_tracked_async
+        from app.modules.vault.sealing import seal_handoff_token
+        from app.modules.vault.tasks import finalize_blind_media_task
+
+        await redis_client.setex(
+            f"{FINALIZE_HANDOFF_PREFIX}:{handoff}",
+            MEDIA_HANDOFF_TTL_SECONDS,
+            json.dumps({"token_box": seal_handoff_token(handoff, unlock_token)}),
+        )
+        task = await dispatch_tracked_async(
+            finalize_blind_media_task,
+            redis_client,
+            FINALIZE_PROGRESS_PREFIX,
+            {"collection_id": collection_id, "status": "queued"},
+            kwargs={"collection_id": collection_id, "handoff": handoff},
+        )
+    except TypeError:
+        logger.error("the Vault finalize task is not a registered Celery task", exc_info=True)
+        return None
+    except Exception:
+        logger.warning("could not queue a blind-media finalize for vault %s", collection_id, exc_info=True)
+        try:
+            await redis_client.delete(f"{FINALIZE_HANDOFF_PREFIX}:{handoff}")
+        except Exception:
+            logger.debug("could not drop a stranded finalize handoff", exc_info=True)
+        return None
+    return task.id
+
+
+async def take_finalize_handoff(handoff: str) -> dict:
+    """Read and immediately destroy the handoff for a queued finalize.
+
+    Same one-shot rule as downloads: the sealed token box is readable only
+    through this call, once, and then it is gone.
+    """
+    if not handoff:
+        return {}
+    raw = await redis_client.getdel(f"{FINALIZE_HANDOFF_PREFIX}:{handoff}")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+
+
 def resolve_download_file_key(handoff_id: str, handoff_data: dict, item_id: int) -> bytes | None:
     """The file key for a queued download, when the queueing tab was unlocked.
 
@@ -410,33 +474,24 @@ async def create_video_capture_item(
             auto_fetch_og=capture.auto_fetch_og,
         ),
     )
-    sealed_here = False
-    if item.collection_id is not None:
-        collection_row = await session.get(VaultCollection, item.collection_id)
-        sealed_here = bool(getattr(collection_row, "is_encrypted", False))
-    task_id = None
-    if sealed_here:
-        # No download for a sealed collection: the worker would have nowhere to
-        # put the bytes except the shared application key, which is the thing the
-        # file key exists to stop. The address and the title are already inside
-        # the sealed payload, so the card is complete — it just has no video yet,
-        # and says so. The owner starts it from an unlocked tab, where the token
-        # travels with the request and the file lands under the vault's key.
-        item.media_status = "pending_unlock"
-    else:
-        task_id = await queue_video_download(
-            session,
-            item.id,
-            str(capture.video_url),
-            quality=capture.quality,
-            title=capture.title,
-        )
+    # Queued unconditionally, sealed or not, and with no unlock token: a sealed
+    # collection's video lands as a blind write — encrypted under a random item
+    # key whose wrap sits on the row — and the next unlock re-seals it under the
+    # collection's file key. The address and the title are already inside the
+    # sealed payload, and the bytes join them without anyone's passphrase
+    # leaving its tab.
+    task_id = await queue_video_download(
+        session,
+        item.id,
+        str(capture.video_url),
+        quality=capture.quality,
+        title=capture.title,
+    )
     # Structural column, like `media_path`: `canvas_data` is a sealed field, so a
     # write there was silently dropped for a locked collection and visible in the
     # clear before that. The task id used to sit here too — write-only, read by
     # nothing, and it expired within a day anyway.
-    if not sealed_here:
-        item.media_status = "queued" if task_id else "not queued"
+    item.media_status = "queued" if task_id else "not queued"
     await session.commit()
     return item
 

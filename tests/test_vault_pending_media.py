@@ -1,14 +1,16 @@
-"""A sealed collection's video is downloaded only by somebody who holds its key.
+"""A sealed collection's video used to wait for somebody who holds its key.
 
-The browser extension cannot: it has no passphrase, so it creates the card with
-the address and the title already inside the sealed payload and stops. The
-download happens when the owner asks from an unlocked tab, which lends the
-worker the token it needs, and the file lands under the collection's file key at
-a fresh path that names the row it belongs to.
+The browser extension has no passphrase, so it creates the card with the
+address and the title already inside the sealed payload and stops. That wait
+is `pending_unlock`: the card is complete, it just has no video yet, and an
+unlocked tab starts the download the worker then stores under the vault's key.
 
-These tests pin that arrangement and, just as importantly, the refusal in the
-middle of it: a sealed video with no key has nowhere to go, and parking it under
-the shared application key — which is what happened before — is the whole reason
+New captures no longer wait at all — the worker stores them at once as blind
+writes (see `tests/test_vault_blind_media.py`) — but rows parked before that
+change, and collections whose inbox key is unusable, still travel this path.
+These tests pin the status and, just as importantly, the refusal in the middle
+of it: a sealed video with no key has nowhere to go, and parking it under the
+shared application key — which is what happened before — is the whole reason
 the file key exists.
 """
 

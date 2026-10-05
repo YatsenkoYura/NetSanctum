@@ -1511,23 +1511,28 @@ function openMediaView(item) {
   const stillUrl = (directPoster && !isVaultFileUrl(directPoster)) ? directPoster : (filePoster || (isVaultFileUrl(directPoster) ? directPoster : ''));
   const isVideo = card.node_type === 'video';
   // Only a card that actually holds bytes plays. Otherwise say what is going on
-  // rather than showing a player that will never load.
-  const playable = isVideo && card.has_media;
+  // rather than showing a player that will never load. A blind file holds
+  // bytes too — under its own item key — but no player can open them until the
+  // finalize re-seals them, so it takes the status branch, not the player.
+  const playable = isVideo && card.has_media && card.media_status !== 'blind';
 
   if (isVideo && !playable) {
     const status = card.media_status || (card.is_locked ? 'locked' : 'ожидает');
     const failed = String(card.media_status || '').startsWith('error:');
+    const blind = card.media_status === 'blind';
     // A failed, never-queued or parked download can be asked again — from an
-    // unlocked tab, so the worker stores under the file key this time. While
-    // locked the attempt opens the unlock dialog instead (mutationJson maps
-    // the 423).
-    const canRetry = failed || card.media_status === 'not queued' || card.media_status === 'pending_unlock';
+    // unlocked tab, so the worker stores under the file key this time. A blind
+    // file needs no download, only the finalize, which still needs the tab's
+    // token. While locked either attempt opens the unlock dialog instead
+    // (mutationJson maps the 423).
+    const canRetry = failed || card.media_status === 'not queued' || card.media_status === 'pending_unlock' || blind;
+    const retryLabel = blind ? '↻ Завершить шифрование' : '↻ Повторить загрузку';
     stage.innerHTML = `
       <div class="text-center px-6 py-10 space-y-2">
         ${card.is_locked ? `<div class="text-3xl">🔒</div>` : ''}
         ${posterAttr ? `<img src="${escapeAttr(posterAttr)}" class="max-h-[40vh] mx-auto opacity-60">` : ''}
         <div class="text-xs text-zinc-400 font-mono">${escapeHtml(statusLabel(status))}</div>
-        ${canRetry ? `<button data-net-action="retryVideoDownload" data-net-args='[${item.id}]' class="text-teal-400 hover:text-white text-xs font-mono uppercase">↻ Повторить загрузку</button>` : ''}
+        ${canRetry ? `<button data-net-action="retryVideoDownload" data-net-args='[${item.id}]' class="text-teal-400 hover:text-white text-xs font-mono uppercase">${retryLabel}</button>` : ''}
       </div>`;
   } else if (isVideo) {
     const duration = formatDuration(card.media_duration);
@@ -1549,14 +1554,16 @@ function openMediaView(item) {
 }
 
 /* Re-queue a video from an unlocked tab, so the worker stores under the file
-   key. The header travels with the request, which is what lends the token. */
+   key — or, for a blind file, run the finalize that re-seals the stored bytes
+   under it. The header travels with the request, which is what lends the
+   token. */
 async function retryVideoDownload(id) {
   const done = await mutationJson(`/api/vault/items/${pathSegment(id)}/video/retry`, {method: 'POST'}, 'Не удалось поставить загрузку');
   if (!done) return;
   const card = window._vaultCache[id];
-  if (card) card.media_status = 'queued';
+  if (card && card.media_status !== 'blind') card.media_status = 'queued';
   openMediaView({id});
-  showToast('Загрузка поставлена в очередь');
+  showToast(card && card.media_status === 'blind' ? 'Финализация поставлена в очередь' : 'Загрузка поставлена в очередь');
 }
 
 /* A failed download leaves a code, never a message: `media_status` is readable
@@ -1585,7 +1592,7 @@ function statusLabel(status) {
     return `Не удалось: ${MEDIA_ERROR_LABELS[code] || MEDIA_ERROR_LABELS.unknown}`;
   }
   // Internal words never reach the card as-is.
-  const labels = { queued: 'В очереди на загрузку', completed: 'Готово', 'not queued': 'Загрузка не запущена', locked: 'Зашифровано — разблокируйте Vault' };
+  const labels = { queued: 'В очереди на загрузку', completed: 'Готово', 'not queued': 'Загрузка не запущена', locked: 'Зашифровано — разблокируйте Vault', blind: 'Видео загружено — откройте Vault для финализации', pending_unlock: 'Ожидает разблокировки для загрузки' };
   return labels[text] || text;
 }
 

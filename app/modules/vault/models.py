@@ -104,6 +104,13 @@ class VaultItem(Base):
     # The poster, encrypted with the application file key exactly like `image_path`
     # and the video itself.
     media_thumbnail_path = Column(String, nullable=True)
+    # A blind media write's item key, wrapped under the collection's inbox public
+    # key (`kind="media"`, this row's id). Set while the stored file is encrypted
+    # under that item key instead of the collection's file key — i.e. downloaded
+    # by a worker that had no vault key — and cleared by the finalize that runs
+    # on the next unlock. A row that still has it is unplayable, not weakly
+    # stored: the endpoints refuse it like a locked file.
+    media_key_wrap = Column(Text, nullable=True)
 
     # For an item in a sealed collection, everything the owner wrote lives here as
     # one AEAD blob and the readable columns above stay empty. Structural columns
