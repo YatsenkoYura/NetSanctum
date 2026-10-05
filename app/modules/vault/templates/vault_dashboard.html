@@ -3251,51 +3251,51 @@ function vaultSidebarRow(collection, depth, hasChildren) {
     count.className = 'text-[9px] text-zinc-600 font-bold';
     count.textContent = collection.items_count;
     right.append(count);
-    const nest = document.createElement('button');
-    nest.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
-    nest.title = 'Вложить в другое пространство…';
-    nest.textContent = '⇥';
-    nest.addEventListener('click', event => {
-      event.stopPropagation();
-      openNestMenu(event, collection.id, event.currentTarget);
-    });
-    right.append(nest);
-    // A folder — a space with a parent — carries the way back out. It dissolves
-    // rather than deletes: what was inside moves up and keeps this row's place.
-    if (collection.parent_id !== null) {
-      const dissolve = document.createElement('button');
-      dissolve.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
-      dissolve.title = 'Распустить папку';
-      dissolve.textContent = '✕';
-      dissolve.addEventListener('click', event => {
-        event.stopPropagation();
-        dissolveSpace(collection);
-      });
-      right.append(dissolve);
-    }
-    const move = document.createElement('button');
-    move.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
-    move.title = 'Слить в другой воркспейс…';
-    move.textContent = '⋯';
-    move.addEventListener('click', event => {
-      event.stopPropagation();
-      openMoveMenu(event, collection.id);
-    });
-    right.append(move);
-    // Destroying a space is separate from dissolving a folder and from merging
-    // one: everything inside goes with it, files included, and there is no way
-    // back. Sealed spaces ask for the passphrase, which is why this is behind
-    // its own button rather than folded into the merge menu.
-    const remove = document.createElement('button');
-    remove.className = 'text-red-800 hover:text-red-400 text-xs px-1 leading-none';
-    remove.title = 'Удалить воркспейс вместе со всем содержимым';
-    remove.textContent = '␡';
-    remove.addEventListener('click', event => {
-      event.stopPropagation();
-      deleteSpace(collection);
-    });
-    right.append(remove);
   }
+  const nest = document.createElement('button');
+  nest.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+  nest.title = 'Вложить в другое пространство…';
+  nest.textContent = '⇥';
+  nest.addEventListener('click', event => {
+    event.stopPropagation();
+    openNestMenu(event, collection.id, event.currentTarget);
+  });
+  right.append(nest);
+  // A folder — a space with a parent — carries the way back out. It dissolves
+  // rather than deletes: what was inside moves up and keeps this row's place.
+  if (collection.parent_id !== null) {
+    const dissolve = document.createElement('button');
+    dissolve.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+    dissolve.title = 'Распустить папку';
+    dissolve.textContent = '✕';
+    dissolve.addEventListener('click', event => {
+      event.stopPropagation();
+      dissolveSpace(collection);
+    });
+    right.append(dissolve);
+  }
+  const move = document.createElement('button');
+  move.className = 'text-zinc-700 hover:text-white text-xs px-1 leading-none';
+  move.title = 'Слить в другой воркспейс…';
+  move.textContent = '⋯';
+  move.addEventListener('click', event => {
+    event.stopPropagation();
+    openMoveMenu(event, collection.id);
+  });
+  right.append(move);
+  // Destroying a space is separate from dissolving a folder and from merging
+  // one: everything inside goes with it, files included, and there is no way
+  // back. Sealed spaces ask for the passphrase, which is why this is behind
+  // its own button rather than folded into the merge menu.
+  const remove = document.createElement('button');
+  remove.className = 'text-red-800 hover:text-red-400 text-xs px-1 leading-none';
+  remove.title = 'Удалить воркспейс вместе со всем содержимым';
+  remove.textContent = '␡';
+  remove.addEventListener('click', event => {
+    event.stopPropagation();
+    deleteSpace(collection);
+  });
+  right.append(remove);
   item.append(label, right);
   return item;
 }

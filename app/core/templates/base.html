@@ -905,6 +905,10 @@
                 '/miku/dashboard',
             ];
             let navigationRequest = null;
+            // What the document is actually showing, which is not always what the address
+            // bar says: a module switch swaps the content and, until the swap succeeds,
+            // the URL.
+            let renderedPath = window.location.pathname + window.location.search;
 
             function isWhitelistedNavigation(url) {
                 return navigationPaths.includes(url.pathname) || /^\/youtube\/watch\/[^/]+$/.test(url.pathname);
@@ -933,12 +937,18 @@
                 if (navigationRequest || url.origin !== window.location.origin || url.pathname.startsWith('/api/') || !isWhitelistedNavigation(url)) return false;
                 preserveActiveVideo();
                 navigationRequest = {link: source, url: url};
+                // No `push` here: htmx 2's `ajax()` reads only target, source, event,
+                // handler, headers, values, swap and select — an unknown key is dropped
+                // without a word. History moves on a response `HX-Push-Url` header, an
+                // `hx-push-url` attribute, or an `hx-boost`ed element, and this call has
+                // none of the three. So the swap landed the new page and the address bar
+                // stayed where it was, which read as "the module opened but did not".
+                // The push is done by hand below, once the swap has actually succeeded.
                 htmx.ajax('GET', url.pathname + url.search, {
                     source: source,
                     target: '#main-content',
                     swap: 'outerHTML',
                     select: '#main-content',
-                    push: url.pathname + url.search,
                 });
                 return true;
             }
@@ -963,7 +973,29 @@
                 if (!navigationRequest || event.detail.elt !== navigationRequest.link) return;
                 const request = navigationRequest;
                 navigationRequest = null;
-                if (event.detail.failed) window.location.assign(request.url.href);
+                if (event.detail.failed) {
+                    window.location.assign(request.url.href);
+                    return;
+                }
+                // `htmx: true` hands the entry to htmx's own popstate handling, so Back
+                // and Forward come back through the server rather than leaving the address
+                // bar describing a page the document no longer holds.
+                const target = request.url.pathname + request.url.search;
+                if (window.location.pathname + window.location.search !== target) {
+                    history.pushState({htmx: true}, '', target);
+                    renderedPath = target;
+                }
+            });
+
+            // The other direction. htmx restores an entry whose state it recognises and
+            // whose content it cached; an entry this document was merely *loaded* at has
+            // no state and no cache entry, so htmx does nothing and the address bar walks
+            // away from a document that never followed it. One reload is the honest fix —
+            // the alternative is a Back button that shows the wrong page under a right URL.
+            window.addEventListener('popstate', event => {
+                if (event.state && event.state.htmx) return;
+                if (window.location.pathname + window.location.search === renderedPath) return;
+                window.location.reload();
             });
         })();
 
