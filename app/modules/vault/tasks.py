@@ -24,6 +24,7 @@ from app.core.staging import staging_workdir
 from app.core.storage import get_storage
 from app.core.ytdlp_pipeline import YtDlpErrorKind, YtDlpPipelineError, extract_info
 from app.modules.vault.models import VaultCollection, VaultItem
+from app.modules.vault.node_types import NodeType
 from app.modules.vault.paths import (
     safe_segment as _sanitize_segment,
     storage_root as _storage_root,
@@ -182,7 +183,7 @@ def _record_status(item_id: int, status: str):
         try:
             with SyncSessionLocal() as session:
                 item = session.get(VaultItem, item_id)
-                if item is not None and item.node_type == "video":
+                if item is not None and item.node_type == NodeType.VIDEO:
                     item.media_status = message
                     session.commit()
         except Exception:

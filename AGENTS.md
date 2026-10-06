@@ -28,3 +28,15 @@
 - Prefer Docker Compose for the real runtime: web, worker, PostgreSQL, Redis, migration, browser, and MIKU processes have distinct environments and network access.
 - `./start.sh` is not a read-only verification command: it creates/updates `.env`, generates secrets, may change `HOST_PORT`, and rebuilds/starts Compose services.
 - Configuration loads `.env` at import time unless `NETSANCTUM_LOAD_DOTENV=0`, and `get_settings()` is process-cached. Set environment overrides before importing application modules in tests or scripts.
+
+## Vault media
+
+- A sealed collection's file key is derived per collection from the session's inbox private key. Any endpoint that reads a sealed file must resolve that key itself and refuse (423) when it cannot — never let the reader fall through to the application key, which opens nothing and aborts the response mid-stream.
+- `<video>` cannot send the `X-Vault-Unlock` header, so a signed media URL is accompanied by a key grant in Redis (`store_media_key_grant`/`load_media_key_grant`, keyed by the URL signature, same 15-minute TTL). A new endpoint that serves sealed bytes to a player needs the same pairing; `tests/test_vault_file_keys.py::PlayerStreamingTests` covers the path.
+- A video captured into a sealed vault lands as a blind write (its own item key, wrapped under the collection's inbox public key) and is re-sealed by `finalize_blind_media_task`, queued automatically on the next unlock. Blind rows must stay unplayable and loudly refused, never weakly stored.
+
+## Vault card types
+
+- `node_type` is a free-form `String` and deliberately structural: it is not in `SEALED_FIELDS`, because a locked vault still has to lay out its grid. Its vocabulary, the view each type opens, and the capture kinds the extension may push all live in `app/modules/vault/node_types.py`; nothing else may spell a type as a bare string or `Literal`.
+- The view table reaches the template through `app/core/template_globals.py`, not a route's context. The dashboard is rendered by two callers — its own route and the sharing module as a read-only page — so a context value exists on only one of them. A module must never import `app.core.templates` at import time: it imports the registry that discovery is in the middle of importing, and the module then drops out of the registry silently. Publish from a module that imports nothing, as `template_globals.py` does.
+- `app/modules/vault/local_types/` is git-ignored: an owner's own card types live there as one `VIEWS` dict per file, so adding a type costs no committed change. Read through `node_types.local_views`, which treats an absent directory as no local types, and warns rather than fails. Local types are snapshotted at import, so a new file needs a process restart.

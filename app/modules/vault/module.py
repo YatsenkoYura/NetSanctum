@@ -8,6 +8,14 @@ from app.core.module_types import (
     ShareRoute,
     ShareSpec,
 )
+from app.modules.vault.node_types import publish_view_map
+
+# Published while this file is imported, which is what module discovery does
+# before any route runs — so both the dashboard route and the sharing module's
+# read-only render find the card-type view table in their context. Importing
+# `app.core.templates` here instead would deadlock discovery: it imports the
+# registry that is in the middle of importing this module.
+publish_view_map()
 
 MODULE = ModuleSpec(
     id="vault",

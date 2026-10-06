@@ -835,5 +835,31 @@ class SealedFileServingContractTests(unittest.TestCase):
         self.assertIn("bindVaultFileImages(stage);", media_view)
 
 
+class BlindMediaWatchContractTests(unittest.TestCase):
+    """A blind file finishes on the worker, out from under the open card.
+
+    The finalize runs after an unlock, so the card that says "шифруется" has
+    to notice when that happened — otherwise the owner is left reading a stale
+    state and reopening the card by hand to find out the player is back.
+    """
+
+    def test_a_waiting_video_watches_its_own_status(self):
+        media_view = TEMPLATE.split("function openMediaView(item)", 1)[1].split("\n}", 1)[0]
+        self.assertIn("watchMediaStatus(card.id);", media_view)
+        self.assertIn("stopMediaWatch();", media_view, "a playable card must not keep polling")
+
+    def test_the_watch_polls_with_the_unlock_header(self):
+        watch = TEMPLATE.split("function watchMediaStatus(itemId)", 1)[1].split("\n}", 1)[0]
+        self.assertIn("requestJson", watch, "the poll has to carry the tab's unlock, like every other read")
+        self.assertIn("/api/vault/items/", watch)
+        self.assertIn("updateCachedItem(fresh)", watch)
+
+    def test_the_watch_stops_when_the_card_settles_or_the_view_closes(self):
+        watch = TEMPLATE.split("function watchMediaStatus(itemId)", 1)[1].split("\n}", 1)[0]
+        self.assertIn("view-media-container", watch, "leaving the card must stop the poll")
+        self.assertIn("openId !== String(itemId)", watch, "switching cards must stop the poll")
+        self.assertIn("settled", watch, "completed and failed cards are terminal")
+
+
 if __name__ == "__main__":
     unittest.main()

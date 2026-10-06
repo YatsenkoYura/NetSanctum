@@ -1447,6 +1447,17 @@ async function instantCreate(type) {
   }
 }
 
+/* Which pane a card opens into, decided by the server in
+   `app/modules/vault/node_types.py` and handed over as data. It used to be a
+   switch here, which made this file a second source of truth about card types
+   and put every new type on the critical path of a committed file. */
+const VAULT_VIEWS = {{ vault_views | tojson }};
+const VAULT_FALLBACK_VIEW = 'editor';
+
+function viewForNodeType(nodeType) {
+  return VAULT_VIEWS[nodeType] || VAULT_FALLBACK_VIEW;
+}
+
 /* ── Media card: a picture or a video, plus a caption ──────────────────
    Deliberately not the editor view. A picture is not a document that wants
    more words, so there is no autosave timer, no "write here" prompt and no
@@ -1455,6 +1466,13 @@ const MEDIA_NODE_TYPES = new Set(['image', 'video']);
 
 function isMediaCard(item) {
   return !!item && MEDIA_NODE_TYPES.has(item.node_type);
+}
+
+/* Video is a subtype of the media view, not a view of its own: the player and
+   the duration badge only make sense for the type that carries a moving
+   picture, while both media types share one pane. */
+function isVideoCard(item) {
+  return !!item && item.node_type === 'video';
 }
 
 function mediaUrl(item) {
@@ -1480,6 +1498,43 @@ function formatDuration(seconds) {
   return h > 0
     ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/* A blind or queued file changes state on the worker, out from under the open
+   editor — the finalize runs after an unlock, and only then. Poll while this
+   view is open and re-render when the card moves on, so the owner is not
+   left watching a stale "шифруется" until they reopen the card. */
+let mediaWatchTimer = null;
+
+function stopMediaWatch() {
+  if (mediaWatchTimer) { clearInterval(mediaWatchTimer); mediaWatchTimer = null; }
+}
+
+function watchMediaStatus(itemId) {
+  stopMediaWatch();
+  mediaWatchTimer = setInterval(async () => {
+    const container = document.getElementById('view-media-container');
+    const openId = document.getElementById('media-id').value;
+    if (!container || container.classList.contains('hidden') || openId !== String(itemId)) {
+      stopMediaWatch();
+      return;
+    }
+    let fresh;
+    try {
+      fresh = await requestJson(`/api/vault/items/${pathSegment(itemId)}`, {}, '');
+    } catch (error) {
+      return;
+    }
+    if (!fresh || fresh.id === undefined) return;
+    const prev = window._vaultCache[itemId] || {};
+    const changed = prev.media_status !== fresh.media_status
+      || prev.media_url !== fresh.media_url
+      || prev.has_media !== fresh.has_media;
+    updateCachedItem(fresh);
+    const settled = fresh.media_status === 'completed' || String(fresh.media_status || '').startsWith('error:');
+    if (changed) openMediaView({id: itemId});
+    if (settled) stopMediaWatch();
+  }, 4000);
 }
 
 function openMediaView(item) {
@@ -1509,7 +1564,7 @@ function openMediaView(item) {
   const filePoster = itemImageUrl(card);
   const posterAttr = directPoster && !isVaultFileUrl(directPoster) ? directPoster : '';
   const stillUrl = (directPoster && !isVaultFileUrl(directPoster)) ? directPoster : (filePoster || (isVaultFileUrl(directPoster) ? directPoster : ''));
-  const isVideo = card.node_type === 'video';
+  const isVideo = isVideoCard(card);
   // Only a card that actually holds bytes plays. Otherwise say what is going on
   // rather than showing a player that will never load. A blind file holds
   // bytes too — under its own item key — but no player can open them until the
@@ -1544,6 +1599,12 @@ function openMediaView(item) {
     stage.innerHTML = stillUrl
       ? vaultImgTag(card, stillUrl, 'max-h-[70vh] w-auto max-w-full object-contain')
       : `<div class="text-xs text-zinc-500 font-mono px-6 py-10">Изображение недоступно</div>`;
+  }
+
+  if (isVideo) {
+    const transitional = !playable && !String(card.media_status || '').startsWith('error:');
+    if (transitional) watchMediaStatus(card.id);
+    else stopMediaWatch();
   }
 
   hideViews();
@@ -1685,7 +1746,7 @@ function stackGripHtml(item, itemId) {
 
 /* A media tile is the picture, at most one line of caption, and the shared footer. */
 function mediaTileHtml(item, itemId, displayImg, openAction) {
-  const isVideo = item.node_type === 'video';
+  const isVideo = isVideoCard(item);
   const caption = String(item.title || item.og_title || '').trim();
   const failed = String(item.media_status || '').startsWith('error:');
   const duration = formatDuration(item.media_duration);
@@ -2673,9 +2734,10 @@ function syncVaultHash() {
 
 function openVaultItemView(item) {
   if (!item) return;
-  if (item.node_type === 'table') openSheetView(item);
-  else if (item.node_type === 'whiteboard') openWhiteboardView(item);
-  else if (isMediaCard(item)) openMediaView(item);
+  const view = viewForNodeType(item.node_type);
+  if (view === 'sheet') openSheetView(item);
+  else if (view === 'whiteboard') openWhiteboardView(item);
+  else if (view === 'media') openMediaView(item);
   else openEditorView(item);
 }
 
@@ -3516,8 +3578,9 @@ function renderTiles(items) {
   grid.innerHTML = sortedItems.map(item => {
     const itemId = Number(item.id);
     if (!Number.isInteger(itemId)) return '';
-    const isTable = item.node_type === 'table';
-    const isWb = item.node_type === 'whiteboard';
+    const tileView = viewForNodeType(item.node_type);
+    const isTable = tileView === 'sheet';
+    const isWb = tileView === 'whiteboard';
     const isMedia = isMediaCard(item);
 
     const wbDrawingPreview = isWb && item.canvas_data?.drawing && item.canvas_data.drawing.length > 100 ? item.canvas_data.drawing : null;

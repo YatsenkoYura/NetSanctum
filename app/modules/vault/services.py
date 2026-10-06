@@ -16,6 +16,7 @@ from app.core.remote_fetch import RemoteFetchError, fetch_bytes_checked, validat
 from app.core.state_store import state_redis_url
 from app.modules.vault import images as _vault_images
 from app.modules.vault.models import VaultCollection, VaultItem
+from app.modules.vault.node_types import NodeType, capture_kind
 from app.modules.vault.schemas import (
     VaultCaptureCreate,
     VaultCollectionCreate,
@@ -173,7 +174,7 @@ async def create_vault_item(session: AsyncSession, item_in: VaultItemCreate) -> 
         related_entity_id=item_in.related_entity_id,
         parent_id=item_in.parent_id,
         is_folder=item_in.is_folder,
-        node_type=item_in.node_type or "note",
+        node_type=item_in.node_type or NodeType.NOTE,
         canvas_data=item_in.canvas_data or {},
     )
     session.add(item)
@@ -192,12 +193,16 @@ async def create_captured_item(
 ) -> VaultItem:
     """Store an extension capture exactly like a dashboard paste or bookmark.
 
-    The image travels as a data URL and lands in `og_image`, so the item reuses
-    the existing embedded-image path: the list endpoint omits the bytes and
-    `/api/vault/items/{id}/image` serves them. Metadata fetching is off unless
-    the caller asks for it, because the extension already knows the title.
+    The kind decides the shape, not this function: `capture_kind` says whether
+    the bytes travel in the request or are archived afterwards, and the registry
+    entry carries the card type they become. The picture that does travel lands
+    in `og_image`, so the item reuses the existing embedded-image path — the list
+    endpoint omits the bytes and `/api/vault/items/{id}/image` serves them.
+    Metadata fetching is off unless the caller asks for it, because the extension
+    already knows the title.
     """
-    if capture.kind == "video":
+    kind_spec = capture_kind(capture.kind)
+    if kind_spec.archived:
         return await create_video_capture_item(session, capture, user=user)
     if not decode_data_image(capture.image or ""):
         raise ValueError("Capture image must be a supported data:image URL within the size limit")
@@ -214,7 +219,7 @@ async def create_captured_item(
         session,
         VaultItemCreate(
             entry_type="bookmark",
-            node_type="image",
+            node_type=kind_spec.node_type,
             title=capture.title,
             content="\n\n".join(content_parts) or None,
             url=capture.page_url,
@@ -461,7 +466,7 @@ async def create_video_capture_item(
         session,
         VaultItemCreate(
             entry_type="bookmark",
-            node_type="video",
+            node_type=NodeType.VIDEO,
             title=capture.title,
             content="\n\n".join(parts) or None,
             url=capture.page_url or capture.video_url,

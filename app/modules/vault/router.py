@@ -32,6 +32,7 @@ from app.modules.vault.images import (
     media_type_for,
 )
 from app.modules.vault.models import VaultCollection, VaultItem
+from app.modules.vault.node_types import NodeType, capture_kind
 from app.modules.vault.schemas import (
     VaultCaptureCreate,
     VaultCaptureResponse,
@@ -61,10 +62,12 @@ from app.modules.vault.sealing import (
     create_sealed_collection,
     data_key_for,
     file_key_for,
+    file_key_for_id,
     file_key_for_write,
     inbox_public_key,
     increment_sealed_progress,
     is_sealed_collection,
+    load_media_key_grant,
     lock_collection,
     locked_collection_ids,
     media_epoch,
@@ -77,6 +80,7 @@ from app.modules.vault.sealing import (
     seal_item,
     sealed_collection_ids,
     sign_file_url,
+    store_media_key_grant,
     unlock_backoff_seconds,
     unlock_collection,
     update_sealed_item,
@@ -225,7 +229,11 @@ async def get_items(
             item,
             locked=item.collection_id in locked,
         )
-        serialized.append(await attach_media_url(payload, item, locked=item.collection_id in locked))
+        serialized.append(
+            await attach_media_url(
+                payload, item, locked=item.collection_id in locked, unlock_token=unlock_token
+            )
+        )
     return serialized
 
 
@@ -358,7 +366,7 @@ async def create_item(
         await db.commit()
         await db.refresh(item)
     payload = _apply_lock_state(_serialize_full_item(item), item, locked=locked)
-    return await attach_media_url(payload, item, locked=locked)
+    return await attach_media_url(payload, item, locked=locked, unlock_token=unlock_token)
 
 
 @router.post("/api/vault/capture", response_model=VaultCaptureResponse, status_code=201)
@@ -409,6 +417,10 @@ async def create_capture(
         "media": "Media saved to Vault",
         "video": "Video queued for archiving",
     }
+    # `.get`, not `[...]`: the kind is checked against the registry, so a kind
+    # the wordlist has not caught up with is a normal capture, not a 500 on the
+    # way out of a request that already stored the card.
+    message = messages.get(capture_in.kind, "Saved to Vault")
     # For a sealed collection the response must not hand the content back: sealing
     # blanked `title`, so echoing it would send an empty name, and `image_path` was
     # never sealed, so handing out its URL would publish the file. The alias is the
@@ -419,8 +431,8 @@ async def create_capture(
         kind=capture_in.kind,
         title=item.public_title if sealed else item.title,
         image_url=None if sealed else (f"/api/vault/items/{item.id}/image" if has_image(item) else None),
-        task_id=item.related_entity_id if capture_in.kind == "video" else None,
-        message=messages[capture_in.kind],
+        task_id=item.related_entity_id if capture_kind(capture_in.kind).archived else None,
+        message=message,
     )
 
 
@@ -455,7 +467,17 @@ async def get_item_media(
     # stored under the collection's file key, and the range reader below must
     # open them under exactly that key — never falling through to the
     # application keys.
-    file_key = await file_key_for(collection, unlock_token) if is_sealed_collection(collection) else None
+    file_key = None
+    if is_sealed_collection(collection):
+        file_key = await file_key_for(collection, unlock_token)
+        if file_key is None and sig:
+            # The player authorized itself with a signed URL only: the key
+            # minted for that URL stands in for the absent unlock header.
+            file_key = await load_media_key_grant(sig)
+        if file_key is None:
+            # Without the key the stream would die the moment it is opened,
+            # mid-response and looking like a network failure. Say so up front.
+            raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы открыть файл")
     storage = get_storage()
     try:
         size = item.media_size or storage.get_file_size(item.media_path)
@@ -598,7 +620,7 @@ async def _require_media_access(
     raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы открыть файл")
 
 
-async def attach_media_url(serialized: dict, item, *, locked: bool) -> dict:
+async def attach_media_url(serialized: dict, item, *, locked: bool, unlock_token: str = "") -> dict:
     """A signed player URL for an unlocked sealed card that holds a video.
 
     Minted per serialization, never stored: the epoch inside dies with the
@@ -617,6 +639,11 @@ async def attach_media_url(serialized: dict, item, *, locked: bool) -> dict:
         return serialized
     epoch = await media_epoch(getattr(item, "collection_id", None))
     expires, signature = sign_file_url(item.collection_id, item.id, "media", item.media_path, epoch)
+    # The player request will carry only the signature: park the file key it
+    # opens under that signature, so the endpoint can still open the bytes.
+    file_key = await file_key_for_id(item.collection_id, unlock_token)
+    if file_key is not None:
+        await store_media_key_grant(signature, file_key)
     serialized["media_url"] = f"/api/vault/items/{item.id}/media?exp={expires}&sig={signature}"
     return serialized
 
@@ -708,7 +735,7 @@ async def get_item_by_id(
     serialized = VaultItemResponse.model_validate(item).model_dump()
     _apply_media_state(serialized, item)
     payload = _apply_lock_state(serialized, item, locked=locked)
-    return await attach_media_url(payload, item, locked=locked)
+    return await attach_media_url(payload, item, locked=locked, unlock_token=unlock_token)
 
 
 @router.get("/api/vault/items/{item_id}/preview", include_in_schema=False)
@@ -798,7 +825,7 @@ async def update_item(
                 raise HTTPException(status_code=423, detail="Разблокируйте Vault, чтобы изменить содержимое")
             updated = await update_vault_item(db, item, update_in)
             payload = _apply_lock_state(_serialize_full_item(updated), updated, locked=True)
-            return await attach_media_url(payload, updated, locked=True)
+            return await attach_media_url(payload, updated, locked=True, unlock_token=unlock_token)
         # A move between sealed spaces re-seals under the *target's* key, or the
         # card would arrive as ciphertext nothing in that space can open.
         if "collection_id" in changed:
@@ -808,7 +835,7 @@ async def update_item(
             except VaultMoveError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             payload = _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
-            return await attach_media_url(payload, updated, locked=False)
+            return await attach_media_url(payload, updated, locked=False, unlock_token=unlock_token)
         updated = await update_sealed_item(
             db,
             item,
@@ -818,14 +845,14 @@ async def update_item(
             file_key=(await file_key_for_write(collection, unlock_token))[0],
         )
         payload = _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
-        return await attach_media_url(payload, updated, locked=False)
+        return await attach_media_url(payload, updated, locked=False, unlock_token=unlock_token)
 
     try:
         updated = await update_vault_item(db, item, update_in)
     except VaultMoveError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     payload = _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
-    return await attach_media_url(payload, updated, locked=False)
+    return await attach_media_url(payload, updated, locked=False, unlock_token=unlock_token)
 
 
 @router.delete("/api/vault/items/{item_id}")
@@ -906,7 +933,7 @@ async def increment_progress(
             db, item, private_key, require_inbox_public_key(collection), step=step
         )
         payload = _apply_lock_state(_serialize_full_item(updated), updated, locked=False)
-        return await attach_media_url(payload, updated, locked=False)
+        return await attach_media_url(payload, updated, locked=False, unlock_token=unlock_token)
     updated = await increment_item_progress(db, item, step=step)
     return updated
 
@@ -932,7 +959,7 @@ async def retry_video_download(
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
-    if item.node_type != "video":
+    if item.node_type != NodeType.VIDEO:
         raise HTTPException(status_code=422, detail="Только видеозапись можно поставить на загрузку")
     if getattr(item, "media_key_wrap", None):
         # The bytes are already home — only the re-seal under the collection's
@@ -1018,7 +1045,7 @@ async def get_random_item(
     serialized = VaultItemResponse.model_validate(item).model_dump()
     _apply_media_state(serialized, item)
     payload = _apply_lock_state(serialized, item, locked=locked)
-    return await attach_media_url(payload, item, locked=locked)
+    return await attach_media_url(payload, item, locked=locked, unlock_token=unlock_token)
 
 
 @router.get("/api/vault/stats", response_model=VaultStatsResponse)
@@ -1223,7 +1250,7 @@ async def move_item(
         else:
             open_item(private_key, item)
     serialized = _apply_lock_state(_serialize_full_item(item), item, locked=locked)
-    return await attach_media_url(serialized, item, locked=locked)
+    return await attach_media_url(serialized, item, locked=locked, unlock_token=unlock_token)
 
 
 @router.post("/api/vault/collections/move", response_model=VaultCollectionResponse)

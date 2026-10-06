@@ -12,10 +12,12 @@ key (never the file key, never the application key), and a blind row is
 reported as unplayable everywhere — never as a resource nobody can open.
 """
 
+import asyncio
 import base64
 import io
 import unittest
 from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
 
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
@@ -268,6 +270,87 @@ class BlindServingTests(unittest.TestCase):
             list(iter_sealed_media(b"\x00" * 32, "vault_sealed_5", item, b"\x01" * 32))
 
 
+class UnlockQueuesFinalizeTests(unittest.TestCase):
+    """An unlock is the one moment a blind file can be re-sealed.
+
+    The worker has no vault key and the owner's tab does, so the finalize runs
+    exactly where a session exists. A blind row that outlives its own unlock
+    is a card nobody can ever play, which is why the queue lives on this route
+    rather than in the dashboard's hands.
+    """
+
+    def setUp(self):
+        from app.modules.vault import router, sealing
+        from tests.test_vault_file_keys import AsyncSessionAdapter, FakeRedis
+
+        self.engine = sa.create_engine("sqlite://")
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, expire_on_commit=False)()
+        self.addCleanup(self.engine.dispose)
+        self.session = AsyncSessionAdapter(self.db)
+        self.redis = FakeRedis()
+        for target, attr in (
+            ("redis_client", self.redis),
+            ("unlock_backoff_seconds", AsyncMock(return_value=0)),
+            ("clear_unlock_failures", AsyncMock(return_value=None)),
+        ):
+            entered = patch.object(sealing, target, attr)
+            entered.start()
+            self.addCleanup(entered.stop)
+        self.queued = AsyncMock(return_value="task-1")
+        entered = patch.object(router, "queue_finalize_blind_media", self.queued)
+        entered.start()
+        self.addCleanup(entered.stop)
+
+    def _collection(self):
+        from tests.test_vault_file_keys import make_sealed_row
+
+        row, _private = make_sealed_row(self.db, collection_id=5)
+        return row
+
+    def _unlock(self):
+        from unittest.mock import Mock
+
+        from app.modules.vault.router import unlock_collection_route
+        from app.modules.vault.schemas import VaultUnlockRequest
+
+        request = Mock()
+        request.client = Mock(host="127.0.0.1")
+        body = VaultUnlockRequest(passphrase="правильная лошадь, скрепка")
+        return asyncio.run(
+            unlock_collection_route(5, body, request, db=self.session, user=None, unlock_token="")
+        )
+
+    def test_an_unlock_with_a_blind_row_queues_the_finalize(self):
+        from app.modules.vault.models import VaultItem
+
+        self._collection()
+        self.db.add(
+            VaultItem(
+                id=91,
+                entry_type="bookmark",
+                title="",
+                tags=[],
+                collection_id=5,
+                media_path="vault/5/91/blind.mp4.enc",
+                media_key_wrap="nsi:v2:blind",
+            )
+        )
+        self.db.commit()
+
+        self._unlock()
+
+        self.queued.assert_awaited_once()
+        self.assertEqual(5, self.queued.await_args.args[0])
+
+    def test_an_unlock_with_nothing_blind_queues_nothing(self):
+        self._collection()
+
+        self._unlock()
+
+        self.queued.assert_not_awaited()
+
+
 class _Async:
     """The slice of AsyncSession the sealed producer touches, over sqlite."""
 
@@ -279,3 +362,6 @@ class _Async:
 
     async def get(self, model, ident):
         return self.session.get(model, ident)
+
+    async def scalar(self, statement, parameters=None):
+        return self.session.execute(statement, parameters or {}).scalar()

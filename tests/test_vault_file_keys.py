@@ -73,6 +73,9 @@ class AsyncSessionAdapter:
     async def get(self, model, ident):
         return self.session.get(model, ident)
 
+    async def scalar(self, statement, parameters=None):
+        return self.session.execute(statement, parameters or {}).scalar()
+
 
 class FakeRedis:
     """In-memory stand-in: the tests prove the lock logic, not Redis."""
@@ -483,6 +486,207 @@ class FileAccessGateTests(unittest.TestCase):
         from app.modules.vault.schemas import VaultItemResponse
 
         self.assertIn("media_url", VaultItemResponse.model_fields)
+
+    def test_a_player_url_grant_round_trips(self):
+        from app.modules.vault.sealing import load_media_key_grant, store_media_key_grant
+
+        key = new_data_key()
+
+        asyncio.run(store_media_key_grant("sig-abc", key))
+
+        self.assertEqual(key, asyncio.run(load_media_key_grant("sig-abc")))
+        self.assertIsNone(asyncio.run(load_media_key_grant("sig-other")))
+        self.assertIsNone(asyncio.run(load_media_key_grant("")))
+
+    def test_a_bad_grant_opens_nothing(self):
+        from app.modules.vault.sealing import load_media_key_grant
+
+        self.redis.store["vault_media_key:sig-bad"] = "!!!not-base64!!!"
+        self.redis.store["vault_media_key:sig-short"] = base64.b64encode(b"short").decode()
+
+        self.assertIsNone(asyncio.run(load_media_key_grant("sig-bad")))
+        self.assertIsNone(asyncio.run(load_media_key_grant("sig-short")))
+
+    def test_file_key_for_id_matches_the_session_record(self):
+        from app.modules.vault.sealing import file_key_for_id
+
+        row, private = make_sealed_row(self.db)
+
+        self.assertIsNone(asyncio.run(file_key_for_id(row.id, "")))
+        self.assertIsNone(asyncio.run(file_key_for_id(row.id, "no-token")))
+
+        token = asyncio.run(unlock_collection(row, "правильная лошадь, скрепка", "tab", session=self.session))
+
+        self.assertEqual(derive_file_key(private, row.id), asyncio.run(file_key_for_id(row.id, token)))
+
+    def test_a_minted_player_url_carries_a_matching_key_grant(self):
+        from app.modules.vault.router import _apply_lock_state, attach_media_url
+        from app.modules.vault.sealing import file_key_for_id, load_media_key_grant
+
+        row, _private = make_sealed_row(self.db)
+        item = VaultItem(
+            id=7,
+            entry_type="bookmark",
+            title="",
+            tags=[],
+            collection_id=5,
+            sealed_payload="nsp:v1:abc",
+            public_title="Проект А",
+            media_path="vault/videos/7-ab.enc",
+            media_status="completed",
+        )
+        token = asyncio.run(unlock_collection(row, "правильная лошадь, скрепка", "tab", session=self.session))
+
+        payload = asyncio.run(
+            attach_media_url(
+                _apply_lock_state({"media_status": item.media_status}, item, locked=False),
+                item,
+                locked=False,
+                unlock_token=token,
+            )
+        )
+
+        signature = payload["media_url"].split("sig=")[1]
+        self.assertEqual(
+            asyncio.run(file_key_for_id(5, token)),
+            asyncio.run(load_media_key_grant(signature)),
+        )
+
+
+class PlayerStreamingTests(unittest.TestCase):
+    """The player path end to end: signed URL, no unlock header, real bytes out.
+
+    A `<video>` element cannot send the unlock header, so the endpoint must
+    still open a file that lives under the collection's file key — via the
+    grant minted with the URL. A regression here shows as a broken player
+    icon and an aborted HTTP/2 stream, not a test failure, so it stays a test.
+    """
+
+    def setUp(self):
+        from tempfile import TemporaryDirectory
+
+        self.engine = sa.create_engine("sqlite://")
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, expire_on_commit=False)()
+        self.addCleanup(self.engine.dispose)
+        self.session = AsyncSessionAdapter(self.db)
+        self.redis = FakeRedis()
+        entered = patch.object(sealing, "redis_client", self.redis)
+        entered.start()
+        self.addCleanup(entered.stop)
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.storage = LocalStorage(self._tmp.name)
+
+    def _player_request(self, range_header=None):
+        from unittest.mock import Mock
+
+        request = Mock()
+        request.headers.get = lambda name, default=None: range_header if name == "range" else default
+        return request
+
+    def _setup_card(self):
+        row, private = make_sealed_row(self.db)
+        token = asyncio.run(unlock_collection(row, "правильная лошадь, скрепка", "tab", session=self.session))
+        file_key = derive_file_key(private, row.id)
+        payload = b"\x00\x00\x00\x18ftypmp42" + b"media" * 200000
+        path = "vault/5/7/00000000000000000000000000000000aa.mp4.enc"
+        self.storage.save_file_encrypted_seekable(
+            io.BytesIO(payload), path, key=file_key, length=len(payload)
+        )
+        item = VaultItem(
+            id=7,
+            entry_type="bookmark",
+            title="",
+            tags=[],
+            collection_id=5,
+            sealed_payload="nsp:v1:x",
+            media_path=path,
+            media_size=len(payload),
+            media_status="completed",
+            node_type="video",
+        )
+        self.db.add(item)
+        self.db.commit()
+        patches = {
+            "app.modules.vault.router.get_storage": patch(
+                "app.modules.vault.router.get_storage", return_value=self.storage
+            ),
+            "app.modules.vault.router.get_vault_item": patch(
+                "app.modules.vault.router.get_vault_item",
+                new=lambda _db, item_id: _async_get(self.db, VaultItem, item_id),
+            ),
+            "app.modules.vault.router.collection_for": patch(
+                "app.modules.vault.router.collection_for",
+                new=lambda _db, collection_id: _async_get(self.db, VaultCollection, collection_id),
+            ),
+        }
+        for p in patches.values():
+            p.start()
+            self.addCleanup(p.stop)
+        return token, payload, path
+
+    def test_a_signed_url_streams_the_collection_file_key_bytes(self):
+        from app.modules.vault.router import _apply_lock_state, attach_media_url, get_item_media
+
+        token, payload, _path = self._setup_card()
+        item = self.db.get(VaultItem, 7)
+        url_payload = asyncio.run(
+            attach_media_url(
+                _apply_lock_state({"media_status": item.media_status}, item, locked=False),
+                item,
+                locked=False,
+                unlock_token=token,
+            )
+        )
+        signature = url_payload["media_url"].split("sig=")[1]
+        expires = url_payload["media_url"].split("exp=")[1].split("&")[0]
+
+        response = asyncio.run(
+            get_item_media(
+                7,
+                self._player_request("bytes=0-1023"),
+                None,
+                user=None,
+                unlock_token="",
+                sig=signature,
+                exp=expires,
+            )
+        )
+
+        self.assertEqual(206, response.status_code)
+        chunks = []
+
+        async def drain():
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+
+        asyncio.run(drain())
+        self.assertEqual(payload[:1024], b"".join(chunks))
+
+    def test_a_missing_grant_is_a_423_not_an_aborted_stream(self):
+        from app.modules.vault.router import get_item_media, sign_file_url
+
+        _token, _payload, path = self._setup_card()
+        expires, signature = sign_file_url(5, 7, "media", path, 0)
+
+        with self.assertRaises(HTTPException) as caught:
+            asyncio.run(
+                get_item_media(
+                    7,
+                    self._player_request("bytes=0-1023"),
+                    None,
+                    user=None,
+                    unlock_token="",
+                    sig=signature,
+                    exp=str(expires),
+                )
+            )
+        self.assertEqual(423, caught.exception.status_code)
+
+
+async def _async_get(db, model, ident):
+    return db.get(model, ident)
 
 
 class HandoffTokenTests(unittest.TestCase):

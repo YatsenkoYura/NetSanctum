@@ -612,9 +612,21 @@ async def file_key_for_write(
 #
 # Fifteen minutes, one file, media only: images need the session-side file
 # key, which no URL can carry, so there is no signed form of them.
+#
+# The player cannot send the unlock header, so the file key would be lost at
+# the endpoint's door without help: the endpoint derives it from the session
+# record, and the session record is found by (collection, token). The grant
+# below stores the derived key under the URL's own signature, minted at the
+# same moment and expiring together — so a valid URL still opens the file,
+# and a lifted URL opens nothing more than the bytes it already licenses
+# watching. Redis holds unlocked DEKs the same way, so this widens nothing.
 
 FILE_URL_TTL_SECONDS = 15 * 60
 FILE_URL_KINDS = ("media",)
+
+
+def media_key_grant_key(signature: str) -> str:
+    return f"vault_media_key:{signature}"
 
 
 def media_epoch_key(collection_id: int) -> str:
@@ -721,6 +733,33 @@ async def verify_file_url(
         logger.debug("could not read the media epoch for Vault %s", collection_id, exc_info=True)
         return False
     return verify_file_url_signature(collection_id, item_id, kind, path, expires, signature, epoch)
+
+
+async def store_media_key_grant(signature: str, file_key: bytes) -> None:
+    """Stash the file key a freshly-minted player URL opens, under its signature."""
+    if not signature or not file_key:
+        return
+    await redis_client.set(
+        media_key_grant_key(signature), b64encode(file_key).decode("ascii"), ex=FILE_URL_TTL_SECONDS
+    )
+
+
+async def load_media_key_grant(signature: str) -> bytes | None:
+    """The file key a valid-looking player URL carries, or None.
+
+    A missing grant fails closed: the player freezes with an error rather than
+    falling through to the application key, which would decrypt nothing — or
+    worse, would succeed against a file that was never the collection's."""
+    if not signature:
+        return None
+    raw = await redis_client.get(media_key_grant_key(signature))
+    if not raw:
+        return None
+    try:
+        key = b64decode(raw)
+    except (ValueError, TypeError):
+        return None
+    return key if len(key) == 32 else None
 
 
 # ── Download handoff token ─────────────────────────────────────────────
@@ -1092,12 +1131,26 @@ async def data_key_for(
     """This tab's key for a sealed collection, or None while it stays locked."""
     if not is_sealed_collection(collection) or collection is None:
         return None
-    if not unlock_token:
+    return await data_key_for_id(collection.id, unlock_token, touch=touch)
+
+
+async def data_key_for_id(
+    collection_id: int | None, unlock_token: str = "", *, touch: bool = True
+) -> bytes | None:
+    """The session data key from the collection id alone.
+
+    The player's `<video>` request arrives with a signed URL and no unlock
+    header, but it still has to open a file that only a session key derives —
+    so the session record must be reachable by id. The id-only form keeps that
+    door the same size as the token-form door: both gate on the same Redis
+    record, and a caller that knows the collection is sealed may use it.
+    """
+    if collection_id is None or not unlock_token:
         return None
-    stored = await redis_client.get(collection_key(collection.id, unlock_token))
+    stored = await redis_client.get(collection_key(collection_id, unlock_token))
     if not stored:
         return None
-    opened = _open_session_record(stored, unlock_token, collection.id)
+    opened = _open_session_record(stored, unlock_token, collection_id)
     if opened is None:
         return None
     private_key, issued_at = opened
@@ -1105,14 +1158,24 @@ async def data_key_for(
     if now - issued_at > SESSION_ABSOLUTE_TTL_SECONDS:
         # The sliding TTL kept refreshing, so Redis would otherwise hold this open
         # forever. The record dies here and the tab asks for the passphrase again.
-        await redis_client.delete(collection_key(collection.id, unlock_token))
+        await redis_client.delete(collection_key(collection_id, unlock_token))
         return None
     # Reading the key is activity: push the expiry out so a tab in use stays open.
     # A background worker resolving the key is not user activity — it must not
     # keep the vault unlocked past the owner walking away, so it reads untouched.
     if touch:
-        await redis_client.expire(collection_key(collection.id, unlock_token), UNLOCK_TTL_SECONDS)
+        await redis_client.expire(collection_key(collection_id, unlock_token), UNLOCK_TTL_SECONDS)
     return private_key
+
+
+async def file_key_for_id(collection_id: int | None, unlock_token: str = "") -> bytes | None:
+    """The collection's file key from the session record alone, for a signed URL."""
+    if collection_id is None or not unlock_token:
+        return None
+    private_key = await data_key_for_id(collection_id, unlock_token)
+    if private_key is None:
+        return None
+    return derive_file_key(private_key, collection_id)
 
 
 async def require_data_key(collection: VaultCollection | None, unlock_token: str = "") -> bytes | None:

@@ -146,6 +146,14 @@ access_token.hash
 app/modules/torrent/
 app/modules/pianoboost/
 
+# The owner's own Vault card types. Deliberately not in the repository: this is
+# where site-specific captures keep their own card types, and the whole directory
+# is ignored rather than its contents so an accidental `git add -A` cannot pick
+# them up. Read by `app/modules/vault/node_types.py::local_views`, which treats
+# an absent directory as "no local types" — so nothing here has to be committed
+# for the feature to work.
+app/modules/vault/local_types/
+
 # Linter caches
 .ruff_cache/
 *.torrent

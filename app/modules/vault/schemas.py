@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.modules.vault.node_types import capture_kind
+
 # Shared ceiling for an embedded picture. It lives here because the capture
 # schema needs it to bound a request body, and services imports this module.
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -73,7 +75,7 @@ class VaultCaptureCreate(BaseModel):
     per-collection encryption planned for it.
     """
 
-    kind: Literal["screenshot", "media", "video"]
+    kind: str
     title: str = Field(..., min_length=1, max_length=2000)
     # The alias shown while a sealed Vault is locked. The extension cannot be given
     # a passphrase, so this is the only handle the owner has on a blind write.
@@ -99,10 +101,15 @@ class VaultCaptureCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self):
-        if self.kind == "video":
+        # The accepted vocabulary lives in `node_types.CAPTURE_KINDS`, beside the
+        # card types each kind produces, rather than spelled as a `Literal` here
+        # where it is invisible until somebody edits this file. An unknown kind is
+        # a bad request; it must not reach the service and come back as a 500.
+        kind_spec = capture_kind(self.kind)
+        if kind_spec.archived:
             if not self.video_url:
                 raise ValueError("A video capture requires video_url")
-        elif not self.image:
+        elif kind_spec.requires_image and not self.image:
             raise ValueError("A screenshot or media capture requires an image")
         # `page_url` becomes the item's clickable link and `video_url` is handed
         # to a downloader that will fetch it, so both must be real addresses.
@@ -123,7 +130,10 @@ class VaultCaptureCreate(BaseModel):
 class VaultCaptureResponse(BaseModel):
     status: Literal["completed"] = "completed"
     item_id: int
-    kind: Literal["screenshot", "media", "video"]
+    # Echoes the request's kind, so it cannot be a narrower vocabulary than the
+    # one `CAPTURE_KINDS` accepts — a response model that refuses to name the
+    # kind it just stored would answer a good capture with a 500.
+    kind: str
     title: str
     image_url: str | None = None
     task_id: str | None = Field(default=None, description="Archive job, for a video capture")
@@ -229,7 +239,9 @@ class VaultItemCreate(BaseModel):
 
     parent_id: int | None = None
     is_folder: bool = False
-    node_type: str = "note"  # folder, note, table, whiteboard, bookmark, rating
+    # The vocabulary lives in `node_types.NodeType`, not in a comment: a comment
+    # is how `rating` survived here for years with nothing behind it.
+    node_type: str = "note"
     canvas_data: dict[str, Any] = Field(default_factory=dict)
 
     auto_fetch_og: bool = True  # If true and url provided, fetch OG metadata
