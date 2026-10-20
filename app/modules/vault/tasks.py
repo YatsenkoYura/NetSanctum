@@ -5,7 +5,6 @@ when the page it came from is gone, and it means Vault is not holding a record
 whose only link is another module's row.
 """
 
-import asyncio
 import base64
 import logging
 import os
@@ -322,7 +321,7 @@ def download_vault_video_task(
     if url is None:
         from app.modules.vault.services import take_download_handoff
 
-        handoff_data = asyncio.run(take_download_handoff(handoff))
+        handoff_data = take_download_handoff(handoff)
         url = handoff_data.get("url")
         title = title or handoff_data.get("title") or None
     else:
@@ -522,11 +521,11 @@ def finalize_blind_media_task(self, handoff: str, collection_id: int) -> str:
     """
     from app.core.crypto.asymmetric import SealedWrite, open_inbox_key
     from app.modules.vault.crypto import derive_file_key
-    from app.modules.vault.sealing import data_key_for, open_handoff_token
+    from app.modules.vault.sealing import data_key_for_id_sync, open_handoff_token
     from app.modules.vault.services import take_finalize_handoff
 
     storage = get_storage()
-    handoff_data = asyncio.run(take_finalize_handoff(handoff))
+    handoff_data = take_finalize_handoff(handoff)
     token = open_handoff_token(handoff, (handoff_data or {}).get("token_box"))
     if not token:
         return "Error: the finalize request expired before the worker picked it up"
@@ -536,7 +535,7 @@ def finalize_blind_media_task(self, handoff: str, collection_id: int) -> str:
         if collection is None or not getattr(collection, "is_encrypted", False):
             return "Error: the Vault is not sealed"
         try:
-            private_key = asyncio.run(data_key_for(collection, token, touch=False))
+            private_key = data_key_for_id_sync(collection.id, token, touch=False)
         except Exception:
             logger.warning("finalize for vault %s lost its session", collection_id, exc_info=True)
             return "Error: the Vault locked before the finalize ran"

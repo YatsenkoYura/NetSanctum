@@ -289,26 +289,29 @@ class TaskHandoffTests(LeakDetectorTestCase):
         self.assertNotIn(SOURCE_URL, json.dumps(captured["payload"]))
 
     def test_the_handoff_is_deleted_when_the_worker_reads_it(self):
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import MagicMock, patch
 
-        from app.modules.vault.services import take_download_handoff
+        from app.modules.vault.services import MEDIA_HANDOFF_PREFIX, take_download_handoff
 
-        redis = AsyncMock()
-        redis.getdel = AsyncMock(return_value=json.dumps({"url": SOURCE_URL, "title": VIDEO_TITLE}))
-        with patch("app.modules.vault.services.redis_client", redis):
-            taken = asyncio.run(take_download_handoff("abc"))
-        redis.getdel.assert_awaited()
+        # A `MagicMock`, not an `AsyncMock`: the handoff is read through the
+        # synchronous client, because its only caller is a Celery task and a task
+        # has no event loop of its own to await on.
+        redis = MagicMock()
+        redis.getdel = MagicMock(return_value=json.dumps({"url": SOURCE_URL, "title": VIDEO_TITLE}))
+        with patch("app.modules.vault.services.sync_redis_client", redis):
+            taken = take_download_handoff("abc")
+        redis.getdel.assert_called_once_with(f"{MEDIA_HANDOFF_PREFIX}:abc")
         self.assertEqual(SOURCE_URL, taken["url"])
 
     def test_a_missing_handoff_is_not_an_error_but_no_download(self):
-        from unittest.mock import AsyncMock, patch
+        from unittest.mock import MagicMock, patch
 
         from app.modules.vault.services import take_download_handoff
 
-        redis = AsyncMock()
-        redis.getdel = AsyncMock(return_value=None)
-        with patch("app.modules.vault.services.redis_client", redis):
-            self.assertEqual({}, asyncio.run(take_download_handoff("abc")))
+        redis = MagicMock()
+        redis.getdel = MagicMock(return_value=None)
+        with patch("app.modules.vault.services.sync_redis_client", redis):
+            self.assertEqual({}, take_download_handoff("abc"))
 
 
 class UnlockSessionTests(LeakDetectorTestCase):

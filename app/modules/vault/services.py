@@ -7,6 +7,7 @@ import secrets
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+import redis as sync_redis
 import redis.asyncio as aioredis
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,20 @@ logger = logging.getLogger(__name__)
 # The handoff holds a video's address and title for half an hour. It is session
 # state, not queue state, so it goes to the store without persistence.
 redis_client = aioredis.Redis.from_url(state_redis_url(), decode_responses=True)
+# The worker gets a *synchronous* client, and the reason is the one thing this
+# module must never do again: reach an async client from a fresh event loop.
+#
+# A `redis.asyncio` client owns a pool of connections, and each connection
+# belongs to the loop it was opened on. The web runs on one loop forever, so the
+# async client is right there. A Celery task, though, runs `asyncio.run(...)` —
+# a new loop per task, closed the moment it returns. The first task opens a
+# connection on its loop; the second task finds that connection still in the
+# pool, attached to a loop that no longer exists, and dies with "got Future
+# attached to a different loop" and then "Event loop is closed".
+#
+# A synchronous client has no loop to be attached to, so this cannot recur. It is
+# the same reason this file uses `SyncSessionLocal` in the worker path.
+sync_redis_client = sync_redis.Redis.from_url(state_redis_url(), decode_responses=True)
 
 # Tracked download progress, declared by the module manifest.
 MEDIA_PROGRESS_PREFIX = "vault_media"
@@ -316,15 +331,19 @@ async def queue_video_download(
     return task.id
 
 
-async def take_download_handoff(handoff: str) -> dict:
+def take_download_handoff(handoff: str) -> dict:
     """Read and immediately destroy the handoff for a queued download.
 
     `GETDEL` rather than `GET` plus `DEL`: a worker that crashes between the two
     leaves the url and the title sitting in Redis until the TTL runs out.
+
+    Synchronous, and read through the synchronous client, because its only caller
+    is a Celery task running a loop of its own — see `sync_redis_client` for why
+    that is not a detail.
     """
     if not handoff:
         return {}
-    raw = await redis_client.getdel(f"{MEDIA_HANDOFF_PREFIX}:{handoff}")
+    raw = sync_redis_client.getdel(f"{MEDIA_HANDOFF_PREFIX}:{handoff}")
     if not raw:
         return {}
     try:
@@ -374,15 +393,15 @@ async def queue_finalize_blind_media(collection_id: int, unlock_token: str) -> s
     return task.id
 
 
-async def take_finalize_handoff(handoff: str) -> dict:
+def take_finalize_handoff(handoff: str) -> dict:
     """Read and immediately destroy the handoff for a queued finalize.
 
-    Same one-shot rule as downloads: the sealed token box is readable only
-    through this call, once, and then it is gone.
+    Same one-shot rule as downloads, and the same reason this one is synchronous:
+    its only caller is a Celery task running a loop of its own.
     """
     if not handoff:
         return {}
-    raw = await redis_client.getdel(f"{FINALIZE_HANDOFF_PREFIX}:{handoff}")
+    raw = sync_redis_client.getdel(f"{FINALIZE_HANDOFF_PREFIX}:{handoff}")
     if not raw:
         return {}
     try:
@@ -411,7 +430,7 @@ def resolve_download_file_key(handoff_id: str, handoff_data: dict, item_id: int)
     """
     from app.core.database import SyncSessionLocal
     from app.modules.vault.sealing import (
-        data_key_for,
+        data_key_for_id_sync,
         derive_file_key,
         open_handoff_token,
     )
@@ -430,7 +449,7 @@ def resolve_download_file_key(handoff_id: str, handoff_data: dict, item_id: int)
             return None
         # Inside the session: `data_key_for` reads the row's attributes, and a
         # detached row outside it would go stale on exactly this path.
-        private_key = asyncio.run(data_key_for(collection, token, touch=False))
+        private_key = data_key_for_id_sync(collection.id, token, touch=False)
         if private_key is None:
             # No fail-open to the application key: the caller discards the
             # download and parks the card as `pending_unlock` instead.

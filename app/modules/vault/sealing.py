@@ -23,6 +23,7 @@ import time
 from base64 import b64decode, b64encode
 from typing import Any
 
+import redis as sync_redis
 import redis.asyncio as aioredis
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -74,6 +75,14 @@ logger = logging.getLogger(__name__)
 # business surviving a restart in a file next to the broker's queue. Falls back
 # to the general Redis when nothing is configured, which is the old behaviour.
 redis_client = aioredis.Redis.from_url(state_redis_url(), decode_responses=True)
+
+# The synchronous twin, for the Celery worker. An async Redis client owns pooled
+# connections and each one belongs to the loop that opened it; the web has one
+# loop forever, but a task runs `asyncio.run(...)` — a new loop per task, closed
+# when it returns. The second task then finds a pooled connection attached to a
+# loop that no longer exists. `data_key_for_id_sync` is the only reader that uses
+# this, and it exists so that the worker never reaches an async client at all.
+sync_redis_client = sync_redis.Redis.from_url(state_redis_url(), decode_responses=True)
 
 # An unlock lives with a browser tab, not with the instance. The token only ever
 # exists in the page's memory, so reloading asks for the passphrase again, and a
@@ -1150,12 +1159,13 @@ async def data_key_for_id(
     stored = await redis_client.get(collection_key(collection_id, unlock_token))
     if not stored:
         return None
-    opened = _open_session_record(stored, unlock_token, collection_id)
-    if opened is None:
+    private_key = _session_private_key(stored, unlock_token, collection_id)
+    if private_key is None:
+        # Unreadable is not expired: a record this build cannot open is another
+        # build's, or a corrupted one, and deleting it would close a session that
+        # is perfectly valid for whoever wrote it.
         return None
-    private_key, issued_at = opened
-    now = int(datetime.datetime.now(datetime.UTC).timestamp())
-    if now - issued_at > SESSION_ABSOLUTE_TTL_SECONDS:
+    if _session_expired(stored, unlock_token, collection_id):
         # The sliding TTL kept refreshing, so Redis would otherwise hold this open
         # forever. The record dies here and the tab asks for the passphrase again.
         await redis_client.delete(collection_key(collection_id, unlock_token))
@@ -1166,6 +1176,57 @@ async def data_key_for_id(
     if touch:
         await redis_client.expire(collection_key(collection_id, unlock_token), UNLOCK_TTL_SECONDS)
     return private_key
+
+
+def data_key_for_id_sync(
+    collection_id: int | None, unlock_token: str = "", *, touch: bool = True
+) -> bytes | None:
+    """The same read, through a synchronous client, for a Celery task.
+
+    The worker runs `asyncio.run(...)` — a fresh loop per task — and an async
+    Redis client's pooled connections belong to the loop that opened them. The
+    first task opens one and its loop closes; the second task finds it still in
+    the pool and dies with "got Future attached to a different loop". So the
+    worker must not reach an async client from here at all.
+
+    `touch` is False in the worker because a download resolving its key is not
+    the owner using the vault.
+    """
+    if collection_id is None or not unlock_token:
+        return None
+    key = collection_key(collection_id, unlock_token)
+    stored = sync_redis_client.get(key)
+    if not stored:
+        return None
+    private_key = _session_private_key(stored, unlock_token, collection_id)
+    if private_key is None:
+        return None
+    if _session_expired(stored, unlock_token, collection_id):
+        sync_redis_client.delete(key)
+        return None
+    if touch:
+        sync_redis_client.expire(key, UNLOCK_TTL_SECONDS)
+    return private_key
+
+
+def _session_private_key(stored: str, unlock_token: str, collection_id: int) -> bytes | None:
+    """The key out of a session record, or None if it will not open.
+
+    Pure, so the async and the synchronous reader agree by construction rather
+    than by two copies of the same rules drifting apart.
+    """
+    opened = _open_session_record(stored, unlock_token, collection_id)
+    return opened[0] if opened else None
+
+
+def _session_expired(stored: str, unlock_token: str, collection_id: int) -> bool:
+    """Whether a readable session record is past its absolute life."""
+    opened = _open_session_record(stored, unlock_token, collection_id)
+    if opened is None:
+        return False
+    _private_key, issued_at = opened
+    now = int(datetime.datetime.now(datetime.UTC).timestamp())
+    return now - issued_at > SESSION_ABSOLUTE_TTL_SECONDS
 
 
 async def file_key_for_id(collection_id: int | None, unlock_token: str = "") -> bytes | None:
