@@ -125,6 +125,14 @@ SEALED_FIELDS = (
     "score",
     "status",
     "media_mime",
+    # What a capture read off the page it came from, for the sites whose picture
+    # is worth more with its metadata than without: an illustration id, its
+    # author, the tags it was published under. It is sealed because it is a
+    # description of the owner's browsing, and a readable copy of "these tags on
+    # this site" is as telling as the picture is — more so, since the picture is
+    # the only part that is a picture.
+    "site",
+    "site_meta",
     # How far into it the owner is, and how big it turned out to be. These were
     # "structural" on the grounds that the grid does not read them — it reads
     # `has_media` and the status — and that is exactly the problem: an episode
@@ -1396,6 +1404,9 @@ def open_item(private_key: bytes, item: VaultItem) -> VaultItem:
     item.title = raw.get("title") or ""
     item.tags = raw.get("tags") or []
     item.canvas_data = raw.get("canvas_data") or {}
+    # A card sealed before capture rules existed has no metadata, and a reader
+    # that gets `None` where the column promises a dict has to guard every time.
+    item.site_meta = raw.get("site_meta") or {}
     # `sealed_payload` and `wrapped_key` deliberately stay in place: they are the
     # state at rest, and dropping them here would let a save write the item back
     # in the clear.

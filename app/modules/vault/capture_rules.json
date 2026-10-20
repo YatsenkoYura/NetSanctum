@@ -1,0 +1,39 @@
+[
+  {
+    "id": "pixiv-artwork",
+    "site": "pixiv",
+    "node_type": "image",
+    "match": { "host": "pixiv.net", "path": "^/artworks/[0-9]+/?$" },
+    "fields": {
+      "illust_id": {
+        "selector": "meta[property='og:image']",
+        "attr": "content",
+        "regex": "/([0-9]{6,})_p[0-9]",
+        "group": 1
+      },
+      "illust_url": { "selector": "link[rel='canonical']", "attr": "href" },
+      "title": { "selector": "h1", "attr": "text" },
+      "author": { "selector": "a[href^='/users/']", "attr": "text" },
+      "author_id": { "selector": "a[href^='/users/']", "attr": "href" },
+      "page_count": { "selector": "[data-page-count]", "attr": "data-page-count" },
+      "tags": { "selector": "a[href^='/tags/']", "attr": "text", "many": true, "max": 30 }
+    }
+  },
+  {
+    "id": "booru-post",
+    "site": "booru",
+    "node_type": "image",
+    "match": { "host": "danbooru.donmai.us", "path": "^/posts/[0-9]+$" },
+    "fields": {
+      "post_id": {
+        "selector": "link[rel='canonical']",
+        "attr": "href",
+        "regex": "/posts/([0-9]+)",
+        "group": 1
+      },
+      "artist": { "selector": "a[href^='/users/']", "attr": "text" },
+      "rating": { "selector": "[data-rating]", "attr": "data-rating" },
+      "tags": { "selector": "#tag-list a", "attr": "text", "many": true, "max": 40 }
+    }
+  }
+]

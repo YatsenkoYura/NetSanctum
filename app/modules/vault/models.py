@@ -134,6 +134,17 @@ class VaultItem(Base):
     # space that never reordered behaves exactly as it did before.
     position = Column(Float, nullable=True, index=True)
 
+    # Which site a capture rule matched, and what it read off the page. Sealed,
+    # not structural: the site is a description of the owner's browsing, and
+    # `node_type` deliberately cannot carry it — that column has to stay readable
+    # while the vault is locked for the grid to lay itself out, so a type named
+    # after a site would publish exactly what this field keeps private.
+    site = Column(String, nullable=True)
+    # `default=dict` so a card that never matched a rule is written as an empty
+    # blob rather than NULL; the read path tolerates NULL anyway, for the rows
+    # that predate this column.
+    site_meta = Column(JSON, default=dict, nullable=True)
+
     # Media tracker fields
     score = Column(Float, nullable=True)  # 1.0 - 10.0
     status = Column(String, nullable=True, index=True)  # watching, completed, dropped, planned, on_hold

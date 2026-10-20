@@ -191,6 +191,8 @@ async def create_vault_item(session: AsyncSession, item_in: VaultItemCreate) -> 
         is_folder=item_in.is_folder,
         node_type=item_in.node_type or NodeType.NOTE,
         canvas_data=item_in.canvas_data or {},
+        site=item_in.site,
+        site_meta=item_in.site_meta or {},
     )
     session.add(item)
     await session.flush()
@@ -248,6 +250,10 @@ async def create_captured_item(
     if not decode_data_image(capture.image or ""):
         raise ValueError("Capture image must be a supported data:image URL within the size limit")
 
+    # A capture rule may name the card type, and only ever a neutral one — see
+    # `_bounded_capture_type`. Without one the kind decides, exactly as before.
+    node_type = capture.node_type or kind_spec.node_type
+
     content_parts = []
     if capture.alt_text:
         content_parts.append(capture.alt_text)
@@ -260,7 +266,7 @@ async def create_captured_item(
         session,
         VaultItemCreate(
             entry_type="bookmark",
-            node_type=kind_spec.node_type,
+            node_type=node_type,
             title=capture.title,
             content="\n\n".join(content_parts) or None,
             url=capture.page_url,
@@ -268,6 +274,8 @@ async def create_captured_item(
             og_description=capture.alt_text,
             og_image=capture.image,
             tags=capture.tags,
+            site=capture.site,
+            site_meta=capture.site_meta,
             collection_id=capture.collection_id,
             parent_id=capture.parent_id,
             auto_fetch_og=capture.auto_fetch_og,
@@ -519,6 +527,8 @@ async def create_video_capture_item(
             og_description=capture.alt_text,
             og_image=capture.image,
             tags=capture.tags,
+            site=capture.site,
+            site_meta=capture.site_meta,
             collection_id=capture.collection_id,
             parent_id=capture.parent_id,
             auto_fetch_og=capture.auto_fetch_og,

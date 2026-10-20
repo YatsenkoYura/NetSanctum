@@ -3,7 +3,7 @@ import json
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.modules.vault.node_types import capture_kind
 
@@ -33,6 +33,19 @@ MAX_OG_IMAGE_CHARS = (MAX_IMAGE_BYTES * 4 // 3) + 64
 MAX_TAGS = 200
 MAX_TAG_CHARS = 200
 MAX_CANVAS_BYTES = 8 * 1024 * 1024
+# What a capture rule may read off a page: an id, a title, an author, some tags.
+# Kept small on purpose. It is not the page — a page snapshot is megabytes of
+# somebody's tracking scripts and the owner's own session state — and the whole
+# point of matching a site is to keep the few fields that make the picture worth
+# having. These three numbers are the only bound there is: they cap it at about
+# 80KB by construction, so there is deliberately no separate bulk ceiling that
+# could never fire and would only look like one.
+MAX_SITE_FIELDS = 40
+MAX_SITE_FIELD_CHARS = 2000
+MAX_SITE_KEY_CHARS = 80
+# Long enough for a type or a site an owner names themselves, short enough that a
+# value from a page cannot smuggle a sentence into a column.
+MAX_NAME_CHARS = 80
 
 
 def _bounded_tags(tags: list[str]) -> list[str]:
@@ -59,6 +72,68 @@ def _bounded_canvas(canvas: dict[str, Any]) -> dict[str, Any]:
     if len(json.dumps(canvas, default=str).encode("utf-8")) > MAX_CANVAS_BYTES:
         raise ValueError(f"canvas_data is over the {MAX_CANVAS_BYTES} byte ceiling")
     return canvas
+
+
+def _bounded_site_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    """Trim, cut and count what a capture rule read off the page.
+
+    Cut rather than refuse, like tags: a rule that matched one site too eagerly
+    should cost the owner that site's extra fields, not the capture itself. The
+    per-value and per-count caps are the whole bound — see `MAX_SITE_FIELDS` —
+    and every value here is sealed, so they also bound what a blind write from
+    the extension carries, which the extension cannot encrypt itself.
+    """
+    out: dict[str, Any] = {}
+    for key, value in list(meta.items())[:MAX_SITE_FIELDS]:
+        name = " ".join(str(key).split())[:MAX_SITE_KEY_CHARS].strip()
+        if not name:
+            continue
+        if isinstance(value, (list, tuple)):
+            items = [
+                " ".join(str(item).split())[:MAX_SITE_FIELD_CHARS].strip()
+                for item in list(value)[:MAX_SITE_FIELDS]
+            ]
+            out[name] = [item for item in items if item]
+        elif isinstance(value, bool) or isinstance(value, (int, float)) or value is None:
+            out[name] = value
+        else:
+            trimmed = " ".join(str(value).split())[:MAX_SITE_FIELD_CHARS].strip()
+            if trimmed:
+                out[name] = trimmed
+    return out
+
+
+def _bounded_capture_type(node_type: str | None) -> str | None:
+    """The card type a capture rule asked for, or None for the kind's own.
+
+    A rule may not name its own source here. `node_type` is a structural column:
+    the grid reads it while the vault is locked, so a value like `pixiv` in it
+    publishes the owner's browsing to anyone holding the database, sealed vault or
+    not. That is the same rule `capture_rules.validate_rule` applies on the way
+    out, repeated on the way in — a rule is data the extension hands over, and
+    data from a browser is not trusted twice.
+
+    An unknown type is kept, not refused: pointing a site's captures at a card
+    type the owner declared in their own local directory is the point of the
+    feature, and refusing it would make a local type unreachable.
+    """
+    if node_type is None:
+        return None
+    from app.modules.vault.node_types import looks_like_provenance
+
+    trimmed = " ".join(str(node_type).split())[:MAX_NAME_CHARS].strip()
+    if not trimmed or looks_like_provenance(trimmed):
+        return None
+    return trimmed
+
+
+def _bounded_site(site: str | None) -> str | None:
+    """A site is a label for a rule match, kept short and free of punctuation
+    that only invites somebody to try to turn it into a host or a path."""
+    if site is None:
+        return None
+    trimmed = " ".join(str(site).split())[:MAX_SITE_KEY_CHARS].strip()
+    return trimmed or None
 
 
 class VaultCaptureCreate(BaseModel):
@@ -93,6 +168,18 @@ class VaultCaptureCreate(BaseModel):
         max_length=(MAX_IMAGE_BYTES * 4 // 3) + 64,
     )
     video_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    # Which capture rule matched, and what it read off the page. The rule name is
+    # a label for the owner's own rules — it never reaches `node_type`, because
+    # that column is readable while the vault is locked and a site named there
+    # would publish the browsing it is meant to describe.
+    site: str | None = Field(default=None, max_length=MAX_SITE_KEY_CHARS)
+    site_meta: dict[str, Any] = Field(default_factory=dict)
+    # The card type a capture rule asked for, when it asked for one. Refused if it
+    # names its own source: this column is structural and readable while the vault
+    # is locked, so a site named here would publish the browsing the `site` field
+    # exists to keep private. A type no build knows is allowed — that is how a
+    # rule reaches a card type the owner declared in their own local directory.
+    node_type: str | None = Field(default=None, max_length=MAX_NAME_CHARS)
     quality: Literal["best", "1080", "720", "480", "360"] = "720"
     tags: list[str] = Field(default_factory=list)
     collection_id: int | None = None
@@ -124,6 +211,9 @@ class VaultCaptureCreate(BaseModel):
             if parsed.username or parsed.password:
                 raise ValueError("Capture URLs must not contain credentials")
         self.tags = _bounded_tags(self.tags)
+        self.site = _bounded_site(self.site)
+        self.site_meta = _bounded_site_meta(self.site_meta)
+        self.node_type = _bounded_capture_type(self.node_type)
         return self
 
 
@@ -243,12 +333,20 @@ class VaultItemCreate(BaseModel):
     # is how `rating` survived here for years with nothing behind it.
     node_type: str = "note"
     canvas_data: dict[str, Any] = Field(default_factory=dict)
+    # Written by a capture, not by a person: the rule that matched the page and
+    # what it read off it. On `VaultItemCreate` because that is the capture
+    # intake; deliberately absent from `VaultItemUpdate`, where an edit should
+    # not be able to rewrite what the page actually said.
+    site: str | None = Field(default=None, max_length=MAX_SITE_KEY_CHARS)
+    site_meta: dict[str, Any] = Field(default_factory=dict)
 
     auto_fetch_og: bool = True  # If true and url provided, fetch OG metadata
 
     @model_validator(mode="after")
     def _fit_the_payload(self) -> "VaultItemCreate":
         self.tags = _bounded_tags(self.tags)
+        self.site = _bounded_site(self.site)
+        self.site_meta = _bounded_site_meta(self.site_meta)
         _bounded_canvas(self.canvas_data)
         return self
 
@@ -325,6 +423,11 @@ class VaultItemResponse(BaseModel):
     is_folder: bool = False
     node_type: str = "note"
     canvas_data: dict[str, Any] = Field(default_factory=dict)
+    # Which capture rule matched and what it read. Blanked while the card is
+    # locked — driven off SEALED_FIELDS on the read path, like every other field
+    # the owner wrote.
+    site: str | None = None
+    site_meta: dict[str, Any] = Field(default_factory=dict)
     # Where the card sits among its neighbours, set by a drag. Structural rather
     # than sealed, so a locked space still lays its grid out the same way.
     position: float | None = None
@@ -336,8 +439,32 @@ class VaultItemResponse(BaseModel):
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
+    @field_validator("site_meta", mode="before")
+    @classmethod
+    def _a_null_blob_is_no_blob(cls, value: Any) -> Any:
+        """A card that never matched a rule stores NULL, not `{}`.
+
+        The column is nullable and every row that existed before the migration
+        has NULL in it, so this is the shape most reads arrive in. Declaring the
+        field as a dict and letting that through turns one migration into a 500
+        on every card in the vault — which is what happened to the two integer
+        counters `SEALED_ZEROED_FIELDS` exists for.
+        """
+        return {} if value is None else value
+
     class Config:
         from_attributes = True
+
+
+class VaultCaptureRulesResponse(BaseModel):
+    """The site rules the extension applies, as plain selectors.
+
+    No compiled patterns and no functions reach here: the extension matches the
+    URL itself and runs the selectors in the page, so a rule that could carry
+    code would be a way to execute code in the owner's browser on every site.
+    """
+
+    rules: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class VaultSpaceDeleteRequest(BaseModel):

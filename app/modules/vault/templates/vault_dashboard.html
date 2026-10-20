@@ -1537,6 +1537,37 @@ function watchMediaStatus(itemId) {
   }, 4000);
 }
 
+/* What a capture rule read off the page, as a labelled line of chips.
+
+   Two shapes, not one: a list is a list of things (tags) and reads as chips,
+   while a single value is a fact (an id, an author) and reads as a pair. The
+   field names come from the owner's own rules, so they are treated as unknown
+   labels — shown verbatim, escaped, and never used to build anything. */
+function siteMetaHtml(item) {
+  const meta = item && item.site_meta;
+  if (!meta || typeof meta !== 'object') return '';
+  const parts = [];
+  for (const [key, value] of Object.entries(meta)) {
+    if (value === null || value === undefined || value === '') continue;
+    const label = escapeHtml(String(key));
+    if (Array.isArray(value)) {
+      const chips = value
+        .map(item => `<span class="px-2 py-0.5 rounded-full border border-zinc-800 bg-zinc-900 text-zinc-300">${escapeHtml(String(item))}</span>`)
+        .join('');
+      if (chips) parts.push(`<div class="flex flex-wrap gap-1 items-baseline"><span class="text-[10px] font-mono uppercase text-zinc-600">${label}</span>${chips}</div>`);
+      continue;
+    }
+    parts.push(
+      `<div class="flex gap-2 items-baseline"><span class="text-[10px] font-mono uppercase text-zinc-600">${label}</span>` +
+      `<span class="text-xs text-zinc-300 break-words">${escapeHtml(String(value))}</span></div>`
+    );
+  }
+  if (!parts.length) return '';
+  const where = item.site ? ` · ${escapeHtml(String(item.site))}` : '';
+  return `<div class="text-left space-y-1">${parts.join('')}</div>` +
+    `<div class="text-[10px] font-mono text-zinc-700 pt-1">правило capture${where}</div>`;
+}
+
 function openMediaView(item) {
   const card = window._vaultCache[item.id];
   if (!card) return;
@@ -1599,6 +1630,22 @@ function openMediaView(item) {
     stage.innerHTML = stillUrl
       ? vaultImgTag(card, stillUrl, 'max-h-[70vh] w-auto max-w-full object-contain')
       : `<div class="text-xs text-zinc-500 font-mono px-6 py-10">Изображение недоступно</div>`;
+  }
+
+  /* What a capture rule read off the page — an id, an author, the tags something
+     was published under. This is the half of a picture card that makes it worth
+     keeping, and it is why the site is remembered at all: the bytes are the same
+     bytes, the metadata is what you came back for.
+
+     The values are already sealed in the row and the response escapes them, but
+     they are still page text, so everything here goes through `escapeHtml` and
+     nothing is ever interpolated into markup as markup. */
+  const siteFacts = siteMetaHtml(card);
+  if (siteFacts) {
+    const notes = document.createElement('div');
+    notes.className = 'w-full mt-3 px-6';
+    notes.innerHTML = siteFacts;
+    stage.appendChild(notes);
   }
 
   if (isVideo) {

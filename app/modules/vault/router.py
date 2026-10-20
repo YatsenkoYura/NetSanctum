@@ -18,6 +18,7 @@ from app.core.security import get_current_bearer_user, get_current_user
 from app.core.storage import get_storage
 from app.core.templates import templates
 from app.modules.vault.capabilities import VAULT_PACKAGE_ID
+from app.modules.vault.capture_rules import public_shape, rules
 from app.modules.vault.crypto import (
     VaultUnlockError,
     WeakPassphraseError,
@@ -36,6 +37,7 @@ from app.modules.vault.node_types import NodeType, capture_kind
 from app.modules.vault.schemas import (
     VaultCaptureCreate,
     VaultCaptureResponse,
+    VaultCaptureRulesResponse,
     VaultCollectionCreate,
     VaultCollectionMerge,
     VaultCollectionMove,
@@ -290,6 +292,10 @@ def _apply_lock_state(serialized: dict, item, *, locked: bool) -> dict:
         serialized["title"] = alias
         serialized["tags"] = []
         serialized["canvas_data"] = {}
+        # A dict the response schema promises, so it is settled here beside the
+        # other two rather than left to the sealed-fields loop, which would hand
+        # it a None.
+        serialized["site_meta"] = {}
         serialized["has_image"] = False
         serialized["has_media"] = False
         serialized["media_status"] = "locked"
@@ -1046,6 +1052,23 @@ async def get_random_item(
     _apply_media_state(serialized, item)
     payload = _apply_lock_state(serialized, item, locked=locked)
     return await attach_media_url(payload, item, locked=locked, unlock_token=unlock_token)
+
+
+@router.get("/api/vault/capture-rules", response_model=VaultCaptureRulesResponse)
+async def get_capture_rules(user=Depends(get_current_bearer_user)):
+    """The site rules the extension applies before saving a capture.
+
+    Bearer-authenticated like the capture endpoint itself, and that is not
+    ceremony: which sites an owner has rules for is itself a description of their
+    browsing, which is the same reason `node_type` may not name a site. A
+    published copy of this instance would otherwise hand out its owner's reading
+    list to anyone who asked.
+
+    The rules are selectors and attribute names — data, never code. The extension
+    runs them in the page, so a rule that could carry a function would be a way
+    to run code in every browser the owner has, on every site they visit.
+    """
+    return VaultCaptureRulesResponse(rules=[public_shape(rule) for rule in rules()])
 
 
 @router.get("/api/vault/stats", response_model=VaultStatsResponse)
