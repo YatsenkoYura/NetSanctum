@@ -23,10 +23,18 @@
 
   const LOGIN_PATH = "/auth/login";
   const CAPTURE_PATH = "/api/vault/capture";
+  const RULES_PATH = "/api/vault/capture-rules";
   const MENU_ID = "netsanctum-capture-page";
 
   let settings = Object.assign({}, DEFAULT_SETTINGS);
   let session = { token: null, expiresAt: 0 };
+  /* The site rules, and when they were last read from the instance. Refreshed
+     on arm rather than per capture: a rule is a handful of selectors, the owner
+     changes one when a site changes its markup, and asking the server on every
+     save would put the network between the user and their own picture. */
+  let captureRules = [];
+  let rulesFetchedAt = 0;
+  const RULES_MAX_AGE_MS = 15 * 60 * 1000;
 
   function storageGet(keys) {
     return netsanctumStorageGet(keys);
@@ -114,8 +122,121 @@
       );
       failure.status = response.status;
       failure.payload = payload;
+      throw failure;
     }
     return response.json();
+  }
+
+  /* A read. `apiFetch` always sends a body, and a GET with one is at best
+     ignored and at worst refused by a proxy in between. */
+  async function apiGet(path) {
+    const token = await ensureSession(false);
+    const response = await fetch(`${settings.serverUrl}${path}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 401) {
+      await ensureSession(true);
+      return apiGet(path);
+    }
+    if (!response.ok) {
+      throw new Error(netsanctumErrorText(response.status, null, `NetSanctum returned ${response.status}`));
+    }
+    return response.json();
+  }
+
+  /* ── Site rules ───────────────────────────────────────── */
+
+  /* Rules are selectors, and the extension is what runs them. Only shapes it can
+     act on are kept: a rule carrying anything else is a bug in the server or an
+     attempt to hand this browser something it should not run, and a capture must
+     not fail because of it — the picture is saved either way. */
+  function usableRules(loaded) {
+    const list = Array.isArray(loaded && loaded.rules) ? loaded.rules : [];
+    const out = [];
+    for (const rule of list) {
+      if (!rule || typeof rule !== "object") continue;
+      if (typeof rule.id !== "string" || !rule.match || typeof rule.match.host !== "string") continue;
+      if (typeof rule.match.path !== "string" || !rule.fields || typeof rule.fields !== "object") continue;
+      const fields = {};
+      for (const [name, spec] of Object.entries(rule.fields)) {
+        if (!spec || typeof spec.selector !== "string" || !spec.selector) continue;
+        fields[name] = {
+          selector: spec.selector,
+          attr: typeof spec.attr === "string" ? spec.attr : "text",
+          many: Boolean(spec.many),
+          max: Number(spec.max) > 0 ? Number(spec.max) : 40,
+          // Only carried when it is a string: an id that lives inside a URL is
+          // the common case, and a pattern is re-compiled in the page rather than
+          // trusted from here.
+          ...(typeof spec.regex === "string" && spec.regex
+            ? { regex: spec.regex, group: Number(spec.group) > 0 ? Number(spec.group) : 1 }
+            : {}),
+        };
+      }
+      if (Object.keys(fields).length) {
+        out.push({
+          id: rule.id,
+          site: typeof rule.site === "string" ? rule.site : "",
+          node_type: typeof rule.node_type === "string" ? rule.node_type : "",
+          match: { host: rule.match.host.toLowerCase(), path: rule.match.path },
+          fields,
+        });
+      }
+    }
+    return out;
+  }
+
+  async function loadCaptureRules(force) {
+    if (!force && captureRules.length && Date.now() - rulesFetchedAt < RULES_MAX_AGE_MS) {
+      return captureRules;
+    }
+    try {
+      captureRules = usableRules(await apiGet(RULES_PATH));
+      rulesFetchedAt = Date.now();
+    } catch (error) {
+      // No rules is the ordinary case on a fresh install, and a rule file that
+      // went wrong must not stop a picture from being saved — so this is
+      // swallowed on purpose, and nothing is shown to the owner.
+      captureRules = [];
+      rulesFetchedAt = Date.now();
+    }
+    return captureRules;
+  }
+
+  function ruleForUrl(url) {
+    if (!url) return null;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (error) {
+      return null;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname || "/";
+    for (const rule of captureRules) {
+      const wanted = rule.match.host;
+      if (host !== wanted && !host.endsWith("." + wanted)) continue;
+      try {
+        if (new RegExp(rule.match.path).test(path)) return rule;
+      } catch (error) {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /* What the rule read off this page, asked of the frame that can see it. A
+     failure here is not a capture failure: the picture was already taken. */
+  async function readRuleFields(tabId, rule) {
+    try {
+      const answer = await sendToTab(tabId, { type: "netsanctum:extract", fields: rule.fields });
+      if (!answer || typeof answer.fields !== "object") return {};
+      return answer.fields;
+    } catch (error) {
+      return {};
+    }
   }
 
   /* ── Image helpers ────────────────────────────────────── */
@@ -358,6 +479,17 @@ async function ensureContentScript(tabId) {
       } else {
         payload = await capturePageArea(tab, page, null, viewport);
       }
+      /* Whatever the page was, if a rule claims it, the few fields it says to
+         read are read now — after the overlay came off, while the document is
+         still there, and never at the cost of the capture: a rule that matches
+         nothing, or that the page cannot answer, leaves the payload exactly as
+         it was. */
+      const rule = ruleForUrl(page.url);
+      if (rule) {
+        payload.site = rule.site || rule.match.host;
+        payload.node_type = rule.node_type || null;
+        payload.site_meta = await readRuleFields(tab.id, rule);
+      }
       stage = "upload";
       const result = await store(payload);
       return { ok: true, message: result.message, title: result.title };
@@ -409,6 +541,9 @@ async function ensureContentScript(tabId) {
 
 async function arm(tab) {
   await loadSettings();
+  // Read before the overlay goes up, so a site the owner has a rule for behaves
+  // like it from the very first tap rather than from the second.
+  loadCaptureRules(false).catch(() => {});
   let response = await sendToTab(tab.id, { type: "netsanctum:arm" });
   if (!response) {
     if (isUnscriptable(tab.url)) {

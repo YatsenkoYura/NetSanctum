@@ -314,6 +314,67 @@ class CreateCapturedItemTests(unittest.TestCase):
 
         self.assertEqual(0, session.query(item_model).count())
 
+    def test_a_rule_s_capture_lands_with_its_site_and_the_fields_it_read(self):
+        """The whole point of a rule: the picture is saved, and so is the thing
+        that makes it worth having."""
+        session, _ = self.build_session()
+        item = asyncio.run(
+            create_captured_item(
+                ExecuteOnlySession(session),
+                VaultCaptureCreate(
+                    **capture_payload(
+                        kind="media",
+                        title="A drawing",
+                        site="pixiv",
+                        site_meta={"illust_id": "98765432", "author": "someone", "tags": ["a", "b"]},
+                    )
+                ),
+            )
+        )
+
+        self.assertEqual("pixiv", item.site)
+        self.assertEqual("98765432", item.site_meta["illust_id"])
+        self.assertEqual(["a", "b"], item.site_meta["tags"])
+
+    def test_a_capture_with_no_rule_keeps_the_kind_s_own_card_type(self):
+        session, _ = self.build_session()
+        item = asyncio.run(
+            create_captured_item(ExecuteOnlySession(session), VaultCaptureCreate(**capture_payload()))
+        )
+
+        self.assertIsNone(item.site)
+        self.assertEqual({}, item.site_meta)
+        self.assertEqual("image", item.node_type)
+
+    def test_a_rule_may_point_a_capture_at_a_card_type_of_the_owners_own(self):
+        """A type no build knows is kept rather than refused: that is how a rule
+        reaches a card type the owner declared in their local directory."""
+        session, _ = self.build_session()
+        item = asyncio.run(
+            create_captured_item(
+                ExecuteOnlySession(session),
+                VaultCaptureCreate(**capture_payload(site="pixiv", node_type="owners-own-type")),
+            )
+        )
+
+        self.assertEqual("owners-own-type", item.node_type)
+        self.assertEqual("pixiv", item.site)
+
+    def test_a_rule_cannot_name_its_site_as_the_card_type(self):
+        """`node_type` is structural — the grid reads it while the vault is locked.
+        A site named there would publish the browsing the sealed `site` field
+        exists to keep private, so the type falls back to the kind's own."""
+        session, _ = self.build_session()
+        item = asyncio.run(
+            create_captured_item(
+                ExecuteOnlySession(session),
+                VaultCaptureCreate(**capture_payload(site="pixiv", node_type="pixiv")),
+            )
+        )
+
+        self.assertEqual("image", item.node_type)
+        self.assertEqual("pixiv", item.site, "the sealed field still says where it came from")
+
     def test_the_router_returns_the_lazy_image_url_of_the_new_item(self):
         created = SimpleNamespace(id=42, title="Example page", og_image=PNG_DATA_URL, related_entity_id=None)
         capture = VaultCaptureCreate(**capture_payload())

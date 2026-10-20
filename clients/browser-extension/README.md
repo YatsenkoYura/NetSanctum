@@ -16,6 +16,42 @@ teal outline, and nothing is saved yet — the extension is waiting for you:
 - **<kbd>Alt</kbd>+drag** — forces a region selection even over a media outline.
 - **<kbd>Esc</kbd> or right-click** — cancel.
 
+## Site rules
+
+Some pages are worth more than their picture. On an illustration page the bytes
+are half of it — the id, the author and the tags it was published under are the
+other half, and those are what you come back for.
+
+The instance can hold **capture rules**: a host, a path pattern, and a set of CSS
+selectors naming what to read. The extension downloads them
+(`/api/vault/capture-rules`, authenticated like a capture), applies the first rule
+that claims the page, reads those few fields in the page, and sends them with the
+capture. The card then shows them under the picture.
+
+```
+GET /api/vault/capture-rules
+{ "rules": [ { "id": "pixiv-artwork", "site": "pixiv", "node_type": "image",
+               "match": { "host": "pixiv.net", "path": "^/artworks/[0-9]+/?$" },
+               "fields": { "illust_id": { "selector": "[data-illust-id]", "attr": "data-illust-id" },
+                           "tags": { "selector": "a[href^='/tags/']", "attr": "text", "many": true, "max": 30 } } } ] }
+```
+
+Three properties this format is chosen for:
+
+- **Rules are data, never code.** A rule that could carry a function would be a
+  way to run code in every browser the owner has, on every site they visit,
+  from a server the owner may only be renting. Selectors are the whole language.
+- **Nothing on this path can cost you a picture.** A rule that matches nothing, a
+  selector the browser refuses, a rules file that will not load — the capture is
+  saved exactly as it would have been, without the metadata.
+- **Read-only attributes, bounded.** Only named attributes from a fixed list, and
+  every value and count is cut.
+
+A site's own rules go in `app/modules/vault/local_types/*_rules.py` on the
+server, which is git-ignored — a rule for a site nobody else cares about costs
+no committed change. A local rule with the same `id` replaces a shipped one,
+which is how you deal with a site that changed its markup.
+
 Hovering an outline shows what it actually is: the kind and tag, the intrinsic
 size next to the size on the page, where the bytes come from, and the alt text.
 An inline `blob:`/`data:` source reads `inline` rather than a host, because

@@ -55,7 +55,7 @@ class TheExtensionRepairsTheSettingTests(unittest.TestCase):
         """A 422 is a request the client got wrong and may fix itself; a 500 is
         the server's problem. Only the number tells them apart, and the error
         text alone cannot."""
-        fetcher = section(BACKGROUND, "async function apiFetch(", "/* ── Image helpers")
+        fetcher = section(BACKGROUND, "async function apiFetch(", "/* A read.")
         self.assertIn("failure.status = response.status", fetcher)
 
     def test_the_retry_goes_in_with_no_space_at_all(self):

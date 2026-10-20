@@ -911,6 +911,79 @@ function mediaRequest(entry) {
     }
   }
 
+  /* ── Site rules ──────────────────────────────────────────
+
+     What a capture rule asked to read off this page. The rule is selectors, not
+     code: it arrived from the instance as data and is matched again on the
+     server before anything it names is stored. Here it is only ever a
+     querySelectorAll and an attribute read.
+
+     Every result is cut. A rule that says "the tags" and hits a page with four
+     thousand of them must not turn a card into a page — and the count is capped
+     per field as well as per value, because a `many` selector on a page that
+     renders a thousand matches is the normal failure, not the exotic one. */
+
+  const MAX_EXTRACT_CHARS = 500;
+  const MAX_EXTRACT_VALUES = 40;
+  const MAX_EXTRACT_FIELDS = 30;
+
+  function extractValue(element, attr) {
+    if (attr === "text") return element.textContent || "";
+    if (typeof element.getAttribute === "function") return element.getAttribute(attr) || "";
+    return "";
+  }
+
+  /* A pattern, for the shape most of the web is in: an id that lives inside a
+     URL. It arrives from the instance, so it is compiled here — at the point of
+     use rather than trusted because it was validated somewhere else.
+
+     `false` means the rule asked for a pattern and this browser would not take
+     it, which is not the same as there being no pattern: returning null there
+     would pass the whole attribute through and store a URL under the field's
+     name, quietly and invisibly. The field is dropped instead. */
+  function extractPattern(spec) {
+    if (!spec.regex) return null;
+    try {
+      return new RegExp(spec.regex);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function extractFields(fields) {
+    const out = {};
+    if (!fields || typeof fields !== "object") return out;
+    for (const [name, spec] of Object.entries(fields).slice(0, MAX_EXTRACT_FIELDS)) {
+      if (!spec || typeof spec.selector !== "string" || !spec.selector) continue;
+      const cap = Number(spec.max) > 0 ? Math.min(Number(spec.max), MAX_EXTRACT_VALUES) : 1;
+      const pattern = extractPattern(spec);
+      if (pattern === false) continue;
+      const group = Number(spec.group) > 0 ? Number(spec.group) : 1;
+      let found;
+      try {
+        found = document.querySelectorAll(spec.selector);
+      } catch (error) {
+        /* A selector the browser refuses is a rule that will never work on this
+           page. Skipping the field leaves the card correct and incomplete, which
+           beats failing a capture over one field. */
+        continue;
+      }
+      const values = [];
+      for (const element of found) {
+        if (values.length >= cap) break;
+        let value = extractValue(element, spec.attr).replace(/\s+/g, " ").trim();
+        if (pattern) {
+          const hit = pattern.exec(value);
+          value = hit && hit[group] !== undefined ? String(hit[group]).trim() : "";
+        }
+        if (value) values.push(value.slice(0, MAX_EXTRACT_CHARS));
+      }
+      if (!values.length) continue;
+      out[String(name).slice(0, 80)] = spec.many || values.length > 1 ? values : values[0];
+    }
+    return out;
+  }
+
   /* ── Cross-frame reporting ────────────────────────────────
      Only the top frame draws an overlay. A frame below it posts its own media up
      so the outline appears in one place, and takes the click back when the user
@@ -993,6 +1066,11 @@ function mediaRequest(entry) {
 
     if (message.type === "netsanctum:viewport") {
       sendResponse({ width: window.innerWidth, height: window.innerHeight });
+      return false;
+    }
+
+    if (message.type === "netsanctum:extract") {
+      sendResponse(extractFields(message.fields));
       return false;
     }
 

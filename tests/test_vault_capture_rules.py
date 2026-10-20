@@ -12,6 +12,7 @@ and that nothing a rule can say turns into something the page should not do.
 """
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app.modules.vault import capture_rules
@@ -284,6 +285,14 @@ class APatternIsTheShapeOfAValueTests(unittest.TestCase):
                 if "regex" in spec:
                     self.assertIsInstance(spec["regex"], str, f"{rule['id']}.{name}")
                     self.assertLessEqual(len(spec["regex"]), 200, f"{rule['id']}.{name}")
+
+    def test_the_extension_drops_a_pattern_it_cannot_compile(self):
+        """The page compiles the pattern too, and a browser that will not take it
+        must drop the field rather than fall back to the raw value — the same
+        half-a-rule failure, one process further out."""
+        content = Path("clients/browser-extension/content.js").read_text(encoding="utf-8")
+        self.assertIn("return false;", content)
+        self.assertIn("if (pattern === false) continue;", content)
 
 
 class WhatTheExtensionReceivesTests(unittest.TestCase):
