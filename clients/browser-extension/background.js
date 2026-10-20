@@ -106,7 +106,14 @@
       } catch (error) {
         /* A non-JSON error body keeps the status-code message. */
       }
-      throw new Error(netsanctumErrorText(response.status, payload, `NetSanctum returned ${response.status}`));
+      /* The status travels with the error as well as in its text: a 422 is a
+         request the client got wrong and may be able to fix by itself, a 500 is
+         the server's problem, and only the number tells them apart. */
+      const failure = new Error(
+        netsanctumErrorText(response.status, payload, `NetSanctum returned ${response.status}`)
+      );
+      failure.status = response.status;
+      failure.payload = payload;
     }
     return response.json();
   }
@@ -234,7 +241,37 @@
   }
 
   async function store(payload) {
-    return apiFetch(CAPTURE_PATH, { body: payload });
+    try {
+      return await apiFetch(CAPTURE_PATH, { body: payload });
+    } catch (error) {
+      if (!isGoneSpace(error) || payload.collection_id === null) throw error;
+      /* The space this extension was told to capture into is not there any
+         more — deleted here, or never in the backup this instance came from. The
+         setting outlives it, and without this the capture is lost entirely,
+         once per attempt, forever.
+
+         So the setting is corrected and the capture is retried into no space at
+         all: the card still lands in the owner's Vault and shows up where the
+         grid has unfiled cards, which they can move in one drag. Losing the
+         picture because a folder was renamed is not a trade worth making. */
+      await netsanctumStorageSet({ collectionId: null });
+      settings.collectionId = null;
+      notify(
+        "NetSanctum Capture",
+        `The chosen space is gone — this capture went to the Vault unfiled. Pick a new one in the options.`
+      );
+      return apiFetch(CAPTURE_PATH, { body: { ...payload, collection_id: null } });
+    }
+  }
+
+  /* A refusal that names the space, rather than any other 422: this is the one
+     the extension can fix by itself, and acting on someone else's bad request
+     would move cards somewhere they did not ask for. */
+  function isGoneSpace(error) {
+    if (!error || error.status !== 422) return false;
+    const detail = error.payload && error.payload.detail;
+    const text = typeof detail === "string" ? detail : "";
+    return /\bno longer exists\b/.test(text);
   }
 
   /* ── Capture flow ─────────────────────────────────────── */

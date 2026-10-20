@@ -42,6 +42,9 @@ class ExecuteOnlySession:
     async def execute(self, statement, parameters=None):
         return self.session.execute(statement, parameters or {})
 
+    async def scalar(self, statement, parameters=None):
+        return self.session.execute(statement, parameters or {}).scalar()
+
     async def flush(self):
         self.session.flush()
 
@@ -219,6 +222,50 @@ class CreateCapturedItemTests(unittest.TestCase):
         Base.metadata.create_all(engine, tables=[VaultCollection.__table__, VaultItem.__table__])
         return Session(engine, expire_on_commit=False), VaultItem
 
+    def test_a_capture_into_a_space_that_is_gone_is_a_422_not_a_500(self):
+        """The extension keeps its chosen space in its own storage, so the id
+        outlives the space. Delete the space and every capture afterwards named an
+        id that no longer existed — which went into the insert and came back as a
+        foreign-key violation: a 500 on a request the client got wrong, saying
+        nothing about what was wrong with it."""
+        session, item_model = self.build_session()
+
+        with self.assertRaises(ValueError) as caught:
+            asyncio.run(
+                create_captured_item(
+                    ExecuteOnlySession(session),
+                    VaultCaptureCreate(**capture_payload(collection_id=4)),
+                )
+            )
+
+        self.assertIn("4", str(caught.exception))
+        self.assertEqual(0, session.query(item_model).count(), "nothing may be written before the refusal")
+
+    def test_a_capture_into_an_existing_space_still_works(self):
+        from app.modules.vault.models import VaultCollection
+
+        session, _ = self.build_session()
+        session.add(VaultCollection(id=5, name="Есть"))
+        session.commit()
+
+        item = asyncio.run(
+            create_captured_item(
+                ExecuteOnlySession(session),
+                VaultCaptureCreate(**capture_payload(collection_id=5)),
+            )
+        )
+
+        self.assertEqual(5, item.collection_id)
+
+    def test_a_capture_with_no_space_is_not_asked(self):
+        session, _ = self.build_session()
+
+        item = asyncio.run(
+            create_captured_item(ExecuteOnlySession(session), VaultCaptureCreate(**capture_payload()))
+        )
+
+        self.assertIsNone(item.collection_id)
+
     def test_a_screenshot_lands_as_an_embedded_image_bookmark(self):
         session, item_model = self.build_session()
         item = asyncio.run(
@@ -291,6 +338,21 @@ class CreateCapturedItemTests(unittest.TestCase):
                 asyncio.run(create_capture(capture, db=object(), user=None))
 
         self.assertEqual(422, caught.exception.status_code)
+
+    def test_the_router_reports_a_gone_space_as_422_naming_the_space(self):
+        """The whole point of checking in the service: the endpoint already turns
+        a `ValueError` into a 422, so the refusal reaches the extension as
+        something it can act on rather than as a 500 it can only stare at."""
+        capture = VaultCaptureCreate(**capture_payload(collection_id=4))
+        with patch(
+            "app.modules.vault.router.create_captured_item",
+            AsyncMock(side_effect=ValueError("Space 4 no longer exists")),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(create_capture(capture, db=object(), user=None))
+
+        self.assertEqual(422, caught.exception.status_code)
+        self.assertIn("4", str(caught.exception.detail))
 
 
 def video_payload(**overrides) -> dict:

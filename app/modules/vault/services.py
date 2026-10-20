@@ -200,6 +200,31 @@ async def create_vault_item(session: AsyncSession, item_in: VaultItemCreate) -> 
     return item
 
 
+async def _assert_capture_space_exists(session: AsyncSession, capture: VaultCaptureCreate) -> None:
+    """Refuse a capture aimed at a space that is gone, before anything is written.
+
+    The extension remembers which space to capture into and keeps that id in its
+    own storage, so it outlives the space: delete the space, or restore from a
+    backup that did not have it, and every capture afterwards named an id that no
+    longer exists. Without this the id went straight into the insert and came
+    back as a foreign-key violation — a 500 on a request the client got wrong,
+    saying nothing about what was wrong with it.
+
+    A `ValueError`, so the endpoint's existing handler answers 422. Not a lookup
+    the caller can satisfy by retrying with a different number: this one has to
+    change the setting.
+    """
+    if capture.collection_id is None:
+        return
+    exists = await session.scalar(
+        select(func.count()).select_from(VaultCollection).where(VaultCollection.id == capture.collection_id)
+    )
+    if not exists:
+        raise ValueError(
+            f"Space {capture.collection_id} no longer exists — pick another one in the extension options"
+        )
+
+
 async def create_captured_item(
     session: AsyncSession,
     capture: VaultCaptureCreate,
@@ -217,6 +242,7 @@ async def create_captured_item(
     already knows the title.
     """
     kind_spec = capture_kind(capture.kind)
+    await _assert_capture_space_exists(session, capture)
     if kind_spec.archived:
         return await create_video_capture_item(session, capture, user=user)
     if not decode_data_image(capture.image or ""):
