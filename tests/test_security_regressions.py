@@ -1,4 +1,6 @@
+import asyncio
 import hashlib
+import io
 import os
 import subprocess
 import sys
@@ -16,7 +18,7 @@ from app.core.config import Settings, validate_runtime_security
 from app.core.encryption_keys import legacy_encryption_keys, primary_encryption_key
 from app.core.http_security import is_cross_site_request
 from app.core.remote_fetch import RemoteFetchError, host_in_allowlist, validate_remote_url
-from app.core.responses import serve_media_stream
+from app.core.responses import serve_media_stream, serve_storage_file_chunked
 from app.core.secret_values import (
     SECRET_PREFIX,
     decrypt_secret_value,
@@ -474,11 +476,94 @@ class CoreBoundarySecurityTests(unittest.TestCase):
                 storage = LocalStorage(str(Path(directory) / "storage"))
                 storage.save_file_encrypted(b"0123456789", "media.enc")
                 with patch("app.core.responses.get_storage", return_value=storage):
-                    response = serve_media_stream(request, "media.enc")
+                    response = asyncio.run(serve_media_stream(request, "media.enc"))
 
             self.assertEqual(206, response.status_code)
             self.assertEqual("bytes 2-5/10", response.headers["content-range"])
             self.assertEqual("4", response.headers["content-length"])
+
+    def test_unreadable_legacy_encrypted_media_fails_before_headers(self):
+        """A key that no longer opens the file is an HTTP status, not a truncated body.
+
+        After the headers are committed a decryption failure can only reach the
+        client as a body that stops halfway, which browsers report as an opaque
+        decode error; the preflight turns it into a status instead.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(FILE_ENCRYPTION_KEY_PATH=str(key_path))
+            request = self.request("GET", "sanctum.example")
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(Path(directory) / "storage"))
+                storage.save_file_encrypted(b"0123456789", "first.enc")
+                # The same envelope under a name it is not bound to: no
+                # available key opens it there.
+                (storage._full_path("moved.enc")).write_bytes(storage._full_path("first.enc").read_bytes())
+                with patch("app.core.responses.get_storage", return_value=storage):
+                    with self.assertRaises(HTTPException) as media:
+                        asyncio.run(serve_media_stream(request, "moved.enc"))
+                    with self.assertRaises(HTTPException) as chunked:
+                        asyncio.run(serve_storage_file_chunked("moved.enc"))
+
+            self.assertEqual(500, media.exception.status_code)
+            self.assertEqual(500, chunked.exception.status_code)
+            # The client gets a stable generic detail; the path stays in the log.
+            self.assertNotIn("moved.enc", media.exception.detail)
+
+    def test_unreadable_seekable_encrypted_media_fails_before_headers(self):
+        """The chunked envelope is proven openable with one chunk before the status line."""
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(FILE_ENCRYPTION_KEY_PATH=str(key_path))
+            request = self.request("GET", "sanctum.example")
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(Path(directory) / "storage"))
+                storage.save_file_encrypted_seekable(io.BytesIO(b"0123456789"), "first.enc", length=10)
+                (storage._full_path("moved.enc")).write_bytes(storage._full_path("first.enc").read_bytes())
+                with patch("app.core.responses.get_storage", return_value=storage):
+                    with self.assertRaises(HTTPException) as caught:
+                        asyncio.run(serve_media_stream(request, "moved.enc"))
+
+            self.assertEqual(500, caught.exception.status_code)
+
+    def test_seekable_encrypted_media_ranges_stream_from_disk(self):
+        """A range over a chunked envelope decrypts only the chunks it touches.
+
+        `get_file_decrypted` is stubbed to fail: any whole-object decrypt in
+        this path would raise, so a successful response proves the body
+        streamed the covering chunks instead.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            settings = Settings(FILE_ENCRYPTION_KEY_PATH=str(key_path))
+            # Spans two 1 MiB chunks so the range crosses the chunk boundary.
+            payload = bytes(range(256)) * 4104
+            request = self.request("GET", "sanctum.example")
+            request.scope["headers"].append((b"range", b"bytes=1048570-1048590"))
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                storage = LocalStorage(str(Path(directory) / "storage"))
+                storage.save_file_encrypted_seekable(io.BytesIO(payload), "video.enc", length=len(payload))
+                with (
+                    patch("app.core.responses.get_storage", return_value=storage),
+                    patch.object(LocalStorage, "get_file_decrypted", side_effect=AssertionError),
+                ):
+
+                    async def serve():
+                        response = await serve_media_stream(request, "video.enc")
+                        body = b"".join([chunk async for chunk in response.body_iterator])
+                        return response, body
+
+                    response, body = asyncio.run(serve())
+
+            self.assertEqual(206, response.status_code)
+            self.assertEqual(f"bytes 1048570-1048590/{len(payload)}", response.headers["content-range"])
+            self.assertEqual(payload[1048570:1048591], body)
 
 
 class SessionSecurityTests(unittest.IsolatedAsyncioTestCase):

@@ -496,9 +496,9 @@ async def miku_resource(
     if not resource.storage_path:
         raise HTTPException(status_code=404, detail="Resource file is unavailable")
     if resource.kind in {"audio", "video"}:
-        return serve_media_stream(request, resource.storage_path)
+        return await serve_media_stream(request, resource.storage_path)
     if resource.kind == "image":
-        return serve_storage_file_chunked(resource.storage_path)
+        return await serve_storage_file_chunked(resource.storage_path)
     raise HTTPException(status_code=422, detail="Unsupported resource type")
 
 

@@ -153,7 +153,7 @@ class AllLibShareProvider:
             media = await self._get_allowed_media(db, share, self._positive_int(params["media_id"]))
             if not media.cover_path:
                 raise HTTPException(status_code=404, detail="Cover not found")
-            response = serve_storage_file_chunked(media.cover_path)
+            response = await serve_storage_file_chunked(media.cover_path)
         elif asset.name == "chapter_page":
             chapter = await self._get_allowed_chapter(
                 db,
@@ -164,7 +164,7 @@ class AllLibShareProvider:
             page_index = self._non_negative_int(params["page_index"])
             if page_index >= len(page_paths):
                 raise HTTPException(status_code=404, detail="Page not found")
-            response = serve_storage_file_chunked(page_paths[page_index])
+            response = await serve_storage_file_chunked(page_paths[page_index])
         elif asset.name == "chapter_video":
             chapter = await self._get_allowed_chapter(
                 db,
@@ -173,7 +173,7 @@ class AllLibShareProvider:
             )
             if not chapter.video_path:
                 raise HTTPException(status_code=404, detail="Video not found")
-            response = serve_media_stream(request, chapter.video_path)
+            response = await serve_media_stream(request, chapter.video_path)
         elif asset.name == "export":
             media = await self._get_allowed_media(db, share, self._positive_int(params["media_id"]))
             if not share.allow_download or media.media_type == "anime":

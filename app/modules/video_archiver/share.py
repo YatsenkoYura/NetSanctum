@@ -339,18 +339,18 @@ class VideoShareProvider:
         if asset_name == "video_stream":
             if not video.file_path:
                 raise HTTPException(status_code=404, detail="Video file not found")
-            response = serve_media_stream(request, video.file_path)
+            response = await serve_media_stream(request, video.file_path)
         elif asset_name == "video_download":
             if not share.allow_download or not video.file_path:
                 raise HTTPException(status_code=404, detail="Shared content not found")
-            response = serve_storage_file_chunked(video.file_path)
+            response = await serve_storage_file_chunked(video.file_path)
             suffix = PurePosixPath(video.file_path).suffix
             filename = urllib.parse.quote(f"{video.title}{suffix}")
             response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{filename}"
         elif asset_name == "video_thumbnail":
             if not video.thumbnail_path:
                 raise HTTPException(status_code=404, detail="Thumbnail not found")
-            response = serve_storage_file_chunked(video.thumbnail_path)
+            response = await serve_storage_file_chunked(video.thumbnail_path)
         elif asset_name == "video_avatar":
             avatar_path = video.channel_avatar_url
             if not avatar_path and video.channel_id:
@@ -358,12 +358,12 @@ class VideoShareProvider:
                 avatar_path = channel.avatar_path if channel else None
             if not avatar_path:
                 raise HTTPException(status_code=404, detail="Avatar not found")
-            response = serve_storage_file_chunked(avatar_path)
+            response = await serve_storage_file_chunked(avatar_path)
         elif asset_name == "video_subtitle":
             language = str(params["language"])
             if not isinstance(video.subtitles, dict) or language not in video.subtitles:
                 raise HTTPException(status_code=404, detail="Subtitle not found")
-            response = serve_storage_file_chunked(video.subtitles[language])
+            response = await serve_storage_file_chunked(video.subtitles[language])
         else:
             raise HTTPException(status_code=404, detail="Shared content not found")
 

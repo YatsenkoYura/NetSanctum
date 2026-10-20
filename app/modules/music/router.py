@@ -966,7 +966,7 @@ async def get_audio(
 
     from app.core.responses import serve_media_stream
 
-    return serve_media_stream(request, song.audio_file_id)
+    return await serve_media_stream(request, song.audio_file_id)
 
 
 @router.get("/cover/{song_id}")
@@ -978,7 +978,7 @@ async def get_cover(song_id: int, db: AsyncSession = Depends(get_db), user=Depen
 
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(song.cover_file_id)
+    return await serve_storage_file_chunked(song.cover_file_id)
 
 
 @router.get("/playlists/{playlist_id}/cover")
@@ -992,4 +992,4 @@ async def get_playlist_cover(
 
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(playlist.cover_path)
+    return await serve_storage_file_chunked(playlist.cover_path)

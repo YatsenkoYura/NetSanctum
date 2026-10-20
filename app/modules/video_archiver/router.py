@@ -582,7 +582,7 @@ async def get_channel_avatar_by_id(
 
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(avatar_url)
+    return await serve_storage_file_chunked(avatar_url)
 
 
 # ── Streaming & Subtitles ────────────────────────────────
@@ -599,7 +599,7 @@ async def stream_video(
 
     from app.core.responses import serve_media_stream
 
-    return serve_media_stream(request, video.file_path)
+    return await serve_media_stream(request, video.file_path)
 
 
 @router.get("/api/video-archiver/videos/{video_id}/frame", include_in_schema=False)
@@ -697,7 +697,7 @@ async def get_thumbnail(video_id: str, db: AsyncSession = Depends(get_db), user=
 
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(video.thumbnail_path)
+    return await serve_storage_file_chunked(video.thumbnail_path)
 
 
 @router.get("/api/video-archiver/videos/{video_id}/avatar", include_in_schema=False)
@@ -718,7 +718,7 @@ async def get_video_channel_avatar(
 
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(avatar_url)
+    return await serve_storage_file_chunked(avatar_url)
 
 
 @router.get("/api/video-archiver/videos/{video_id}/subtitles/{lang}", include_in_schema=False)
@@ -733,7 +733,7 @@ async def get_subtitle(
     subtitle_path = video.subtitles[lang]
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(subtitle_path)
+    return await serve_storage_file_chunked(subtitle_path)
 
 
 # ── Active Tasks API ─────────────────────────────────────
@@ -899,7 +899,7 @@ async def get_playlist_cover(
 
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(playlist.cover_path)
+    return await serve_storage_file_chunked(playlist.cover_path)
 
 
 @router.put("/api/video-archiver/playlists/{playlist_id}/source")

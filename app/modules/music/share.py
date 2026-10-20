@@ -320,9 +320,9 @@ class MusicShareProvider:
         song = await _get_scoped_song(db, share, song_id)
 
         if asset.name == "audio":
-            response = serve_media_stream(request, song.audio_file_id)
+            response = await serve_media_stream(request, song.audio_file_id)
         elif asset.name == "cover" and song.cover_file_id:
-            response = serve_storage_file_chunked(song.cover_file_id)
+            response = await serve_storage_file_chunked(song.cover_file_id)
         else:
             raise HTTPException(status_code=404, detail="Shared content not found")
 

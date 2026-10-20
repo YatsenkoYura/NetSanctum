@@ -115,7 +115,18 @@ async def get_resources_for_package(pkg_id: str) -> list:
         raise HTTPException(status_code=400, detail=f"No active package provider for: {pkg_id}")
 
     async with AsyncSessionLocal() as db:
-        return normalize_package_resources(await resolver(pkg_id, db))
+        try:
+            resources = await resolver(pkg_id, db)
+        except ValueError as exc:
+            # Resolvers reject an id they do not own with ValueError, and their
+            # messages ("Invalid Vault package ID") are written to be shown —
+            # a bad id is the caller's mistake, not a server fault. An
+            # HTTPException raised by a resolver is a deliberate 400/404 and
+            # is not caught here; a ValueError from normalizing the *result*
+            # still escapes as a 500, because that list is ours to build.
+            logger.warning("Package resolver rejected '%s': %s", pkg_id, exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return normalize_package_resources(resources)
 
 
 async def fetch_nsp_resource(

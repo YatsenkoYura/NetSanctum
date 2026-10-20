@@ -13,11 +13,15 @@ from app.core.packages_router import (
     PackageResourceError,
     download_package_nsp,
     generate_nsp,
+    get_resources_for_package,
     make_hybrid_manifest,
     make_package_manifest,
 )
 from app.modules.alllib.capabilities import resolve_package_resources
 from app.modules.alllib.router import _package_media_id, get_media_sync_manifest
+from app.modules.video_archiver.capabilities import (
+    resolve_package_resources as resolve_video_package_resources,
+)
 from app.modules.video_archiver.module import MODULE as VIDEO_MODULE
 from app.modules.video_archiver.router import _video_resources
 
@@ -341,6 +345,67 @@ class PackageContractTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             asyncio.run(resolve_package_resources("anime_7", Database()))
+
+    def test_resolver_value_error_is_a_client_error(self):
+        """A resolver that rejects the id does so with 400, not with a 500.
+
+        The id is the caller's input; only a ValueError raised while
+        normalizing the resolver's *result* — a list this router is
+        responsible for — still counts as a server fault.
+        """
+
+        async def resolver(package_id, db):
+            raise ValueError("Invalid Vault package ID")
+
+        class Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+        with (
+            patch("app.core.packages_router.AsyncSessionLocal", return_value=Session()),
+            patch("app.core.packages_router.module_registry.package_resolver", return_value=resolver),
+            self.assertRaises(HTTPException) as caught,
+        ):
+            asyncio.run(get_resources_for_package("vault_example"))
+
+        self.assertEqual(400, caught.exception.status_code)
+        self.assertEqual("Invalid Vault package ID", caught.exception.detail)
+
+    def test_video_package_resolver_rejects_malformed_ids(self):
+        """Malformed video ids fail before any lookup, as 400 rather than 500."""
+        for package_id in ("video_playlist_abc", "video_playlist_0", "video_", "song_1"):
+            with self.subTest(package_id=package_id), self.assertRaises(HTTPException) as caught:
+                asyncio.run(resolve_video_package_resources(package_id, None))
+            self.assertEqual(400, caught.exception.status_code)
+
+    def test_video_package_resolver_enforces_package_identity(self):
+        """A manifest that names another package is refused, not served."""
+
+        async def run():
+            with patch(
+                "app.modules.video_archiver.router.get_playlist_sync_manifest",
+                AsyncMock(return_value={"package_id": "video_playlist_9", "resources": []}),
+            ):
+                await resolve_video_package_resources("video_playlist_7", None)
+
+        with self.assertRaises(HTTPException) as caught:
+            asyncio.run(run())
+
+        self.assertEqual(400, caught.exception.status_code)
+        self.assertEqual("Video package identity mismatch", caught.exception.detail)
+
+    def test_video_package_resolver_returns_resources_for_a_valid_id(self):
+        manifest = AsyncMock(
+            return_value={"package_id": "video_abc", "resources": [{"url": "/x", "type": "json"}]}
+        )
+        with patch("app.modules.video_archiver.router.get_video_sync_manifest", manifest):
+            resources = asyncio.run(resolve_video_package_resources("video_abc", None))
+
+        self.assertEqual([{"url": "/x", "type": "json"}], resources)
+        manifest.assert_awaited_once_with("abc", db=None, hybrid=False)
 
 
 if __name__ == "__main__":

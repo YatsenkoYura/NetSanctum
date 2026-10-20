@@ -1299,7 +1299,7 @@ async def export_media(
 
         from app.core.responses import serve_storage_file_chunked
 
-        response = serve_storage_file_chunked(artifact_path, media_type=media_type)
+        response = await serve_storage_file_chunked(artifact_path, media_type=media_type)
         if artifact_path.endswith(".enc"):
             size = await asyncio.to_thread(storage.get_encrypted_plaintext_size, artifact_path)
         else:
@@ -1332,7 +1332,7 @@ async def get_cover(
     from app.core.responses import serve_storage_file_chunked
 
     try:
-        return serve_storage_file_chunked(media.cover_path)
+        return await serve_storage_file_chunked(media.cover_path)
     except Exception:
         return RedirectResponse(url="/static/placeholder.svg")
 
@@ -1342,7 +1342,7 @@ async def get_page(path: str, user=Depends(get_current_user)):
     """Serve a downloaded page image from the storage backend (auto-decrypts encrypted pages)."""
     from app.core.responses import serve_storage_file_chunked
 
-    return serve_storage_file_chunked(path)
+    return await serve_storage_file_chunked(path)
 
 
 @router.get("/api/video/stream", include_in_schema=False)
@@ -1350,7 +1350,7 @@ async def stream_anime_video(request: Request, path: str, user=Depends(get_curre
     """Stream anime video file with seek capability."""
     from app.core.responses import serve_media_stream
 
-    return serve_media_stream(request, path)
+    return await serve_media_stream(request, path)
 
 
 @router.get("/api/proxy-image", include_in_schema=False)
