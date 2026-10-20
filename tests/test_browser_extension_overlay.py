@@ -114,7 +114,16 @@ class LayerCyclingTests(unittest.TestCase):
         self.assertIn('event.key === "Tab" && event.shiftKey', on_key)
 
     def test_leaving_the_frame_drops_the_stack(self):
-        self.assertRegex(SOURCE, r"const onLeave = \(\) => \{[\s\S]*?stack = \[\];")
+        self.assertRegex(SOURCE, r"const onLeave = \(event\) => \{[\s\S]*?stack = \[\];")
+
+    def test_leaving_does_not_drop_the_stack_for_a_finger(self):
+        """A finger produces `pointerleave` the moment it lifts. Treating that as
+        the pointer leaving wiped the stack after every tap, which is what made
+        the layers unreachable on a touchscreen rather than merely hard."""
+        on_leave = SOURCE[SOURCE.index("const onLeave = (event) => {") :]
+        on_leave = on_leave[: on_leave.index("addEventListener")]
+        self.assertIn('event.pointerType !== "mouse"', on_leave)
+        self.assertRegex(on_leave, r'!== "mouse"\)\s*return;')
 
     def test_the_dead_single_box_lookup_is_gone(self):
         self.assertNotIn("targetAt", SOURCE)
@@ -123,6 +132,100 @@ class LayerCyclingTests(unittest.TestCase):
 class SourceIsValidTests(unittest.TestCase):
     def test_no_stale_reference_to_a_removed_helper(self):
         self.assertIsNone(re.search(r"\btargetAt\b", SOURCE))
+
+
+class TouchGestureTests(unittest.TestCase):
+    """A finger has no hover and no keyboard, so the taps stand in for both.
+
+    Before this, every layer feature was reachable only through `ArrowDown`, and
+    a tap that did not drag was read as "the page, as seen" — so on a phone the
+    only captures on offer were a region or the whole viewport, and the stacked
+    media underneath a player could not be reached at all.
+    """
+
+    def _section(self, start: str, end: str) -> str:
+        return SOURCE[SOURCE.index(start) : SOURCE.index(end, SOURCE.index(start))]
+
+    def test_a_tap_saves_and_a_double_tap_only_steps_a_layer(self):
+        """Not the other way round: a tap that changes a layer is the one that
+        costs a second tap to save, and a tap that saves has to be told apart
+        before it is spent."""
+        commit = self._section("const commitTaps = () => {", "const onTap =")
+        self.assertIn("taps === 2", commit)
+        self.assertIn("taps >= 3", commit)
+        self.assertLess(commit.index("taps === 2"), commit.index("saveChosen"))
+        self.assertIn("saveChosen(hits[Math.min(layerIndex, hits.length - 1)])", commit)
+
+    def test_the_save_waits_for_a_second_tap_instead_of_firing_on_the_lift(self):
+        self.assertIn("setTimeout(commitTaps, TAP_WINDOW_MS)", SOURCE)
+        self.assertIn("const TAP_WINDOW_MS", SOURCE)
+
+    def test_a_tap_hit_tests_the_point_the_finger_landed_on(self):
+        """The stack was built in a move handler that touch never calls, so it is
+        built where the tap lands instead."""
+        on_tap = self._section("const onTap = (x, y) => {", "const onMove =")
+        self.assertIn("stackAt(x, y)", on_tap)
+
+    def test_stepping_off_the_end_wraps_round(self):
+        commit = self._section("const commitTaps = () => {", "const onTap =")
+        self.assertIn("layerIndex = (layerIndex + 1) % hits.length", commit)
+        self.assertIn("layerIndex = (layerIndex - 1 + hits.length) % hits.length", commit)
+
+    def test_a_tap_never_becomes_a_screenshot_of_the_page(self):
+        """An empty tap used to mean the whole viewport. On a thumb that is one
+        wobble away from an unwanted save of everything on screen."""
+        on_up = self._section("const onUp = (event) => {", "const confirmViewport")
+        self.assertIn("onTap(event.clientX, event.clientY)", on_up)
+        self.assertIn("confirmViewport()", on_up)
+
+    def test_a_touch_press_does_not_spend_the_capture(self):
+        on_down = self._section("const onDown = (event) => {", "const onUp =")
+        touch_branch = on_down[: on_down.index('event.pointerType !== "mouse"')]
+        # The touch branch returns before anything can submit.
+        self.assertIn("return;", touch_branch)
+        self.assertNotIn("submit(", touch_branch)
+
+    def test_the_overlay_owns_its_touches(self):
+        """Without `touch-action: none` the browser scrolls the page under the
+        veil and cancels the pointer stream, so a drag with a finger never
+        reaches the end and the region is never captured."""
+        css = self._section("const OVERLAY_CSS = `", "function buildOverlay")
+        root = css[css.index(".root {") :]
+        root = root[: root.index("}")]
+        self.assertIn("touch-action: none", root)
+        self.assertIn("user-select: none", root)
+
+    def test_the_hint_wraps_instead_of_running_off_the_screen(self):
+        """`white-space: nowrap` on a bottom bar of three phrases is the whole of
+        "it doesn't fit" on a 360px screen."""
+        css = self._section("const OVERLAY_CSS = `", "function buildOverlay")
+        hint = css[css.index(".hint {") :]
+        hint = hint[: hint.index("}")]
+        self.assertIn("flex-wrap: wrap", hint)
+        self.assertIn("max-width: calc(100vw - 16px)", hint)
+        self.assertIn("env(safe-area-inset-bottom)", hint)
+        self.assertNotIn("white-space: nowrap", hint)
+
+    def test_the_tag_is_bounded_by_the_viewport(self):
+        css = self._section("const OVERLAY_CSS = `", "function buildOverlay")
+        tag = css[css.index(".tag {") :]
+        tag = tag[: tag.index("}")]
+        self.assertIn("calc(100vw - 8px)", tag)
+
+    def test_the_hint_says_the_touch_gestures_rather_than_the_keys(self):
+        build_hint = self._section("function buildHintInto(", "function buildOverlay()")
+        self.assertIn("isCoarsePointer()", build_hint)
+        self.assertIn("Double tap", build_hint)
+        self.assertIn("Triple tap", build_hint)
+        # The keyboard hint must not follow the finger around.
+        self.assertIn("if (!isCoarsePointer())", build_hint)
+
+    def test_coarse_pointer_is_asked_of_the_platform(self):
+        """Not the user agent: a UA string cannot tell a touchscreen laptop from
+        a desktop with a mouse, and getting it wrong hands both the mouse and the
+        finger the wrong gesture."""
+        self.assertIn('window.matchMedia("(pointer: coarse)")', SOURCE)
+        self.assertNotIn("userAgent", SOURCE)
 
 
 if __name__ == "__main__":

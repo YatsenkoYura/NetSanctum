@@ -16,6 +16,24 @@ teal outline, and nothing is saved yet — the extension is waiting for you:
 - **<kbd>Alt</kbd>+drag** — forces a region selection even over a media outline.
 - **<kbd>Esc</kbd> or right-click** — cancel.
 
+On a touchscreen there is no hover and no keyboard, so the same job is done with
+taps instead:
+
+- **Tap an outline** — saves it, the same as a click.
+- **Double tap** — the next layer down, wrapping past the last one back to the
+  first.
+- **Triple tap** — one layer back up, wrapping past the first to the last.
+- **Drag** — the same region selection as on a desktop.
+- **Tap empty page** — asks once, then a second tap saves the whole screen.
+
+Media stacks: a poster under a `<video>`, a thumbnail under the player that
+replaced it, a lightbox over the page it opened. The tag says which layer is
+showing (`слой 2 из 3`), and it follows the finger between taps.
+
+Because a tap saves and a double tap only changes the layer, the save waits
+about a quarter of a second to see whether a second tap follows. That delay is
+the cost of not spending the capture before the second tap can arrive.
+
 ## Site rules
 
 Some pages are worth more than their picture. On an illustration page the bytes

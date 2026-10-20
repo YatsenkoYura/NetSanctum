@@ -220,21 +220,85 @@
 
   const OVERLAY_CSS = `
 :host { all: initial; }
-.root { position: fixed; inset: 0; z-index: 2147483647; font: 500 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; cursor: crosshair; }
+.root { position: fixed; inset: 0; z-index: 2147483647; font: 500 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .backdrop { position: absolute; inset: 0; background: rgba(8, 10, 12, 0.55); }
 .box { position: absolute; z-index: 1; border: 1.5px solid rgba(45, 212, 191, 0.85); background: rgba(45, 212, 191, 0.08); pointer-events: none; }
 .box.hover { border-color: #5eead4; background: rgba(94, 234, 212, 0.2); box-shadow: 0 0 0 1px rgba(94, 234, 212, 0.5), 0 0 18px rgba(45, 212, 191, 0.35); }
-.tag { position: absolute; z-index: 5; max-width: 320px; padding: 4px 8px; border: 1px solid rgba(94, 234, 212, 0.6); background: rgba(6, 20, 22, 0.95); color: #ccfbf1; font: 500 11px/1.45 ui-monospace, monospace; pointer-events: none; overflow-wrap: anywhere; }
+.tag { position: absolute; z-index: 5; max-width: min(320px, calc(100vw - 8px)); padding: 4px 8px; border: 1px solid rgba(94, 234, 212, 0.6); background: rgba(6, 20, 22, 0.95); color: #ccfbf1; font: 500 11px/1.45 ui-monospace, monospace; pointer-events: none; overflow-wrap: anywhere; }
 .tag .k { color: #5eead4; font-weight: 700; }
 .tag .d { color: #94a3b8; }
 .tag .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; color: #e2e8f0; }
 .tag.below { transform: none; }
 .selection { position: absolute; z-index: 3; border: 1.5px dashed #5eead4; background: rgba(94, 234, 212, 0.14); box-shadow: 0 0 0 9999px rgba(8, 10, 12, 0.55); pointer-events: none; }
-.hint { position: absolute; z-index: 6; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; gap: 18px; align-items: center; padding: 10px 18px; background: #0b1113; border: 1px solid rgba(45, 212, 191, 0.5); color: #ccfbf1; white-space: nowrap; }
+/* The hint sits at the bottom of the screen, so it has to survive a phone: it
+   wraps instead of running off both edges, keeps clear of the home indicator,
+   and grows its type on a coarse pointer where 12px monospace is not readable
+   with a thumb on it. The nowrap here was the whole of "it doesn't fit". */
+.hint { position: absolute; z-index: 6; left: 50%; bottom: 0; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center; max-width: calc(100vw - 16px); padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: #0b1113; border: 1px solid rgba(45, 212, 191, 0.5); border-radius: 8px 8px 0 0; color: #ccfbf1; text-align: center; }
 .hint kbd { padding: 1px 5px; background: #134e4a; border: 1px solid #2dd4bf; border-radius: 2px; color: #5eead4; font: inherit; }
 .hint .err { color: #fca5a5; }
+.hint .d { color: #94a3b8; }
+
+/* A finger is not a cursor: the desktop sizes are chosen for a glance, and on a
+   phone the same numbers are unreadable. Only the overlay's own chrome grows —
+   the outlines stay exact, because they are measured against real pixels. */
+@media (pointer: coarse) {
+  .root { font-size: 13px; }
+  .hint { font-size: 13px; gap: 8px 16px; }
+  .tag { font-size: 12px; }
+}
 .busy { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: rgba(8, 10, 12, 0.72); color: #5eead4; font: 600 13px/1 ui-monospace, monospace; letter-spacing: 0.08em; }
 `;
+
+  /* How long a tap waits for a second one before it counts as a save. A tap that
+     saves has to be told apart from a double tap that only changes the layer,
+     so the save cannot happen on the finger's lift — it happens here. */
+  const TAP_WINDOW_MS = 260;
+  /* Two taps that drift further apart than this are two intentions, not one. */
+  const TAP_SLOP = 24;
+  /* A finger wobbles more than a mouse hand does, and a wobbly tap must not turn
+     into a screenshot of a region nobody asked for. */
+  const TOUCH_CLICK_SLOP = 16;
+
+  function isCoarsePointer() {
+    try {
+      return window.matchMedia("(pointer: coarse)").matches;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /* The hint is rewritten rather than appended to: it is also where a
+     confirmation and the "older copy of the extension" notice go, and those two
+     have to be able to hand the original back when they are done. */
+  function buildHintInto(hint, mediaCount) {
+    hint.textContent = "";
+    if (isCoarsePointer()) {
+      hint.innerHTML =
+        "<span>Tap to save</span>" +
+        "<span>Double tap: layer below</span>" +
+        "<span>Triple tap: layer above</span>" +
+        "<span>Drag: screenshot a region</span>";
+    } else {
+      hint.innerHTML =
+        "<span>Click a teal outline to save that media</span>" +
+        "<span>Drag to screenshot a region</span>" +
+        "<span><kbd>Esc</kbd> cancel</span>";
+    }
+    if (mediaCount > 0) {
+      const counter = document.createElement("span");
+      counter.textContent = `${mediaCount} media found`;
+      hint.appendChild(counter);
+      /* The layer keys are invisible until something is stacked under the
+         pointer, so say once that they exist. */
+      if (!isCoarsePointer()) {
+        const layerHelp = document.createElement("span");
+        layerHelp.className = "d";
+        layerHelp.textContent = "· ↑↓ слои · Esc отмена";
+        hint.appendChild(layerHelp);
+      }
+    }
+  }
 
   function buildOverlay() {
     const host = document.createElement("div");
@@ -256,10 +320,7 @@
 
     const hint = document.createElement("div");
     hint.className = "hint";
-    hint.innerHTML =
-      "<span>Click a teal outline to save that media</span>" +
-      "<span>Drag to screenshot a region</span>" +
-      "<span><kbd>Esc</kbd> cancel</span>";
+    buildHintInto(hint, 0);
 
     const busy = document.createElement("div");
     busy.className = "busy";
@@ -555,15 +616,7 @@ function mediaRequest(entry) {
       boxes.push({ ...target, box, rect });
     }
     if (boxes.length) {
-      const counter = document.createElement("span");
-      counter.textContent = `${boxes.length} media found`;
-      overlay.hint.appendChild(counter);
-      /* The layer keys are invisible until something is stacked under the
-         pointer, so say once that they exist. */
-      const layerHelp = document.createElement("span");
-      layerHelp.className = "d";
-      layerHelp.textContent = "· ↑↓ слои · Esc отмена";
-      overlay.hint.appendChild(layerHelp);
+      buildHintInto(overlay.hint, boxes.length);
     }
 
     let drag = null;
@@ -609,6 +662,84 @@ function mediaRequest(entry) {
       if (stack.length < 2) return;
       layerIndex = (layerIndex + step + stack.length) % stack.length;
       showHovered();
+    };
+
+    /* ── Taps ────────────────────────────────────────────
+
+       A finger has no hover, so the whole hover-driven half of this overlay —
+       the stack, the layer choice, the tag — had nothing to hang on: there was
+       no pointer position until the finger moved, and a tap that did not drag
+       was read as "the page, as seen". On a phone that meant the only thing you
+       could capture was a region or the whole viewport, and the layers could
+       not be reached at all.
+
+       So a tap is a real gesture here, and the stack is hit-tested at the point
+       the finger landed rather than wherever it last hovered. Three taps in one
+       place in quick succession mean three different things, which is why the
+       save waits out the double-tap window instead of firing on the lift. */
+
+    let tapTimer = null;
+    let tapCount = 0;
+    let tapX = 0;
+    let tapY = 0;
+    let tapStack = [];
+
+    const forgetTaps = () => {
+      if (tapTimer) clearTimeout(tapTimer);
+      tapTimer = null;
+      tapCount = 0;
+      tapStack = [];
+    };
+
+    /* Save whatever layer the tag is currently showing. Shared with the mouse
+       path so the two cannot drift on what "the chosen media" means. */
+    const saveChosen = (chosen) => {
+      if (!chosen) return false;
+      if (chosen.remote) {
+        /* The outline belongs to another frame; let it do its own capture. */
+        if (!forwardClick(chosen)) dismiss();
+        return true;
+      }
+      submit(mediaRequest(chosen));
+      return true;
+    };
+
+    const commitTaps = () => {
+      const hits = tapStack;
+      const taps = tapCount;
+      forgetTaps();
+      if (!hits.length) return;
+      // The tag has to follow the finger between taps, so the stack is set here
+      // rather than in a move handler that touch never calls.
+      stack = hits;
+      if (taps >= 3) {
+        layerIndex = (layerIndex - 1 + hits.length) % hits.length;
+        showHovered();
+        return;
+      }
+      if (taps === 2) {
+        layerIndex = (layerIndex + 1) % hits.length;
+        showHovered();
+        return;
+      }
+      saveChosen(hits[Math.min(layerIndex, hits.length - 1)]);
+    };
+
+    const onTap = (x, y) => {
+      const hits = stackAt(x, y);
+      if (!hits.length) return false;
+      const near = tapCount > 0 && Math.abs(x - tapX) <= TAP_SLOP && Math.abs(y - tapY) <= TAP_SLOP;
+      tapCount = near ? tapCount + 1 : 1;
+      tapX = x;
+      tapY = y;
+      tapStack = hits;
+      if (tapTimer) clearTimeout(tapTimer);
+      tapTimer = setTimeout(commitTaps, TAP_WINDOW_MS);
+      // Show the layer immediately: waiting out the window to draw anything at
+      // all would read as a dropped tap.
+      stack = hits;
+      showHovered();
+      return true;
     };
 
     const onMove = (event) => {
@@ -668,6 +799,18 @@ function mediaRequest(entry) {
      * which is not always the topmost one. */
     const onDown = (event) => {
       if (event.button !== 0) return;
+      /* Touch never chooses here. A tap has to be told apart from a double tap
+         that only steps a layer, and the lift is the only moment both are known
+         — choosing on the press would have spent the save before the second tap
+         could arrive. So a press on touch only ever begins a drag, and the tap
+         handlers decide what the gesture was. */
+      if (event.pointerType !== "mouse") {
+        drag = { startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY };
+        // Drawn straight away: a finger gives no hover to react to, so this mark
+        // is the only thing saying the press landed.
+        paint();
+        return;
+      }
       const chosen = stack.length ? stack[Math.min(layerIndex, stack.length - 1)] : null;
       const found = event.altKey ? null : chosen;
       if (found && found.remote) {
@@ -685,7 +828,9 @@ function mediaRequest(entry) {
 
     const onUp = (event) => {
       if (!drag) return;
-      const moved = Math.abs(event.clientX - drag.startX) > CLICK_SLOP || Math.abs(event.clientY - drag.startY) > CLICK_SLOP;
+      const touch = event.pointerType !== "mouse";
+      const slop = touch ? TOUCH_CLICK_SLOP : CLICK_SLOP;
+      const moved = Math.abs(event.clientX - drag.startX) > slop || Math.abs(event.clientY - drag.startY) > slop;
       const rect = clampRect({
         left: Math.min(drag.startX, event.clientX),
         top: Math.min(drag.startY, event.clientY),
@@ -694,20 +839,53 @@ function mediaRequest(entry) {
       });
       drag = null;
       overlay.selection.style.display = "none";
-      // A click on empty page with no drag means "the page, as seen".
-      if (!moved || rect.width < 1 || rect.height < 1) {
+      if (!moved) {
+        // A tap that landed on media is a choice about that media — the layer
+        // gesture or the save — and never a screenshot. Only a tap on nothing
+        // means "the page, as seen", and on a coarse pointer that stays a
+        // deliberate second gesture: an empty tap is still more likely to be a
+        // mis-aimed thumb than an intent to save the viewport.
+        if (onTap(event.clientX, event.clientY)) return;
+        if (touch && !confirmViewport()) return;
         submit({ action: "viewport", viewport: viewportSize() });
         return;
       }
       submit({ action: "region", rect, viewport: viewportSize() });
     };
 
+    /* An empty tap on a phone saves the whole viewport, which is one keystroke
+       away from a mis-aimed thumb and impossible to undo from the overlay. It
+       waits to be asked for twice. */
+    let viewportArmed = false;
+    let viewportTimer = null;
+    const confirmViewport = () => {
+      if (viewportArmed) {
+        if (viewportTimer) clearTimeout(viewportTimer);
+        viewportArmed = false;
+        return true;
+      }
+      viewportArmed = true;
+      overlay.hint.textContent = "";
+      const note = document.createElement("span");
+      note.textContent = "Tap again to save the whole screen";
+      overlay.hint.appendChild(note);
+      viewportTimer = setTimeout(() => {
+        viewportArmed = false;
+        overlay.hint.textContent = "";
+        buildHintInto(overlay.hint, boxes.length);
+      }, 2000);
+      return false;
+    };
+
     overlay.root.addEventListener("pointermove", onMove);
     overlay.root.addEventListener("pointerdown", onDown);
     overlay.root.addEventListener("pointerup", onUp);
     /* Leaving the page drops the stack, so coming back does not resume a stale
-       layer choice against whatever is now underneath. */
-    const onLeave = () => {
+       layer choice against whatever is now underneath. Mouse only: a finger
+       produces `pointerleave` the moment it lifts, which wiped the stack
+       immediately after every tap and took the layer gesture with it. */
+    const onLeave = (event) => {
+      if (event && event.pointerType && event.pointerType !== "mouse") return;
       stack = [];
       layerIndex = 0;
       if (hovered) hovered.box.classList.remove("hover");
