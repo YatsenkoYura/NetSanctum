@@ -17,6 +17,7 @@ break:
 """
 
 import importlib
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -163,16 +164,25 @@ class LocalTypesTests(unittest.TestCase):
     DIRECTORY = Path("app/modules/vault/local_types")
 
     def _write(self, name: str, body: str):
-        self.DIRECTORY.mkdir(parents=True, exist_ok=True)
+        """A container image cannot grow card types, and that is not a failure."""
+        try:
+            self.DIRECTORY.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            self.skipTest(f"local types directory is not writable: {error}")
+        if not os.access(self.DIRECTORY, os.W_OK):
+            self.skipTest("local types directory is not writable")
         self.addCleanup(lambda: (self.DIRECTORY / name).unlink(missing_ok=True))
         (self.DIRECTORY / name).write_text(body)
 
     def test_the_directory_is_not_tracked_by_git(self):
         """Otherwise "not in git" is a promise the .gitignore has to keep."""
-        ignored = subprocess.run(
-            ["git", "check-ignore", "-q", str(self.DIRECTORY)],
-            capture_output=True,
-        )
+        try:
+            ignored = subprocess.run(
+                ["git", "check-ignore", "-q", str(self.DIRECTORY)],
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            self.skipTest("git is not available")
         if ignored.returncode == 127:
             self.skipTest("git is not available")
         self.assertEqual(0, ignored.returncode, f"{self.DIRECTORY} is not ignored")
