@@ -1450,7 +1450,6 @@ async def get_sealed_sync_manifest(
         root_url=sealed_items_url(collection.id, package_id),
         resources=await sealed_package_resources(db, collection),
     )
-    manifest["sealing"] = sealing
     manifest = make_hybrid_manifest(package_id, manifest)
     manifest["sealing"] = sealing
     return manifest
