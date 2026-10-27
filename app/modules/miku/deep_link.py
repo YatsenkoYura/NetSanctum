@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlparse
 # Module -> allowed path prefixes for `open_path` documents publish.
 OPEN_PATH_PREFIXES: dict[str, tuple[str, ...]] = {
     "alllib": ("/alllib/reader/", "/alllib/dashboard"),
+    "archiver": ("/archiver/dashboard",),
     "music": ("/music/dashboard",),
     "planner": ("/planner",),
     "vault": ("/vault/dashboard",),

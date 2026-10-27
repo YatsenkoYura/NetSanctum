@@ -154,12 +154,12 @@ class VaultCaptureCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=2000)
     # The alias shown while a sealed Vault is locked. The extension cannot be given
     # a passphrase, so this is the only handle the owner has on a blind write.
-    public_title: str | None = Field(default=None, max_length=1000)
+    public_title: str | None = Field(default=None, max_length=4000)
     page_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
     # Free-form provenance, shown as text and never dereferenced, so a `blob:`
     # or `data:` value is kept rather than refused.
     source_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
-    alt_text: str | None = Field(default=None, max_length=1000)
+    alt_text: str | None = Field(default=None, max_length=4000)
     image: str | None = Field(
         default=None,
         description="data:image/...;base64 payload; required unless kind is video",
@@ -300,7 +300,7 @@ class VaultCollectionMerge(BaseModel):
 
 class VaultItemCreate(BaseModel):
     entry_type: str = Field("bookmark", description="bookmark, rating, or thought")
-    title: str | None = Field(default="", max_length=1000)
+    title: str | None = Field(default="", max_length=4000)
     content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
     url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
 
@@ -310,7 +310,7 @@ class VaultItemCreate(BaseModel):
 
     # Required for a sealed item: the alias shown while its Vault is locked. It is
     # stored in the clear on purpose and is never the real title.
-    public_title: str | None = Field(default=None, max_length=1000)
+    public_title: str | None = Field(default=None, max_length=4000)
 
     score: float | None = Field(None, ge=1.0, le=10.0)
     status: str | None = Field(None, description="watching, completed, dropped, planned, on_hold")
@@ -353,9 +353,9 @@ class VaultItemCreate(BaseModel):
 
 class VaultItemUpdate(BaseModel):
     # Editable while the Vault is locked: the alias is public by design.
-    public_title: str | None = Field(default=None, max_length=1000)
+    public_title: str | None = Field(default=None, max_length=4000)
 
-    title: str | None = Field(default=None, max_length=1000)
+    title: str | None = Field(default=None, max_length=4000)
     content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
     url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
     score: float | None = None

@@ -22,6 +22,7 @@ from app.core.modules import (
 
 PUBLIC_MODULES = {
     "alllib",
+    "archiver",
     "auth",
     "computercraft",
     "miku",
@@ -408,6 +409,7 @@ class ModuleManifestTests(unittest.TestCase):
         modules_root = Path("app/modules")
         product_modules = {
             "alllib",
+            "archiver",
             "computercraft",
             "music",
             "tabletop_games",

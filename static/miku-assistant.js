@@ -244,6 +244,7 @@
     // turn the chat's Open buttons into 404s or open redirects.
     const OPEN_PATH_PREFIXES = {
         alllib: ['/alllib/reader/', '/alllib/dashboard'],
+        archiver: ['/archiver/dashboard'],
         music: ['/music/dashboard'],
         vault: ['/vault/dashboard'],
         video_archiver: ['/video-archiver/dashboard'],
@@ -274,6 +275,7 @@
             youtube: '/youtube/dashboard',
             alllib: '/alllib/dashboard',
             vault: '/vault/dashboard',
+            archiver: '/archiver/dashboard',
         };
         return dashboards[item.module_id] || item.resource_url;
     }

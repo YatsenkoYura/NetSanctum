@@ -62,6 +62,7 @@ class DeepLinkTests(unittest.TestCase):
 
         for path in (
             "app/modules/alllib/search.py",
+            "app/modules/archiver/search.py",
             "app/modules/music/search.py",
             "app/modules/vault/search.py",
             "app/modules/video_archiver/search.py",

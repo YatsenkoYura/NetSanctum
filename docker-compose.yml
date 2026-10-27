@@ -163,7 +163,7 @@ services:
     init: true
     environment:
       NETSANCTUM_LOAD_DOTENV: "0"
-      BROWSER_EGRESS_HOSTS: ${BROWSER_EGRESS_HOSTS:-google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,recaptcha.net,youtube.com,youtube-nocookie.com,ytimg.com,googlevideo.com}
+      BROWSER_EGRESS_HOSTS: ${BROWSER_EGRESS_HOSTS:-google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,recaptcha.net,youtube.com,youtube-nocookie.com,ytimg.com,googlevideo.com,telegram.org,boosty.to,www.boosty.to,api.boosty.to,static.boosty.to}
     read_only: true
     tmpfs:
       - /tmp

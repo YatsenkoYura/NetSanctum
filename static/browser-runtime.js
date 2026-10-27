@@ -166,11 +166,31 @@ class NetSanctumBrowser extends HTMLElement {
     async clickFrame(event) {
         if (!this.sessionId) return;
         const rect = this.frame.getBoundingClientRect();
+        // object-contain может добавлять черные полосы (letterboxing),
+        // поэтому реальное изображение не всегда заполняет весь rect.
+        // Пересчитываем координаты клика относительно отображаемого изображения.
+        const naturalWidth = this.frame.naturalWidth || 1280;
+        const naturalHeight = this.frame.naturalHeight || 800;
+        const imageRatio = naturalWidth / naturalHeight;
+        const rectRatio = rect.width / rect.height;
+        let displayWidth, displayHeight, offsetX, offsetY;
+        if (rectRatio > imageRatio) {
+            // Элемент шире изображения: отступы слева/справа
+            displayHeight = rect.height;
+            displayWidth = rect.height * imageRatio;
+        } else {
+            // Элемент выше изображения: отступы сверху/снизу
+            displayWidth = rect.width;
+            displayHeight = rect.width / imageRatio;
+        }
+        offsetX = (rect.width - displayWidth) / 2;
+        offsetY = (rect.height - displayHeight) / 2;
+        const clickX = event.clientX - rect.left - offsetX;
+        const clickY = event.clientY - rect.top - offsetY;
         await this.command('click', {
-            x: (event.clientX - rect.left) * 1280 / rect.width,
-            y: (event.clientY - rect.top) * 800 / rect.height,
+            x: Math.max(0, Math.min(1280, (clickX / displayWidth) * 1280)),
+            y: Math.max(0, Math.min(800, (clickY / displayHeight) * 800)),
         });
-        this.textInput.focus();
     }
 
     async save() {

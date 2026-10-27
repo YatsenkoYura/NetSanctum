@@ -181,6 +181,35 @@ class BrowserSnapshotStore:
             return None
         return self._cookies_netscape(storage_state)
 
+    def cookies_dict_for_scope_sync(self, credential_scope: str) -> dict[str, str]:
+        """Live session cookies of one credential scope as a name→value map.
+
+        Unlike ``cookies_for_scope_sync`` this keeps the raw pairs, so a caller
+        can build a ``Cookie`` header for its own HTTP client. A scope whose
+        snapshot misses a required cookie name counts as signed out.
+        """
+        from app.core.modules import module_registry
+
+        resolved = module_registry.browser_policy_for_credential_scope(credential_scope)
+        if not resolved:
+            return {}
+        record, policy = resolved
+        storage_state = self._load_sync(policy.id, record.id, policy)
+        if not storage_state:
+            return {}
+        cookies: dict[str, str] = {}
+        now = int(time.time())
+        for cookie in storage_state.get("cookies") or []:
+            expires = int(cookie.get("expires") or 0)
+            if 0 < expires <= now:
+                continue
+            name = str(cookie.get("name") or "")
+            if name:
+                cookies[name] = str(cookie.get("value") or "")
+        if policy.required_cookie_names and not set(cookies) & set(policy.required_cookie_names):
+            return {}
+        return cookies
+
     async def cookies_for_scope(self, credential_scope: str) -> str | None:
         return await asyncio.to_thread(self.cookies_for_scope_sync, credential_scope)
 

@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const content = execFileSync(
@@ -7,6 +8,18 @@ const content = execFileSync(
 )
   .split("\0")
   .filter((path) => path.endsWith(".html") || path.endsWith(".py"));
+
+// A module that is deliberately git-ignored is invisible to the listing above,
+// so its templates would ship unstyled. Read the directory directly while it
+// exists; once the module is committed, `git ls-files` lists it and this is a
+// harmless duplicate.
+const ignoredTemplates = "app/modules/archiver/templates";
+if (fs.existsSync(ignoredTemplates)) {
+  for (const name of fs.readdirSync(ignoredTemplates)) {
+    if (name.endsWith(".html")) content.push(`${ignoredTemplates}/${name}`);
+  }
+}
+
 content.push("static/browser-runtime.js", "static/miku-assistant.js", "static/miku-dashboard.js");
 
 /** @type {import('tailwindcss').Config} */

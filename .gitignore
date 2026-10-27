@@ -160,3 +160,10 @@ app/modules/vault/local_types/
 
 # Frontend build dependencies (compiled CSS is committed)
 node_modules/
+
+# Archiver module — local only, must never be committed
+app/modules/archiver/
+app/contracts/site_archive_v1.py
+docs/archiver-provider-standard.md
+docs/module-developer-guide.md
+tests/test_archiver_module.py

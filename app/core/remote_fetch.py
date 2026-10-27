@@ -66,6 +66,9 @@ def fetch_bytes_checked(
     max_bytes: int = 8 * 1024 * 1024,
     allowed_content_prefixes: tuple[str, ...] = ("image/",),
     https_only: bool = True,
+    connect_timeout: float = 10,
+    read_timeout: float = 30,
+    request_attempts: int = 2,
 ) -> tuple[bytes, str, str]:
     current_url = url
     request_headers = dict(headers or {})
@@ -98,7 +101,7 @@ def fetch_bytes_checked(
         pool_kwargs = {
             "host": addresses[0],
             "port": port,
-            "timeout": urllib3.Timeout(connect=5, read=15),
+            "timeout": urllib3.Timeout(connect=connect_timeout, read=read_timeout),
         }
         if parsed.scheme == "https":
             pool_kwargs.update(
@@ -113,14 +116,30 @@ def fetch_bytes_checked(
         target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
         response = None
         try:
-            response = pool.request(
-                "GET",
-                target,
-                headers=hop_headers,
-                redirect=False,
-                preload_content=False,
-                assert_same_host=False,
-            )
+            attempt = 0
+            while True:
+                try:
+                    response = pool.request(
+                        "GET",
+                        target,
+                        headers=hop_headers,
+                        redirect=False,
+                        preload_content=False,
+                        assert_same_host=False,
+                    )
+                    break
+                except (urllib3.exceptions.HTTPError, OSError) as exc:
+                    # A slow preview page is a transient network failure, not a
+                    # reason to mark a source dead. Retry on a fresh pool once
+                    # before handing the failure to the caller.
+                    attempt += 1
+                    if attempt >= max(1, request_attempts):
+                        # Connection and read failures are caller-visible
+                        # outcomes, not crashes: every caller already handles
+                        # RemoteFetchError.
+                        raise RemoteFetchError(f"Remote request failed: {exc}") from exc
+                    pool.close()
+                    pool = pool_class(**pool_kwargs)
             try:
                 if response.status in REDIRECT_STATUSES:
                     location = response.headers.get("location")
@@ -141,7 +160,13 @@ def fetch_bytes_checked(
                     raise RemoteFetchError("Remote response is too large")
 
                 content = bytearray()
-                while chunk := response.read(64 * 1024, decode_content=True):
+                while True:
+                    try:
+                        chunk = response.read(64 * 1024, decode_content=True)
+                    except (urllib3.exceptions.HTTPError, OSError) as exc:
+                        raise RemoteFetchError(f"Remote request failed: {exc}") from exc
+                    if not chunk:
+                        break
                     content.extend(chunk)
                     if len(content) > max_bytes:
                         raise RemoteFetchError("Remote response is too large")

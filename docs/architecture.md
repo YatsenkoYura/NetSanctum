@@ -14,8 +14,8 @@ Only modules tracked in git appear here. Excluded on purpose:
 | `app/modules/pianoboost/` | listed in `.gitignore` |
 | `app/modules/private_gallery/` | not tracked; contains only `__pycache__` |
 
-Fourteen modules are in git, and all fourteen appear in the committed `module-build.json`
-catalog. Ten of them are in `default_modules`; `auth`, `settings`, and `sharing` are `required`;
+Fifteen modules are in git, and all fifteen appear in the committed `module-build.json`
+catalog. Eleven of them are in `default_modules`; `auth`, `settings`, and `sharing` are `required`;
 `miku` is explicitly opt-in (`default_enabled=False`).
 
 ---
@@ -84,6 +84,7 @@ flowchart TB
                 MU["music<br/>audio archive, playlists,<br/>local player"]
                 AL["alllib<br/>novels, manga, anime<br/>from Lib-network sources"]
                 VLT["vault<br/>notes, bookmarks,<br/>collections, sealed media"]
+                ARC["archiver<br/>site histories through<br/>per-platform adapters<br/>(t.me public pages first)"]
             end
             subgraph DERIVED["derived"]
                 SEARCH["search<br/>private index built from every<br/>module, one ranked query"]
@@ -145,6 +146,7 @@ flowchart TB
     AL -->|"search.documents.v1"| SEARCH
     VLT -->|"search.documents.v1"| SEARCH
     PLR -->|"search.documents.v1"| SEARCH
+    ARC -->|"search.documents.v1"| SEARCH
 
     MIKU -->|"search.global.v1"| SEARCH
     MIKU -->|"vault.capture.v1"| VLT
@@ -178,7 +180,7 @@ flowchart TB
 2. **Modules never import each other.** The eight labelled `a.b.v1` arrows are the entire
    cross-module surface. Remove `music` and `video_archiver` still builds, still migrates, and
    only loses its music import button.
-3. **Search is the hub, not the assistant.** Five modules publish `search.documents.v1` snapshots;
+3. **Search is the hub, not the assistant.** Six modules publish `search.documents.v1` snapshots;
    `search` ranks them; `miku` is pointed at `search.global.v1` and deliberately denied the
    per-module `library.viewer.v1` APIs so discovery cannot bypass the shared ranking path.
 4. **Two independent switches decide what runs.** `NETSANCTUM_MODULES` is baked into the image at
@@ -231,6 +233,7 @@ flowchart TB
         Search["search<br/>private cross-module index"]
         TT["tabletop_games<br/>token-scoped live rooms"]
         CC["computercraft<br/>NetSanctumOS client"]
+        Arc["archiver<br/>site archives via adapters"]
     end
 
     subgraph Opt["Opt-in module"]
@@ -774,6 +777,7 @@ flowchart TB
         P8["tabletop_games<br/>tabletop_rooms, tabletop_participants,<br/>tabletop_messages"]
         P9["settings<br/>settings"]
         P10["sharing<br/>share_links"]
+        P11["archiver<br/>archiver_sources, archiver_jobs,<br/>archiver_messages, archiver_attachments"]
     end
 
     L3 --> PerMod

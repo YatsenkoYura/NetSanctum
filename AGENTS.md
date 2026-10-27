@@ -26,7 +26,7 @@
 ## Runtime Cautions
 
 - Prefer Docker Compose for the real runtime: web, worker, PostgreSQL, Redis, migration, browser, and MIKU processes have distinct environments and network access.
-- `./start.sh` is not a read-only verification command: it creates/updates `.env`, generates secrets, may change `HOST_PORT`, and rebuilds/starts Compose services.
+- `./start.sh` is not a read-only verification command: it creates/updates `.env`, generates secrets, may change `HOST_PORT`, and rebuilds/starts Compose services. Run without a tty it refuses; with one and no arguments it opens an interactive menu, so pass an action (`up`, `--down`, `--logs`, ...) when it must run unattended.
 - Configuration loads `.env` at import time unless `NETSANCTUM_LOAD_DOTENV=0`, and `get_settings()` is process-cached. Set environment overrides before importing application modules in tests or scripts.
 
 ## Vault media

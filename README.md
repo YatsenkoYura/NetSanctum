@@ -220,7 +220,7 @@ response or one validated native tool call to the MIKU module, which remains res
 authorization, policy, integration invocation, confirmation, and response filtering. Destructive
 commands are not exposed; create actions require a short-lived, user-bound confirmation token. The
 built-in rule planner and browser speech APIs remain available when local providers are absent. Use
-`./start.sh --no-miku-runtime` to omit the sidecar.
+`./start.sh --no-agent` to omit the sidecar.
 
 Read-tool results receive a separate grounded response pass over sanitized observations, so natural
 conversation and module orchestration share one reply contract without granting the model execution
@@ -372,6 +372,10 @@ Requirements:
 ./start.sh
 ```
 
+The script opens an interactive menu: stack status, feature toggles (browser runtime, agent, local
+model, voice), and a `.env` editor with secret rotation. Use `./start.sh up` to start immediately
+without the menu.
+
 Open `http://localhost:8000` by default.
 
 The default Compose port is bound to `127.0.0.1`. For remote sharing, place NetSanctum behind an
@@ -394,12 +398,14 @@ For production, treat host access as a security boundary:
 Management commands:
 
 ```bash
+./start.sh up
 ./start.sh --logs
 ./start.sh --restart
 ./start.sh --down
 ```
 
-Use `./start.sh 4000` or `./start.sh -p 4000` to select another host port.
+Without arguments the script opens the interactive menu; the commands above run the same actions
+non-interactively. Use `./start.sh 4000` or `./start.sh -p 4000` to select another host port.
 
 ## Development
 

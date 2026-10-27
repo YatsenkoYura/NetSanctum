@@ -152,6 +152,36 @@ class BrowserRuntime:
 
                 await context.route_web_socket("**/*", route_web_socket)
                 page = await context.new_page()
+
+                _popup_fallback_tasks: set[asyncio.Task] = set()
+
+                async def adopt_popup(popup) -> None:
+                    # OAuth logins open their consent screen in a popup the
+                    # single-frame UI cannot show. Make the popup the page the
+                    # session streams; when it closes, fall back to whatever
+                    # page of this context is still open.
+                    async with session.operation_lock:
+                        session.page = popup
+
+                    def popup_closed() -> None:
+                        task = asyncio.create_task(_fallback_page(session, popup))
+                        _popup_fallback_tasks.add(task)
+                        task.add_done_callback(_popup_fallback_tasks.discard)
+
+                    popup.on("close", popup_closed)
+
+                async def _fallback_page(session: BrowserSession, closed) -> None:
+                    async with session.operation_lock:
+                        if session.page is not closed:
+                            return
+                        candidates = [
+                            candidate
+                            for candidate in session.context.pages
+                            if candidate is not closed and not candidate.is_closed()
+                        ]
+                        session.page = candidates[-1] if candidates else closed
+
+                context.on("page", lambda popup: asyncio.ensure_future(adopt_popup(popup)))
                 await page.goto(policy.start_url, wait_until="domcontentloaded", timeout=60000)
             except BaseException:
                 if playwright:
@@ -254,7 +284,10 @@ class BrowserRuntime:
     async def type_text(self, session_id: str, text: str) -> None:
         session = self._require(session_id)
         async with session.operation_lock:
-            await session.page.keyboard.insert_text(text)
+            # ``type`` эмулирует реальные нажатия клавиш (keydown/keyup/input),
+            # в отличие от ``insert_text``, который просто подставляет значение и
+            # не всегда триггерит события изменения в React/Vue формах.
+            await session.page.keyboard.type(text)
 
     async def press(self, session_id: str, key: str) -> None:
         session = self._require(session_id)
