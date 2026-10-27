@@ -339,7 +339,7 @@
   }
 
   function basePayload(kind, page, extra) {
-    return Object.assign(
+    const payload = Object.assign(
       {
         kind,
         title: (page.title || "NetSanctum capture").slice(0, 500),
@@ -352,6 +352,16 @@
       },
       extra
     );
+    if (payload.alt_text) {
+      payload.alt_text = String(payload.alt_text).slice(0, 4000);
+    }
+    if (payload.public_title) {
+      payload.public_title = String(payload.public_title).slice(0, 4000);
+    }
+    if (payload.title) {
+      payload.title = String(payload.title).slice(0, 4000);
+    }
+    return payload;
   }
 
   function activePage(tab) {
@@ -465,7 +475,7 @@ async function ensureContentScript(tabId) {
           payload = basePayload("media", page, {
             title: (request.info.alt || request.info.title || page.title || "Media").slice(0, 500),
             source_url: storableUrl(request.info.url),
-            alt_text: request.info.alt || null,
+            alt_text: request.info.alt ? String(request.info.alt) : null,
             image: await normalizeImage(image),
           });
         } catch (error) {
@@ -580,7 +590,7 @@ async function arm(tab) {
       basePayload("media", page, {
         title: (info.alt || info.title || page.title || "Media").slice(0, 500),
         source_url: storableUrl(info.url),
-        alt_text: info.alt || null,
+        alt_text: info.alt ? String(info.alt) : null,
         image: await normalizeImage(await mediaImage(info)),
       })
     );
