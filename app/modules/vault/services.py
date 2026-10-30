@@ -161,7 +161,9 @@ async def fetch_url_metadata(url: str) -> dict[str, str | None]:
     return result
 
 
-async def create_vault_item(session: AsyncSession, item_in: VaultItemCreate) -> VaultItem:
+async def create_vault_item(
+    session: AsyncSession, item_in: VaultItemCreate, *, commit: bool = True
+) -> VaultItem:
     """Create a new vault entry (bookmark, rating, thought)."""
     og_meta = {}
     if item_in.url and item_in.auto_fetch_og:
@@ -197,8 +199,9 @@ async def create_vault_item(session: AsyncSession, item_in: VaultItemCreate) -> 
     session.add(item)
     await session.flush()
     await place_new_card(session, item)
-    await session.commit()
-    await session.refresh(item)
+    if commit:
+        await session.commit()
+        await session.refresh(item)
     return item
 
 
@@ -232,6 +235,7 @@ async def create_captured_item(
     capture: VaultCaptureCreate,
     *,
     user: Any = None,
+    commit: bool = True,
 ) -> VaultItem:
     """Store an extension capture exactly like a dashboard paste or bookmark.
 
@@ -280,6 +284,7 @@ async def create_captured_item(
             parent_id=capture.parent_id,
             auto_fetch_og=capture.auto_fetch_og,
         ),
+        commit=commit,
     )
 
 
@@ -391,7 +396,7 @@ async def queue_finalize_blind_media(collection_id: int, unlock_token: str) -> s
 
     The unlocking tab lends its token through a one-shot handoff — sealed under
     the server key, never in the task arguments — so the worker can open each
-    blind wrap and re-seal the file under the collection's file key. Fire and
+    blind wrap and re-seal each image or media file under the collection's file key. Fire and
     forget: a finalize that never runs leaves the rows blind, and the next
     unlock queues another one. Returns the task id, or None when there is no
     worker to take it.

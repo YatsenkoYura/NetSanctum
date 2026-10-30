@@ -128,6 +128,9 @@ class VaultItem(Base):
     # data URL, which put a screenshot into a text column at a third more space and
     # with none of the encryption the video files get.
     image_path = Column(String, nullable=True)
+    # A locked capture's per-image key, wrapped by the collection inbox until
+    # the unlock finalizer re-encrypts the image under the collection file key.
+    image_key_wrap = Column(Text, nullable=True)
     # Manual order inside the card's space. Fractional for the same reason the
     # collections' position is: a drop between two neighbours stores the midpoint.
     # NULL means "no opinion yet" and sorts after everything that has one, so a

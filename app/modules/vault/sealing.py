@@ -870,6 +870,7 @@ async def heal_collection_images(session, collection: VaultCollection, file_key:
                     .where(
                         VaultItem.collection_id == collection.id,
                         VaultItem.image_path.is_not(None),
+                        VaultItem.image_key_wrap.is_(None),
                     )
                     .order_by(VaultItem.id.asc())
                     .limit(HEAL_BATCH_LIMIT)

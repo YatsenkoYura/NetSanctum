@@ -12,7 +12,7 @@ import secrets
 from enum import StrEnum
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.config import get_settings
 from app.core.crypto.asymmetric import rewrap_inbox_key
@@ -115,6 +115,7 @@ MEDIA_BLIND_STATUS = "blind"
 # so a wrap lifted from one card cannot be offered to another — and the
 # finalize must open it under exactly this kind.
 MEDIA_KEY_KIND = "media"
+IMAGE_KEY_KIND = "image"
 
 
 def mint_blind_media_key(
@@ -504,21 +505,7 @@ def download_vault_video_task(
 
 @celery_app.task(bind=True)
 def finalize_blind_media_task(self, handoff: str, collection_id: int) -> str:
-    """Re-seal blind media files under the collection's file key.
-
-    Runs after an unlock, with the unlocking tab's token lent through a one-shot
-    handoff — the same arrangement downloads use, because the broker's AOF is no
-    place for a passphrase-derived token either. Every blind file is decrypted
-    under its own item key (opened from the row's wrap through the inbox private
-    key) and re-encrypted under the collection's file key at a fresh path, so
-    afterwards the row is indistinguishable from one the worker stored while
-    unlocked — same envelope, same path layout, no wrap left.
-
-    The wrap is cleared last, per row, each in its own commit: an interrupted
-    run simply resumes on the next unlock, because a row that still has a wrap
-    is a row still to do. A file that fails stays blind and keeps waiting rather
-    than degrading to a weaker key.
-    """
+    """Re-seal blind image and media files under the collection's file key."""
     from app.core.crypto.asymmetric import SealedWrite, open_inbox_key
     from app.modules.vault.crypto import derive_file_key
     from app.modules.vault.sealing import data_key_for_id_sync, open_handoff_token
@@ -546,91 +533,103 @@ def finalize_blind_media_task(self, handoff: str, collection_id: int) -> str:
             session.execute(
                 select(VaultItem).where(
                     VaultItem.collection_id == collection_id,
-                    VaultItem.media_key_wrap.is_not(None),
+                    or_(VaultItem.media_key_wrap.is_not(None), VaultItem.image_key_wrap.is_not(None)),
                 )
             )
             .scalars()
             .all()
         )
-        pending = [
-            (row.id, row.media_path, row.media_size, row.media_thumbnail_path, row.media_key_wrap)
-            for row in rows
-        ]
+        pending = []
+        for row in rows:
+            if row.image_key_wrap:
+                pending.append((row.id, "image", row.image_path, None, None, row.image_key_wrap))
+            if row.media_key_wrap:
+                pending.append(
+                    (
+                        row.id,
+                        "media",
+                        row.media_path,
+                        row.media_size,
+                        row.media_thumbnail_path,
+                        row.media_key_wrap,
+                    )
+                )
 
     done, failed = 0, 0
-    for item_id, old_path, size, old_thumb, wrap in pending:
+    for item_id, file_kind, old_path, size, old_thumb, wrap in pending:
         try:
             blind_key = open_inbox_key(
                 SealedWrite(payload="", wrapped_key=wrap),
                 private_key,
                 collection_id=collection_id,
-                kind=MEDIA_KEY_KIND,
+                kind=IMAGE_KEY_KIND if file_kind == "image" else MEDIA_KEY_KIND,
                 row_id=item_id,
             )
         except Exception:
             logger.warning("finalize could not open the blind key for item %s", item_id, exc_info=True)
             failed += 1
             continue
-        workdir = staging_workdir("vault_finalize_")
+
+        new_thumb: str | None = None
+        relative: str | None = None
         try:
-            new_thumb: str | None = None
-            if old_path and size:
+            if old_path:
                 if not storage.is_seekable_encrypted(old_path):
                     logger.warning("finalize found a non-seekable blind file for item %s", item_id)
                     failed += 1
                     continue
-                relative = sealed_media_path(collection_id, item_id, "mp4.enc")
-                with storage.get_file_stream_decrypted(old_path, key=blind_key) as plain:
-                    storage.save_file_encrypted_seekable(plain, relative, key=file_key, length=size)
-                if old_thumb:
-                    new_thumb = _finalize_blind_thumbnail(
-                        storage, old_thumb, blind_key, file_key, collection_id, item_id
+                if file_kind == "image":
+                    from app.modules.vault.images import media_type_for, store_image_bytes
+
+                    with storage.get_file_stream_decrypted(old_path, key=blind_key) as plain:
+                        content = plain.read()
+                    relative = store_image_bytes(
+                        content, media_type_for(old_path), item_id, key=file_key, sealed=True
                     )
-                    if new_thumb is None:
-                        logger.debug("finalize dropped the poster for item %s", item_id)
-                try:
-                    storage.delete_file(old_path)
-                except Exception:
-                    logger.debug("could not delete the blind file for item %s", item_id, exc_info=True)
+                else:
+                    relative = sealed_media_path(collection_id, item_id, "mp4.enc")
+                    with storage.get_file_stream_decrypted(old_path, key=blind_key) as plain:
+                        storage.save_file_encrypted_seekable(plain, relative, key=file_key, length=size)
+                    if old_thumb:
+                        new_thumb = _finalize_blind_thumbnail(
+                            storage, old_thumb, blind_key, file_key, collection_id, item_id
+                        )
+                        if new_thumb is None:
+                            logger.debug("finalize dropped the poster for item %s", item_id)
             else:
-                # A wrap with nothing behind it: the download never finished
-                # writing, so there is nothing to re-seal and nothing to play.
-                # Clear it rather than park the row in a state no job clears.
-                logger.warning("finalize found a blind wrap with no file for item %s", item_id)
-                relative, new_thumb = None, None
+                logger.warning("finalize found a blind %s wrap with no file for item %s", file_kind, item_id)
+
             with SyncSessionLocal() as session:
                 row = session.get(VaultItem, item_id)
                 if row is None:
                     failed += 1
                     continue
-                if row.media_key_wrap is None or row.media_path != old_path:
-                    # Another finalize (or a fresh download) got here first: the
-                    # row moved on, and re-sealing our stale copy would orphan
-                    # the winner's file. Skip it — the row is somebody else's
-                    # completed now, which is exactly what we wanted.
+                current_wrap = row.image_key_wrap if file_kind == "image" else row.media_key_wrap
+                current_path = row.image_path if file_kind == "image" else row.media_path
+                if current_wrap is None or current_path != old_path:
                     done += 1
                     continue
-                if relative is not None:
-                    row.media_path = relative
-                    row.media_thumbnail_path = new_thumb
-                row.media_key_wrap = None
-                row.media_status = "completed"
+                if file_kind == "image":
+                    row.image_path = relative
+                    row.image_key_wrap = None
+                else:
+                    if relative is not None:
+                        row.media_path = relative
+                        row.media_thumbnail_path = new_thumb
+                    row.media_key_wrap = None
+                    row.media_status = "completed"
                 session.commit()
+
+            if old_path and relative is not None:
+                try:
+                    storage.delete_file(old_path)
+                except Exception:
+                    logger.debug("could not delete blind file for item %s", item_id, exc_info=True)
             done += 1
         except Exception:
             logger.warning("finalize failed for item %s", item_id, exc_info=True)
             failed += 1
-        finally:
-            for leftover in workdir.glob("*"):
-                try:
-                    leftover.unlink()
-                except OSError:
-                    pass
-            try:
-                os.rmdir(workdir)
-            except OSError:
-                pass
-    return f"Finalized {done} of {done + failed} blind media files"
+    return f"Finalized {done} of {done + failed} blind files"
 
 
 def _finalize_blind_thumbnail(

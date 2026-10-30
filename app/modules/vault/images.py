@@ -137,6 +137,48 @@ def externalize_image(item, *, key: bytes | None = None, sealed: bool = False) -
     return True
 
 
+IMAGE_KEY_KIND = "image"
+
+
+def externalize_blind_image(item, *, collection_id: int, inbox_public_b64: str | None) -> bool:
+    """Store an embedded image under a one-time key when the Vault is locked.
+
+    The key is wrapped to the collection inbox and bound to this item. If the
+    public inbox key is unavailable, leave the legacy sealed-payload path intact.
+    """
+    import base64
+
+    from app.core.crypto.asymmetric import rewrap_inbox_key
+    from app.core.crypto.kdf import new_data_key
+
+    decoded = decode_data_image(item.og_image)
+    if decoded is None:
+        return False
+    try:
+        public_key = base64.b64decode(inbox_public_b64 or "", validate=True)
+        if len(public_key) != 32:
+            return False
+        blind_key = new_data_key()
+        wrap = rewrap_inbox_key(
+            blind_key, public_key, collection_id=collection_id, kind=IMAGE_KEY_KIND, row_id=item.id
+        )
+    except Exception:
+        logger.warning("Could not prepare a blind image key for Vault item %s", item.id, exc_info=True)
+        return False
+
+    payload, media_type = decoded
+    try:
+        path = store_image_bytes(payload, media_type, item.id, key=blind_key, sealed=True)
+    except Exception:
+        logger.warning("Could not store blind image for Vault item %s", item.id, exc_info=True)
+        return False
+    item.image_path = path
+    item.image_key_wrap = wrap
+    item.og_image = None
+    logger.debug("Vault item %s image stored under a blind key", item.id)
+    return True
+
+
 def image_bytes(item, *, file_key: bytes | None = None) -> tuple[bytes, str] | None:
     """The image's bytes and media type, from the file, else from the old column.
 
@@ -146,6 +188,8 @@ def image_bytes(item, *, file_key: bytes | None = None) -> tuple[bytes, str] | N
     rather than read as missing. The two keys never mix: the file key is tried
     exactly once, with no legacy rotation behind it.
     """
+    if getattr(item, "image_key_wrap", None):
+        return None
     if item.image_path:
         storage = get_storage()
         if file_key is not None:
@@ -183,4 +227,6 @@ def has_image(item) -> bool:
     host and rendered as `og_image`, so claiming a local image would point the
     tile at an endpoint with nothing behind it.
     """
-    return bool(item.image_path) or bool(decode_data_image(item.og_image))
+    return not getattr(item, "image_key_wrap", None) and (
+        bool(item.image_path) or bool(decode_data_image(item.og_image))
+    )

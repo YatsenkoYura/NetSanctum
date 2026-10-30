@@ -27,6 +27,7 @@ from app.modules.vault.crypto import (
 from app.modules.vault.images import (
     LOCAL_IMAGE_PREFIXES,
     decode_data_image,
+    externalize_blind_image,
     externalize_image,
     has_image,
     image_bytes,
@@ -351,19 +352,19 @@ async def create_item(
     under its public inbox key, which is exactly the blind write the extension
     relies on. Nothing readable is stored, locked or not.
     """
-    item = await create_vault_item(db, item_in)
-    collection = await collection_for(db, item.collection_id)
+    collection = await collection_for(db, item_in.collection_id)
+    sealed_collection = is_sealed_collection(collection)
+    item = await create_vault_item(db, item_in, commit=not sealed_collection)
     file_key = None
     locked = False
     if is_sealed_collection(collection):
-        # Unlocked: the picture goes into storage under the file key. Locked
-        # (a blind write): the data URL stays and is sealed into the payload
-        # below — the locked vault has no file key to store it under, and the
-        # first save while unlocked moves it out.
         file_key, locked = await file_key_for_write(collection, unlock_token)
-        if file_key is not None and externalize_image(item, key=file_key, sealed=True):
-            await db.commit()
-            await db.refresh(item)
+        if file_key is not None:
+            externalize_image(item, key=file_key, sealed=True)
+        elif collection is not None:
+            externalize_blind_image(
+                item, collection_id=collection.id, inbox_public_b64=collection.inbox_public_key
+            )
     elif externalize_image(item):
         await db.commit()
         await db.refresh(item)
@@ -389,19 +390,19 @@ async def create_capture(
     session to any page that can reach this path.
     """
     try:
-        item = await create_captured_item(db, capture_in, user=user)
+        target_collection = await collection_for(db, capture_in.collection_id)
+        blind_capture = is_sealed_collection(target_collection) and not capture_kind(capture_in.kind).archived
+        item = await create_captured_item(db, capture_in, user=user, commit=not blind_capture)
         # A capture into a sealed collection must be sealed too. This used to be
         # missing entirely, which meant the extension wrote screenshots, titles and
         # URLs into a locked vault in the clear, silently.
         collection = await collection_for(db, getattr(item, "collection_id", None))
         if not is_sealed_collection(collection):
             externalize_image(item)
-        # Else a blind write: the extension never holds the passphrase, so the
-        # vault is locked from here. The picture stays a data URL and is sealed
-        # into the payload below — there is no file key to store it under
-        # without an unlock, and the shared key would protect a blind write
-        # less than an unlocked one.
-        if is_sealed_collection(collection):
+        else:
+            externalize_blind_image(
+                item, collection_id=collection.id, inbox_public_b64=collection.inbox_public_key
+            )
             item.public_title = capture_in.public_title or DEFAULT_ITEM_ALIAS
             seal_item(item, require_inbox_public_key(collection))
             await db.commit()
@@ -799,6 +800,10 @@ async def get_item_image(
     item = await get_vault_item(db, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Vault item not found")
+    if getattr(item, "image_key_wrap", None):
+        raise HTTPException(
+            status_code=423, detail="Разблокируйте Vault, чтобы завершить шифрование изображения"
+        )
     file_key = await _require_file_access(await collection_for(db, item.collection_id), unlock_token)
     decoded = await asyncio.to_thread(image_bytes, item, file_key=file_key)
     if not decoded:
@@ -1201,7 +1206,7 @@ async def unlock_collection_route(
         await record_unlock_failure(collection.id, client_ip)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     await clear_unlock_failures(collection.id, client_ip)
-    # Blind media waits for exactly this moment: files the worker stored under
+    # Blind files wait for exactly this moment: images and media stored under
     # their own item keys — wrapped on each row — are re-sealed under the
     # collection's file key by a worker holding this tab's token. Queued only
     # when there is anything to do, and fire-and-forget: a finalize that never
@@ -1209,7 +1214,10 @@ async def unlock_collection_route(
     blind = await db.scalar(
         select(func.count())
         .select_from(VaultItem)
-        .where(VaultItem.collection_id == collection.id, VaultItem.media_key_wrap.is_not(None))
+        .where(
+            VaultItem.collection_id == collection.id,
+            VaultItem.media_key_wrap.is_not(None) | VaultItem.image_key_wrap.is_not(None),
+        )
     )
     if blind:
         await queue_finalize_blind_media(collection.id, token)
