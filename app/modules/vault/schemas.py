@@ -11,17 +11,14 @@ from app.modules.vault.node_types import capture_kind
 # schema needs it to bound a request body, and services imports this module.
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
-# Ceilings for fields that went in unbounded on the item write paths. None of
-# these is a security boundary — the renderer escapes all of it, and the point is
-# weight, not safety: every value is serialized into the dashboard payload and,
-# for a sealed card, sealed and re-opened on each unlock, so one field with no
-# ceiling is a weight the whole collection carries.
-#
-# They are deliberately far above anything real. A limit that fires on ordinary
-# input is a bug that looks like a safety feature, so each one sits where a
-# person would have to be doing something unusual to reach it: URLs from sites
-# that stuff a session and a signature into the query, tags from platforms that
-# treat them as sentences, descriptions from feeds that emit a paragraph.
+# Advisory sizes for the fields that went in unbounded on the item write paths.
+# None of these is a security boundary — the renderer escapes all of it — and
+# they are no longer limits either: the write paths keep whatever the capture
+# carried, and a value past its advisory size is reported back as a warning on
+# the capture response instead of truncating or refusing the card. They sit
+# where a person would have to be doing something unusual to reach them: URLs
+# from sites that stuff a session and a signature into the query, titles from
+# feeds that emit a paragraph.
 MAX_CONTENT_CHARS = 1024 * 1024
 MAX_URL_CHARS = 8000
 MAX_OG_TITLE_CHARS = 4000
@@ -151,15 +148,19 @@ class VaultCaptureCreate(BaseModel):
     """
 
     kind: str
-    title: str = Field(..., min_length=1, max_length=2000)
+    # Every text field arrives unbounded: a capture is the owner's own record,
+    # and cutting an alt text or a title to fit a number loses the very words
+    # the capture was for. Oversized values are reported as warnings on the
+    # response — see `capture_warnings` — rather than truncated or refused.
+    title: str = Field(..., min_length=1)
     # The alias shown while a sealed Vault is locked. The extension cannot be given
     # a passphrase, so this is the only handle the owner has on a blind write.
-    public_title: str | None = Field(default=None, max_length=4000)
-    page_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    public_title: str | None = None
+    page_url: str | None = None
     # Free-form provenance, shown as text and never dereferenced, so a `blob:`
     # or `data:` value is kept rather than refused.
-    source_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
-    alt_text: str | None = Field(default=None, max_length=4000)
+    source_url: str | None = None
+    alt_text: str | None = None
     image: str | None = Field(
         default=None,
         description="data:image/...;base64 payload; required unless kind is video",
@@ -167,7 +168,7 @@ class VaultCaptureCreate(BaseModel):
         # checks the bytes, this only keeps an oversized body out of the router.
         max_length=(MAX_IMAGE_BYTES * 4 // 3) + 64,
     )
-    video_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    video_url: str | None = None
     # Which capture rule matched, and what it read off the page. The rule name is
     # a label for the owner's own rules — it never reaches `node_type`, because
     # that column is readable while the vault is locked and a site named there
@@ -217,6 +218,30 @@ class VaultCaptureCreate(BaseModel):
         return self
 
 
+def capture_warnings(capture: "VaultCaptureCreate") -> list[str]:
+    """Name every capture text field past its advisory size.
+
+    Nothing is cut and nothing is refused — the card stores exactly what the
+    extension sent — but a field that towers over everything a real page
+    produces is worth telling the owner about, on the response the extension
+    already turns into a notification.
+    """
+    limits = {
+        "title": MAX_OG_TITLE_CHARS,
+        "public_title": MAX_OG_TITLE_CHARS,
+        "alt_text": MAX_OG_TITLE_CHARS,
+        "page_url": MAX_URL_CHARS,
+        "source_url": MAX_URL_CHARS,
+        "video_url": MAX_URL_CHARS,
+    }
+    out: list[str] = []
+    for name, limit in limits.items():
+        value = getattr(capture, name, None)
+        if value and len(value) > limit:
+            out.append(f"{name} is unusually long ({len(value)} characters; advisory size {limit})")
+    return out
+
+
 class VaultCaptureResponse(BaseModel):
     status: Literal["completed"] = "completed"
     item_id: int
@@ -228,6 +253,9 @@ class VaultCaptureResponse(BaseModel):
     image_url: str | None = None
     task_id: str | None = Field(default=None, description="Archive job, for a video capture")
     message: str
+    # Advisory notices about oversized text fields, empty for an ordinary
+    # capture. The card is stored whole regardless.
+    warnings: list[str] = Field(default_factory=list)
 
 
 class VaultCollectionCreate(BaseModel):
@@ -300,17 +328,17 @@ class VaultCollectionMerge(BaseModel):
 
 class VaultItemCreate(BaseModel):
     entry_type: str = Field("bookmark", description="bookmark, rating, or thought")
-    title: str | None = Field(default="", max_length=4000)
-    content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
-    url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    title: str | None = Field(default="")
+    content: str | None = None
+    url: str | None = None
 
-    og_title: str | None = Field(default=None, max_length=MAX_OG_TITLE_CHARS)
-    og_description: str | None = Field(default=None, max_length=MAX_OG_DESCRIPTION_CHARS)
+    og_title: str | None = None
+    og_description: str | None = None
     og_image: str | None = Field(default=None, max_length=MAX_OG_IMAGE_CHARS)
 
     # Required for a sealed item: the alias shown while its Vault is locked. It is
     # stored in the clear on purpose and is never the real title.
-    public_title: str | None = Field(default=None, max_length=4000)
+    public_title: str | None = None
 
     score: float | None = Field(None, ge=1.0, le=10.0)
     status: str | None = Field(None, description="watching, completed, dropped, planned, on_hold")
@@ -353,11 +381,11 @@ class VaultItemCreate(BaseModel):
 
 class VaultItemUpdate(BaseModel):
     # Editable while the Vault is locked: the alias is public by design.
-    public_title: str | None = Field(default=None, max_length=4000)
+    public_title: str | None = None
 
-    title: str | None = Field(default=None, max_length=4000)
-    content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
-    url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    title: str | None = None
+    content: str | None = None
+    url: str | None = None
     score: float | None = None
     status: str | None = None
     progress_current: int | None = None

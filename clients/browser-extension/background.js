@@ -339,10 +339,13 @@
   }
 
   function basePayload(kind, page, extra) {
-    const payload = Object.assign(
+    /* Text fields travel whole: the server keeps whatever the page carried and
+       reports anything unusually long as a warning on the response, so cutting
+       here would silently lose the words a capture was made for. */
+    return Object.assign(
       {
         kind,
-        title: (page.title || "NetSanctum capture").slice(0, 500),
+        title: page.title || "NetSanctum capture",
         page_url: page.url,
         source_url: null,
         alt_text: null,
@@ -352,16 +355,6 @@
       },
       extra
     );
-    if (payload.alt_text) {
-      payload.alt_text = String(payload.alt_text).slice(0, 4000);
-    }
-    if (payload.public_title) {
-      payload.public_title = String(payload.public_title).slice(0, 4000);
-    }
-    if (payload.title) {
-      payload.title = String(payload.title).slice(0, 4000);
-    }
-    return payload;
   }
 
   function activePage(tab) {
@@ -369,6 +362,14 @@
       url: tab && tab.url ? tab.url.split("#")[0] : null,
       title: (tab && tab.title ? tab.title : "") || "NetSanctum capture",
     };
+  }
+
+  /* The server stores oversized text whole and reports it back as warnings;
+     they belong in the same notification as the confirmation. */
+  function withWarnings(result) {
+    const list = result && Array.isArray(result.warnings) ? result.warnings : [];
+    const text = result && result.message ? result.message : "";
+    return list.length ? `${text}\n${list.join("\n")}` : text;
   }
 
   async function store(payload) {
@@ -473,7 +474,7 @@ async function ensureContentScript(tabId) {
         try {
           const image = await mediaImage(request.info);
           payload = basePayload("media", page, {
-            title: (request.info.alt || request.info.title || page.title || "Media").slice(0, 500),
+            title: request.info.alt || request.info.title || page.title || "Media",
             source_url: storableUrl(request.info.url),
             alt_text: request.info.alt ? String(request.info.alt) : null,
             image: await normalizeImage(image),
@@ -502,7 +503,7 @@ async function ensureContentScript(tabId) {
       }
       stage = "upload";
       const result = await store(payload);
-      return { ok: true, message: result.message, title: result.title };
+      return { ok: true, message: withWarnings(result), title: result.title };
     } catch (error) {
       // Put the overlay back so the user can retry without re-arming.
       try {
@@ -588,7 +589,7 @@ async function arm(tab) {
     const page = activePage(tab);
     return store(
       basePayload("media", page, {
-        title: (info.alt || info.title || page.title || "Media").slice(0, 500),
+        title: info.alt || info.title || page.title || "Media",
         source_url: storableUrl(info.url),
         alt_text: info.alt ? String(info.alt) : null,
         image: await normalizeImage(await mediaImage(info)),
@@ -629,7 +630,7 @@ async function arm(tab) {
         return;
       }
       const result = await captureTab(tab, command === "capture-page");
-      notify("Saved to Vault", result.message || result.title);
+      notify("Saved to Vault", withWarnings(result) || result.title);
       if (settings.openDashboard && settings.serverUrl) {
         chrome.tabs.create({ url: `${settings.serverUrl}/vault/dashboard` });
       }
@@ -655,7 +656,7 @@ async function arm(tab) {
       const result = info.mediaType && info.srcUrl
         ? await captureResolvedMedia(target, { url: info.srcUrl, alt: null, title: null, inline: false })
         : await captureTab(target, false);
-      notify("Saved to Vault", result.message || result.title);
+      notify("Saved to Vault", withWarnings(result) || result.title);
     } catch (error) {
       await reportFailure(error);
     }

@@ -51,6 +51,7 @@ from app.modules.vault.schemas import (
     VaultStatsResponse,
     VaultUnlockRequest,
     VaultUnlockResponse,
+    capture_warnings,
 )
 from app.modules.vault.sealing import (
     DEFAULT_ITEM_ALIAS,
@@ -439,6 +440,7 @@ async def create_capture(
         image_url=None if sealed else (f"/api/vault/items/{item.id}/image" if has_image(item) else None),
         task_id=item.related_entity_id if capture_kind(capture_in.kind).archived else None,
         message=message,
+        warnings=capture_warnings(capture_in),
     )
 
 

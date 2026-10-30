@@ -286,7 +286,7 @@ def attach_downloaded_media(
     item.media_mime = mime
     item.media_title = title
     if not item.title and title:
-        item.title = title[:4000]
+        item.title = title
 
 
 def _collection_is_sealed(session, item) -> bool:

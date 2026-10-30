@@ -1,4 +1,4 @@
-"""The ceilings on card fields must not fire on ordinary input.
+"""The bounds on card fields must not fire on ordinary input.
 
 Every bound added here is a weight limit, not a safety one, and a weight limit
 that trips on a real page is worse than no limit at all: it looks like a working
@@ -6,6 +6,10 @@ save and loses the capture. So these tests assert the opposite of what a bound
 test usually asserts — that a 10 MiB inline picture, a 1500-character title, a
 7000-character URL, 150 tags and a 4 MiB whiteboard all go in, and only that
 absurd input does not.
+
+Text fields are not bounded at all any more: whatever the capture carried is
+stored whole, and a value past its advisory size comes back as a warning on the
+capture response instead of a truncation or a refusal.
 """
 
 import base64
@@ -20,6 +24,7 @@ from app.modules.vault.schemas import (
     VaultCaptureCreate,
     VaultItemCreate,
     VaultItemUpdate,
+    capture_warnings,
 )
 
 
@@ -82,14 +87,47 @@ class AbsurdInputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             VaultItemCreate(title="t", canvas_data={"drawing": "x" * (MAX_CANVAS_BYTES + 1)})
 
-    def test_a_url_past_the_ceiling_is_refused(self):
-        with self.assertRaises(ValueError):
-            VaultItemCreate(title="t", url="u" * (MAX_URL_CHARS + 1))
+    def test_a_url_past_the_advisory_size_is_kept_whole(self):
+        """A long URL is a warning on a capture, never a lost card."""
+        capture = VaultCaptureCreate(
+            kind="media",
+            title="t",
+            page_url="https://example.com/?" + "a" * MAX_URL_CHARS,
+            image=png_data_url(64),
+        )
+
+        self.assertGreater(len(capture.page_url or ""), MAX_URL_CHARS)
+        self.assertEqual(
+            1,
+            len(capture_warnings(capture)),
+            "one oversized field, and it must be named",
+        )
+        self.assertIn("page_url", capture_warnings(capture)[0])
+
+    def test_an_oversized_alt_text_is_reported_not_cut(self):
+        capture = VaultCaptureCreate(
+            kind="media",
+            title="t",
+            alt_text="а" * 5000,
+            image=png_data_url(64),
+        )
+
+        self.assertEqual(5000, len(capture.alt_text or ""))
+        self.assertEqual(["alt_text"], [w.split()[0] for w in capture_warnings(capture)])
+
+    def test_an_ordinary_capture_stays_warning_free(self):
+        capture = VaultCaptureCreate(
+            kind="media",
+            title="Заголовок",
+            alt_text="Скриншот статьи",
+            page_url="https://example.com/post",
+            image=png_data_url(64),
+        )
+
+        self.assertEqual([], capture_warnings(capture))
 
     def test_the_update_path_is_bounded_too(self):
         """A bound that only exists on create is a bound with a hole in it."""
-        with self.assertRaises(ValueError):
-            VaultItemUpdate(url="u" * (MAX_URL_CHARS + 1))
         with self.assertRaises(ValueError):
             VaultItemUpdate(canvas_data={"drawing": "x" * (MAX_CANVAS_BYTES + 1)})
 
