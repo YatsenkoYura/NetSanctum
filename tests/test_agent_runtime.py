@@ -33,16 +33,21 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         # Root, and only for the one-shot: a repair that quietly started the stack
         # would rebuild images on a machine that is asking for a permission fix.
         self.assertIn("--user 0:0", script)
-        block = script[script.index('if [ "$ACTION" = "chown-abort" ]') :]
-        block = block[: block.index("exit 0")]
+        # The repair body lives in do_chown_abort(); the ACTION dispatch only
+        # calls it, so checks must look inside the function, not the two-line
+        # dispatch block at the bottom of the script.
+        block = script[script.index("do_chown_abort() {") :]
+        # The function ends where the next top-level definition starts.
+        block = block[: block.index("voice_model_dir_unusable()")]
         self.assertNotIn("docker compose up", block)
         # Both halves of the repair, or the directory comes back owned by the user
         # and still unreadable by anyone else who has to inspect it.
         self.assertIn("chown -R", block)
         self.assertIn("chmod -R a+rwX", block)
-        # And the argument is reachable: the flag has to be in the usage line, since
-        # a repair nobody can find is not a way out.
-        self.assertIn("--chown-abort", script.split("Usage: ./start.sh")[-1][:200])
+        # And the argument is reachable: the flag has to be in the usage block, since
+        # a repair nobody can find is not a way out. The header lists one command
+        # per line under "# Usage:", so check that whole listing, not a slice.
+        self.assertIn("--chown-abort", script.split("# Usage:")[-1][:1000])
 
     def test_agent_runtime_is_opt_in_and_hardened(self):
         service = self.compose["services"]["agent-runtime"]
@@ -166,8 +171,11 @@ class AgentRuntimeIsolationTests(unittest.TestCase):
         self.assertIn("PROFILE_ARGS+=(--profile voice)", script)
         stop = script.index("stop miku-voice miku-stt voice-init")
         self.assertIn("rm -f miku-voice miku-stt voice-init", script)
-        # The release has to happen on the way past, not only inside the enabled branch.
-        self.assertLess(script.index('if [ "$VOICE" = "1" ]; then\n    PROFILE_ARGS'), stop)
+        # The release happens in the disabled branch (else), not only when the
+        # profile is enabled: stopping the services is also how a user who just
+        # disabled the profile actually gets the memory back.
+        self.assertLess(script.index("PROFILE_ARGS+=(--profile voice)"), stop)
+        self.assertIn('if [ "$VOICE" = "1" ]; then', script)
 
     def test_the_voice_profile_fetches_the_models_it_needs(self):
         manifest = self.compose["services"]["voice-init"]["environment"]["VOICE_MANIFEST"]

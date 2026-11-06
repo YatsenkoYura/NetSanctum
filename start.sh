@@ -692,11 +692,10 @@ load_section() {
                 "extension IDs allowed to sign in and capture")
             ;;
         modules)
-            SECTION_KEYS=(NETSANCTUM_MODULES NETSANCTUM_EXTERNAL_MODULES ENABLED_MODULES BROWSER_EGRESS_HOSTS)
+            SECTION_KEYS=(NETSANCTUM_MODULES NETSANCTUM_EXTERNAL_MODULES ENABLED_MODULES)
             SECTION_HINTS=("modules baked into the image ('core' or a comma list)"
                 "external module ids with matching pyproject extras"
-                "optional module allowlist; empty enables all installed"
-                "union of hosts browser-enabled modules may request")
+                "optional module allowlist; empty enables all installed")
             ;;
         assistant)
             SECTION_KEYS=(MIKU_LLM_URL MIKU_LLM_MODEL MIKU_LLM_API_KEY MIKU_STT_URL MIKU_STT_MODEL MIKU_STT_API_KEY MIKU_TTS_URL MIKU_TTS_MODEL MIKU_TTS_API_KEY AGENT_LLM_THINKING)
@@ -975,7 +974,7 @@ changes.${C_OFF}"
         done
         echo
         printf '%s\n' "   v) Advanced values   NETSANCTUM_MODULES (what the image is built with),"
-        printf '%s\n' "                         external modules, browser egress hosts"
+        printf '%s\n' "                         external module ids"
         printf '%s\n' "   b) Back"
         printf '%s' "Select a number to toggle: "
         read -r CHOICE || CHOICE=""

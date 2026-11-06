@@ -86,7 +86,9 @@ jobs:
 
     - name: Run Regression Tests
       if: matrix.profile == 'full'
-      run: docker run --rm netsanctum:full python -m unittest discover -s tests -v
+      run: |
+        docker run --rm netsanctum:full python -m unittest discover -s tests -v
+        docker run --rm netsanctum:full python -m unittest discover -s app/modules -t . -p "test_*.py" -v
 
     - name: Verify Core-Only Image
       if: matrix.profile == 'core'

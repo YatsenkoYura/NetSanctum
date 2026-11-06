@@ -15,8 +15,8 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.modules.vault.tasks import _human
 
-COMPOSE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
-TASKS = Path(__file__).resolve().parents[1] / "app" / "modules" / "vault" / "tasks.py"
+COMPOSE = Path(__file__).resolve().parents[4] / "docker-compose.yml"
+TASKS = Path(__file__).resolve().parents[4] / "app" / "modules" / "vault" / "tasks.py"
 
 _UNITS = {"k": 1024, "m": 1024**2, "g": 1024**3}
 

@@ -11,15 +11,15 @@
 ## Verification
 
 - Install the exact development environment with `uv sync --locked --all-extras`; run Python tools through `uv run`.
-- Tests use `unittest`, not pytest. Focus a test with `uv run python -m unittest tests.test_module_contracts.ModuleManifestTests.test_committed_module_build_catalog_matches_manifests -v` or a file with `uv run python -m unittest tests.test_module_contracts -v`.
+- Tests use `unittest`, not pytest. Core tests live in `tests/` (run `uv run python -m unittest tests.test_module_contracts -v`); module tests live beside their module in `app/modules/<id>/tests/` (run `uv run python -m unittest discover -s app/modules -t . -p "test_*.py"` or `uv run python -m unittest app.modules.vault.tests.test_vault_file_keys -v`).
 - Fast repository checks are `uv run ruff format --check .`, `uv run ruff check .`, and `uv run pre-commit run --all-files`.
-- The authoritative full regression run includes image-only system dependencies: `docker build -t netsanctum:test .` then `docker run --rm netsanctum:test python -m unittest discover -s tests -v`.
+- The authoritative full regression run includes image-only system dependencies: `docker build -t netsanctum:test .` then `docker run --rm netsanctum:test python -m unittest discover -s tests -v` and `docker run --rm netsanctum:test python -m unittest discover -s app/modules -t . -p "test_*.py" -v`.
 - `tests.test_migrations.PostgresMigrationSmokeTests` only runs with `MIGRATION_TEST_DATABASE_URL`; it drops and recreates `public`, and the URL's database name must end in `_test`.
 
 ## Coupled Changes
 
 - After changing a bundled module's manifest, dependency extra, or system packages, run `uv lock` when dependencies changed, then `uv run python scripts/module_build.py catalog` and `uv run python scripts/module_build.py check`. `module-build.json` is generated and committed.
-- Template or Python-generated Tailwind class changes require `npm ci && npm run build:css`; commit the resulting `static/tailwind.css`. Tailwind scans `.html` and `.py` under `app/` plus `static/browser-runtime.js`, `static/miku-assistant.js`, and `static/miku-dashboard.js`.
+- Template or Python-generated Tailwind class changes require `npm ci && npm run build:css`; commit the resulting `static/tailwind.css`. Tailwind scans `.html` and `.py` under `app/` except `*/tests/` directories, plus `static/browser-runtime.js`, `static/miku-assistant.js`, and `static/miku-dashboard.js`.
 - Database-backed modules own independent Alembic histories under their package. Use `uv run python -m app.core.migrations revision <module> -m "..."`, then `upgrade <module>` and `check <module>`; do not use the root Alembic CLI for new module migrations.
 - A migration manifest's `tables` must exactly match that module's current model tables. Move removed table names to `historical_tables`; table ownership is permanent and cannot be reassigned to another module.
 
@@ -32,7 +32,7 @@
 ## Vault media
 
 - A sealed collection's file key is derived per collection from the session's inbox private key. Any endpoint that reads a sealed file must resolve that key itself and refuse (423) when it cannot — never let the reader fall through to the application key, which opens nothing and aborts the response mid-stream.
-- `<video>` cannot send the `X-Vault-Unlock` header, so a signed media URL is accompanied by a key grant in Redis (`store_media_key_grant`/`load_media_key_grant`, keyed by the URL signature, same 15-minute TTL). A new endpoint that serves sealed bytes to a player needs the same pairing; `tests/test_vault_file_keys.py::PlayerStreamingTests` covers the path.
+- `<video>` cannot send the `X-Vault-Unlock` header, so a signed media URL is accompanied by a key grant in Redis (`store_media_key_grant`/`load_media_key_grant`, keyed by the URL signature, same 15-minute TTL). A new endpoint that serves sealed bytes to a player needs the same pairing; `app/modules/vault/tests/test_vault_file_keys.py::PlayerStreamingTests` covers the path.
 - A video captured into a sealed vault lands as a blind write (its own item key, wrapped under the collection's inbox public key) and is re-sealed by `finalize_blind_media_task`, queued automatically on the next unlock. Blind rows must stay unplayable and loudly refused, never weakly stored.
 
 ## Vault card types

@@ -96,11 +96,7 @@ class BrowserRuntimeClient:
         if not get_settings().BROWSER_RUNTIME_ENABLED:
             raise RuntimeError("Browser runtime is disabled")
         async with self._policy_lock(policy.id):
-            configured_hosts = {
-                host.strip().lower().rstrip(".")
-                for host in get_settings().BROWSER_EGRESS_HOSTS.split(",")
-                if host.strip()
-            }
+            configured_hosts = frozenset(module_registry.egress_hosts())
             if not all(
                 any(host == allowed or host.endswith(f".{allowed}") for allowed in configured_hosts)
                 for host in policy.allowed_hosts

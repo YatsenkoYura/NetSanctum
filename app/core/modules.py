@@ -543,6 +543,36 @@ class ModuleRegistry:
                     return record, policy
         return None
 
+    def egress_hosts(self) -> tuple[str, ...]:
+        """Union of hosts allowed by active browser policies (sorted, deduped).
+
+        Every active module declares its own ``BrowserPolicySpec.allowed_hosts``,
+        so the effective allowlist is their union rather than a
+        hand-maintained duplicate. The browser client checks against this.
+        """
+        hosts: set[str] = set()
+        for record in self.active_records():
+            if record.spec:
+                for policy in record.spec.browser_policies:
+                    hosts.update(policy.allowed_hosts)
+        return tuple(sorted(hosts))
+
+    def declared_egress_hosts(self) -> tuple[str, ...]:
+        """Upper bound of hosts allowed by any declared browser policy.
+
+        The egress proxy enforces this ceiling: it is a network-level guard,
+        not an authorization decision, so it covers every module whose
+        manifest is present in the image's source tree — including disabled
+        or locally-bundled modules. Authorization stays in the browser
+        client, which checks the tighter :meth:`egress_hosts`.
+        """
+        hosts: set[str] = set()
+        for record in self.declared_records():
+            if record.spec:
+                for policy in record.spec.browser_policies:
+                    hosts.update(policy.allowed_hosts)
+        return tuple(sorted(hosts))
+
     def browser_policy_catalog(self) -> list[dict[str, Any]]:
         return [
             {

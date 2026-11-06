@@ -1,15 +1,24 @@
 import asyncio
 import ipaddress
-import os
 import socket
 from urllib.parse import urlsplit
 
 MAX_HEADER_BYTES = 64 * 1024
-ALLOWED_HOSTS = frozenset(
-    host.strip().lower().rstrip(".")
-    for host in os.getenv("BROWSER_EGRESS_HOSTS", "").split(",")
-    if host.strip()
-)
+
+
+def _derived_allowed_hosts() -> frozenset[str]:
+    # The proxy is built with the core-only module set, so the process-wide
+    # registry (bound to the installed-modules marker) would report no
+    # browser policies at all. Discover without marker constraints instead:
+    # every manifest present in the image's source tree declares its own
+    # allowed hosts, and the union is the network ceiling. Authorization
+    # stays with the browser client, which checks only active policies.
+    from app.core.modules import ModuleRegistry
+
+    return frozenset(ModuleRegistry.discover().declared_egress_hosts())
+
+
+ALLOWED_HOSTS = _derived_allowed_hosts()
 
 
 def _host_allowed(host: str) -> bool:
@@ -96,7 +105,7 @@ async def handle_proxy(reader: asyncio.StreamReader, writer: asyncio.StreamWrite
 
 async def main() -> None:
     if not ALLOWED_HOSTS:
-        raise RuntimeError("BROWSER_EGRESS_HOSTS must not be empty")
+        raise RuntimeError("No browser policy declares egress hosts")
     server = await asyncio.start_server(handle_proxy, "0.0.0.0", 8888)
     async with server:
         await server.serve_forever()

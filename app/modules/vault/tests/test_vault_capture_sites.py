@@ -43,7 +43,7 @@ class SiteFieldsStaySealedTests(unittest.TestCase):
         explicitly — like `canvas_data` and `tags` — instead of taking whatever
         the sealed-fields loop hands it."""
         from app.modules.vault.router import _apply_lock_state
-        from tests.test_vault_locked_views import make_item
+        from app.modules.vault.tests.test_vault_locked_views import make_item
 
         item = make_item()
         item.site = "pixiv"
@@ -57,7 +57,7 @@ class SiteFieldsStaySealedTests(unittest.TestCase):
 
     def test_an_unlocked_card_shows_what_it_stored(self):
         from app.modules.vault.router import _apply_lock_state
-        from tests.test_vault_locked_views import make_item
+        from app.modules.vault.tests.test_vault_locked_views import make_item
 
         item = make_item()
         item.site = "pixiv"

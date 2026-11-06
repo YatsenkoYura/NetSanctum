@@ -7,7 +7,10 @@ const content = execFileSync(
   { encoding: "utf8" }
 )
   .split("\0")
-  .filter((path) => path.endsWith(".html") || path.endsWith(".py"));
+  // Tests live per module (app/modules/<id>/tests/) but are not shipped
+  // templates: their assertions may name classes nothing renders, so keep
+  // the scan surface identical to before the move (shipped .py/.html only).
+  .filter((path) => (path.endsWith(".html") || path.endsWith(".py")) && !path.includes("/tests/"));
 
 // A module that is deliberately git-ignored is invisible to the listing above,
 // so its templates would ship unstyled. Read the directory directly while it

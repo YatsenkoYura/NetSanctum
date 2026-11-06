@@ -66,10 +66,11 @@ class Settings(BaseSettings):
 
     # ── YouTube / yt-dlp ─────────────────────────────────
     YTDLP_CACHE_DIR: str = "/app/storage/.cache/yt-dlp"
-    BROWSER_EGRESS_HOSTS: str = (
-        "google.com,googleapis.com,googleusercontent.com,ggpht.com,gstatic.com,recaptcha.net,"
-        "youtube.com,youtube-nocookie.com,ytimg.com,googlevideo.com"
-    )
+    # Browser egress has no deployment setting: each module declares its own
+    # BrowserPolicySpec.allowed_hosts in its module.py, the client checks the
+    # union of active policies (ModuleRegistry.egress_hosts) and the proxy
+    # enforces the ceiling of every declared policy
+    # (ModuleRegistry.declared_egress_hosts).
     BROWSER_RUNTIME_ENABLED: bool = True
     YOUTUBE_POT_PROVIDER_URL: str = ""
     YOUTUBE_YTDLP_PUBLIC_INTERVAL_SECONDS: float = 5.0

@@ -57,6 +57,7 @@ class DeepLinkTests(unittest.TestCase):
 
     def test_search_open_paths_match_the_contract(self):
         import re
+        from pathlib import Path
 
         from app.modules.miku.deep_link import OPEN_PATH_PREFIXES
 
@@ -67,6 +68,10 @@ class DeepLinkTests(unittest.TestCase):
             "app/modules/vault/search.py",
             "app/modules/video_archiver/search.py",
         ):
+            # Local-only modules (e.g. archiver) may not be present in CI;
+            # only check the ones that exist.
+            if not Path(path).exists():
+                continue
             with open(path, encoding="utf-8") as handle:
                 content = handle.read()
             paths = re.findall(r'open_path=(?:f?"([^"]+)"|\(\s*f?"([^"]+)")', content)

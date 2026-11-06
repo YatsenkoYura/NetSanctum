@@ -117,7 +117,7 @@ async def response_body(response) -> bytes:
 
 class AllLibOfflineIdentityTests(unittest.TestCase):
     def test_offline_detail_uses_the_snapshotted_export_artifact(self):
-        template = (Path(__file__).parents[1] / "app/modules/alllib/templates/alllib_detail.html").read_text()
+        template = (Path(__file__).parents[4] / "app/modules/alllib/templates/alllib_detail.html").read_text()
 
         self.assertIn("media.export_sha256", template)
         self.assertIn("/export?artifact=", template)

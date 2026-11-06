@@ -405,12 +405,21 @@ class CreateCapturedItemTests(unittest.TestCase):
         a `ValueError` into a 422, so the refusal reaches the extension as
         something it can act on rather than as a 500 it can only stare at."""
         capture = VaultCaptureCreate(**capture_payload(collection_id=4))
+
+        class GoneSpaceSession:
+            """The router pre-checks the collection, so the fake session must
+            answer `get` (with None: the space is gone) instead of being a
+            bare object() that has no get at all."""
+
+            async def get(self, *_args, **_kwargs):
+                return None
+
         with patch(
             "app.modules.vault.router.create_captured_item",
             AsyncMock(side_effect=ValueError("Space 4 no longer exists")),
         ):
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(create_capture(capture, db=object(), user=None))
+                asyncio.run(create_capture(capture, db=GoneSpaceSession(), user=None))
 
         self.assertEqual(422, caught.exception.status_code)
         self.assertIn("4", str(caught.exception.detail))

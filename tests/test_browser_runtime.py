@@ -140,6 +140,39 @@ class BrowserRuntimeContractTests(unittest.TestCase):
         self.assertTrue(policy.persist_snapshot)
         self.assertEqual(policy, WorkerPolicy.model_validate(asdict(policy)).to_spec())
 
+    def test_egress_hosts_are_derived_from_active_policies(self):
+        registry = ModuleRegistry.discover({"youtube"})
+
+        _, policy = registry.browser_policy("youtube.account")
+        self.assertEqual(tuple(sorted(policy.allowed_hosts)), registry.egress_hosts())
+
+    def test_declared_egress_covers_every_present_manifest(self):
+        registry = ModuleRegistry.discover()
+
+        declared = set(registry.declared_egress_hosts())
+        active = set(registry.egress_hosts())
+
+        self.assertLessEqual(active, declared)
+        _, policy = registry.browser_policy("youtube.account")
+        self.assertLessEqual(set(policy.allowed_hosts), declared)
+
+    def test_proxy_allowlist_is_derived_not_configured(self):
+        # The proxy derives the same ceiling as the registry declares, and
+        # the deployment files carry no egress value of their own.
+        registry = ModuleRegistry.discover()
+        self.assertEqual(set(registry.declared_egress_hosts()), set(browser_egress_proxy.ALLOWED_HOSTS))
+
+        example = Path(".env.example").read_text()
+        self.assertNotIn("BROWSER_EGRESS_HOSTS", example)
+
+        compose = yaml.safe_load(Path("docker-compose.yml").read_text())
+        proxy_env = compose["services"]["browser-proxy"]["environment"]
+        self.assertNotIn("BROWSER_EGRESS_HOSTS", proxy_env)
+
+        for line in Path("start.sh").read_text().splitlines():
+            if "SECTION_KEYS" in line:
+                self.assertNotIn("BROWSER_EGRESS_HOSTS", line)
+
     def test_encrypted_snapshot_round_trip_survives_new_store_instance(self):
         state = {
             "cookies": [

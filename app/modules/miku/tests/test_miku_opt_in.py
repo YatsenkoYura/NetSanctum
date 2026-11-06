@@ -41,7 +41,7 @@ class MikuWithoutModuleUiTests(unittest.TestCase):
     def setUp(self):
         from pathlib import Path
 
-        self.base = (Path(__file__).resolve().parents[1] / "app/core/templates/base.html").read_text()
+        self.base = (Path(__file__).resolve().parents[4] / "app/core/templates/base.html").read_text()
 
     def test_the_assistant_shell_is_gated_on_the_module(self):
         self.assertIn("miku_enabled", self.base)

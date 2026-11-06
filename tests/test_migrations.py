@@ -243,7 +243,6 @@ class ModuleMigrationTests(unittest.TestCase):
         self.assertEqual(
             {
                 "alllib",
-                "archiver",
                 "miku",
                 "music",
                 "planner",

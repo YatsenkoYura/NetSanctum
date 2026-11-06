@@ -281,7 +281,7 @@ class UnlockQueuesFinalizeTests(unittest.TestCase):
 
     def setUp(self):
         from app.modules.vault import router, sealing
-        from tests.test_vault_file_keys import AsyncSessionAdapter, FakeRedis
+        from app.modules.vault.tests.test_vault_file_keys import AsyncSessionAdapter, FakeRedis
 
         self.engine = sa.create_engine("sqlite://")
         Base.metadata.create_all(self.engine)
@@ -303,7 +303,7 @@ class UnlockQueuesFinalizeTests(unittest.TestCase):
         self.addCleanup(entered.stop)
 
     def _collection(self):
-        from tests.test_vault_file_keys import make_sealed_row
+        from app.modules.vault.tests.test_vault_file_keys import make_sealed_row
 
         row, _private = make_sealed_row(self.db, collection_id=5)
         return row

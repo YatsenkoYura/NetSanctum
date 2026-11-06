@@ -1,0 +1,369 @@
+Вот готовый автономный прототип на чистом HTML с подключенным Tailwind через CDN
+(cdn.tailwindcss.com).
+
+В файле объединены оба экрана:
+
+1.  Веб-интерфейс сервера (Проводник Drive) с кнопкой привязки к клиенту.
+2.  Окно десктопного клиента (Панель синхронизации по требованию) с карточками
+    папок и открытым модальным окном разрешения 3-Way конфликта.
+
+Вы можете сохранить этот код в файл drive_preview.html и дважды кликнуть, чтобы
+открыть в любом браузере:
+
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <title>NetSanctum Drive — UI Prototype</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['"JetBrains Mono"', 'monospace'],
+            sans: ['"Inter"', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-[#09090b] text-zinc-300 font-mono text-xs min-h-screen p-6 space-y-12">
+
+  <!-- ========================================================================= -->
+  <!-- ЧАСТЬ 1: ВЕБ-ИНТЕРФЕЙС НОДЫ (NETSANCTUM DRIVE WEB UI)                     -->
+  <!-- ========================================================================= -->
+  <section class="max-w-6xl mx-auto border border-zinc-800 bg-[#0c0e12] rounded-lg p-6 shadow-2xl space-y-6">
+    <div class="text-[10px] text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2">
+      ЭКРАН 1: Веб-интерфейс сервера (NetSanctum Node Web View)
+    </div>
+
+    <!-- Шапка модуля Drive -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+      <div>
+        <div class="flex items-center gap-3">
+          <h1 class="text-base font-bold tracking-wider text-zinc-100 uppercase">
+            NetSanctum Drive
+          </h1>
+          <span class="px-2 py-0.5 text-[10px] bg-teal-950 text-teal-400 border border-teal-800/80 rounded font-semibold">
+            WORKSPACE REV #142
+          </span>
+        </div>
+        <p class="text-[11px] text-zinc-500 font-sans mt-0.5">
+          Дедуплицированное CAS-хранилище (AES-256-GCM) с поддержкой контроля версий
+        </p>
+      </div>
+
+      <!-- Кнопка моста к десктопному клиенту -->
+      <button class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-teal-300 bg-teal-950/80 border border-teal-500/50 hover:bg-teal-900 rounded transition cursor-pointer">
+        <svg class="w-4 h-4 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <span>⟳ Синхронизировать с ПК</span>
+      </button>
+    </div>
+
+    <!-- Вкладки воркспейсов -->
+    <div class="flex items-center gap-2 border-b border-zinc-800/80 pb-3">
+      <button class="px-3 py-1 bg-zinc-800 text-zinc-100 font-semibold border border-zinc-700 rounded text-xs">
+        📁 Рабочие документы (Work)
+      </button>
+      <button class="px-3 py-1 bg-zinc-950 text-zinc-400 hover:text-zinc-200 border border-zinc-800 rounded text-xs">
+        📁 Проекты (Projects)
+      </button>
+      <button class="px-3 py-1 bg-zinc-950 text-zinc-400 hover:text-zinc-200 border border-zinc-800 rounded text-xs">
+        📁 Личный архив (Personal)
+      </button>
+      <button class="px-2.5 py-1 text-zinc-500 hover:text-teal-400 border border-dashed border-zinc-800 hover:border-teal-700 rounded text-xs">
+        + Новый Workspace
+      </button>
+    </div>
+
+    <!-- Панель управления и Хлебные крошки -->
+    <div class="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/40 p-2.5 border border-zinc-800 rounded">
+      <!-- Breadcrumbs -->
+      <div class="flex items-center gap-2 text-zinc-400">
+        <span class="text-teal-400 cursor-pointer hover:underline">root</span>
+        <span>/</span>
+        <span class="text-teal-400 cursor-pointer hover:underline">architecture</span>
+        <span>/</span>
+        <span class="text-zinc-200 font-semibold">specs</span>
+      </div>
+
+      <!-- Кнопки действий -->
+      <div class="flex items-center gap-2">
+        <button class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded transition">
+          + Папка
+        </button>
+        <button class="px-2.5 py-1 bg-teal-500 hover:bg-teal-400 text-black font-semibold rounded transition">
+          ↑ Загрузить файл
+        </button>
+      </div>
+    </div>
+
+    <!-- Таблица файлов -->
+    <div class="border border-zinc-800 rounded overflow-hidden">
+      <table class="w-full text-left">
+        <thead class="bg-zinc-900/80 text-zinc-400 text-[10px] uppercase border-b border-zinc-800">
+          <tr>
+            <th class="py-2 px-4">Имя</th>
+            <th class="py-2 px-4">Размер</th>
+            <th class="py-2 px-4">Ревизия</th>
+            <th class="py-2 px-4">Изменен</th>
+            <th class="py-2 px-4 text-right">Действия</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-zinc-900">
+          <!-- Папка -->
+          <tr class="hover:bg-zinc-900/30 transition-colors">
+            <td class="py-2.5 px-4 flex items-center gap-2">
+              <span class="text-amber-400">📁</span>
+              <span class="text-zinc-200 hover:text-teal-300 cursor-pointer font-medium">diagrams/</span>
+            </td>
+            <td class="py-2.5 px-4 text-zinc-500">--</td>
+            <td class="py-2.5 px-4 text-zinc-500">r140</td>
+            <td class="py-2.5 px-4 text-zinc-500">12 минут назад</td>
+            <td class="py-2.5 px-4 text-right text-zinc-400 space-x-2">
+              <button class="hover:text-teal-400">Переименовать</button>
+              <button class="hover:text-red-400">✕</button>
+            </td>
+          </tr>
+          <!-- Файл 1 -->
+          <tr class="hover:bg-zinc-900/30 transition-colors">
+            <td class="py-2.5 px-4 flex items-center gap-2">
+              <span class="text-zinc-400">📄</span>
+              <span class="text-zinc-200">api_contract_v2.md</span>
+            </td>
+            <td class="py-2.5 px-4 text-zinc-400">42.8 KB</td>
+            <td class="py-2.5 px-4 text-zinc-500">r142</td>
+            <td class="py-2.5 px-4 text-zinc-500">2 часа назад</td>
+            <td class="py-2.5 px-4 text-right text-zinc-400 space-x-2">
+              <button class="hover:text-teal-400">Скачать</button>
+              <button class="hover:text-red-400">✕</button>
+            </td>
+          </tr>
+          <!-- Файл 2 -->
+          <tr class="hover:bg-zinc-900/30 transition-colors">
+            <td class="py-2.5 px-4 flex items-center gap-2">
+              <span class="text-zinc-400">📄</span>
+              <span class="text-zinc-200">database_schema.sql</span>
+            </td>
+            <td class="py-2.5 px-4 text-zinc-400">1.4 MB</td>
+            <td class="py-2.5 px-4 text-zinc-500">r139</td>
+            <td class="py-2.5 px-4 text-zinc-500">Вчера</td>
+            <td class="py-2.5 px-4 text-right text-zinc-400 space-x-2">
+              <button class="hover:text-teal-400">Скачать</button>
+              <button class="hover:text-red-400">✕</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+
+  <!-- ========================================================================= -->
+  <!-- ЧАСТЬ 2: КЛИЕНТСКИЙ ИНТЕРФЕЙС (NETSANCTUM CLIENT — DESKTOP VIEW)         -->
+  <!-- ========================================================================= -->
+  <section class="max-w-3xl mx-auto border border-zinc-800 bg-[#0a0d0b] rounded-lg p-6 shadow-2xl space-y-6">
+    <div class="text-[10px] text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2">
+      ЭКРАН 2: Вкладка "Синхронизация по требованию" в NetSanctum Client
+    </div>
+
+    <!-- Заголовок панели клиента -->
+    <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3">
+      <div>
+        <h2 class="text-sm font-bold text-teal-400 tracking-wider uppercase">
+          Синхронизируемые папки (On-Demand Sync)
+        </h2>
+        <p class="text-[11px] text-zinc-500 font-sans mt-0.5">
+          Файлы хранятся на вашем устройстве. Синхронизация запускается только по кнопке.
+        </p>
+      </div>
+      <button class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded transition text-xs">
+        + Привязать папку
+      </button>
+    </div>
+
+    <!-- Список папок -->
+    <div class="space-y-4">
+
+      <!-- Карточка 1: Все синхронизировано -->
+      <div class="border border-zinc-800/80 bg-zinc-950 p-4 rounded space-y-3">
+        <div class="flex items-start justify-between">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="text-base">📁</span>
+              <span class="font-bold text-zinc-100 text-xs">Рабочие документы (Work)</span>
+              <span class="px-1.5 py-0.2 text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800 rounded">
+                СИНХРОНИЗИРОВАНО
+              </span>
+            </div>
+            <div class="text-[11px] text-zinc-500">
+              Локальный путь: <code class="text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded">~/NetSanctum/WorkDocuments</code>
+            </div>
+            <div class="text-[11px] text-zinc-500">
+              Сервер: <span class="text-zinc-400">node.lan (Rev #142)</span> | Посл. синхронизация: 2 часа назад
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 pt-2 border-t border-zinc-900">
+          <button class="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded transition">
+            🔍 Проверить изменения
+          </button>
+          <button class="px-3 py-1 bg-transparent hover:bg-zinc-900 text-zinc-400 border border-zinc-800 rounded transition">
+            📂 Открыть в проводнике
+          </button>
+          <button class="px-2 py-1 text-zinc-600 hover:text-red-400 ml-auto transition">
+            Отвязать
+          </button>
+        </div>
+      </div>
+
+      <!-- Карточка 2: Обнаружены изменения и конфликт -->
+      <div class="border border-amber-900/50 bg-zinc-950 p-4 rounded space-y-3">
+        <div class="flex items-start justify-between">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="text-base">📁</span>
+              <span class="font-bold text-zinc-100 text-xs">Проекты (Projects)</span>
+              <span class="px-1.5 py-0.2 text-[9px] bg-amber-950 text-amber-400 border border-amber-800 rounded">
+                ЕСТЬ ИЗМЕНЕНИЯ (3)
+              </span>
+            </div>
+            <div class="text-[11px] text-zinc-500">
+              Локальный путь: <code class="text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded">/home/user/Projects</code>
+            </div>
+            <!-- Сводка диффа -->
+            <div class="flex items-center gap-4 text-[11px] pt-1 font-sans">
+              <span class="text-emerald-400">↑ 2 файла на сервер</span>
+              <span class="text-cyan-400">↓ 1 файл на ПК</span>
+              <span class="text-rose-400 font-semibold">⚠ 1 конфликт</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 pt-2 border-t border-zinc-900">
+          <button class="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded transition">
+            ⚠ Разрешить и применить (Sync)
+          </button>
+          <button class="px-3 py-1 bg-transparent hover:bg-zinc-900 text-zinc-400 border border-zinc-800 rounded transition">
+            📂 Открыть в проводнике
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+
+
+  <!-- ========================================================================= -->
+  <!-- ЧАСТЬ 3: МОДАЛЬНОЕ ОКНО РАЗРЕШЕНИЯ КОНФЛИКТОВ (3-WAY CONFLICT RESOLVER)  -->
+  <!-- ========================================================================= -->
+  <section class="max-w-2xl mx-auto border-2 border-zinc-700 bg-[#0e1117] rounded-lg p-5 shadow-2xl space-y-5">
+    <div class="text-[10px] text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2">
+      ЭКРАН 3: Модальное окно разрешения конфликтов при 3-Way Diff
+    </div>
+
+    <!-- Шапка модалки -->
+    <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+      <div>
+        <h3 class="text-sm font-bold text-zinc-100">
+          План синхронизации: "Проекты"
+        </h3>
+        <p class="text-[11px] text-zinc-500 mt-0.5">
+          Сверка между Base (r140), Локальной папкой и Сервером (r142)
+        </p>
+      </div>
+      <button class="text-zinc-500 hover:text-zinc-300 text-sm">✕</button>
+    </div>
+
+    <!-- Список запланированных неконфликтных операций -->
+    <div class="space-y-2 text-[11px]">
+      <div class="text-zinc-400 font-semibold uppercase text-[10px]">Готово к применению:</div>
+      <div class="bg-zinc-950 p-2.5 rounded border border-zinc-800/80 space-y-1.5">
+        <div class="flex items-center gap-2 text-emerald-400">
+          <span>↑ [Загрузить]</span>
+          <span class="text-zinc-300 font-mono">src/main.rs</span>
+          <span class="text-zinc-600 text-[10px]">(Локально изменен, 12 KB)</span>
+        </div>
+        <div class="flex items-center gap-2 text-cyan-400">
+          <span>↓ [Скачать]</span>
+          <span class="text-zinc-300 font-mono">assets/logo.png</span>
+          <span class="text-zinc-600 text-[10px]">(Загружен на сервере, 120 KB)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Блок конфликта (3-Way Conflict) -->
+    <div class="space-y-2">
+      <div class="text-rose-400 font-semibold uppercase text-[10px] flex items-center gap-1.5">
+        <span>⚠ Конфликт (файл изменен и на сервере, и на этом ПК):</span>
+      </div>
+
+      <div class="border border-rose-900/60 bg-rose-950/20 p-3.5 rounded space-y-3">
+        <div class="font-mono text-zinc-200 text-xs font-bold">
+          docs/architecture.md
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-[10px] text-zinc-400 bg-zinc-900/80 p-2 rounded">
+          <div>
+            <span class="text-zinc-500">Локальный файл:</span> 14.2 KB (15 мин назад)
+          </div>
+          <div>
+            <span class="text-zinc-500">Файл на сервере:</span> 12.8 KB (1 час назад)
+          </div>
+        </div>
+
+        <!-- Радиокнопки выбора стратегии -->
+        <div class="space-y-2 pt-1">
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <input type="radio" name="conflict1" class="mt-0.5 accent-teal-500">
+            <div>
+              <span class="text-zinc-200 font-medium text-[11px]">Оставить мою локальную версию</span>
+              <p class="text-zinc-500 text-[10px]">Серверная версия файла будет перезаписана.</p>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <input type="radio" name="conflict1" class="mt-0.5 accent-teal-500">
+            <div>
+              <span class="text-zinc-200 font-medium text-[11px]">Взять версию с сервера</span>
+              <p class="text-zinc-500 text-[10px]">Локальный файл на этом ПК будет перезаписан.</p>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-2.5 cursor-pointer">
+            <input type="radio" name="conflict1" checked class="mt-0.5 accent-teal-500">
+            <div>
+              <span class="text-teal-300 font-medium text-[11px]">Сохранить оба файла (Рекомендуется)</span>
+              <p class="text-zinc-500 text-[10px]">
+                Локальный файл будет переименован в <code class="text-zinc-400">architecture (conflict-2026-10-15).md</code>, а с сервера скачан оригинал.
+              </p>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Футер модалки -->
+    <div class="flex items-center justify-between pt-3 border-t border-zinc-800">
+      <button class="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 rounded transition">
+        Отмена
+      </button>
+      <button class="px-4 py-1.5 bg-teal-500 hover:bg-teal-400 text-black font-bold rounded transition">
+        Применить синхронизацию (3 операции)
+      </button>
+    </div>
+  </section>
+
+</body>
+</html>

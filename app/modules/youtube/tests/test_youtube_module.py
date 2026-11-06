@@ -142,16 +142,14 @@ class YouTubeModuleTests(unittest.TestCase):
         self.assertFalse(BrowserRuntime._allowed_url(policy, "https://youtube.com.evil.example/"))
         self.assertFalse(BrowserRuntime._allowed_url(policy, "http://accounts.google.com/signin"))
 
-    def test_browser_policy_hosts_are_in_example_deployment_allowlist(self):
-        policy = YOUTUBE_MODULE.browser_policies[0]
-        line = next(
-            line
-            for line in Path(".env.example").read_text().splitlines()
-            if line.startswith("BROWSER_EGRESS_HOSTS=")
-        )
-        deployment_hosts = set(line.partition("=")[2].split(","))
+    def test_browser_policy_hosts_are_in_derived_egress(self):
+        from app.core.modules import ModuleRegistry
 
-        self.assertLessEqual(set(policy.allowed_hosts), deployment_hosts)
+        policy = YOUTUBE_MODULE.browser_policies[0]
+        registry = ModuleRegistry.discover({"youtube"})
+
+        self.assertLessEqual(set(policy.allowed_hosts), set(registry.egress_hosts()))
+        self.assertLessEqual(set(policy.allowed_hosts), set(registry.declared_egress_hosts()))
 
     def test_catalog_request_has_a_deadline(self):
         dashboard = (Path("app/modules/youtube/templates/youtube_dashboard.html")).read_text()

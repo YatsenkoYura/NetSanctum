@@ -33,7 +33,7 @@ from app.modules.miku.models import (
     MikuConversationMessage,
     MikuConversationNote,
 )
-from tests.test_miku_memory import AsyncSessionAdapter
+from app.modules.miku.tests.test_miku_memory import AsyncSessionAdapter
 
 OWNER = 7
 

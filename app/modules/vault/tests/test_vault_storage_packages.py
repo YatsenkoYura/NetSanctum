@@ -18,7 +18,7 @@ from app.modules.vault.module import MODULE as VAULT_MODULE
 from app.modules.vault.router import get_package_items, get_vault_sync_manifest
 from app.modules.vault.services import list_vault_package_items
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 def run(coro):

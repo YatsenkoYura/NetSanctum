@@ -288,7 +288,7 @@ class MusicOfflineContractTests(unittest.TestCase):
         self.assertIn(detail_url, urls)
         self.assertEqual("/music/dashboard?package_id=playlist_12", manifest["root_url"])
 
-        templates = Path(__file__).parents[1] / "app/modules/music/templates"
+        templates = Path(__file__).parents[4] / "app/modules/music/templates"
         self.assertIn("?package_id={{ package_id }}", (templates / "playlists.html").read_text())
         self.assertIn("?package_id={{ package_id }}", (templates / "playlist_detail.html").read_text())
 

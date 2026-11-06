@@ -145,6 +145,7 @@ access_token.hash
 # Modules in development / ignored
 app/modules/torrent/
 app/modules/pianoboost/
+app/modules/drive/
 
 # The owner's own Vault card types. Deliberately not in the repository: this is
 # where site-specific captures keep their own card types, and the whole directory

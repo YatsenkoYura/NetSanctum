@@ -3,7 +3,6 @@
   "default_modules": [
     "search",
     "music",
-    "archiver",
     "video_archiver",
     "youtube",
     "vault",
@@ -20,11 +19,6 @@
       "system_packages": [
         "ffmpeg"
       ]
-    },
-    "archiver": {
-      "required": false,
-      "extra": "archiver",
-      "system_packages": []
     },
     "auth": {
       "required": true,
