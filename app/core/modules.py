@@ -265,7 +265,10 @@ class ModuleRegistry:
 
     def _discover_entry_points(self) -> None:
         for entry_point in entry_points(group="netsanctum.modules"):
-            if self._installed_modules is None or entry_point.name not in self._installed_modules:
+            # No marker configured (local development): the environment
+            # itself is the selection, so load every installed entry point.
+            # With a marker (production images), only listed ids load.
+            if self._installed_modules is not None and entry_point.name not in self._installed_modules:
                 continue
             try:
                 package = (
@@ -273,7 +276,9 @@ class ModuleRegistry:
                     if entry_point.module.endswith(".module")
                     else entry_point.module
                 )
-                self._register_spec(package, entry_point.load(), expected_id=entry_point.name)
+                self._register_spec(
+                    package, entry_point.load(), expected_id=entry_point.name, from_entry_point=True
+                )
             except Exception as exc:
                 logger.error("Failed to load external module entry point %s: %s", entry_point.name, exc)
 
@@ -283,6 +288,7 @@ class ModuleRegistry:
         spec: ModuleSpec,
         *,
         expected_id: str | None = None,
+        from_entry_point: bool = False,
     ) -> None:
         if not isinstance(spec, ModuleSpec):
             raise TypeError("module entry point must expose a ModuleSpec")
@@ -298,7 +304,12 @@ class ModuleRegistry:
                 status=ModuleStatus.INCOMPATIBLE,
                 error=f"Module API {spec.api_version} is not supported (expected {MODULE_API_VERSION})",
             )
-        elif not spec.required and not spec.bundled and self._installed_modules is None:
+        elif (
+            not spec.required
+            and not spec.bundled
+            and self._installed_modules is None
+            and not from_entry_point
+        ):
             record = ModuleRecord(package=package, spec=spec, status=ModuleStatus.UNAVAILABLE)
         elif (
             not spec.required

@@ -32,6 +32,23 @@ class StaticCssContractTests(unittest.TestCase):
 
         self.assertEqual([], references)
 
+    def test_tailwind_scan_is_disk_based_not_git_based(self):
+        # Removing/adding a module folder must change the scan surface
+        # without an exception list. A git-based listing would keep
+        # importing deleted modules (or miss untracked ones).
+        config = (ROOT / "tailwind.config.js").read_text()
+
+        self.assertNotIn("ls-files", config)
+        self.assertNotIn("execFileSync", config)
+        self.assertIn("readdirSync", config)
+        # Semantic theme tokens exist for future global themes, without
+        # requiring classes to change yet.
+        for token in ("panel", "surface", "muted", "accent", "line"):
+            self.assertIn(token, config)
+        dark = (ROOT / "static/themes/dark.css").read_text()
+        for var in ("--ns-panel", "--ns-surface", "--ns-muted", "--ns-accent", "--ns-line"):
+            self.assertIn(var, dark)
+
     def test_video_dashboard_avoids_missing_avatar_requests_and_redeclared_globals(self):
         dashboard = (ROOT / "app/modules/video_archiver/templates/video_dashboard.html").read_text()
 

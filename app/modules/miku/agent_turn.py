@@ -6,6 +6,7 @@ falls back to the in-process assistant rather than dropping the turn.
 """
 
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 REPLY_TEXT_LIMIT = 2000
 HISTORY_TEXT_LIMIT = 500
 STATUS_LIMIT = 200
+# Progress summaries are for the UI, not a log: the window is what the turn
+# keeps, so a long cascade cannot grow this without bound.
+STATUS_WINDOW = 50
 VALID_MOODS = {"neutral", "happy", "confused", "thinking", "listening"}
 
 
@@ -239,7 +243,7 @@ async def run_agent_turn(
     if not agent.enabled:
         return None
     provider_profile = to_agent_profile(provider)
-    statuses: list[str] = []
+    statuses: deque[str] = deque(maxlen=STATUS_WINDOW)
     warnings: list[str] = []
 
     async def _emit(phase: str, data: dict) -> None:

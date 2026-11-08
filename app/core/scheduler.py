@@ -32,6 +32,13 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     worker_hijack_root_logger=False,
+    # Emergency leak containment: recycle prefork children so RSS/RAM
+    # accumulated in a worker process is actually returned to the OS.
+    # Without these, yt-dlp/ffmpeg/SQLAlchemy growth is never reclaimed.
+    worker_max_tasks_per_child=20,
+    worker_max_memory_per_child=1048576,  # 1 GiB, in KiB
+    task_acks_on_failure_or_timeout=True,
+    result_expires=3600,
 )
 
 

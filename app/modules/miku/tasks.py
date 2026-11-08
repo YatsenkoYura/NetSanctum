@@ -86,7 +86,15 @@ async def ensure_continue_armed() -> None:
             logger.warning("miku continuation could not be armed", exc_info=True)
 
 
-@celery_app.task(name="miku.continue_tasks", ignore_result=True, max_retries=0)
+@celery_app.task(
+    name="miku.continue_tasks",
+    ignore_result=True,
+    max_retries=0,
+    # Backstop: 5 goals x <=420s turns = 2100s max, plus consolidation. A hung
+    # turn must not hold a child for hours; the turn itself now has a deadline.
+    soft_time_limit=2400,
+    time_limit=2700,
+)
 def continue_tasks() -> None:
     """Claim due goals, then arm the next pass so the loop survives restarts."""
     run_async(continue_due_tasks())

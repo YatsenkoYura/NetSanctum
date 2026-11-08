@@ -19,7 +19,7 @@
 ## Coupled Changes
 
 - After changing a bundled module's manifest, dependency extra, or system packages, run `uv lock` when dependencies changed, then `uv run python scripts/module_build.py catalog` and `uv run python scripts/module_build.py check`. `module-build.json` is generated and committed.
-- Template or Python-generated Tailwind class changes require `npm ci && npm run build:css`; commit the resulting `static/tailwind.css`. Tailwind scans `.html` and `.py` under `app/` except `*/tests/` directories, plus `static/browser-runtime.js`, `static/miku-assistant.js`, and `static/miku-dashboard.js`.
+- Template or Python-generated Tailwind class changes require `npm ci && npm run build:css`; commit the resulting `static/tailwind.css`. Tailwind scans `.html` and `.py` under `app/` except `*/tests/` directories (walked from disk, so removed/added module folders need no exception list), plus `static/browser-runtime.js`, `static/miku-assistant.js`, and `static/miku-dashboard.js`. Semantic theme tokens (`bg-panel` etc.) map to `--ns-*` variables in `static/themes/*.css` — not wired yet.
 - Database-backed modules own independent Alembic histories under their package. Use `uv run python -m app.core.migrations revision <module> -m "..."`, then `upgrade <module>` and `check <module>`; do not use the root Alembic CLI for new module migrations.
 - A migration manifest's `tables` must exactly match that module's current model tables. Move removed table names to `historical_tables`; table ownership is permanent and cannot be reassigned to another module.
 

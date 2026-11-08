@@ -1,0 +1,15 @@
+/* Dark theme tokens (future global themes).
+ *
+ * Values match the current zinc/teal look. Not loaded yet: raw palette
+ * classes still render identically. To activate as the global theme,
+ * add <link rel="stylesheet" href="/static/themes/dark.css"> next to
+ * tailwind.css in app/core/templates/base.html (or @import in
+ * static/tailwind.input.css before @tailwind utilities).
+ */
+:root {
+  --ns-panel: #09090b;
+  --ns-surface: #18181b;
+  --ns-muted: #a1a1aa;
+  --ns-accent: #2dd4bf;
+  --ns-line: #27272a;
+}

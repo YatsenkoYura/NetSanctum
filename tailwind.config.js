@@ -1,27 +1,38 @@
 const fs = require("node:fs");
-const { execFileSync } = require("node:child_process");
+const path = require("node:path");
 
-const content = execFileSync(
-  "git",
-  ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "app"],
-  { encoding: "utf8" }
-)
-  .split("\0")
-  // Tests live per module (app/modules/<id>/tests/) but are not shipped
-  // templates: their assertions may name classes nothing renders, so keep
-  // the scan surface identical to before the move (shipped .py/.html only).
-  .filter((path) => (path.endsWith(".html") || path.endsWith(".py")) && !path.includes("/tests/"));
-
-// A module that is deliberately git-ignored is invisible to the listing above,
-// so its templates would ship unstyled. Read the directory directly while it
-// exists; once the module is committed, `git ls-files` lists it and this is a
-// harmless duplicate.
-const ignoredTemplates = "app/modules/archiver/templates";
-if (fs.existsSync(ignoredTemplates)) {
-  for (const name of fs.readdirSync(ignoredTemplates)) {
-    if (name.endsWith(".html")) content.push(`${ignoredTemplates}/${name}`);
+// Source of truth is the filesystem, but the committed CSS must stay
+// canonical: git-ignored local modules and files are skipped, so a local
+// build produces the same output as CI (which has no ignored trees at
+// all). Removing a folder drops it from the scan automatically — no
+// per-module exception list. Tests are excluded: they are not shipped
+// templates and their assertions may name classes nothing renders.
+const ignored = new Set();
+if (fs.existsSync(".gitignore")) {
+  for (const line of fs.readFileSync(".gitignore", "utf8").split("\n")) {
+    const entry = line.trim();
+    if (entry.startsWith("app/") && !entry.startsWith("!")) ignored.add(entry.replace(/\/$/, ""));
   }
 }
+const isIgnored = (p) => {
+  const normalized = p.split(path.sep).join("/");
+  for (const prefix of ignored) {
+    if (normalized === prefix || normalized.startsWith(prefix + "/")) return true;
+  }
+  return false;
+};
+const content = [];
+(function collect(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (isIgnored(full)) continue;
+    if (entry.isDirectory()) {
+      if (entry.name !== "__pycache__") collect(full);
+    } else if ((full.endsWith(".html") || full.endsWith(".py")) && !full.includes("/tests/")) {
+      content.push(full);
+    }
+  }
+})("app");
 
 content.push("static/browser-runtime.js", "static/miku-assistant.js", "static/miku-dashboard.js");
 
@@ -76,6 +87,19 @@ module.exports = {
   ],
   theme: {
     extend: {
+      // Future global themes: semantic tokens instead of raw palette names.
+      // Templates use bg-panel/text-muted/border-line/text-accent and a
+      // theme is just a different static/themes/*.css assigning the
+      // --ns-* variables. Values in dark.css match the current zinc/teal
+      // look, so wiring a theme alters no layout. Not wired into base.html
+      // yet — raw zinc/teal classes keep working.
+      colors: {
+        panel: "var(--ns-panel)",
+        surface: "var(--ns-surface)",
+        muted: "var(--ns-muted)",
+        accent: "var(--ns-accent)",
+        line: "var(--ns-line)"
+      },
       fontFamily: {
         mono: ['"JetBrains Mono"', '"Fira Code"', "monospace"],
         sans: ['"Inter"', "system-ui", "sans-serif"]

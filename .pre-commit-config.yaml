@@ -41,9 +41,8 @@ repos:
 
       - id: tailwind-css
         name: rebuild committed Tailwind CSS
-        entry: tailwindcss -c tailwind.config.js -i static/tailwind.input.css -o static/tailwind.css --minify
-        language: node
-        additional_dependencies: [tailwindcss@3.4.17]
+        entry: npm run build:css
+        language: system
         pass_filenames: false
         files: ^(app/.*\.(html|py)|static/tailwind\.input\.css|tailwind\.config\.js)$
 
