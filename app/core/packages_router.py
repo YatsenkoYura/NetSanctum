@@ -1,9 +1,7 @@
 import asyncio
 import hashlib
-import json
 import logging
 import re
-import struct
 import tempfile
 from collections.abc import AsyncGenerator
 from urllib.parse import urlsplit
@@ -14,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.database import AsyncSessionLocal
 from app.core.modules import module_registry
+from app.core.nsp2 import create_package_streaming
 from app.core.security import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -23,17 +22,51 @@ router = APIRouter(prefix="/api/packages", tags=["packages"])
 PACKAGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RESOURCE_TYPES = {"binary", "container", "css", "html", "image", "js", "json", "sealed", "text"}
-# Packed into the NSP container by the hybrid projection and the NSP builder.
-# `binary` stays standalone (hashed, ranged); `sealed` stays standalone too — a
-# sealed resource packed beside plaintext would still decrypt, but the rule that
-# sealed bytes never sit inside a shared plaintext container is worth more than
-# the saved request.
-PACKABLE_RESOURCE_TYPES = {"container", "css", "html", "image", "js", "json", "text"}
-STANDALONE_RESOURCE_TYPES = {"binary", "sealed"}
+# NSP2 (v2) packs everything except `sealed` resources.
+# Binary media (mp4, webm, mp3, epub, cbz, …) are now native to the container.
+PACKABLE_RESOURCE_TYPES = {"container", "css", "html", "image", "js", "json", "text", "binary"}
+STANDALONE_RESOURCE_TYPES = {"sealed"}
 
 
 class PackageResourceError(RuntimeError):
     pass
+
+
+def _parse_range_header(range_header: str | None, content_length: int) -> tuple[int, int] | None:
+    """Parse ``Range: bytes=...`` header.
+
+    Returns ``(start, length)`` or ``None`` if the range is invalid.
+    Only supports single-range requests like ``bytes=0-499`` or ``bytes=100-``.
+    """
+    if not range_header or not range_header.startswith("bytes="):
+        return None
+    range_spec = range_header[len("bytes=") :]
+    parts = range_spec.split("-", 1)
+    try:
+        if parts[0] and parts[1]:
+            start, end = int(parts[0]), int(parts[1])
+            length = min(end - start + 1, content_length - start)
+            if length <= 0 or start >= content_length:
+                return None
+            return start, length
+        elif parts[0]:
+            start = int(parts[0])
+            if start >= content_length:
+                return None
+            return start, content_length - start
+        elif parts[1]:
+            suffix = int(parts[1])
+            if suffix <= 0 or suffix > content_length:
+                return None
+            start = content_length - suffix
+            return start, suffix
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_etag(data_len: int, last_modified: str = "") -> str:
+    """Build a weak ETag from file size and optional last-modified."""
+    return f'W/"{hashlib.md5(f"{data_len}:{last_modified}".encode()).hexdigest()[:16]}"'
 
 
 def _validate_local_url(url: str, field: str) -> None:
@@ -78,7 +111,7 @@ def make_package_manifest(
     root_url: str,
     resources: list[dict],
 ) -> dict:
-    """Build the versioned, module-agnostic offline package contract."""
+    """Build the versioned, module-agnostic offline package contract (NSP2)."""
     if not PACKAGE_ID_PATTERN.fullmatch(package_id):
         raise ValueError(f"Invalid package ID: {package_id!r}")
     _validate_local_url(root_url, "Package root URL")
@@ -90,18 +123,17 @@ def make_package_manifest(
     if not record or not record.spec or not record.spec.dashboard_url:
         raise RuntimeError(f"Active module {module_id!r} has no offline-capable dashboard")
     return {
-        "schema_version": 1,
-        "package_id": package_id,
-        "package_title": package_title,
-        "package_name": package_title,
-        "title": package_title,
-        "name": package_title,
-        "module": {
-            "id": record.spec.id,
-            "title": record.spec.title_en,
-            "title_en": record.spec.title_en,
-            "title_ru": record.spec.title_ru,
-            "root_url": record.spec.dashboard_url,
+        "schema_version": 2,
+        "package": {
+            "id": package_id,
+            "title": package_title,
+            "revision": 1,
+            "root_url": root_url,
+            "module": {
+                "id": record.spec.id,
+                "title": record.spec.title_en,
+                "root_url": record.spec.dashboard_url,
+            },
         },
         "root_url": root_url,
         "resources": resources,
@@ -150,60 +182,77 @@ async def fetch_nsp_resource(
         }
 
 
-async def build_nsp_file(
-    resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict
+async def build_nsp_to_file(
+    resources: list,
+    client: httpx.AsyncClient,
+    headers: dict,
+    cookies: dict,
+    package_info: dict,
 ) -> tempfile.SpooledTemporaryFile[bytes]:
-    """Build a complete container in bounded temporary storage before it is served."""
+    """Build a complete NSP2 container, streaming directly to a tempfile on disk."""
     packable_resources = [res for res in resources if res.get("type") in PACKABLE_RESOURCE_TYPES]
-    package_file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
-    index = {}
-    offset = 0
+    nsp_resources: list[dict] = []
     semaphore = asyncio.Semaphore(1)
-    try:
-        for resource_spec in packable_resources:
-            resource = await fetch_nsp_resource(resource_spec, client, headers, cookies, semaphore)
-            content = resource["content"]
-            length = len(content)
-            index[resource["url"]] = {
-                "offset": offset,
-                "length": length,
+    for resource_spec in packable_resources:
+        resource = await fetch_nsp_resource(resource_spec, client, headers, cookies, semaphore)
+        nsp_resources.append(
+            {
+                "url": resource["url"],
+                "content": resource["content"],
                 "mime": resource["mime"],
-                "sha256": hashlib.sha256(content).hexdigest(),
+                "type": resource_spec.get("type", "text"),
             }
-            package_file.write(content)
-            offset += length
-
-        package_file.write(json.dumps(index, separators=(",", ":")).encode("utf-8"))
-        package_file.write(struct.pack(">Q4s", offset, b"NSPK"))
-        package_file.seek(0)
-        return package_file
-    except Exception:
-        package_file.close()
-        raise
+        )
+    # Create_package_streaming writes directly to disk — no RAM bottleneck
+    return create_package_streaming(
+        resources=nsp_resources,
+        package_info=package_info,
+        sealed=False,
+        padded=False,
+    )
 
 
 async def stream_nsp_file(
     package_file: tempfile.SpooledTemporaryFile[bytes],
+    start: int = 0,
+    length: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
-    try:
-        while chunk := package_file.read(64 * 1024):
-            yield chunk
-    finally:
-        package_file.close()
+    """Yield NSP2 data from a seekable file, optionally a slice."""
+    package_file.seek(start)
+    end = length if length is not None else -1
+    chunk_size = 64 * 1024
+    while True:
+        read_len = chunk_size if end < 0 else min(chunk_size, end - start)
+        if read_len <= 0:
+            break
+        chunk = package_file.read(read_len)
+        if not chunk:
+            break
+        yield chunk
+        start += len(chunk)
+    package_file.close()
 
 
 async def generate_nsp(
-    resources: list, client: httpx.AsyncClient, headers: dict, cookies: dict
+    resources: list,
+    client: httpx.AsyncClient,
+    headers: dict,
+    cookies: dict,
+    package_info: dict,
 ) -> AsyncGenerator[bytes, None]:
-    """Asynchronously stream NSP container payload chunk by chunk on the fly."""
-    package_file = await build_nsp_file(resources, client, headers, cookies)
+    """Asynchronously stream NSP2 container payload chunk by chunk on the fly."""
+    package_file = await build_nsp_to_file(resources, client, headers, cookies, package_info)
     async for chunk in stream_nsp_file(package_file):
         yield chunk
 
 
 @router.get("/{package_id}/nsp", include_in_schema=False)
 async def download_package_nsp(package_id: str, request: Request, user=Depends(get_current_user)):
-    """Serve the complete NetSanctum Package container (.nsp) on-the-fly for the requested package_id."""
+    """Serve the complete NetSanctum Package container (.nsp) with Range support.
+
+    Returns ``Accept-Ranges: bytes`` and supports ``Range: bytes=...`` → 206 Partial Content.
+    Also returns ``Cache-Control: no-store`` and ``X-Content-Type-Options: nosniff``.
+    """
     if not PACKAGE_ID_PATTERN.fullmatch(package_id):
         raise HTTPException(status_code=400, detail="Invalid package ID")
     # Resolve all resources to be packed
@@ -211,13 +260,30 @@ async def download_package_nsp(package_id: str, request: Request, user=Depends(g
     if not resources:
         raise HTTPException(status_code=404, detail="No package resources found to package.")
 
+    # Resolve module_id from package_prefixes
+    module_id = "unknown"
+    for record in module_registry.active_records():
+        if record.spec and record.spec.package_prefixes:
+            if any(package_id.startswith(p) for p in record.spec.package_prefixes):
+                module_id = record.spec.id
+                break
+
+    # Build package_info from manifest metadata
+    manifest = make_package_manifest(
+        module_id=module_id,
+        package_id=package_id,
+        package_title=package_id,
+        root_url=f"/dashboard?package_id={package_id}",
+        resources=resources,
+    )
+
     # Prepare authorization forwarding
-    headers = {}
+    headers: dict[str, str] = {}
     auth_header = request.headers.get("authorization")
     if auth_header:
         headers["authorization"] = auth_header
 
-    cookies = {}
+    cookies: dict[str, str] = {}
     access_token = request.cookies.get("access_token")
     if access_token:
         cookies["access_token"] = access_token
@@ -235,21 +301,48 @@ async def download_package_nsp(package_id: str, request: Request, user=Depends(g
     # Fetch before response headers are sent, so an incomplete package is never reported as successful.
     try:
         async with client:
-            package_file = await build_nsp_file(resources, client, headers, cookies)
+            package_file = await build_nsp_to_file(resources, client, headers, cookies, manifest)
     except PackageResourceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    package_size = package_file.seek(0, 2)
-    package_file.seek(0)
+    package_file.seek(0, 2)  # EOF
+    total_size = package_file.tell()
     filename = f"{package_id}.nsp"
-    return StreamingResponse(
-        stream_nsp_file(package_file),
-        media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-            "Content-Length": str(package_size),
-        },
-    )
+
+    # Parse Range header
+    range_header = request.headers.get("range")
+    range_parsed = _parse_range_header(range_header, total_size)
+
+    common_headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+
+    if range_parsed is not None:
+        start, length = range_parsed
+        etag = _build_etag(total_size)
+        common_headers["ETag"] = etag
+        common_headers["Content-Range"] = f"bytes {start}-{start + length - 1}/{total_size}"
+        common_headers["Content-Length"] = str(length)
+        package_file.seek(start)
+        return StreamingResponse(
+            stream_nsp_file(package_file, start=0, length=length),
+            media_type="application/octet-stream",
+            headers=common_headers,
+            status_code=206,
+        )
+    else:
+        common_headers["Content-Length"] = str(total_size)
+        etag = _build_etag(total_size)
+        common_headers["ETag"] = etag
+        package_file.seek(0)
+        return StreamingResponse(
+            stream_nsp_file(package_file, start=0, length=None),
+            media_type="application/octet-stream",
+            headers=common_headers,
+        )
 
 
 def make_hybrid_manifest(pkg_id: str, original_manifest: dict) -> dict:

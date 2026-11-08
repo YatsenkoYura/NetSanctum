@@ -5,6 +5,7 @@ reply; the sidecar only decides what to do next. If the sidecar is missing or br
 callers fall back to the in-process assistant instead of losing the turn.
 """
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -138,27 +139,35 @@ class AgentClient:
             llm=llm,
         )
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.url}/v1/turn",
-                    headers=self._headers(),
-                    json=body.model_dump(mode="json"),
-                ) as response:
-                    if response.status_code != 200:
-                        raise AgentRuntimeUnavailableError(f"agent runtime returned {response.status_code}")
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        frame = _parse_frame(line)
-                        if frame is None:
-                            continue
-                        if frame.get("type") == "done":
-                            yield AgentTurnResult.model_validate(frame.get("result") or {})
-                            return
-                        if frame.get("type") == "failed":
-                            raise AgentRuntimeUnavailableError("the cascade failed")
-                        yield AgentTurnProgress(str(frame.get("type") or ""), frame)
+            # httpx's timeout bounds each read, so a cascade that trickles frames
+            # forever would hold this stream open indefinitely. The deadline bounds
+            # the whole turn instead: nothing downstream can outlive it.
+            async with asyncio.timeout(self.timeout):
+                async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.url}/v1/turn",
+                        headers=self._headers(),
+                        json=body.model_dump(mode="json"),
+                    ) as response:
+                        if response.status_code != 200:
+                            raise AgentRuntimeUnavailableError(
+                                f"agent runtime returned {response.status_code}"
+                            )
+                        async for line in response.aiter_lines():
+                            if not line.strip():
+                                continue
+                            frame = _parse_frame(line)
+                            if frame is None:
+                                continue
+                            if frame.get("type") == "done":
+                                yield AgentTurnResult.model_validate(frame.get("result") or {})
+                                return
+                            if frame.get("type") == "failed":
+                                raise AgentRuntimeUnavailableError("the cascade failed")
+                            yield AgentTurnProgress(str(frame.get("type") or ""), frame)
+        except TimeoutError as exc:
+            raise AgentRuntimeUnavailableError("the agent turn timed out") from exc
         except httpx.HTTPError as exc:
             raise AgentRuntimeUnavailableError("the agent runtime is unreachable") from exc
 

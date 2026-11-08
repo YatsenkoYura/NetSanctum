@@ -2,6 +2,7 @@
 
 import argparse
 import importlib
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,7 @@ MODULE_ENV_ROOT = LEGACY_ALEMBIC_ROOT / "module_env"
 LEGACY_HEAD = "i3j4k5l6m7n8"
 MIGRATION_LOCK_ID = 5640003949526500692
 OWNERSHIP_TABLE = "netsanctum_migration_ownership"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +211,14 @@ def upgrade_database(
             not inspect(connection).has_table(migration.version_table) for migration in migrations
         )
         if legacy_database and needs_adoption:
+            # Legacy adoption is deprecated: after all databases are adopted
+            # this branch (and LEGACY_HEAD) can be removed.
+            logger.info(
+                "Legacy database detected — upgrading global schema to module adoption "
+                "(LEGACY_HEAD=%s); this code path is deprecated and will be removed once "
+                "all databases are migrated",
+                LEGACY_HEAD,
+            )
             command.upgrade(_legacy_config(connection), LEGACY_HEAD)
         for migration in migrations:
             _adopt_or_upgrade(

@@ -66,6 +66,38 @@
 .tile-card[draggable="true"] { cursor:grab; }
 .tile-card[draggable="true"]:active { cursor:grabbing; }
 
+/* Selection mode */
+.tile-card.vault-selected { border-color:#2dd4bf; background:rgba(45,212,191,.06); }
+.tile-card.vault-selected::after {
+  content:'\2713';
+  position:absolute; top:6px; right:6px; z-index:10;
+  width:22px; height:22px; display:flex; align-items:center; justify-content:center;
+  background:#2dd4bf; color:#09090b; font-size:13px; font-weight:900;
+  border-radius:50%; line-height:1;
+}
+/* Hide reorder cursor in selection mode */
+body.vault-selection-mode .tile-card { cursor:default; }
+body.vault-selection-mode .tile-card[draggable="true"] { cursor:default; }
+
+/* Selection toolbar */
+#vault-selection-bar {
+  position:fixed; bottom:0; left:0; right:0; z-index:50;
+  background:#18181b; border-top:1px solid #27272a;
+  padding:8px 16px; display:none; align-items:center; justify-content:space-between;
+  gap:12px;
+}
+#vault-selection-bar.visible { display:flex; }
+#vault-selection-bar .selection-info { font-size:12px; color:#a1a1aa; white-space:nowrap; }
+#vault-selection-bar .selection-actions { display:flex; gap:8px; align-items:center; }
+#vault-selection-bar button {
+  padding:4px 12px; font-size:11px; font-weight:700; text-transform:uppercase;
+  border:1px solid #27272a; background:#09090b; color:#a1a1aa; cursor:pointer;
+  border-radius:3px;
+}
+#vault-selection-bar button:hover { color:#fff; border-color:#3f3f46; }
+#vault-selection-bar button.danger { color:#f87171; border-color:#7f1d1d; }
+#vault-selection-bar button.danger:hover { background:#1c1c1f; }
+
 /* Reading strips. Invisible on purpose. On a touch pointer they are the only way
    to page between notes, so they take taps; with a mouse they would just eat
    clicks over the margins, so they stay inert until focused by keyboard. */
@@ -76,21 +108,6 @@
 .vault-edges-touch .vault-edge, .vault-edge:focus { pointer-events:auto; opacity:1; }
 .vault-edge:focus-visible { outline:2px solid #2dd4bf; outline-offset:-2px; }
 
-/* Card-stack grip: bottom-center handle to drag a card onto another one. */
-.tile-grip { position:absolute; left:50%; bottom:2px; transform:translateX(-50%); z-index:5; opacity:0; cursor:grab; font-size:10px; line-height:1.6; color:#71717a; background:rgba(0,0,0,.75); border:1px solid #27272a; padding:0 9px; user-select:none; }
-.tile-card:hover .tile-grip { opacity:.9; }
-.tile-grip:active { cursor:grabbing; }
-
-/* Collapsed stack bar appended under the cover tile. */
-.tile-stackbar { border-top:1px solid #27272a; background:#0c0c0e; }
-.tile-stacktoggle { display:flex; align-items:center; gap:6px; width:100%; padding:5px 12px; font-size:10px; font-weight:800; color:#a1a1aa; text-transform:uppercase; background:none; border:none; cursor:pointer; }
-.tile-stacktoggle:hover { color:#2dd4bf; }
-.stack-child { display:flex; align-items:center; gap:6px; padding:5px 12px 5px 18px; border-top:1px solid #1c1c1f; font-size:11px; color:#d4d4d8; }
-.stack-child .stack-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
-.stack-child .stack-title:hover { color:#2dd4bf; }
-.stack-child button { flex-shrink:0; font-size:10px; font-weight:700; color:#71717a; background:none; border:none; cursor:pointer; text-transform:uppercase; }
-.stack-child button:hover { color:#fff; }
-.stack-child button.stack-out:hover { color:#f87171; }
 
 .drag-over-active { border:2px dashed #2dd4bf !important; background:rgba(45,212,191,.05) !important; }
 
@@ -596,6 +613,16 @@
 
 <div id="vault-toast" class="vault-toast hidden" role="status" aria-live="polite"></div>
 
+<!-- Selection toolbar -->
+<div id="vault-selection-bar">
+  <span class="selection-info" id="selection-info">Выбрано: 0</span>
+  <div class="selection-actions">
+    <button data-net-action="selectAllTiles" data-net-args='[]'>Все</button>
+    <button data-net-action="deselectAllTiles" data-net-args='[]'>Сброс</button>
+    <button data-net-action="deleteSelected" data-net-args='[]' class="danger">Удалить</button>
+  </div>
+</div>
+
 {% if not is_readonly %}
 <!-- Modal: New Workspace Name -->
 <div id="modal-workspace" class="hidden fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 font-mono">
@@ -759,6 +786,13 @@ var vaultChildIds = {};
 var vaultCollapsedSpaces = new Set();
 // The sealed workspace currently behind the gate (its tiles never load).
 var lockedGateId = null;
+// Selection mode: long-press on touch devices, shift-click on desktop.
+var vaultSelectionMode = false;
+var vaultSelectedIds = new Set();
+var longPressTimer = null;
+var longPressTarget = null;
+var longPressTriggered = false;
+var selectionPointerStart = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, ch => ({
@@ -1122,7 +1156,6 @@ function __vaultAttachRootDrop() {
   root.dataset.vaultDropBound = '1';
 
   root.addEventListener('dragover', (e) => {
-    if (window.vaultDragCardId) return;
     if (vaultReorder && vaultReorder.fromId !== null) return;
     e.preventDefault(); root.classList.add('drag-over-active');
   });
@@ -1131,7 +1164,6 @@ function __vaultAttachRootDrop() {
     if (readOnlyMode) return;
     e.preventDefault();
     root.classList.remove('drag-over-active');
-    if (window.vaultDragCardId) return;
     // A card being reordered is not a file upload and not a workspace drop.
     if (vaultReorder && vaultReorder.fromId !== null) return;
 
@@ -1783,14 +1815,6 @@ function openMoveCardMenu(event, cardId, element) {
   menu.classList.remove('hidden');
 }
 
-// Bottom-center stack grip: grab a card here to drop it onto another one.
-// Hidden for locked cards (restacking them is refused with 423 anyway) and
-// in read-only mode.
-function stackGripHtml(item, itemId) {
-  if (readOnlyMode || item.is_locked) return '';
-  return `<span class="tile-grip" draggable="true" data-grip="${itemId}" title="Перетащить в стопку">⠿</span>`;
-}
-
 /* A media tile is the picture, at most one line of caption, and the shared footer. */
 function mediaTileHtml(item, itemId, displayImg, openAction) {
   const isVideo = isVideoCard(item);
@@ -1825,7 +1849,6 @@ function mediaTileHtml(item, itemId, displayImg, openAction) {
     </div>
     ${caption ? `<div class="px-3 pt-2 text-xs text-zinc-200 truncate cursor-pointer hover:text-teal-400" data-net-action="${openAction}" data-net-args='[${itemId}]'>${escapeHtml(caption)}</div>` : ''}
     ${tileFooterHtml(item, itemId, openAction, true)}
-    ${stackGripHtml(item, itemId)}
   </div>`;
 }
 
@@ -2637,8 +2660,132 @@ async function lockWorkspace(collectionId) {
   if (typeof refreshVaultCalendar === 'function') refreshVaultCalendar();
 }
 
+// ── SELECTION MODE ───────────────────────────────────────────────────
+
+function toggleSelectionMode() {
+  vaultSelectionMode = !vaultSelectionMode;
+  document.body.classList.toggle('vault-selection-mode', vaultSelectionMode);
+  if (!vaultSelectionMode) {
+    clearSelection();
+  }
+}
+
+function clearSelection() {
+  vaultSelectedIds.clear();
+  vaultSelectionMode = false;
+  document.body.classList.remove('vault-selection-mode');
+  longPressTimer = null;
+  longPressTarget = null;
+  longPressTriggered = false;
+  selectionPointerStart = null;
+  updateSelectionUI();
+  renderTiles(currentItems);
+}
+
+function toggleTileSelection(itemId) {
+  itemId = Number(itemId);
+  if (vaultSelectedIds.has(itemId)) {
+    vaultSelectedIds.delete(itemId);
+  } else {
+    vaultSelectedIds.add(itemId);
+  }
+  updateSelectionUI();
+  // Update the DOM tile class without full re-render
+  const tile = document.querySelector(`.tile-card[data-tile-id="${itemId}"]`);
+  if (tile) tile.classList.toggle('vault-selected', vaultSelectedIds.has(itemId));
+}
+
+function selectAllTiles() {
+  vaultSelectedIds.clear();
+  currentItems.forEach(item => vaultSelectedIds.add(Number(item.id)));
+  updateSelectionUI();
+  document.querySelectorAll('.tile-card').forEach(tile => {
+    tile.classList.toggle('vault-selected', vaultSelectedIds.has(Number(tile.dataset.tileId)));
+  });
+}
+
+function deselectAllTiles() {
+  clearSelection();
+}
+
+function updateSelectionUI() {
+  const bar = document.getElementById('vault-selection-bar');
+  const info = document.getElementById('selection-info');
+  const count = vaultSelectedIds.size;
+  if (count > 0) {
+    bar?.classList.add('visible');
+    info.textContent = `Выбрано: ${count}`;
+  } else {
+    bar?.classList.remove('visible');
+  }
+}
+
+async function deleteSelected() {
+  if (vaultSelectedIds.size === 0) return;
+  const count = vaultSelectedIds.size;
+  if (!await vaultConfirm(`Удалить ${count} карточку(ей)? Это нельзя отменить.`)) return;
+
+  let successCount = 0;
+  let firstError = null;
+  const ids = Array.from(vaultSelectedIds);
+
+  // Delete sequentially to avoid race conditions
+  for (const id of ids) {
+    try {
+      const deleted = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {
+        method: 'DELETE'
+      }, `Не удалось удалить карточку ${id}`);
+      if (deleted) {
+        successCount++;
+        deleteItem(id); // Update cache
+      }
+    } catch (e) {
+      if (!firstError) firstError = e.message;
+    }
+  }
+
+  showToast(`Удалено: ${successCount} из ${count}`);
+  clearSelection();
+  loadWorkspace();
+}
+
+// Long-press handler for touch devices
+function startLongPress(e) {
+  if (readOnlyMode) return;
+  const tile = e.target.closest('.tile-card');
+  if (!tile) return;
+  // Ignore if clicking on interactive elements
+  if (e.target.closest('a, button, input, textarea, [contenteditable="true"]')) return;
+
+  longPressTarget = tile;
+  longPressTriggered = false;
+  selectionPointerStart = { x: e.clientX, y: e.clientY };
+  longPressTimer = setTimeout(() => {
+    if (longPressTarget === tile) {
+      longPressTriggered = true;
+      if (!vaultSelectionMode) toggleSelectionMode();
+      toggleTileSelection(Number(tile.dataset.tileId));
+      // Vibrate if available
+      if (navigator.vibrate) navigator.vibrate(50);
+    }
+  }, 500); // 500ms long press
+}
+
+function cancelLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressTarget = null;
+  longPressTriggered = false;
+  selectionPointerStart = null;
+}
+
 async function selectWorkspace(id, name) {
   await closeActiveView();
+  // Clear the media URL from cached items so the server generates fresh ones
+  // on the next load (signatures expire when switching collections).
+  currentItems.forEach(item => { if (item.media_url !== undefined) item.media_url = undefined; });
   currentCollectionId = id;
   document.querySelectorAll('.ws-item').forEach(el => el.classList.remove('active'));
   const target = id ? document.getElementById('ws-item-' + id) : document.getElementById('ws-item-all');
@@ -3599,25 +3746,7 @@ function renderTiles(items) {
   // dies with them. Re-fetching is cheap against the private cache header.
   revokeVaultBlobUrls();
 
-  // Card stacks: children (parent_id set, cover on this page) collapse under
-  // their cover instead of rendering as tiles. Orphan children (cover off-page)
-  // stay visible as plain tiles so no card ever vanishes.
-  const byId = new Map(items.map(card => [Number(card.id), card]));
-  const kidsByParent = {};
-  const tops = [];
-  items.forEach(card => {
-    const pid = card.parent_id === null || card.parent_id === undefined ? null : Number(card.parent_id);
-    if (pid !== null && byId.has(pid)) {
-      (kidsByParent[pid] || (kidsByParent[pid] = [])).push(card);
-    } else {
-      tops.push(card);
-    }
-  });
-  // The dropped card lands inside last: entry order, oldest first.
-  Object.values(kidsByParent).forEach(kids => kids.sort((a, b) =>
-    new Date(a.created_at) - new Date(b.created_at) || Number(a.id) - Number(b.id)));
-
-  const sortedItems = tops.sort((a, b) => {
+  const sortedItems = items.sort((a, b) => {
     if (a.is_pinned !== b.is_pinned) return b.is_pinned ? 1 : -1;
     return new Date(b.created_at) - new Date(a.created_at);
   });
@@ -3688,7 +3817,7 @@ function renderTiles(items) {
     const escapedUrl = escapeAttr(itemUrl);
 
     return `
-    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}" draggable="true">
+    <div class="tile-card ${itemColSpan} ${item.is_pinned?'pinned':''}" data-tile-id="${itemId}" data-vault-selection-id="${itemId}" draggable="true">
       ${displayImg ? `
         <div class="bg-zinc-950 border-b border-zinc-800 cursor-pointer overflow-hidden flex items-center justify-center p-1" data-net-action="${openAction}" data-net-args='[${itemId}]'>
           ${vaultImgTag(item, displayImg, 'w-full h-auto max-h-[420px] object-contain block mx-auto')}
@@ -3711,18 +3840,12 @@ function renderTiles(items) {
 
         ${tileFooterHtml(item, itemId, openAction, false)}
       </div>
-      ${stackGripHtml(item, itemId)}
     </div>`;
   }).join('');
 
-  // Old spans die with the old nodes; stack bars go on before measuring so
-  // covers reserve their height. Searches force every stack open.
+  // Old spans die with the old nodes; searches force every stack open.
   vaultUnobserveTiles();
   const searchActive = document.getElementById('vault-search').value.trim() !== '';
-  Object.keys(kidsByParent).forEach(pid => {
-    const tile = grid.querySelector(`[data-tile-id="${pid}"]`);
-    if (tile) tile.appendChild(buildStackBar(byId.get(Number(pid)), kidsByParent[pid], searchActive));
-  });
   grid.querySelectorAll('.tile-card').forEach(card => {
     resizeGridItem(card);
     vaultObserveTile(card);
@@ -3730,6 +3853,76 @@ function renderTiles(items) {
   // Sealed pictures arrive through the authorized fetch; the rest already have
   // a `src` and are untouched by the binder.
   bindVaultFileImages(grid);
+  // Bind selection handlers
+  __vaultBindSelection();
+}
+
+function __vaultBindSelection() {
+  const grid = document.getElementById('tiles-grid');
+  if (!grid) return;
+  if (window.__vaultSelectionBound) return;
+  window.__vaultSelectionBound = true;
+
+  // Pointer down: start long press timer
+  grid.addEventListener('pointerdown', (e) => {
+    const tile = e.target.closest('.tile-card');
+    if (!tile) return;
+    // Don't interfere with interactive elements
+    if (e.target.closest('a, button, input, textarea, [contenteditable="true"]')) return;
+
+    if (vaultSelectionMode) {
+      // In selection mode, click toggles selection
+      e.preventDefault();
+      toggleTileSelection(Number(tile.dataset.vaultSelectionId));
+      return;
+    }
+
+    startLongPress(e);
+  });
+
+  // Pointer up/move: cancel long press
+  grid.addEventListener('pointerup', cancelLongPress);
+  grid.addEventListener('pointermove', (e) => {
+    if (longPressTriggered) return; // Already triggered, stay in selection mode
+    if (selectionPointerStart) {
+      const dx = e.clientX - selectionPointerStart.x;
+      const dy = e.clientY - selectionPointerStart.y;
+      // If dragged more than 10px, cancel long press (user is scrolling)
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        cancelLongPress();
+        selectionPointerStart = null;
+      }
+    }
+  });
+
+  // Shift+click for multi-select on desktop
+  grid.addEventListener('click', (e) => {
+    if (longPressTriggered) return; // Long press already handled it
+    const tile = e.target.closest('.tile-card');
+    if (!tile) return;
+    // Ignore if clicking on interactive elements
+    if (e.target.closest('a, button, input, textarea, [contenteditable="true"]')) return;
+
+    if (e.shiftKey && !vaultSelectionMode) {
+      // Shift+click: enter selection mode and toggle this tile
+      toggleSelectionMode();
+      toggleTileSelection(Number(tile.dataset.vaultSelectionId));
+      e.preventDefault();
+      return;
+    }
+
+    if (vaultSelectionMode && !e.shiftKey) {
+      // Click without shift in selection mode: just toggle, don't exit
+      return;
+    }
+  });
+
+  // Escape to exit selection mode
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && vaultSelectionMode) {
+      clearSelection();
+    }
+  });
 }
 
 async function togglePin(id) {
@@ -3742,136 +3935,7 @@ async function deleteItem(id) {
   if (deleted) { loadWorkspace(); loadVaultSummary(); }
 }
 
-// ── CARD STACKS (collections inside one workspace) ───────────────────────
-// Grab a card by the bottom-center grip and drop it onto another card: the
-// target stays the cover (first), the dropped card lands inside last. Both
-// stay separate entities (parent_id link only), search still sees every
-// card's text, and unstacking restores the tile.
-
-var vaultDragCardId = null;
-var vaultExpandedStacks = {};
-
-function toggleStack(coverId) {
-  vaultExpandedStacks[coverId] = !vaultExpandedStacks[coverId];
-  renderTiles(currentItems);
-}
-
-function buildStackBar(cover, kids, forceOpen) {
-  const open = forceOpen || vaultExpandedStacks[cover.id];
-  const wrap = document.createElement('div');
-  wrap.className = 'tile-stackbar';
-  const toggle = document.createElement('button');
-  toggle.className = 'tile-stacktoggle';
-  toggle.textContent = `${open ? '▾' : '▸'} ▤ ${kids.length} внутри`;
-  toggle.addEventListener('click', () => toggleStack(cover.id));
-  wrap.appendChild(toggle);
-  if (open) {
-    kids.forEach(kid => {
-      const row = document.createElement('div');
-      row.className = 'stack-child';
-      const title = document.createElement('span');
-      title.className = 'stack-title';
-      title.textContent = kid.title || kid.og_title || `Карточка #${kid.id}`;
-      title.addEventListener('click', () => openVaultItemView(window._vaultCache[kid.id] || kid));
-      const openBtn = document.createElement('button');
-      openBtn.textContent = 'Открыть';
-      openBtn.addEventListener('click', () => openVaultItemView(window._vaultCache[kid.id] || kid));
-      const outBtn = document.createElement('button');
-      outBtn.className = 'stack-out';
-      outBtn.textContent = '✕';
-      outBtn.title = 'Убрать из стопки';
-      outBtn.addEventListener('click', () => vaultUnstack(kid.id));
-      row.append(title, openBtn, outBtn);
-      wrap.appendChild(row);
-    });
-  }
-  return wrap;
-}
-
-async function vaultUnstack(id) {
-  const freed = await mutationJson(`/api/vault/items/${pathSegment(id)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parent_id: null })
-  }, 'Не удалось разобрать стопку');
-  if (!freed) return;
-  updateCachedItem(freed);
-  loadWorkspace();
-}
-
-function vaultStackRefusal(fromId, toId) {
-  const from = window._vaultCache[fromId];
-  const to = window._vaultCache[toId];
-  if (!from || !to) return 'Карточка уже не на экране';
-  if (from.is_locked || to.is_locked) return 'Стопки собираются только в открытом воркспейсе';
-  if (from.sealed_payload || to.sealed_payload) return 'Зашифрованные карточки в стопки не собираются';
-  if ((from.collection_id ?? null) !== (to.collection_id ?? null)) return 'Стопка живёт внутри одного воркспейса';
-  if (to.parent_id !== null && to.parent_id !== undefined) return 'Бросайте на обложку стопки, а не внутрь неё';
-  return null;
-}
-
-function vaultStackTargetValid(fromId, toId) {
-  if (!Number.isInteger(fromId) || !Number.isInteger(toId) || fromId === toId) return false;
-  return vaultStackRefusal(fromId, toId) === null;
-}
-
-async function vaultStackDrop(fromId, toId) {
-  if (fromId === toId) return;
-  const refusal = vaultStackRefusal(fromId, toId);
-  if (refusal) { showToast(refusal, true); return; }
-  const moved = await mutationJson(`/api/vault/items/${pathSegment(fromId)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ parent_id: toId })
-  }, 'Не удалось собрать стопку');
-  if (!moved) return;
-  updateCachedItem(moved);
-  vaultExpandedStacks[toId] = true;
-  loadWorkspace();
-}
-
-function __vaultBindCardStacks() {
-  const grid = document.getElementById('tiles-grid');
-  if (!grid || grid.dataset.vaultStackBound) return;
-  grid.dataset.vaultStackBound = '1';
-  grid.addEventListener('dragstart', function (e) {
-    const grip = e.target.closest ? e.target.closest('[data-grip]') : null;
-    if (!grip || readOnlyMode) return;
-    vaultDragCardId = Number(grip.dataset.grip);
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('application/x-vault-card', String(vaultDragCardId)); } catch (err) {}
-  });
-  grid.addEventListener('dragover', function (e) {
-    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
-    const toId = tile ? Number(tile.dataset.tileId) : NaN;
-    if (!tile || vaultStackTargetValid(vaultDragCardId, toId) !== true) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    tile.classList.add('drag-over-active');
-  });
-  grid.addEventListener('dragleave', function (e) {
-    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
-    if (tile) tile.classList.remove('drag-over-active');
-  });
-  grid.addEventListener('drop', function (e) {
-    // A reorder drag also ends on a tile. Stacking must keep its hands off it,
-    // or every reorder would end in a "card is not on screen" complaint.
-    if (vaultReorder && vaultReorder.fromId !== null) return;
-    const tile = e.target.closest ? e.target.closest('.tile-card') : null;
-    grid.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
-    const toId = tile ? Number(tile.dataset.tileId) : NaN;
-    const fromId = vaultDragCardId;
-    vaultDragCardId = null;
-    if (!tile || !Number.isInteger(toId)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    vaultStackDrop(fromId, toId);
-  });
-  grid.addEventListener('dragend', function () {
-    vaultDragCardId = null;
-    grid.querySelectorAll('.drag-over-active').forEach(el => el.classList.remove('drag-over-active'));
-  });
-}
+// ── EXPORT ─────────────────────────────────────────────────────────────
 
 async function exportItems() {
   try {
@@ -3979,7 +4043,8 @@ Object.assign(window.netSanctumActions, {
   cleanEmptySheetRows: netLazy('cleanEmptySheetRows'), clearSheetTable: netLazy('clearSheetTable'), clearWbCanvas: netLazy('clearWbCanvas'), closeEditorView: netLazy('closeEditorView'), closeLinkModal: netLazy('closeLinkModal'),
   closeMediaView: netLazy('closeMediaView'), closeSheetView: netLazy('closeSheetView'), closeSidebar: netLazy('closeSidebar'), closeUnlockModal: netLazy('closeUnlockModal'), closeVcalModal: netLazy('closeVcalModal'),
   closeWhiteboardView: netLazy('closeWhiteboardView'), closeWorkspaceModal: netLazy('closeWorkspaceModal'), debounceSearch: netLazy('debounceSearch'), deleteItem: netLazy('deleteItem'), deleteRow: netLazy('deleteRow'),
-  deleteColumn: netLazy('deleteColumn'), deleteWbNode: netLazy('deleteWbNode'), exportItems: netLazy('exportItems'), formatCell: netLazy('formatCell'), handleCellInput: netLazy('handleCellInput'), instantCreate: netLazy('instantCreate'),
+  deleteColumn: netLazy('deleteColumn'), deleteSelected: netLazy('deleteSelected'), deleteWbNode: netLazy('deleteWbNode'), deselectAllTiles: netLazy('deselectAllTiles'), exportItems: netLazy('exportItems'),
+  formatCell: netLazy('formatCell'), handleCellInput: netLazy('handleCellInput'), instantCreate: netLazy('instantCreate'), selectAllTiles: netLazy('selectAllTiles'),
   loadMoreVault: netLazy('loadMoreVault'), openEditorView: netLazy('openEditorView'), openLinkModal: netLazy('openLinkModal'), openSheetView: netLazy('openSheetView'), openWorkspaceModal: netLazy('openWorkspaceModal'),
   resetWbZoom: netLazy('resetWbZoom'), retryVideoDownload: netLazy('retryVideoDownload'), selectWorkspace: netLazy('selectWorkspace'), setWbMode: netLazy('setWbMode'),
   submitGateUnlock: netLazy('submitGateUnlock'), submitLink: netLazy('submitLink'), submitUnlock: netLazy('submitUnlock'), submitVcalModal: netLazy('submitVcalModal'), submitWorkspace: netLazy('submitWorkspace'),
@@ -4048,7 +4113,8 @@ Object.assign(window.netSanctumActions, {
   cleanEmptySheetRows: netLazy('cleanEmptySheetRows'), clearSheetTable: netLazy('clearSheetTable'), clearWbCanvas: netLazy('clearWbCanvas'), closeEditorView: netLazy('closeEditorView'), closeLinkModal: netLazy('closeLinkModal'),
   closeMediaView: netLazy('closeMediaView'), closeSheetView: netLazy('closeSheetView'), closeSidebar: netLazy('closeSidebar'), closeUnlockModal: netLazy('closeUnlockModal'), closeVcalModal: netLazy('closeVcalModal'),
   closeWhiteboardView: netLazy('closeWhiteboardView'), closeWorkspaceModal: netLazy('closeWorkspaceModal'), debounceSearch: netLazy('debounceSearch'), deleteItem: netLazy('deleteItem'), deleteRow: netLazy('deleteRow'),
-  deleteColumn: netLazy('deleteColumn'), deleteWbNode: netLazy('deleteWbNode'), exportItems: netLazy('exportItems'), formatCell: netLazy('formatCell'), handleCellInput: netLazy('handleCellInput'), instantCreate: netLazy('instantCreate'),
+  deleteColumn: netLazy('deleteColumn'), deleteSelected: netLazy('deleteSelected'), deleteWbNode: netLazy('deleteWbNode'), deselectAllTiles: netLazy('deselectAllTiles'), exportItems: netLazy('exportItems'),
+  formatCell: netLazy('formatCell'), handleCellInput: netLazy('handleCellInput'), instantCreate: netLazy('instantCreate'), selectAllTiles: netLazy('selectAllTiles'),
   loadMoreVault: netLazy('loadMoreVault'), openEditorView: netLazy('openEditorView'), openLinkModal: netLazy('openLinkModal'), openSheetView: netLazy('openSheetView'), openWorkspaceModal: netLazy('openWorkspaceModal'),
   resetWbZoom: netLazy('resetWbZoom'), retryVideoDownload: netLazy('retryVideoDownload'), selectWorkspace: netLazy('selectWorkspace'), setWbMode: netLazy('setWbMode'),
   submitGateUnlock: netLazy('submitGateUnlock'), submitLink: netLazy('submitLink'), submitUnlock: netLazy('submitUnlock'), submitVcalModal: netLazy('submitVcalModal'), submitWorkspace: netLazy('submitWorkspace'),
@@ -4105,7 +4171,6 @@ Object.assign(window.netSanctumActions, {
 function __vaultBoot() {
   __vaultAttachRootDrop();
   __vaultBindWorkspaceDrop();
-  __vaultBindCardStacks();
   __vaultBindReorder();
   __vaultBindFolderDrop();
   __vaultBindReadingOrder();
@@ -4315,8 +4380,6 @@ function __vaultBindReorder() {
   grid.dataset.vaultReorderBound = '1';
 
   grid.addEventListener('dragstart', (e) => {
-    // The grip belongs to the stack gesture; it must not start a reorder.
-    if (e.target.closest && e.target.closest('[data-grip]')) return;
     const tile = e.target.closest ? e.target.closest('.tile-card') : null;
     if (!tile) return;
     const refusal = vaultReorderRefusal();
@@ -4337,7 +4400,6 @@ function __vaultBindReorder() {
 
   grid.addEventListener('dragover', (e) => {
     if (vaultReorder.fromId === null) return;
-    if (vaultDragCardId !== null && vaultDragCardId !== undefined) return;
     const tile = e.target.closest ? e.target.closest('.tile-card') : null;
     if (!tile) return;
     e.preventDefault();

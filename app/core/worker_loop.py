@@ -29,6 +29,18 @@ def worker_loop() -> asyncio.AbstractEventLoop:
     return _loop
 
 
+def reset_worker_loop() -> None:
+    """Drop the cached loop so a forked child creates its own."""
+    global _loop
+    loop = _loop
+    _loop = None
+    if loop is not None and not loop.is_closed():
+        try:
+            loop.close()
+        except Exception:
+            logger.debug("could not close inherited worker loop", exc_info=True)
+
+
 def run_async(coro):
     """Run a coroutine on the worker loop, whatever loop the caller is on."""
     loop = worker_loop()
@@ -48,4 +60,4 @@ def run_async(coro):
             logger.debug("could not restore the previous event loop", exc_info=True)
 
 
-__all__ = ["run_async", "worker_loop"]
+__all__ = ["reset_worker_loop", "run_async", "worker_loop"]

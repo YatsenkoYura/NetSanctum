@@ -11,26 +11,48 @@ import hmac
 import secrets
 from datetime import UTC, datetime
 
+from argon2 import PasswordHasher, Type
+from argon2.exceptions import VerifyMismatchError
 from fastapi import Header, HTTPException, Request, status
-from passlib.context import CryptContext
 from starlette.requests import HTTPConnection
 
 from app.core.config import get_settings
 
 settings = get_settings()
 
-# ── Password hashing ────────────────────────────────────
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ── Password hashing (Argon2id) ──────────────────────────
+# PasswordHasher uses the recommended defaults (t=2, m=65536, p=1) which
+# are suitable for interactive login (≈250 ms per check). The vault uses
+# a separate KDF module with higher cost (m=65536, t=3, p=4) because
+# each unlock is expected far less often.
+_pwd_hasher = PasswordHasher(
+    time_cost=2,
+    memory_cost=65536,
+    parallelism=1,
+    hash_len=32,
+    salt_len=16,
+    type=Type.ID,
+)
 
 
 def hash_password(password: str) -> str:
-    """Return a bcrypt hash of the given plaintext password."""
-    return pwd_context.hash(password)
+    """Return an Argon2id hash of the given plaintext password."""
+    return _pwd_hasher.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    """Verify a plaintext password against its bcrypt hash."""
-    return pwd_context.verify(plain, hashed)
+    """Verify a plaintext password against its Argon2id hash.
+
+    Returns False for any error (malformed hash, wrong algorithm, etc.)
+    rather than raising, so caller code stays simple.
+    """
+    try:
+        _pwd_hasher.verify(hashed, plain)
+        return True
+    except VerifyMismatchError:
+        return False
+    except Exception:
+        return False
 
 
 from pathlib import Path

@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 SELF_RESCHEDULE_SECONDS = 15 * 60
 CONTINUE_ARMED_KEY = "miku:continue:armed"
 CONTINUE_ARMED_TTL_SECONDS = 40 * 60
+CONTINUE_SCHEDULE_KEY = "miku:continue:scheduled"
+CONTINUE_SCHEDULE_TTL_SECONDS = SELF_RESCHEDULE_SECONDS - 60
 MAX_TASKS_PER_PASS = 5
 
 
@@ -73,6 +75,40 @@ async def continue_due_tasks() -> int:
         return len(tasks)
 
 
+async def _schedule_next_continue(*, force: bool = False) -> bool:
+    """Enqueue the next continuation pass once. Prevents fan-out when runs overlap."""
+    try:
+        if force:
+            await redis_client.set(CONTINUE_SCHEDULE_KEY, "1", ex=CONTINUE_SCHEDULE_TTL_SECONDS)
+            should_schedule = True
+        else:
+            should_schedule = bool(
+                await redis_client.set(
+                    CONTINUE_SCHEDULE_KEY,
+                    "1",
+                    ex=CONTINUE_SCHEDULE_TTL_SECONDS,
+                    nx=True,
+                )
+            )
+    except Exception:
+        # If Redis is unavailable, fall back to scheduling so the loop is not lost.
+        should_schedule = True
+
+    if not should_schedule:
+        return False
+
+    try:
+        continue_tasks.apply_async(countdown=SELF_RESCHEDULE_SECONDS)
+    except Exception:
+        logger.warning("miku continuation could not be scheduled", exc_info=True)
+        try:
+            await redis_client.delete(CONTINUE_SCHEDULE_KEY)
+        except Exception:
+            pass
+        return False
+    return True
+
+
 async def ensure_continue_armed() -> None:
     """Arm the continuation loop unless it is already running. Never raises."""
     try:
@@ -80,17 +116,23 @@ async def ensure_continue_armed() -> None:
     except Exception:
         return
     if armed:
-        try:
-            continue_tasks.apply_async(countdown=SELF_RESCHEDULE_SECONDS)
-        except Exception:
-            logger.warning("miku continuation could not be armed", exc_info=True)
+        await _schedule_next_continue(force=True)
 
 
-@celery_app.task(name="miku.continue_tasks", ignore_result=True, max_retries=0)
+@celery_app.task(
+    name="miku.continue_tasks",
+    ignore_result=True,
+    max_retries=0,
+    # Backstop: 5 goals x <=420s turns = 2100s max, plus consolidation. A hung
+    # turn must not hold a child for hours; the turn itself now has a deadline.
+    soft_time_limit=2400,
+    time_limit=2700,
+)
 def continue_tasks() -> None:
     """Claim due goals, then arm the next pass so the loop survives restarts."""
     run_async(continue_due_tasks())
-    continue_tasks.apply_async(countdown=SELF_RESCHEDULE_SECONDS)
+    if not run_async(_schedule_next_continue()):
+        logger.info("miku continuation reschedule skipped (already scheduled)")
 
 
 @worker_ready.connect(weak=False)

@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import pkgutil
+import re
 import subprocess
 import sys
 import tomllib
@@ -110,23 +111,47 @@ def system_packages(catalog: dict, modules: list[str]) -> list[str]:
     )
 
 
+def _normalize_module_id(raw_package: str) -> str:
+    name = raw_package.strip().split("[", 1)[0].strip().lower().replace("-", "_")
+    return name
+
+
+_MODULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def parse_external_modules(selection: str) -> list[tuple[str, str]]:
+    """Parse ``NETSANCTUM_EXTERNAL_MODULES`` into ``(module_id, pip_spec)`` pairs.
+
+    Each comma-separated item is either a plain module id / package name
+    (``my_module`` or ``my-module``) implying ``pip install my_module``, or
+    a PEP 508 requirement (``my_module @ git+https://...``) whose package
+    name before ``@`` is the module id. The module id must equal the
+    entry-point name declared by the external package.
+    """
+    parsed: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in selection.split(","):
+        spec = item.strip()
+        if not spec:
+            continue
+        module_id = _normalize_module_id(spec.split("@", 1)[0])
+        if not _MODULE_ID_PATTERN.fullmatch(module_id):
+            raise SystemExit(f"Invalid external module id: {module_id!r} (from {spec!r})")
+        if module_id in seen:
+            raise SystemExit(f"Duplicate external module: {module_id!r}")
+        seen.add(module_id)
+        parsed.append((module_id, spec))
+    return parsed
+
+
 def resolve_external_modules(project: Path, selection: str) -> list[str]:
-    selected = sorted({item.strip() for item in selection.split(",") if item.strip()})
-    if not selected:
-        return []
-    optional_dependencies = tomllib.loads((project / "pyproject.toml").read_text())["project"].get(
-        "optional-dependencies", {}
-    )
-    unknown = set(selected) - set(optional_dependencies)
-    if unknown:
-        raise SystemExit(
-            "External module IDs must have matching pyproject extras: " + ", ".join(sorted(unknown))
-        )
-    return selected
+    del project  # kept for call-site compatibility; externals no longer need main pyproject extras
+    return sorted(module_id for module_id, _spec in parse_external_modules(selection))
 
 
 def sync_dependencies(args, catalog: dict, modules: list[str]) -> None:
-    external_modules = resolve_external_modules(args.project, args.external_modules)
+    externals = parse_external_modules(args.external_modules or "")
+    external_modules = sorted(module_id for module_id, _spec in externals)
     overlap = set(external_modules) & set(catalog["modules"])
     if overlap:
         raise SystemExit("External module IDs conflict with bundled modules: " + ", ".join(sorted(overlap)))
@@ -137,12 +162,22 @@ def sync_dependencies(args, catalog: dict, modules: list[str]) -> None:
         "--no-dev",
         "--no-install-project",
     ]
-    for extra in sorted(set(dependency_extras(catalog, modules)) | set(external_modules)):
+    for extra in dependency_extras(catalog, modules):
         command.extend(("--extra", extra))
 
     environment = os.environ.copy()
     environment["UV_PROJECT_ENVIRONMENT"] = str(args.environment)
     subprocess.run(command, cwd=args.project, env=environment, check=True)
+    if externals:
+        pip_command = [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(Path(args.environment) / "bin" / "python"),
+            *[spec for _module_id, spec in externals],
+        ]
+        subprocess.run(pip_command, env=environment, check=True)
     args.marker.parent.mkdir(parents=True, exist_ok=True)
     args.marker.write_text(",".join([*modules, *external_modules]) + "\n")
 

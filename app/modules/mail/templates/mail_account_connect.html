@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Подключение почты · NetSanctum{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-3xl space-y-5 py-6 font-mono text-xs text-zinc-300">
+  <header class="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+    <div>
+      <h1 class="text-base font-bold uppercase tracking-wider text-zinc-100">Подключение аккаунта</h1>
+      <p class="mt-1 font-sans text-[11px] text-zinc-500">Укажите IMAP/SMTP данные почтового ящика. После сохранения вы вернётесь в почту.</p>
+    </div>
+    <a href="/mail" class="rounded border border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-300 hover:bg-zinc-800">← Назад к почте</a>
+  </header>
+
+  <form id="account-form" class="space-y-4 rounded border border-zinc-800 bg-zinc-900/40 p-5">
+    <div class="grid gap-4 md:grid-cols-2">
+      <label class="block space-y-1 md:col-span-2">
+        <span class="text-[11px] text-zinc-500">Название (необязательно)</span>
+        <input id="acc-name" class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2" placeholder="Личная почта / Работа">
+      </label>
+      <label class="block space-y-1 md:col-span-2">
+        <span class="text-[11px] text-zinc-500">Email аккаунта</span>
+        <input id="acc-email" type="email" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2" placeholder="you@example.com">
+      </label>
+    </div>
+
+    <div class="border-t border-zinc-800 pt-4">
+      <h2 class="mb-3 text-sm font-semibold text-zinc-100">IMAP (входящие)</h2>
+      <div class="grid gap-4 md:grid-cols-2">
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">IMAP host</span><input id="acc-imap-host" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2" placeholder="imap.example.com"></label>
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">IMAP port</span><input id="acc-imap-port" type="number" value="993" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"></label>
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">IMAP username</span><input id="acc-imap-user" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"></label>
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">IMAP password / app password</span><input id="acc-imap-pass" type="password" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"></label>
+        <label class="flex items-center gap-2 text-[11px] text-zinc-400 md:col-span-2"><input id="acc-imap-ssl" type="checkbox" checked> Использовать SSL (обычно порт 993)</label>
+      </div>
+    </div>
+
+    <div class="border-t border-zinc-800 pt-4">
+      <h2 class="mb-3 text-sm font-semibold text-zinc-100">SMTP (исходящие)</h2>
+      <div class="grid gap-4 md:grid-cols-2">
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">SMTP host</span><input id="acc-smtp-host" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2" placeholder="smtp.example.com"></label>
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">SMTP port</span><input id="acc-smtp-port" type="number" value="587" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"></label>
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">SMTP username</span><input id="acc-smtp-user" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"></label>
+        <label class="block space-y-1"><span class="text-[11px] text-zinc-500">SMTP password / app password</span><input id="acc-smtp-pass" type="password" required class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2"></label>
+        <label class="flex items-center gap-2 text-[11px] text-zinc-400 md:col-span-2"><input id="acc-smtp-tls" type="checkbox" checked> Использовать TLS/STARTTLS (порт 465 = SSL)</label>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 border-t border-zinc-800 pt-4">
+      <button type="submit" id="submit-btn" class="rounded bg-teal-500 px-4 py-2 font-semibold text-black hover:bg-teal-400">Подключить аккаунт</button>
+      <a href="/mail" class="rounded border border-zinc-700 px-4 py-2 text-zinc-300 hover:bg-zinc-800">Отмена</a>
+      <span id="status" class="text-[11px] text-zinc-500"></span>
+    </div>
+  </form>
+</div>
+
+<script>
+(() => {
+  const form = document.getElementById('account-form');
+  const status = document.getElementById('status');
+  const submitBtn = document.getElementById('submit-btn');
+
+  async function api(url, opts = {}) {
+    const res = await fetch(url, {headers: {'Content-Type': 'application/json', ...(opts.headers || {})}, ...opts});
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!res.ok) throw new Error((data && data.detail) || res.statusText || 'Request failed');
+    return data;
+  }
+
+  // Prefill SMTP/IMAP usernames with email for convenience
+  const emailEl = document.getElementById('acc-email');
+  emailEl.addEventListener('blur', () => {
+    const v = emailEl.value.trim();
+    if (!v) return;
+    ['acc-imap-user','acc-smtp-user'].forEach(id => { const el = document.getElementById(id); if (!el.value) el.value = v; });
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    submitBtn.disabled = true;
+    status.textContent = 'Сохранение...';
+    status.className = 'text-[11px] text-zinc-500';
+    try {
+      await api('/api/mail/accounts', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: document.getElementById('acc-name').value || null,
+          email_address: document.getElementById('acc-email').value,
+          imap_host: document.getElementById('acc-imap-host').value,
+          imap_port: parseInt(document.getElementById('acc-imap-port').value || '993', 10),
+          imap_username: document.getElementById('acc-imap-user').value,
+          imap_password: document.getElementById('acc-imap-pass').value,
+          imap_use_ssl: document.getElementById('acc-imap-ssl').checked,
+          smtp_host: document.getElementById('acc-smtp-host').value,
+          smtp_port: parseInt(document.getElementById('acc-smtp-port').value || '587', 10),
+          smtp_username: document.getElementById('acc-smtp-user').value,
+          smtp_password: document.getElementById('acc-smtp-pass').value,
+          smtp_use_tls: document.getElementById('acc-smtp-tls').checked,
+          is_active: true,
+        })
+      });
+      status.textContent = 'Аккаунт подключен. Перенаправление...';
+      status.className = 'text-[11px] text-teal-400';
+      setTimeout(() => { window.location.href = '/mail'; }, 500);
+    } catch (err) {
+      status.textContent = err.message || 'Ошибка подключения';
+      status.className = 'text-[11px] text-rose-400';
+      submitBtn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

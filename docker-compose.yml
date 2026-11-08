@@ -701,6 +701,11 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Emergency containment for the worker RAM leak: without a hard cap, one
+    # prefork parent + 2 children plus the /tmp tmpfs (RAM disk) can consume
+    # unbounded host memory. tmpfs pages count toward the cgroup limit.
+    mem_limit: 3g
+    mem_reservation: 1g
     depends_on:
       storage-init:
         condition: service_completed_successfully
@@ -713,7 +718,7 @@ services:
     command:
       - sh
       - -c
-      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2
+      - umask 077 && python -c 'from app.core.config import validate_runtime_security; validate_runtime_security()' && exec celery -A app.core.scheduler:celery_app worker --loglevel=info --concurrency=2 --pool=prefork --max-tasks-per-child=20 --max-memory-per-child=1048576
     stop_grace_period: 10m
 
 volumes:

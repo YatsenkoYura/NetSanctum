@@ -106,6 +106,14 @@ class Settings(BaseSettings):
     ENCRYPTION_MIGRATION_INTERVAL_SECONDS: float = 5.0
     ENCRYPTION_MIGRATION_IDLE_SECONDS: float = 300.0
 
+    # ── Mail ─────────────────────────────────────────────
+    MAIL_SMTP_HOST: str = ""
+    MAIL_SMTP_PORT: int = 587
+    MAIL_SMTP_USERNAME: str = ""
+    MAIL_SMTP_PASSWORD: str = ""
+    MAIL_SMTP_USE_TLS: bool = True
+    MAIL_SENDER_NAME: str = ""
+
     # ── Storage ──────────────────────────────────────────
     STORAGE_BACKEND: str = "local"  # "local" | "s3"
     LOCAL_STORAGE_ROOT: str = "./storage"

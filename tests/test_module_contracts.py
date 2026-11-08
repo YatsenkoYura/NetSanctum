@@ -137,11 +137,29 @@ class ModuleManifestTests(unittest.TestCase):
 
         self.assertEqual("auth,settings,sharing", result.stdout.strip())
 
-    def test_external_module_requires_matching_optional_extra(self):
-        from scripts.module_build import resolve_external_modules
+    def test_external_modules_resolve_without_main_pyproject(self):
+        from scripts.module_build import parse_external_modules, resolve_external_modules
+
+        self.assertEqual(
+            ["external_example"],
+            resolve_external_modules(Path.cwd(), "external_example"),
+        )
+        self.assertEqual(
+            [
+                ("external_example", "external_example"),
+                ("my_mod", "my_mod @ git+https://example.com/my_mod.git"),
+            ],
+            parse_external_modules("external_example,my_mod @ git+https://example.com/my_mod.git"),
+        )
+        self.assertEqual([], resolve_external_modules(Path.cwd(), ""))
+
+    def test_external_module_rejects_invalid_or_duplicate_ids(self):
+        from scripts.module_build import parse_external_modules
 
         with self.assertRaises(SystemExit):
-            resolve_external_modules(Path.cwd(), "missing_external")
+            parse_external_modules("not a valid id")
+        with self.assertRaises(SystemExit):
+            parse_external_modules("my_mod,my-mod")
 
     def test_external_entry_point_registers_installed_module(self):
         external_spec = ModuleSpec(
@@ -182,19 +200,59 @@ class ModuleManifestTests(unittest.TestCase):
         self.assertFalse(registry.is_installed("external_unavailable"))
         load.assert_not_called()
 
-    def test_external_entry_point_is_not_loaded_without_marker(self):
-        load = Mock()
+    def test_external_entry_point_loads_without_marker(self):
+        # Local development (no marker file configured): the environment
+        # itself is the selection, so an installed entry point loads.
+        external_spec = ModuleSpec(
+            id="external_without_marker",
+            version="1.0.0",
+            title_en="External",
+            title_ru="External",
+            bundled=False,
+        )
         external_entry_point = SimpleNamespace(
             name="external_without_marker",
             module="external_without_marker.module",
-            load=load,
+            load=lambda: external_spec,
         )
 
         with patch("app.core.modules.entry_points", return_value=[external_entry_point]):
             registry = ModuleRegistry.discover()
 
-        self.assertFalse(registry.is_installed("external_without_marker"))
-        load.assert_not_called()
+        self.assertTrue(registry.is_active("external_without_marker"))
+        self.assertTrue(registry.is_installed("external_without_marker"))
+
+    def test_external_sync_installs_packages_not_extras(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from scripts.module_build import sync_dependencies
+
+        catalog = {"modules": {"auth": {"required": True, "extra": None, "system_packages": []}}}
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(
+                project=Path(tmp),
+                external_modules="my_mod @ git+https://example.com/my_mod.git",
+                environment=Path(tmp) / "venv",
+                marker=Path(tmp) / "marker",
+            )
+            with patch("scripts.module_build.subprocess.run", side_effect=fake_run):
+                sync_dependencies(args, catalog, ["auth"])
+
+            self.assertEqual(2, len(calls))
+            self.assertNotIn("--extra", calls[0])
+            self.assertNotIn("my_mod", calls[0])
+            # Second call is `uv pip install`, first is `uv sync`
+            self.assertEqual("pip", calls[1][1])
+            self.assertIn("my_mod @ git+https://example.com/my_mod.git", calls[1])
+            self.assertEqual("auth,my_mod\n", (Path(tmp) / "marker").read_text())
 
     def test_unbundled_module_requires_explicit_installed_marker(self):
         registry = ModuleRegistry()

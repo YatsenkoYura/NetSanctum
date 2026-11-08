@@ -254,6 +254,13 @@ FEATURE_VAL="$(env_get FEATURE_MIKU_LOCAL)";        MIKU_LOCAL="$FEATURE_VAL"
 if [ -z "$MIKU_LOCAL" ] && grep -q '^MIKU_LLM_URL=http://miku-llm:' "$ENV_FILE"; then
     MIKU_LOCAL=1
 fi
+FEATURE_VAL="$(env_get FEATURE_MIKU_MODULE)";        MIKU_MODULE="$FEATURE_VAL"
+if [ -z "$MIKU_MODULE" ]; then
+    case ",$(env_get NETSANCTUM_MODULES)," in
+        *,miku,*) MIKU_MODULE=1 ;;
+        *) MIKU_MODULE=0 ;;
+    esac
+fi
 
 usage() {
     cat <<'USAGE'
@@ -268,6 +275,7 @@ Usage:
   ./start.sh --no-browser-runtime | --browser-runtime
   ./start.sh --no-agent
   ./start.sh --miku-local | --no-miku-local
+  ./start.sh --miku-module | --no-miku-module
   ./start.sh --voice | --no-voice
 USAGE
 }
@@ -318,6 +326,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-miku-local)
             MIKU_LOCAL=0
+            shift
+            ;;
+        --miku-module)
+            MIKU_MODULE=1
+            shift
+            ;;
+        --no-miku-module)
+            MIKU_MODULE=0
             shift
             ;;
         --voice)
@@ -464,6 +480,11 @@ do_up() {
     else
         echo " Agent runtime: disabled"
     fi
+    if [ "$MIKU_MODULE" = "1" ]; then
+        echo " MIKU module: enabled (assistant app module)"
+    else
+        echo " MIKU module: disabled (not installed/enabled)"
+    fi
     if [ "$MIKU_LOCAL" = "1" ]; then
         echo " Local model: enabled (llama.cpp)"
     fi
@@ -499,6 +520,26 @@ do_up() {
             voice_model_dir_unusable || return 1
         fi
     fi
+    # Apply MIKU module toggle (NETSANCTUM_MODULES/ENABLED_MODULES) before build.
+    env_set FEATURE_MIKU_MODULE "$MIKU_MODULE"
+    if [ "$MIKU_MODULE" = "0" ]; then
+        REQUESTED="$(env_get NETSANCTUM_MODULES)"; REQUESTED="${REQUESTED:-default}"
+        REQUESTED="$(remove_list_token "$REQUESTED" miku)"; [ -z "$REQUESTED" ] && REQUESTED="default"
+        env_set NETSANCTUM_MODULES "$REQUESTED"
+        ENABLED="$(env_get ENABLED_MODULES)"
+        if [ -n "$ENABLED" ]; then
+            NEWLIST="$(remove_list_token "$ENABLED" miku)"
+            [ -n "$NEWLIST" ] && env_set ENABLED_MODULES "$NEWLIST"
+        fi
+    else
+        REQUESTED="$(env_get NETSANCTUM_MODULES)"; REQUESTED="${REQUESTED:-default}"
+        REQUESTED="$(add_list_token "$REQUESTED" miku)"; [ -z "$REQUESTED" ] && REQUESTED="default,miku"
+        env_set NETSANCTUM_MODULES "$REQUESTED"
+    fi
+    if [ "$MIKU_MODULE" = "0" ]; then
+        echo " MIKU module: will be excluded/disabled (rebuild required if previously installed)."
+    fi
+
     if [ "$MIKU_LOCAL" = "1" ]; then
         MODEL_FILE="$(sed -n 's/^MIKU_MODEL_FILE=//p' "$ENV_FILE" | tail -1)"
         MODEL_URL="$(sed -n 's/^MIKU_MODEL_URL=//p' "$ENV_FILE" | tail -1)"
@@ -911,6 +952,64 @@ installed_optional_modules() {
     fi
 }
 
+remove_list_token() {
+    # remove_list_token <list> <token>
+    printf '%s\n' "${1//,/$'\n'}" | sed 's/[[:space:]]//g' | grep -vx "$2" | sed '/^$/d' | paste -sd, -
+}
+
+add_list_token() {
+    # add_list_token <list> <token>
+    local LIST="$1" TOKEN="$2"
+    LIST="$(printf '%s\n' "${LIST//,/$'\n'}" | sed 's/[[:space:]]//g' | sed '/^$/d' | paste -sd, -)"
+    if [ -z "$LIST" ]; then
+        printf '%s' "$TOKEN"
+        return
+    fi
+    case ",$LIST," in
+        *",$TOKEN,"*) printf '%s' "$LIST" ;;
+        *) printf '%s,%s' "$LIST" "$TOKEN" ;;
+    esac
+}
+
+apply_miku_module_setting() {
+    # Keeps NETSANCTUM_MODULES/ENABLED_MODULES in sync with FEATURE_MIKU_MODULE so
+    # the assistant app module can be really excluded (build/install) or disabled.
+    local REQUESTED ENABLED NEWLIST
+    backup_env_once
+    env_set FEATURE_MIKU_MODULE "$MIKU_MODULE"
+
+    REQUESTED="$(env_get NETSANCTUM_MODULES)"
+    REQUESTED="${REQUESTED:-default}"
+    if [ "$MIKU_MODULE" = "1" ]; then
+        REQUESTED="$(add_list_token "$REQUESTED" miku)"
+        [ -z "$REQUESTED" ] && REQUESTED="default,miku"
+    else
+        REQUESTED="$(remove_list_token "$REQUESTED" miku)"
+        [ -z "$REQUESTED" ] && REQUESTED="default"
+    fi
+    env_set NETSANCTUM_MODULES "$REQUESTED"
+
+    ENABLED="$(env_get ENABLED_MODULES)"
+    if [ "$MIKU_MODULE" = "1" ]; then
+        if [ -n "$ENABLED" ]; then
+            ENABLED="$(add_list_token "$ENABLED" miku)"
+            env_set ENABLED_MODULES "$ENABLED"
+        fi
+    else
+        # Removing miku from NETSANCTUM_MODULES prevents (re)installing it. If an
+        # explicit allowlist exists, drop miku from it; keep an empty allowlist
+        # empty to avoid forcing modules that may not be installed in this image.
+        if [ -n "$ENABLED" ]; then
+            NEWLIST="$(remove_list_token "$ENABLED" miku)"
+            if [ -n "$NEWLIST" ]; then
+                env_set ENABLED_MODULES "$NEWLIST"
+            else
+                printf '%s\n' "${C_YELLOW}  Cannot disable miku in ENABLED_MODULES alone (would leave it empty).${C_OFF}"
+            fi
+        fi
+    fi
+}
+
 module_enabled() {
     local ENABLED
     ENABLED="$(env_get ENABLED_MODULES)"
@@ -1042,8 +1141,9 @@ stops and removes its containers on the next Start.${C_OFF}"
         echo
         feature_row 1 "$BROWSER_RUNTIME" "Browser runtime" "containers browser-runtime, browser-proxy"
         feature_row 2 "$AGENT_RUNTIME"   "Agent runtime"   "container agent-runtime (assistant engine)"
-        feature_row 3 "$MIKU_LOCAL"      "Local model"     "containers miku-llm, model-init (llama.cpp)"
-        feature_row 4 "$VOICE"           "Voice"           "containers miku-voice, miku-stt, voice-init"
+        feature_row 3 "$MIKU_MODULE"     "MIKU module"     "assistant app module (build/install/enable)"
+        feature_row 4 "$MIKU_LOCAL"      "Local model"     "containers miku-llm, model-init (llama.cpp)"
+        feature_row 5 "$VOICE"           "Voice"           "containers miku-voice, miku-stt, voice-init"
         if [ "$MIKU_LOCAL" = "1" ]; then
             MODEL_FILE="$(env_get MIKU_MODEL_FILE)"
             MODEL_URL="$(env_get MIKU_MODEL_URL)"
@@ -1075,11 +1175,15 @@ stops and removes its containers on the next Start.${C_OFF}"
                 env_set FEATURE_AGENT_RUNTIME "$AGENT_RUNTIME"
                 ;;
             3)
+                if [ "$MIKU_MODULE" = "1" ]; then MIKU_MODULE=0; else MIKU_MODULE=1; fi
+                apply_miku_module_setting
+                ;;
+            4)
                 if [ "$MIKU_LOCAL" = "1" ]; then MIKU_LOCAL=0; else MIKU_LOCAL=1; fi
                 backup_env_once
                 env_set FEATURE_MIKU_LOCAL "$MIKU_LOCAL"
                 ;;
-            4)
+            5)
                 if [ "$VOICE" = "1" ]; then VOICE=0; else VOICE=1; fi
                 backup_env_once
                 env_set FEATURE_VOICE "$VOICE"

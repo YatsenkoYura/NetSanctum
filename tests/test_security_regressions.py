@@ -201,15 +201,26 @@ class CoreBoundarySecurityTests(unittest.TestCase):
 
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-        nonce = os.urandom(12)
-        legacy_key = hashlib.sha256(b"dev-api-key-change-me").digest()
-        legacy = SECRET_PREFIX + base64.urlsafe_b64encode(
-            nonce + AESGCM(legacy_key).encrypt(nonce, b"legacy-secret", None)
-        ).decode("ascii")
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "file.key"
+            key_path.write_bytes(b"generated-runtime-key-material" * 2)
+            legacy_path = Path(directory) / "legacy.keys"
+            legacy_path.write_text("dev-api-key-change-me\n")
 
-        rotated = rotate_secret_value(legacy)
-        self.assertEqual("legacy-secret", decrypt_secret_value(rotated))
-        self.assertNotEqual(legacy, rotated)
+            settings = Settings(
+                FILE_ENCRYPTION_KEY_PATH=str(key_path),
+                LEGACY_FILE_ENCRYPTION_KEYS_PATH=str(legacy_path),
+            )
+            nonce = os.urandom(12)
+            legacy_key = hashlib.sha256(b"dev-api-key-change-me").digest()
+            legacy = SECRET_PREFIX + base64.urlsafe_b64encode(
+                nonce + AESGCM(legacy_key).encrypt(nonce, b"legacy-secret", None)
+            ).decode("ascii")
+
+            with patch("app.core.encryption_keys.get_settings", return_value=settings):
+                rotated = rotate_secret_value(legacy)
+                self.assertEqual("legacy-secret", decrypt_secret_value(rotated))
+                self.assertNotEqual(legacy, rotated)
 
     def test_owner_auth_no_longer_accepts_query_tokens(self):
         source = (Path(__file__).resolve().parents[1] / "app/core/security.py").read_text()

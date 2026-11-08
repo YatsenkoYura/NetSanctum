@@ -48,31 +48,32 @@ def legacy_encryption_keys(
     until the migration runs — and it is also why publicly known development
     values must never be fallback candidates in production: anyone able to
     plant a file sealed under a published dev key would otherwise produce
-    ciphertext this deployment accepts as its own. In production the dev
-    placeholders below are excluded, and setting ENCRYPTION_ALLOW_LEGACY_KEYS
+    ciphertext this deployment accepts as its own.
+
+    The dev placeholders are always excluded. Setting ENCRYPTION_ALLOW_LEGACY_KEYS
     to False disables the fallback entirely once the migration reports
     pending=0 and unreadable=0.
     """
     settings = settings or get_settings()
     if not settings.ENCRYPTION_ALLOW_LEGACY_KEYS:
         return ()
-    is_production = settings.NETSANCTUM_ENVIRONMENT.lower() == "production"
-    dev_placeholders = {"dev-file-encryption-key-change-me", "dev-api-key-change-me"}
+
     root = _root_encryption_key(settings)
     primary = primary_encryption_key(settings, purpose=purpose)
+
+    # Only configuration-derived values — no hard-coded dev strings.
+    # If an operator leaves the defaults unchanged, validate_runtime_security
+    # will refuse the deployment in production; in development the values are
+    # still known, so they must never be accepted as legacy decryption keys.
+    dev_placeholders = {"dev-file-encryption-key-change-me", "dev-api-key-change-me"}
     candidates = (
         settings.FILE_ENCRYPTION_KEY,
         settings.MASTER_API_KEY,
-        "dev-file-encryption-key-change-me",
-        "dev-api-key-change-me",
     )
-    if is_production:
-        # The hard-coded dev strings are published; the configured values may
-        # still equal them when an operator forgot to rotate (validate_runtime_security
-        # refuses that in production), so filter both.
-        candidates = tuple(value for value in candidates if value not in dev_placeholders)
+    candidates = tuple(value for value in candidates if value and value not in dev_placeholders)
+
     legacy_file_values: tuple[str, ...] = ()
-    legacy_path = settings.LEGACY_FILE_ENCRYPTION_KEYS_PATH.strip() if purpose == "files" else ""
+    legacy_path = settings.LEGACY_FILE_ENCRYPTION_KEYS_PATH.strip()
     if legacy_path:
         try:
             legacy_file_values = tuple(
@@ -82,6 +83,7 @@ def legacy_encryption_keys(
             pass
         except OSError as error:
             raise RuntimeError(f"Could not read LEGACY_FILE_ENCRYPTION_KEYS_PATH: {legacy_path}") from error
+
     keys = (
         root,
         *(

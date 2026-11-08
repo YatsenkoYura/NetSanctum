@@ -1,0 +1,426 @@
+{% extends "base.html" %}
+{% block title %}NetSanctum Mail{% endblock %}
+
+{% block content %}
+<div class="h-[calc(100dvh-5.5rem)] max-h-[calc(100dvh-5.5rem)] overflow-hidden py-3 font-mono text-xs text-zinc-300">
+  <div class="flex h-full min-h-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/60">
+    <!-- Accounts rail -->
+    <aside class="flex h-full w-20 shrink-0 flex-col items-center border-r border-zinc-800 bg-zinc-900/40 py-3">
+      <div class="mb-2 shrink-0 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Акк.</div>
+      <ul id="mail-accounts" class="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto overscroll-contain px-2 py-1"></ul>
+      <div class="mt-2 shrink-0 border-t border-zinc-800 pt-3">
+        <a href="/mail/accounts/new" title="Добавить аккаунт" class="flex h-10 w-10 items-center justify-center rounded-full border border-dashed border-zinc-600 text-xl leading-none text-zinc-400 hover:border-teal-500 hover:text-teal-400">+</a>
+      </div>
+    </aside>
+
+    <!-- Messages column -->
+    <section id="messages-pane" class="hidden h-full min-h-0 w-[380px] shrink-0 flex-col overflow-hidden border-r border-zinc-800 bg-zinc-900/20">
+      <div class="shrink-0 border-b border-zinc-800 p-3 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div id="selected-account-name" class="truncate text-sm font-semibold text-zinc-100">Аккаунт</div>
+            <div id="selected-account-email" class="truncate text-[11px] text-zinc-500"></div>
+          </div>
+          <div class="flex shrink-0 gap-1">
+            <button type="button" id="sync-btn" title="Новые сообщения" class="rounded border border-zinc-700 px-2 py-1 text-[11px] hover:bg-zinc-800">⟳</button>
+<button type="button" id="sync-full-btn" title="Полная синхронизация" class="rounded border border-zinc-700 px-2 py-1 text-[11px] hover:bg-zinc-800 text-zinc-400">⟳⟳</button>
+            <button type="button" id="compose-btn" title="Новое письмо" class="rounded border border-teal-700 px-2 py-1 text-[11px] text-teal-300 hover:bg-teal-950">✎</button>
+          </div>
+        </div>
+        <input id="mail-search" type="search" placeholder="Поиск по письмам..." class="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600 focus:border-teal-600 focus:outline-none">
+      </div>
+      <ul id="mail-messages" class="min-h-0 flex-1 overflow-y-auto overscroll-contain"></ul>
+      <div id="compose-panel" class="hidden max-h-[45%] shrink-0 overflow-y-auto border-t border-zinc-800 bg-zinc-950/80 p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-semibold text-zinc-200">Новое письмо</span>
+          <button type="button" id="compose-close" class="text-zinc-500 hover:text-zinc-200">✕</button>
+        </div>
+        <input id="compose-to" class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5" placeholder="Кому (через запятую)">
+        <input id="compose-subject" class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5" placeholder="Тема">
+        <textarea id="compose-body" rows="5" class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5" placeholder="Текст письма"></textarea>
+        <div class="flex items-center gap-2">
+          <button type="button" id="compose-send" class="rounded bg-teal-500 px-3 py-1 font-semibold text-black hover:bg-teal-400">Отправить</button>
+          <span id="compose-status" class="text-[11px] text-zinc-500"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Reading pane -->
+    <main class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-950/30">
+      <div id="empty-state" class="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-zinc-500">
+        <div class="text-4xl">✉</div>
+        <p class="font-sans text-sm">Выберите аккаунт слева, чтобы открыть письма.</p>
+        <p class="text-[11px] text-zinc-600">Нет аккаунтов? Нажмите «+» внизу левой панели.</p>
+      </div>
+      <article id="mail-message-view" class="hidden h-full min-h-0 flex-col overflow-hidden">
+        <header class="shrink-0 border-b border-zinc-800 p-5">
+          <div class="flex items-start justify-between gap-4">
+            <h2 id="view-subject" class="min-w-0 break-words text-base font-semibold text-zinc-100"></h2>
+            <div class="flex shrink-0 gap-2">
+              <button type="button" id="view-star" class="rounded border border-zinc-700 px-2 py-1 hover:bg-zinc-800" title="Избранное">☆</button>
+              <button type="button" id="view-delete" class="rounded border border-rose-900/60 px-2 py-1 text-rose-400 hover:bg-rose-950/40" title="Удалить">Удалить</button>
+            </div>
+          </div>
+          <dl class="mt-3 space-y-1 text-[11px] text-zinc-400">
+            <div class="flex gap-2"><dt class="w-14 shrink-0 text-zinc-500">От:</dt><dd id="view-from" class="break-all text-zinc-300"></dd></div>
+            <div class="flex gap-2"><dt class="w-14 shrink-0 text-zinc-500">Кому:</dt><dd id="view-to" class="break-all"></dd></div>
+            <div class="flex gap-2"><dt class="w-14 shrink-0 text-zinc-500">Дата:</dt><dd id="view-date"></dd></div>
+          </dl>
+        </header>
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 space-y-4">
+          <div id="view-body" class="prose prose-invert prose-sm max-w-none font-sans text-[13px] leading-relaxed text-zinc-200"></div>
+          <div id="attachments-section" class="hidden border-t border-zinc-800 pt-4">
+            <div class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Вложения (<span id="attachment-count">0</span>)</div>
+            <ul id="attachments-list" class="space-y-2"></ul>
+          </div>
+        </div>
+      </article>
+    </main>
+  </div>
+</div>
+<!-- Lightbox modal -->
+<div id="lightbox" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/90" role="dialog" aria-modal="true">
+  <button id="lightbox-close" class="absolute top-4 right-4 rounded-full bg-zinc-800 p-2 text-zinc-300 hover:bg-zinc-700 hover:text-white" title="Закрыть">
+    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+  </button>
+  <button id="lightbox-prev" class="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-zinc-800/80 p-2 text-zinc-300 hover:bg-zinc-700 hover:text-white" title="Предыдущее">
+    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+  </button>
+  <button id="lightbox-next" class="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-zinc-800/80 p-2 text-zinc-300 hover:bg-zinc-700 hover:text-white" title="Следующее">
+    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+  </button>
+  <img id="lightbox-img" src="" alt="" class="max-h-[90vh] max-w-[90vw] rounded-lg object-contain">
+  <div id="lightbox-caption" class="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900/90 px-4 py-2 text-sm text-zinc-300"></div>
+</div>
+
+<script>
+(() => {
+  const accountsEl = document.getElementById('mail-accounts');
+  const messagesPane = document.getElementById('messages-pane');
+  const messagesEl = document.getElementById('mail-messages');
+  const searchEl = document.getElementById('mail-search');
+  const emptyState = document.getElementById('empty-state');
+  const viewEl = document.getElementById('mail-message-view');
+  const viewBody = document.getElementById('view-body');
+  const attachmentsSection = document.getElementById('attachments-section');
+  const attachmentsList = document.getElementById('attachments-list');
+  const attachmentCount = document.getElementById('attachment-count');
+  const composePanel = document.getElementById('compose-panel');
+  const lightbox = document.getElementById('lightbox');
+  const lightboxImg = document.getElementById('lightbox-img');
+  const lightboxCaption = document.getElementById('lightbox-caption');
+
+  let accounts = [];
+  let selectedAccountId = null;
+  let selectedMessageId = null;
+  let searchTimer = null;
+  let currentAttachments = [];
+  let lightboxIndex = 0;
+  let lightboxImages = [];
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const initial = (a) => (a.name || a.email_address || '?').trim().charAt(0).toUpperCase();
+  const fmtDate = (v) => {
+    if (!v) return '';
+    try { return new Date(v).toLocaleString(); } catch { return String(v); }
+  };
+  const fmtSize = (bytes) => {
+    if (bytes == null) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+  const fileIcon = (ct) => {
+    if (ct.startsWith('image/')) return '🖼️';
+    if (ct.startsWith('video/')) return '🎥';
+    if (ct.startsWith('audio/')) return '🎵';
+    if (ct.includes('pdf')) return '📄';
+    if (ct.includes('zip') || ct.includes('rar') || ct.includes('tar')) return '📦';
+    if (ct.includes('word') || ct.includes('document')) return '📝';
+    if (ct.includes('sheet') || ct.includes('excel') || ct.includes('csv')) return '📊';
+    return '📎';
+  };
+
+  async function api(url, opts = {}) {
+    const res = await fetch(url, {headers: {'Content-Type': 'application/json', ...(opts.headers || {})}, ...opts});
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!res.ok) throw new Error((data && (data.detail || data.message)) || res.statusText || 'Request failed');
+    return data;
+  }
+
+  function renderAccounts() {
+    if (!accounts.length) {
+      accountsEl.innerHTML = '<li class="px-1 text-center text-[10px] text-zinc-600">нет</li>';
+      return;
+    }
+    accountsEl.innerHTML = accounts.map(a => {
+      const sel = String(a.id) === String(selectedAccountId);
+      return `<li>
+        <button data-acc="${a.id}" title="${esc(a.email_address)}" class="flex h-11 w-11 items-center justify-center rounded-full border text-sm font-semibold transition ${sel ? 'border-teal-500 bg-teal-900/50 text-teal-200' : 'border-zinc-700 bg-zinc-800/60 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'}">${esc(initial(a))}</button>
+      </li>`;
+    }).join('');
+    accountsEl.querySelectorAll('button[data-acc]').forEach(btn => btn.addEventListener('click', () => selectAccount(btn.dataset.acc)));
+  }
+
+  async function loadAccounts(preferId = null) {
+    accounts = await api('/api/mail/accounts');
+    if (preferId) selectedAccountId = String(preferId);
+    if (selectedAccountId && !accounts.find(a => String(a.id) === String(selectedAccountId))) selectedAccountId = null;
+    if (!selectedAccountId && accounts.length) selectedAccountId = String(accounts[0].id);
+    renderAccounts();
+    if (selectedAccountId) await selectAccount(selectedAccountId, {skipRender: true});
+    else showNoSelection();
+  }
+
+  function showNoSelection() {
+    messagesPane.classList.add('hidden');
+    messagesPane.classList.remove('flex');
+    viewEl.classList.add('hidden');
+    viewEl.classList.remove('flex');
+    emptyState.classList.remove('hidden');
+  }
+
+  async function selectAccount(id, opts = {}) {
+    selectedAccountId = String(id);
+    selectedMessageId = null;
+    if (!opts.skipRender) renderAccounts();
+    const acc = accounts.find(a => String(a.id) === String(selectedAccountId));
+    if (!acc) { showNoSelection(); return; }
+    document.getElementById('selected-account-name').textContent = acc.name || acc.email_address;
+    document.getElementById('selected-account-email').textContent = acc.email_address;
+    emptyState.classList.add('hidden');
+    messagesPane.classList.remove('hidden');
+    messagesPane.classList.add('flex');
+    viewEl.classList.add('hidden');
+    viewEl.classList.remove('flex');
+    await loadMessages();
+  }
+
+  async function loadMessages() {
+    if (!selectedAccountId) return;
+    const q = searchEl.value.trim();
+    const params = new URLSearchParams({account_id: selectedAccountId, limit: '100'});
+    if (q) params.set('q', q);
+    const messages = await api(`/api/mail/messages?${params.toString()}`);
+    if (!messages.length) {
+      messagesEl.innerHTML = '<li class="p-4 text-center text-[11px] text-zinc-500">Писем не найдено.</li>';
+      return;
+    }
+    messagesEl.innerHTML = messages.map(m => {
+      const sel = String(m.id) === String(selectedMessageId);
+      const from = m.sender_name || m.sender_email || m.recipient_emails || '';
+      const badge = m.has_attachments ? ' 📎' : '';
+      return `<li class="border-b border-zinc-800/80">
+        <button data-id="${m.id}" class="w-full px-3 py-3 text-left transition hover:bg-zinc-800/60 ${sel ? 'bg-zinc-800/80' : ''}">
+          <div class="flex items-start justify-between gap-2">
+            <span class="line-clamp-1 ${m.is_read ? 'text-zinc-300' : 'font-semibold text-zinc-100'}">${esc(m.subject || '(без темы)')}${badge}</span>
+            ${m.is_starred ? '<span class="shrink-0 text-amber-400">★</span>' : ''}
+          </div>
+          <div class="mt-1 line-clamp-1 text-[11px] text-zinc-500">${esc(from)}</div>
+          <div class="mt-1 line-clamp-2 text-[11px] text-zinc-600">${esc((m.body_text || '').slice(0, 140))}</div>
+        </button>
+      </li>`;
+    }).join('');
+    messagesEl.querySelectorAll('button[data-id]').forEach(btn => btn.addEventListener('click', () => openMessage(btn.dataset.id)));
+  }
+
+  async function openMessage(id) {
+    selectedMessageId = String(id);
+    const m = await api(`/api/mail/messages/${id}`);
+    api(`/api/mail/messages/${id}/read`, {method: 'POST'}).catch(() => {});
+    document.getElementById('view-subject').textContent = m.subject || '(без темы)';
+    const from = [m.sender_name, m.sender_email].filter(Boolean).join(' ');
+    document.getElementById('view-from').textContent = from || '—';
+    document.getElementById('view-to').textContent = m.recipient_emails || '—';
+    document.getElementById('view-date').textContent = fmtDate(m.sent_at || m.created_at) || '—';
+
+    // Render HTML body if available, fallback to plain text
+    if (m.body_html) {
+      viewBody.innerHTML = m.body_html;
+    } else if (m.body_text) {
+      viewBody.textContent = m.body_text;
+    } else {
+      viewBody.innerHTML = '<span class="text-zinc-500">(пусто)</span>';
+    }
+
+    const starBtn = document.getElementById('view-star');
+    starBtn.textContent = m.is_starred ? '★' : '☆';
+    starBtn.classList.toggle('text-amber-400', !!m.is_starred);
+    starBtn.onclick = async () => {
+      const updated = await api(`/api/mail/messages/${id}`, {method: 'PATCH', body: JSON.stringify({is_starred: !m.is_starred})});
+      m.is_starred = updated.is_starred;
+      starBtn.textContent = m.is_starred ? '★' : '☆';
+      starBtn.classList.toggle('text-amber-400', !!m.is_starred);
+      loadMessages().catch(() => {});
+    };
+    document.getElementById('view-delete').onclick = async () => {
+      if (!confirm('Удалить сообщение?')) return;
+      await api(`/api/mail/messages/${id}`, {method: 'DELETE'});
+      selectedMessageId = null;
+      viewEl.classList.add('hidden');
+      viewEl.classList.remove('flex');
+      await loadMessages();
+    };
+
+    // Load attachments
+    try {
+      currentAttachments = await api(`/api/mail/messages/${id}/attachments`);
+      renderAttachments(currentAttachments);
+    } catch {
+      currentAttachments = [];
+      renderAttachments([]);
+    }
+
+    viewEl.classList.remove('hidden');
+    viewEl.classList.add('flex');
+    loadMessages().catch(() => {});
+  }
+
+  function renderAttachments(attachments) {
+    if (!attachments.length) {
+      attachmentsSection.classList.add('hidden');
+      attachmentsList.innerHTML = '';
+      return;
+    }
+    attachmentsSection.classList.remove('hidden');
+    attachmentCount.textContent = attachments.length;
+    attachmentsList.innerHTML = attachments.map((a, i) => {
+      const isImage = a.content_type.startsWith('image/');
+      const downloadUrl = `/api/mail/attachments/${a.id}`;
+      const previewUrl = isImage ? `/api/mail/attachments/${a.id}/preview` : downloadUrl;
+      return `<li class="flex items-center gap-3 rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+        <span class="text-lg">${fileIcon(a.content_type)}</span>
+        <div class="min-w-0 flex-1">
+          <div class="truncate text-[12px] font-medium text-zinc-200">${esc(a.filename)}</div>
+          <div class="text-[11px] text-zinc-500">${fmtSize(a.size)}</div>
+        </div>
+        <div class="flex shrink-0 gap-1">
+          ${isImage ? `<button data-idx="${i}" data-img="${previewUrl}" data-name="${esc(a.filename)}" class="rounded border border-zinc-700 px-2 py-1 text-[11px] text-teal-400 hover:bg-teal-950" title="Просмотр">👁</button>` : ''}
+          <a href="${downloadUrl}" download="${esc(a.filename)}" class="rounded border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-800" title="Скачать">⬇</a>
+        </div>
+      </li>`;
+    }).join('');
+
+    // Attach click handlers for image preview buttons
+    attachmentsList.querySelectorAll('button[data-img]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.idx);
+        lightboxImages = attachments.filter(a => a.content_type.startsWith('image/'));
+        lightboxIndex = idx - attachments.findIndex(a => !a.content_type.startsWith('image/'));
+        // Recalculate: find the position among images only
+        const imageAttachments = attachments.filter(a => a.content_type.startsWith('image/'));
+        const imageIdx = imageAttachments.findIndex(img => img.id === parseInt(btn.dataset.idx));
+        if (imageIdx >= 0) {
+          lightboxIndex = imageIdx;
+          lightboxImages = imageAttachments;
+          openLightbox();
+        }
+      });
+    });
+  }
+
+  function openLightbox() {
+    if (!lightboxImages.length) return;
+    const img = lightboxImages[lightboxIndex];
+    lightboxImg.src = `/api/mail/attachments/${img.id}/preview`;
+    lightboxImg.alt = img.filename;
+    lightboxCaption.textContent = `${img.filename} (${lightboxIndex + 1}/${lightboxImages.length})`;
+    lightbox.classList.remove('hidden');
+    document.getElementById('lightbox-prev').classList.toggle('hidden', lightboxIndex === 0);
+    document.getElementById('lightbox-next').classList.toggle('hidden', lightboxIndex === lightboxImages.length - 1);
+  }
+
+  function closeLightbox() {
+    lightbox.classList.add('hidden');
+    lightboxImg.src = '';
+  }
+
+  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  document.getElementById('lightbox-prev').addEventListener('click', () => {
+    if (lightboxIndex > 0) { lightboxIndex--; openLightbox(); }
+  });
+  document.getElementById('lightbox-next').addEventListener('click', () => {
+    if (lightboxIndex < lightboxImages.length - 1) { lightboxIndex++; openLightbox(); }
+  });
+  lightbox.addEventListener('click', (e) => {
+    if (e.target === lightbox) closeLightbox();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!lightbox.classList.contains('hidden')) {
+      if (e.key === 'Escape') closeLightbox();
+      if (e.key === 'ArrowLeft' && lightboxIndex > 0) { lightboxIndex--; openLightbox(); }
+      if (e.key === 'ArrowRight' && lightboxIndex < lightboxImages.length - 1) { lightboxIndex++; openLightbox(); }
+    }
+  });
+
+
+
+searchEl.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadMessages().catch(err => console.error(err)), 250);
+});
+
+document.getElementById('sync-btn').addEventListener('click', async (e) => {
+  if (!selectedAccountId) return;
+  const btn = e.currentTarget;
+  btn.disabled = true; const prev = btn.textContent; btn.textContent = '…';
+  try {
+    const res = await api(`/api/mail/accounts/${selectedAccountId}/sync?sync_mode=recent`, {method: 'POST'});
+    btn.title = `Синхронизировано (+${res.created || 0})`;
+    await loadMessages();
+  } catch (err) {
+    alert(err.message || 'Ошибка синхронизации');
+  } finally {
+    btn.disabled = false; btn.textContent = prev;
+  }
+});
+
+// Full re-sync: fetch ALL messages (UNSEEN + SEEN)
+document.getElementById('sync-full-btn').addEventListener('click', async (e) => {
+  if (!selectedAccountId) return;
+  if (!confirm('Полная синхронизация загрузит все сообщения из ящика. Продолжить?')) return;
+  const btn = e.currentTarget;
+  btn.disabled = true; const prev = btn.textContent; btn.textContent = '…';
+  try {
+    const res = await api(`/api/mail/accounts/${selectedAccountId}/sync?sync_mode=all`, {method: 'POST'});
+    btn.title = `Полная синхронизация (+${res.created || 0})`;
+    await loadMessages();
+  } catch (err) {
+    alert(err.message || 'Ошибка синхронизации');
+  } finally {
+    btn.disabled = false; btn.textContent = prev;
+  }
+});
+
+document.getElementById('compose-btn').addEventListener('click', () => composePanel.classList.toggle('hidden'));
+document.getElementById('compose-close').addEventListener('click', () => composePanel.classList.add('hidden'));
+document.getElementById('compose-send').addEventListener('click', async () => {
+  const status = document.getElementById('compose-status');
+  status.textContent = 'Отправка...';
+  try {
+    const to = document.getElementById('compose-to').value.split(',').map(s => s.trim()).filter(Boolean);
+    const url = selectedAccountId ? `/api/mail/messages?account_id=${encodeURIComponent(selectedAccountId)}` : '/api/mail/messages';
+    await api(url, {method: 'POST', body: JSON.stringify({
+      to,
+      subject: document.getElementById('compose-subject').value,
+      body_text: document.getElementById('compose-body').value,
+    })});
+    status.textContent = 'Готово';
+    document.getElementById('compose-to').value = '';
+    document.getElementById('compose-subject').value = '';
+    document.getElementById('compose-body').value = '';
+    setTimeout(() => { status.textContent = ''; composePanel.classList.add('hidden'); }, 700);
+    await loadMessages();
+  } catch (err) {
+    status.textContent = err.message || 'Ошибка';
+  }
+});
+
+loadAccounts().catch(err => {
+  accountsEl.innerHTML = `<li class="text-rose-400 text-[10px] px-1">${esc(err.message)}</li>`;
+});
+})();
+</script>
+{% endblock %}

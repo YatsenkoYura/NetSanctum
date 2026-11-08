@@ -73,16 +73,13 @@ class ManualOrderContractTests(unittest.TestCase):
         self.assertIn("after_id", body)
 
     def test_the_grip_keeps_the_stack_gesture_to_itself(self):
-        """The grip means "build a stack"; the tile body means "reorder"."""
+        """The grip has been removed; no data-grip check exists in reorder."""
         reorder = TEMPLATE.split("function __vaultBindReorder() {", 1)[1]
-        self.assertIn("if (e.target.closest && e.target.closest('[data-grip]')) return;", reorder)
+        self.assertNotIn("data-grip", reorder)
 
     def test_stacking_does_not_answer_a_reorder_drop(self):
-        """Both end on a tile. Without this every reorder ends in a false alarm."""
-        stack_drop = TEMPLATE.split("function __vaultBindCardStacks() {", 1)[1].split(
-            "grid.addEventListener('drop'", 1
-        )[1]
-        self.assertIn("vaultReorder.fromId !== null", stack_drop.split("\n  });", 1)[0])
+        """Stacking gesture has been removed; __vaultBindCardStacks no longer exists."""
+        self.assertNotIn("__vaultBindCardStacks", TEMPLATE)
 
     def test_the_root_drop_ignores_a_card_being_reordered(self):
         root_drop = TEMPLATE.split("function __vaultAttachRootDrop() {", 1)[1]
@@ -610,10 +607,10 @@ class CardOntoSpaceGestureTests(unittest.TestCase):
         self.assertIn("Порядок задаётся внутри пространства", commit)
 
     def test_the_three_drop_targets_are_three_different_meanings(self):
-        """A card on a card reorders; a card on a grip stacks; a card on a space moves."""
-        self.assertIn("if (e.target.closest && e.target.closest('[data-grip]')) return;", TEMPLATE)
+        """Stacking gesture removed: grip check is gone, only reorder and folder move remain."""
+        self.assertNotIn("[data-grip]", TEMPLATE)
+        self.assertNotIn("vaultStackDrop(fromId, toId)", TEMPLATE)
         self.assertIn("/api/vault/items/move", TEMPLATE)
-        self.assertIn("vaultStackDrop(fromId, toId)", TEMPLATE)
 
     def test_the_folder_tiles_have_their_own_drop_binding(self):
         body = TEMPLATE.split("function __vaultBindFolderDrop() {", 1)[1].split("\n}", 1)[0]

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import struct
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +8,13 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from app.core.nsp2 import (
+    HEADER_SIZE,
+    MAGIC_FOOTER,
+    MAGIC_WRITE,
+    parse_footer,
+    parse_header,
+)
 from app.core.packages_router import (
     PackageResourceError,
     download_package_nsp,
@@ -27,6 +33,18 @@ from app.modules.video_archiver.router import _video_resources
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import zstandard as zstd
+
+_ZSTD_DECOMPRESSOR = zstd.ZstdDecompressor()
+
+
+def _decompress_index(payload: bytes, footer: dict) -> bytes:
+    """Extract and decompress the NSP2 index block."""
+    idx_off = footer["index_offset"]
+    idx_len = footer["index_len"]
+    raw = payload[idx_off : idx_off + idx_len]
+    return _ZSTD_DECOMPRESSOR.decompress(raw)
+
 
 class PackageContractTests(unittest.TestCase):
     def test_manifest_contains_explicit_module_metadata(self):
@@ -38,11 +56,12 @@ class PackageContractTests(unittest.TestCase):
             resources=[{"url": "/music/audio/1", "type": "binary"}],
         )
 
-        self.assertEqual(1, manifest["schema_version"])
-        self.assertEqual("music", manifest["module"]["id"])
-        self.assertEqual("/music/dashboard", manifest["module"]["root_url"])
+        self.assertEqual(2, manifest["schema_version"])
+        self.assertEqual("music", manifest["package"]["module"]["id"])
+        self.assertEqual("/music/dashboard", manifest["package"]["module"]["root_url"])
 
-    def test_hybrid_manifest_keeps_binary_and_adds_container(self):
+    def test_hybrid_manifest_keeps_sealed_and_adds_container(self):
+        """NSP2 packs binary, so only sealed resources stay standalone."""
         manifest = make_package_manifest(
             module_id="music",
             package_id="song_1",
@@ -56,11 +75,9 @@ class PackageContractTests(unittest.TestCase):
 
         hybrid = make_hybrid_manifest("song_1", manifest)
 
+        # Binary is now packed into NSP2, only sealed resources stay standalone
         self.assertEqual(
-            [
-                {"url": "/music/audio/1", "type": "binary"},
-                {"url": "/api/packages/song_1/nsp", "type": "container"},
-            ],
+            [{"url": "/api/packages/song_1/nsp", "type": "container"}],
             hybrid["resources"],
         )
 
@@ -224,11 +241,17 @@ class PackageContractTests(unittest.TestCase):
             _package_media_id("novel_0")
 
     def test_nsp_compiler_preserves_query_bearing_resource_keys(self):
+        """NSP2 packs all resources (including binary) and preserves query-bearing URLs."""
         resources = [
             {"url": "/static/tailwind.css", "type": "css"},
             {"url": "/alllib/ui/chapter/11?package_id=novel_7", "type": "html"},
             {"url": "/alllib/api/novel/7/export", "type": "binary"},
         ]
+        package_info = {
+            "schema_version": 2,
+            "package": {"id": "test_pkg", "title": "Test", "revision": 1, "root_url": "/"},
+            "runtime": {"embedded": True, "sha256": ""},
+        }
 
         class Response:
             status_code = 200
@@ -250,21 +273,37 @@ class PackageContractTests(unittest.TestCase):
                         Client(),
                         {},
                         {},
+                        package_info,
                     )
                 ]
             )
 
         payload = asyncio.run(compile_package())
-        index_offset, magic = struct.unpack(">Q4s", payload[-12:])
-        index = json.loads(payload[index_offset:-12])
+        # NSP2: 32-byte header + data + index + footer(72 bytes)
+        self.assertEqual(MAGIC_WRITE, payload[:4])
+        fmt_ver, _flags, _cid = parse_header(payload[:HEADER_SIZE])
+        self.assertEqual(2, fmt_ver)
+        footer = parse_footer(payload, len(payload))
+        self.assertEqual(MAGIC_FOOTER, payload[len(payload) - 4 :])
+        self.assertEqual(2, footer["format_version"])
 
-        self.assertEqual(b"NSPK", magic)
-        self.assertTrue(payload.startswith(b"/static/tailwind.css/alllib/ui/chapter/11?package_id=novel_7"))
-        self.assertIn("/alllib/ui/chapter/11?package_id=novel_7", index)
-        self.assertNotIn("/alllib/api/novel/7/export", index)
-        self.assertEqual(64, len(index["/static/tailwind.css"]["sha256"]))
+        index = json.loads(_decompress_index(payload, footer))
+        # NSP2 includes binary — all three URLs present in entries
+        entry_urls = {e["url"] for e in index["entries"]}
+        self.assertIn("/static/tailwind.css", entry_urls)
+        self.assertIn("/alllib/ui/chapter/11?package_id=novel_7", entry_urls)
+        self.assertIn("/alllib/api/novel/7/export", entry_urls)
+        # Verify blob SHA-256 lengths
+        for blob in index["blobs"]:
+            self.assertEqual(64, len(blob["sha256"]))
 
     def test_nsp_compiler_rejects_partial_packages(self):
+        package_info = {
+            "schema_version": 2,
+            "package": {"id": "test", "title": "Test", "revision": 1, "root_url": "/"},
+            "runtime": {"embedded": True, "sha256": ""},
+        }
+
         class Response:
             status_code = 404
             content = b""
@@ -285,6 +324,7 @@ class PackageContractTests(unittest.TestCase):
                         Client(),
                         {},
                         {},
+                        package_info,
                     )
                 ]
             )
@@ -315,7 +355,10 @@ class PackageContractTests(unittest.TestCase):
                 return b"".join([chunk async for chunk in response.body_iterator])
 
         payload = asyncio.run(download())
-        self.assertEqual(b"NSPK", payload[-4:])
+        # NSP2: header starts with MAGIC_WRITE
+        self.assertEqual(MAGIC_WRITE, payload[:4])
+        # Footer ends with MAGIC_FOOTER
+        self.assertEqual(MAGIC_FOOTER, payload[len(payload) - 4 :])
 
     def test_offline_templates_only_request_packaged_vault_and_video_urls(self):
         vault = (ROOT / "app/modules/vault/templates/vault_dashboard.html").read_text()
